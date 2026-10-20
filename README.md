@@ -66,8 +66,12 @@ Git Bash / MSYS2 下直接 `./clipboard`，CMD 下 `clipboard.cmd`。
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
+| `DataDir` | 空 | 写入位置；空 = 脚本旁的 `data/`。相对路径相对脚本目录，`-DataDir` 优先 |
 | `Hotkey` | `Ctrl+Alt+V` | 全局热键；`Win+V` 在多数系统上被占用，注册失败会自动回退 |
+| `HotkeyFallbacks` | 空 | 逗号分隔的回退链，按顺序尝试；空 = 内置 Ctrl+Alt+V / Win+V / Alt+反引号 / Win+Shift+V |
 | `PasteKeys` | `^v` | 选定后用 SendKeys 发送的按键（`^+v` = Ctrl+Shift+V） |
+| `ModReleaseTimeout` | `1200` | 最多等多久（毫秒）让修饰键松开再注入粘贴 |
+| `PasteSettle` | `80` | 切回原窗口后、发 `PasteKeys` 前再等一下（毫秒）；目标应用慢就调大 |
 | `MaxItems` | `300` | 最多保留条数 |
 | `MaxBytes` | `204800` | 单条上限，超出不入库 |
 | `MaxTotal` | `4194304` | 总容量上限，超出丢最旧的 |
@@ -90,7 +94,9 @@ data/                历史 / 日志 / 生效热键缓存（不入库）
 tests/run-tests.ps1  自测套件
 ```
 
-数据默认放在脚本旁的 `data/`；脚本目录不可写时自动回退到 `%LOCALAPPDATA%\clipboard`。也可以用 `-DataDir <路径>` 显式指定（测试就是这么隔离的）。
+写入位置按 **`-DataDir` > `clipboard.ini` 的 `DataDir=` > 脚本旁 `data/`** 解析；`config` 的 `data dir` 与 `status` 的 `store file` 都会显示实际生效位置。
+
+**不写 `%LOCALAPPDATA%`、不建任何用户目录下的文件**：目录不可写时直接报错退出并提示怎么改，不会偷偷换个地方存。除 `install`（两个快捷方式）和 `restore`（按需修系统 Win+V 的注册表项）之外不碰注册表。
 
 ## 开机自启与桌面快捷方式
 

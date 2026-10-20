@@ -62,6 +62,14 @@ function Test-MutexFree([string]$name) {
   } catch { return $true }
 }
 
+# the resident polls the clipboard, so a write can lose the race - retry a few times
+function Set-Clip([string]$value) {
+  for ($i = 0; $i -lt 6; $i++) {
+    try { Set-Clipboard -Value $value -ErrorAction Stop; return $true } catch { Start-Sleep -Milliseconds 150 }
+  }
+  return $false
+}
+
 $tmpRoot = Join-Path $env:TEMP ('clipboard-tests-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 $unitDir = Join-Path $tmpRoot 'unit'
 $intDir = Join-Path $tmpRoot 'integration'
@@ -80,6 +88,7 @@ try {
   # ---------------------------------------------------------------- unit tests
   if ($Unit) {
     . $clipPs1 -Library -DataDir $unitDir
+    $ErrorActionPreference = 'Continue'   # the dot-sourced script sets Stop
 
     $h = Parse-Hotkey 'Ctrl+Alt+V'
     Check 'unit' 'Parse-Hotkey mods ctrl+alt' ($h.Mods -eq 3) ('mods=0x' + $h.Mods.ToString('X2'))
@@ -121,6 +130,13 @@ try {
     Check 'unit' 'Read-Ini skips malformed' (-not $kv.ContainsKey('Garbage')) ''
     Check 'unit' 'Read-Ini keeps number' ($kv['MaxItems'] -eq '7') ('MaxItems=' + $kv['MaxItems'])
     Check 'unit' 'Read-Ini reads hotkey' ($kv['Hotkey'] -eq 'Ctrl+Shift+F9') ('Hotkey=' + $kv['Hotkey'])
+
+    # Apply-Config must pick up the paste timings and the fallback list
+    [IO.File]::WriteAllLines($cfg, @('ModReleaseTimeout=1500', 'PasteSettle=250', 'HotkeyFallbacks=Alt+Q;Alt+W'), $Utf8)
+    Apply-Config
+    Check 'unit' 'Apply-Config ModReleaseTimeout' ($script:ModReleaseTimeout -eq 1500) ('value=' + $script:ModReleaseTimeout)
+    Check 'unit' 'Apply-Config PasteSettle' ($script:PasteSettle -eq 250) ('value=' + $script:PasteSettle)
+    Check 'unit' 'Apply-Config HotkeyFallbacks' ($script:HotkeyFallbacks -eq 'Alt+Q;Alt+W') ('value=' + $script:HotkeyFallbacks)
 
     # store
     Save-Items @()
@@ -237,6 +253,15 @@ try {
 
     # -DataDir must not leak into the repo
     Check 'int' 'data dir isolate' ((Test-Path -LiteralPath (Join-Path $intDir 'history.dat')) -and -not (Test-Path -LiteralPath (Join-Path $repoRoot 'data\integration'))) ''
+
+    # DataDir= in clipboard.ini decides the write location
+    $altDir = Join-Path $tmpRoot 'alt'
+    $cfgRoot = Join-Path $tmpRoot 'cfgroot'
+    foreach ($d in @($altDir, $cfgRoot)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
+    Copy-Item -LiteralPath $clipPs1 -Destination (Join-Path $cfgRoot 'clipboard.ps1')
+    [IO.File]::WriteAllLines((Join-Path $cfgRoot 'clipboard.ini'), @('DataDir=' + $altDir), $Utf8)
+    & powershell -NoProfile -ExecutionPolicy Bypass -Sta -File (Join-Path $cfgRoot 'clipboard.ps1') put 'ini-datadir' 2>&1 | Out-Null
+    Check 'int' 'DataDir from ini' (Test-Path -LiteralPath (Join-Path $altDir 'history.dat')) $altDir
   }
 
   # ------------------------------------------------------------------ e2e tests
@@ -263,13 +288,13 @@ try {
         Check 'e2e' 'store lives in -DataDir' ($s -match [regex]::Escape($e2eDir)) ''
 
         $marker = 'e2e-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-        Set-Clipboard -Value $marker
+        [void](Set-Clip $marker)
         Start-Sleep -Milliseconds 1600
         Check 'e2e' 'capture pipeline' ((Clip $e2eDir @('list', '-Count', '5')) -match [regex]::Escape($marker)) $marker
 
         [void](Clip $e2eDir @('pause'))
         $marker2 = 'e2e-paused-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-        Set-Clipboard -Value $marker2
+        [void](Set-Clip $marker2)
         Start-Sleep -Milliseconds 1600
         Check 'e2e' 'pause stops capture' (-not ((Clip $e2eDir @('list', '-Count', '5')) -match [regex]::Escape($marker2))) $marker2
         [void](Clip $e2eDir @('resume'))
@@ -294,7 +319,7 @@ try {
   }
 }
 finally {
-  if ($clipBak) { try { Set-Clipboard -Value $clipBak } catch { } }
+  if ($clipBak) { [void](Set-Clip $clipBak) }
   try { Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
 }
 

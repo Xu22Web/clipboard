@@ -18,6 +18,9 @@ param(
   [int]$MaxBytes = 204800,
   [int]$MaxTotal = 4194304,
   [int]$Interval = 300,
+  [string]$HotkeyFallbacks = '',
+  [int]$ModReleaseTimeout = 1200,
+  [int]$PasteSettle = 80,
   [switch]$NoPaste,
   [switch]$Purge,
   [string]$DataDir,
@@ -28,22 +31,42 @@ $ErrorActionPreference = 'Stop'
 $RS        = [string][char]30
 $FILESIG   = [string][char]1
 $Root      = Split-Path -Parent $PSCommandPath
-# -DataDir keeps store + config in one place, which is how the tests stay away from data\
-$StoreDir  = if ($DataDir) { [IO.Path]::GetFullPath($DataDir) } else { Join-Path $Root 'data' }
-$IniPath   = if ($DataDir) { Join-Path $StoreDir 'clipboard.ini' } else { Join-Path $Root 'clipboard.ini' }
+
+# Write location, highest priority first:
+#   1. -DataDir <path>      CLI switch
+#   2. DataDir=<path>       in clipboard.ini next to the script
+#   3. <script dir>\data    default
+# Nothing is ever written outside these folders (no %LOCALAPPDATA% fallback).
+$IniPath = if ($DataDir) { Join-Path ([IO.Path]::GetFullPath($DataDir)) 'clipboard.ini' } else { Join-Path $Root 'clipboard.ini' }
+if (-not $DataDir -and (Test-Path -LiteralPath $IniPath)) {
+  try {
+    foreach ($line in [IO.File]::ReadAllLines($IniPath, [Text.Encoding]::UTF8)) {
+      if ($line -match '^\s*DataDir\s*=\s*(.*)$') {
+        $v = $Matches[1].Trim().Trim('"')
+        if ($v) { $DataDir = $v }
+        break
+      }
+    }
+  } catch { }
+}
+if ($DataDir) {
+  if (-not [IO.Path]::IsPathRooted($DataDir)) { $DataDir = Join-Path $Root $DataDir }
+  $DataDir = [IO.Path]::GetFullPath($DataDir).TrimEnd([char]92, [char]47)
+}
+$StoreDir = if ($DataDir) { $DataDir } else { Join-Path $Root 'data' }
 try {
-  if (-not (Test-Path $StoreDir)) { New-Item -ItemType Directory -Path $StoreDir -Force | Out-Null }
-  $probes = if ($DataDir) { @(Join-Path $StoreDir 'p.probe') } else { @((Join-Path $StoreDir 'p.probe'), (Join-Path $Root 'p.probe')) }
-  foreach ($probe in $probes) {
+  foreach ($d in (@($StoreDir, (Split-Path -Parent $IniPath)) | Select-Object -Unique)) {
+    if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
+    $probe = Join-Path $d 'p.probe'
     [IO.File]::WriteAllText($probe, 'x')
     Remove-Item -LiteralPath $probe -Force
   }
 } catch {
-  if (-not $DataDir) {
-    $StoreDir = Join-Path $env:LOCALAPPDATA 'clipboard'
-    $IniPath = Join-Path $StoreDir 'clipboard.ini'
-  }
-  Write-Warning ('script folder not writable, using ' + $StoreDir)
+  if ($Library) { return }
+  Write-Host ('[x] not writable: ' + $StoreDir)
+  Write-Host '    set DataDir=<path> in clipboard.ini, or pass -DataDir <path>, to move the write location.'
+  Write-Host '    nothing is written to %LOCALAPPDATA% or any other user folder.'
+  exit 1
 }
 $StoreFile = Join-Path $StoreDir 'history.dat'
 $Paused    = Join-Path $StoreDir 'paused.flag'
@@ -468,12 +491,12 @@ function Show-Picker {
       if ($NoPaste) { [void](Set-ClipItem $text); $form.Close(); return }
       if (-not (Set-ClipItem $text)) { Write-Log 'set clipboard failed'; $form.Close(); return }
       $sw = [Diagnostics.Stopwatch]::StartNew()
-      while ($sw.ElapsedMilliseconds -lt 1200) {
+      while ($sw.ElapsedMilliseconds -lt $script:ModReleaseTimeout) {
         if (Test-Modifiers-Up) { break }
         Start-Sleep -Milliseconds 30
       }
       [void][Cb.Win]::SetForegroundWindow($prev)
-      Start-Sleep -Milliseconds 80
+      Start-Sleep -Milliseconds $script:PasteSettle
       try { [Windows.Forms.SendKeys]::SendWait($PasteKeys) } catch { Write-Log ('sendkeys fail: ' + $_.Exception.Message) }
       $form.Close()
     }
@@ -674,7 +697,9 @@ function Invoke-ServeOnce {
   }
 
   $hw = New-Object Cb.HotWindow
-  $cands = @($Hotkey, 'Ctrl+Alt+V', 'Win+V', 'Alt+`', 'Win+Shift+V') | Select-Object -Unique
+  $fb = @($script:HotkeyFallbacks -split '[,;]' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  if ($fb.Count -eq 0) { $fb = @('Ctrl+Alt+V', 'Win+V', 'Alt+`', 'Win+Shift+V') }
+  $cands = @(@($Hotkey) + $fb | Select-Object -Unique)
   $script:Hot = ''
   $reg = $false
   foreach ($c in $cands) {
@@ -921,12 +946,21 @@ function Write-IniTemplate([switch]$Force) {
   $t = @(
     '# clipboard.ini - flat key=value list. Restart the daemon after editing (clipboard stop, clipboard serve).',
     '# CLI switches win over this file.',
+    '# write location, empty = <script dir>\data. relative paths resolve against the script dir.',
+    'DataDir=',
     '# Hotkey: key may be A-Z 0-9 F1-F24 Insert Delete Home End PgUp PgDn Space.',
     '# Default is Ctrl+Alt+V. Win+V would be nicer but Windows reserves it on most builds',
     '# (RegisterHotKey fails); the tool then falls back to Alt+` / Win+Shift+V by itself.',
     'Hotkey=Ctrl+Alt+V',
+    '# comma separated list tried in order when Hotkey is taken. empty = built-in chain:',
+    '# Ctrl+Alt+V, Win+V, Alt+`, Win+Shift+V',
+    'HotkeyFallbacks=',
     '# ^v = Ctrl+V | ^+v = Ctrl+Shift+V (terminal) | +{INS} = Shift+Insert (mintty)',
     'PasteKeys=^v',
+    '# ms to wait for the modifiers to be released before injecting the paste',
+    'ModReleaseTimeout=1200',
+    '# ms to wait after focusing the previous window before sending PasteKeys',
+    'PasteSettle=80',
     'MaxItems=300',
     'MaxBytes=204800',
     '# total store size cap in bytes; oldest entries are dropped beyond it',
@@ -954,7 +988,10 @@ function Apply-Config {
   $cli = $script:CliParams
   if ((-not $cli.ContainsKey('Hotkey')) -and $c.ContainsKey('Hotkey') -and $c['Hotkey']) { $script:Hotkey = $c['Hotkey'] }
   if ((-not $cli.ContainsKey('PasteKeys')) -and $c.ContainsKey('PasteKeys') -and $c['PasteKeys']) { $script:PasteKeys = $c['PasteKeys'] }
+  if ((-not $cli.ContainsKey('HotkeyFallbacks')) -and $c.ContainsKey('HotkeyFallbacks')) { $script:HotkeyFallbacks = [string]$c['HotkeyFallbacks'] }
   $n = 0
+  if ((-not $cli.ContainsKey('ModReleaseTimeout')) -and $c.ContainsKey('ModReleaseTimeout') -and [int]::TryParse($c['ModReleaseTimeout'], [ref]$n) -and $n -ge 0) { $script:ModReleaseTimeout = $n }
+  if ((-not $cli.ContainsKey('PasteSettle')) -and $c.ContainsKey('PasteSettle') -and [int]::TryParse($c['PasteSettle'], [ref]$n) -and $n -ge 0) { $script:PasteSettle = $n }
   if ((-not $cli.ContainsKey('MaxItems')) -and $c.ContainsKey('MaxItems') -and [int]::TryParse($c['MaxItems'], [ref]$n) -and $n -gt 0) { $script:MaxItems = $n }
   if ((-not $cli.ContainsKey('MaxBytes')) -and $c.ContainsKey('MaxBytes') -and [int]::TryParse($c['MaxBytes'], [ref]$n) -and $n -gt 0) { $script:MaxBytes = $n }
   if ((-not $cli.ContainsKey('MaxTotal')) -and $c.ContainsKey('MaxTotal') -and [int]::TryParse($c['MaxTotal'], [ref]$n) -and $n -gt 0) { $script:MaxTotal = $n }
@@ -968,17 +1005,21 @@ function Apply-Config {
 function Show-Config {
   [void](Write-IniTemplate)
   Write-Host ('config file : ' + $IniPath)
+  Write-Host ('data dir    : ' + $StoreDir + $(if ($script:CliParams.ContainsKey('DataDir')) { '   (from -DataDir)' } elseif ($DataDir) { '   (from clipboard.ini)' } else { '   (default)' }))
   Write-Host ''
-  Write-Host ('Hotkey          = ' + $Hotkey)
-  Write-Host ('PasteKeys       = ' + $PasteKeys)
-  Write-Host ('MaxItems        = ' + $MaxItems)
-  Write-Host ('MaxBytes        = ' + $MaxBytes)
-  Write-Host ('MaxTotal        = ' + $MaxTotal + ' bytes')
-  Write-Host ('Interval        = ' + $Interval + ' ms')
-  Write-Host ('NoPaste         = ' + [int][bool]$NoPaste)
-  Write-Host ('Balloon         = ' + [int][bool]$script:ShowBalloon)
-  Write-Host ('Theme           = ' + $script:Theme)
-  Write-Host ('ExcludePattern  = ' + $(if ($script:ExcludePattern) { $script:ExcludePattern } else { '(none)' }))
+  Write-Host ('Hotkey            = ' + $Hotkey)
+  Write-Host ('HotkeyFallbacks   = ' + $(if ($script:HotkeyFallbacks) { $script:HotkeyFallbacks } else { '(built-in chain)' }))
+  Write-Host ('ModReleaseTimeout = ' + $script:ModReleaseTimeout + ' ms')
+  Write-Host ('PasteSettle       = ' + $script:PasteSettle + ' ms')
+  Write-Host ('PasteKeys         = ' + $PasteKeys)
+  Write-Host ('MaxItems          = ' + $MaxItems)
+  Write-Host ('MaxBytes          = ' + $MaxBytes)
+  Write-Host ('MaxTotal          = ' + $MaxTotal + ' bytes')
+  Write-Host ('Interval          = ' + $Interval + ' ms')
+  Write-Host ('NoPaste           = ' + [int][bool]$NoPaste)
+  Write-Host ('Balloon           = ' + [int][bool]$script:ShowBalloon)
+  Write-Host ('Theme             = ' + $script:Theme)
+  Write-Host ('ExcludePattern    = ' + $(if ($script:ExcludePattern) { $script:ExcludePattern } else { '(none)' }))
   Write-Host ''
   Write-Host 'clipboard config edit   open clipboard.ini in notepad'
   Write-Host 'clipboard config init   rewrite the template with defaults'
@@ -1010,7 +1051,8 @@ function Show-Usage {
     'Options (override clipboard.ini):',
     '  -Hotkey Ctrl+Alt+V   -PasteKeys ^v    -MaxItems 300',
     '  -MaxBytes 204800     -Interval 300    -NoPaste',
-    '  -DataDir <path>      keep store + config here instead of next to the script',
+    '  -HotkeyFallbacks a,b -ModReleaseTimeout 1200   -PasteSettle 80',
+    '  -DataDir <path>      write location (overrides DataDir= in clipboard.ini)',
     '',
     'Examples:',
     '  clipboard put "hello there"    echo hi | clipboard put    clipboard list -Count 5',
