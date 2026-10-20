@@ -51,7 +51,14 @@ if (-not $DataDir -and (Test-Path -LiteralPath $IniPath)) {
 }
 if ($DataDir) {
   if (-not [IO.Path]::IsPathRooted($DataDir)) { $DataDir = Join-Path $Root $DataDir }
-  $DataDir = [IO.Path]::GetFullPath($DataDir).TrimEnd([char]92, [char]47)
+  try {
+    $DataDir = [IO.Path]::GetFullPath($DataDir).TrimEnd([char]92, [char]47)
+    if ($DataDir -match '^[A-Za-z]:$') { $DataDir += '\' }
+  } catch {
+    if ($Library) { return }
+    Write-Host ('[x] invalid DataDir: ' + $DataDir)
+    exit 1
+  }
 }
 $StoreDir = if ($DataDir) { $DataDir } else { Join-Path $Root 'data' }
 try {
@@ -804,13 +811,29 @@ function Invoke-Diag {
   Row 'TextInputHost.exe' ([bool](Get-ChildItem "$env:SystemRoot\SystemApps" -Recurse -Filter 'TextInputHost.exe' -ErrorAction SilentlyContinue)) ''
   Row 'Clipboard data dir' (Test-Path "$env:LOCALAPPDATA\Microsoft\Windows\Clipboard") ''
   if ($script:FormsReady) {
+    # Never clobber the clipboard just to prove a point: skip when a resident would record
+    # the probe text into history, or when the clipboard holds no text to restore.
     $bak = Get-Text
-    $wr = $false; $rt = $false
-    try { $wr = Set-Text 'cb-selftest' } catch { }
-    if ($wr) { try { $rt = ((Get-Text) -ceq 'cb-selftest') } catch { } }
-    if ($bak) { try { [void](Set-Text $bak) } catch { } }
-    Row 'Clipboard write' $wr 'False -> Win32 clipboard gone'
-    Row 'Clipboard roundtrip' $rt ''
+    $residentUp = $false
+    try {
+      $hm = New-Object System.Threading.Mutex($false, $MutexName)
+      if ($hm.WaitOne(0)) { $hm.ReleaseMutex() } else { $residentUp = $true }
+      $hm.Dispose()
+    } catch { }
+    if ($residentUp) {
+      Row 'Clipboard write' 'skipped' 'resident is running - the probe would land in the history'
+      Row 'Clipboard roundtrip' 'skipped' ''
+    } elseif ([string]::IsNullOrEmpty($bak)) {
+      Row 'Clipboard write' 'skipped' 'clipboard holds no text - the probe would clobber it'
+      Row 'Clipboard roundtrip' 'skipped' ''
+    } else {
+      $wr = $false; $rt = $false
+      try { $wr = Set-Text 'cb-selftest' } catch { }
+      if ($wr) { try { $rt = ((Get-Text) -ceq 'cb-selftest') } catch { } }
+      try { [void](Set-Text $bak) } catch { }
+      Row 'Clipboard write' $wr 'False -> Win32 clipboard gone'
+      Row 'Clipboard roundtrip' $rt ''
+    }
   }
   foreach ($x in $o) { Write-Host ('[ ] ' + $x.Check + ' = ' + [string]$x.Result + $(if ($x.Hint) { '   <- ' + $x.Hint } else { '' })) }
   Write-Host ''
