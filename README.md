@@ -6,6 +6,12 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+| 深色 | 浅色 |
+|---|---|
+| ![深色主题的历史面板](docs/screenshot-dark.png) | ![浅色主题的历史面板](docs/screenshot-light.png) |
+
+> 截图里是示例数据，不是真实剪贴板内容。
+
 ## 功能
 
 - 后台轮询剪贴板，保存最近 N 条文本（默认 300 条 / 单条 200 KB / 合计 4 MB）
@@ -125,7 +131,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run-tests.ps1
 
 全部用 `%TEMP%` 下的临时 `-DataDir` 跑，不碰 `data/` 和 `clipboard.ini`；真实剪贴板会在开始前备份、结束后还原。任何一项失败时退出码为 1。
 
-> 跑之前建议先 `clipboard pause`：集成分组会写真实剪贴板，正在运行的常驻进程会把测试文本记进历史。
+> 检测到常驻进程时会自动临时 `pause`，跑完再 `resume`（本来就处于 paused 的话不动它），所以真实历史不会被测试数据污染。
 
 > `-E2E` 会在运行期间占用全局热键并短暂接管剪贴板；如果已经有常驻进程在跑，这组会自动跳过。
 > 图形界面（面板的实际绘制、粘贴注入）仍需手动确认，自动化覆盖不到。

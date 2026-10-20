@@ -79,8 +79,19 @@ foreach ($d in @($unitDir, $intDir, $e2eDir)) { New-Item -ItemType Directory -Pa
 $clipBak = ''
 try { $clipBak = (Get-Clipboard -Raw -ErrorAction Stop) } catch { }
 
+# A running resident records every clipboard write the tests make, so pause it for the
+# duration of the run and resume it afterwards - the real history stays untouched.
+$wePaused = $false
 if (-not (Test-MutexFree 'Local\clipboard.daemon')) {
-  Write-Warning 'a resident is running: test clipboard writes will land in its history - run "clipboard pause" first'
+  $st = & powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $clipPs1 status 2>&1 | Out-String
+  if ($st -match 'capture     : paused') {
+    Write-Output 'resident is already paused - leaving it paused'
+  }
+  else {
+    [void](& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $clipPs1 pause 2>&1)
+    $wePaused = $true
+    Write-Output 'resident paused for the run (resumed at the end)'
+  }
 }
 
 try {
@@ -319,7 +330,10 @@ try {
   }
 }
 finally {
-  if ($clipBak) { [void](Set-Clip $clipBak) }
+  # Restore the clipboard while capture is still paused: whatever is left on the clipboard
+  # is recorded by the resident as soon as capture resumes, so it must not be test junk.
+  if ($clipBak) { [void](Set-Clip $clipBak) } else { [void](Set-Clip '') }
+  if ($wePaused) { [void](& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $clipPs1 resume 2>&1) }
   try { Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
 }
 
