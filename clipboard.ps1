@@ -113,6 +113,8 @@ namespace Cb {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern uint GetClipboardSequenceNumber();
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
+    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int index);
+    [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr h, int index, int value);
   }
   public class HotWindow : System.Windows.Forms.NativeWindow {
     public event EventHandler Hot;
@@ -395,6 +397,19 @@ function Show-Picker {
     $lst.BackColor = $ui.Surface
     $lst.ForeColor = $ui.Text
     $lst.Font = $fBody
+    $lst.HorizontalScrollbar = $false
+    $lst.ScrollAlwaysVisible = $false
+
+    # WinForms can only draw the classic Win32 scrollbar, which looks nothing like the
+    # Windows 11 one. Hide it and paint a thin rounded thumb that fades in on hover.
+    $sbar = New-Object Windows.Forms.Panel
+    $sbar.Dock = 'Right'
+    $sbar.Width = 10
+    $sbar.BackColor = $ui.Surface
+    $script:SbTop = 0
+    $script:SbLen = 0
+    $script:SbDrag = -1
+    $script:SbHot = $false
 
     $foot = New-Object Windows.Forms.Label
     $foot.Dock = 'Bottom'
@@ -453,6 +468,7 @@ function Show-Picker {
     $head.Controls.Add($line)
 
     $form.Controls.Add($lst)
+    $form.Controls.Add($sbar)
     $form.Controls.Add($foot)
     $form.Controls.Add($head)
 
@@ -464,6 +480,103 @@ function Show-Picker {
     function Sync-Placeholder {
       if ($txt.Text.Length -eq 0) { $ph.Visible = $true } else { $ph.Visible = $false }
     }
+
+    function Get-Rows {
+      return [Math]::Max(1, [int][Math]::Floor($lst.ClientSize.Height / $lst.ItemHeight))
+    }
+
+    # ListBox has no VerticalScrollbar property, and setting TopIndex makes it put WS_VSCROLL
+    # back, so the style bit is stripped again after every scroll.
+    function Hide-ListBar {
+      try {
+        $ws = [Cb.Win]::GetWindowLong($lst.Handle, -16)
+        if (($ws -band 0x00200000) -ne 0) {
+          [void][Cb.Win]::SetWindowLong($lst.Handle, -16, ($ws -band (-bnot 0x00200000)))
+        }
+      } catch { }
+    }
+
+    # recompute thumb geometry from the current TopIndex
+    function Sync-Sb {
+      Hide-ListBar
+      $n = $lst.Items.Count
+      $vis = Get-Rows
+      $h = $sbar.ClientSize.Height
+      if ($n -le $vis -or $h -le 12) { $script:SbLen = 0; $sbar.Invalidate(); return }
+      $track = $h - 6
+      $script:SbLen = [Math]::Max(28, [int]($track * $vis / $n))
+      $span = $track - $script:SbLen
+      $maxTop = $n - $vis
+      $t = 0
+      if ($maxTop -gt 0 -and $span -gt 0) { $t = [int]($span * $lst.TopIndex / $maxTop) }
+      $script:SbTop = 3 + $t
+      $sbar.Invalidate()
+    }
+
+    # move the list so the thumb lands at $thumbTop
+    function Sb-ScrollTo([int]$thumbTop) {
+      if ($script:SbLen -le 0) { return }
+      $vis = Get-Rows
+      $maxTop = $lst.Items.Count - $vis
+      $span = ($sbar.ClientSize.Height - 6) - $script:SbLen
+      if ($maxTop -le 0 -or $span -le 0) { return }
+      $i = [int][Math]::Round(($thumbTop - 3) * $maxTop / $span)
+      if ($i -lt 0) { $i = 0 }
+      if ($i -gt $maxTop) { $i = $maxTop }
+      if ($i -ne $lst.TopIndex) { $lst.TopIndex = $i; $lst.Invalidate() }
+      Sync-Sb
+    }
+
+    function Scroll-By([int]$rows) {
+      $maxTop = $lst.Items.Count - (Get-Rows)
+      if ($maxTop -le 0) { return }
+      $i = $lst.TopIndex + $rows
+      if ($i -lt 0) { $i = 0 }
+      if ($i -gt $maxTop) { $i = $maxTop }
+      if ($i -ne $lst.TopIndex) { $lst.TopIndex = $i; $lst.Invalidate() }
+      Sync-Sb
+    }
+
+    # focus stays in the search box, so wheel events bubble up here instead of the list
+    $form.Add_MouseWheel({ param($s, $e) if ($e.Delta -gt 0) { Scroll-By (-3) } else { Scroll-By 3 } })
+
+    $sbar.Add_Paint({
+        param($s, $e)
+        if ($script:SbLen -le 0) { return }
+        $e.Graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+        $alpha = if ($script:SbHot -or $script:SbDrag -ge 0) { 190 } else { 110 }
+        $br = New-Object Drawing.SolidBrush ([Drawing.Color]::FromArgb($alpha, $ui.Dim))
+        $gp = New-RoundPath 3 $script:SbTop 4 $script:SbLen 2
+        $e.Graphics.FillPath($br, $gp)
+        $gp.Dispose()
+        $br.Dispose()
+      })
+    $sbar.Add_MouseEnter({ $script:SbHot = $true; $sbar.Invalidate() })
+    $sbar.Add_MouseLeave({ $script:SbHot = $false; $sbar.Invalidate() })
+    $sbar.Add_MouseDown({
+        param($s, $e)
+        if ($script:SbLen -le 0) { return }
+        if ($e.Y -ge $script:SbTop -and $e.Y -le ($script:SbTop + $script:SbLen)) {
+          $script:SbDrag = $e.Y - $script:SbTop
+        } else {
+          $script:SbDrag = [int]($script:SbLen / 2)
+          Sb-ScrollTo ($e.Y - $script:SbDrag)
+        }
+        $sbar.Capture = $true
+        $sbar.Invalidate()
+      })
+    $sbar.Add_MouseMove({
+        param($s, $e)
+        if ($script:SbDrag -lt 0) { return }
+        Sb-ScrollTo ($e.Y - $script:SbDrag)
+      })
+    $sbar.Add_MouseUp({
+        $script:SbDrag = -1
+        $sbar.Capture = $false
+        $sbar.Invalidate()
+      })
+    $form.Add_Resize({ Sync-Sb })
+    $sbar.Add_SizeChanged({ Sync-Sb })
 
     function Update-List([string]$q) {
       $lst.BeginUpdate()
@@ -489,6 +602,7 @@ function Show-Picker {
       }
       $lst.EndUpdate()
       Sync-Placeholder
+      Sync-Sb
     }
 
     function Use-Index([int]$idx) {
@@ -585,7 +699,13 @@ function Show-Picker {
     $form.Add_KeyDown({
         param($s, $e)
         $code = [int]$e.KeyCode
-        if ($e.KeyCode -eq 'Up') {
+        if ($e.KeyCode -eq 'PageDown') {
+          Scroll-By 8
+          $e.Handled = $true; $e.SuppressKeyPress = $true
+        } elseif ($e.KeyCode -eq 'PageUp') {
+          Scroll-By (-8)
+          $e.Handled = $true; $e.SuppressKeyPress = $true
+        } elseif ($e.KeyCode -eq 'Up') {
           if ($lst.SelectedIndex -gt 0) { $lst.SelectedIndex-- }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.KeyCode -eq 'Down') {
@@ -621,6 +741,7 @@ function Show-Picker {
         $form.Region = New-RoundRegion $form.Width $form.Height 8
         $form.Activate()
         $txt.Focus()
+        Sync-Sb
         Write-Log ('picker: shown ' + $script:Theme + '/' + $script:UiFamily + ' items=' + $script:All.Count)
       })
 
