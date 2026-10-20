@@ -19,31 +19,37 @@ param(
   [int]$MaxTotal = 4194304,
   [int]$Interval = 300,
   [switch]$NoPaste,
-  [switch]$Purge
+  [switch]$Purge,
+  [string]$DataDir,
+  [switch]$Library
 )
 
 $ErrorActionPreference = 'Stop'
 $RS        = [string][char]30
 $FILESIG   = [string][char]1
 $Root      = Split-Path -Parent $PSCommandPath
-$StoreDir  = Join-Path $Root 'data'
-$IniPath   = Join-Path $Root 'clipboard.ini'
+# -DataDir keeps store + config in one place, which is how the tests stay away from data\
+$StoreDir  = if ($DataDir) { [IO.Path]::GetFullPath($DataDir) } else { Join-Path $Root 'data' }
+$IniPath   = if ($DataDir) { Join-Path $StoreDir 'clipboard.ini' } else { Join-Path $Root 'clipboard.ini' }
 try {
   if (-not (Test-Path $StoreDir)) { New-Item -ItemType Directory -Path $StoreDir -Force | Out-Null }
-  foreach ($probe in @((Join-Path $StoreDir 'p.probe'), (Join-Path $Root 'p.probe'))) {
+  $probes = if ($DataDir) { @(Join-Path $StoreDir 'p.probe') } else { @((Join-Path $StoreDir 'p.probe'), (Join-Path $Root 'p.probe')) }
+  foreach ($probe in $probes) {
     [IO.File]::WriteAllText($probe, 'x')
     Remove-Item -LiteralPath $probe -Force
   }
 } catch {
-  $StoreDir = Join-Path $env:LOCALAPPDATA 'cbhist'
-  $IniPath = Join-Path $StoreDir 'clipboard.ini'
+  if (-not $DataDir) {
+    $StoreDir = Join-Path $env:LOCALAPPDATA 'clipboard'
+    $IniPath = Join-Path $StoreDir 'clipboard.ini'
+  }
   Write-Warning ('script folder not writable, using ' + $StoreDir)
 }
 $StoreFile = Join-Path $StoreDir 'history.dat'
 $Paused    = Join-Path $StoreDir 'paused.flag'
-$LogFile   = Join-Path $StoreDir 'cb.log'
-$MutexName = 'Local\cbhist.daemon'
-$EventName = 'Local\cbhist.show'
+$LogFile   = Join-Path $StoreDir 'clipboard.log'
+$MutexName = 'Local\clipboard.daemon'
+$EventName = 'Local\clipboard.show'
 $Utf8      = New-Object System.Text.UTF8Encoding $false
 $script:CliParams = $PSBoundParameters
 
@@ -83,7 +89,7 @@ namespace Cb {
     public HotWindow() {
       var cp = new System.Windows.Forms.CreateParams();
       cp.ClassName = "STATIC";
-      cp.Caption = "cbhist-hot";
+      cp.Caption = "clipboard-hot";
       CreateHandle(cp);
     }
     protected override void WndProc(ref System.Windows.Forms.Message m) {
@@ -235,7 +241,7 @@ function Save-Items([string[]]$items) {
 }
 
 function Use-StoreLock([scriptblock]$body) {
-  $m = New-Object System.Threading.Mutex($false, 'Local\cbhist.store')
+  $m = New-Object System.Threading.Mutex($false, 'Local\clipboard.store')
   $held = $false
   try {
     try { $held = $m.WaitOne(3000) } catch { $held = $true }
@@ -614,12 +620,12 @@ function Start-Serve {
     try {
       $e = [System.Threading.EventWaitHandle]::OpenExisting($EventName)
       [void]$e.Set()
-      Write-Host 'cbhist already running -> asked the running instance to show the picker'
-    } catch { Write-Host 'cbhist already running (could not signal it, try: clipboard ui)' }
+      Write-Host 'clipboard already running -> asked the running instance to show the picker'
+    } catch { Write-Host 'clipboard already running (could not signal it, try: clipboard ui)' }
     return
   }
 
-  $script:StopEvt = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, 'Local\cbhist.stop')
+  $script:StopEvt = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, 'Local\clipboard.stop')
   $script:ExitKind = ''
   try {
     Load-Forms
@@ -689,7 +695,7 @@ function Invoke-ServeOnce {
   try {
     $script:Tray = New-Object Windows.Forms.NotifyIcon
     $script:Tray.Icon = [Drawing.SystemIcons]::Information
-    $script:Tray.Text = 'cbhist - ' + $eff
+    $script:Tray.Text = 'clipboard - ' + $eff
     $script:Tray.Add_DoubleClick({ try { Show-Picker } catch { } })
     $dm = New-Object Windows.Forms.ContextMenuStrip
     $i1 = $dm.Items.Add('Show history'); $i1.Add_Click({ try { Show-Picker } catch { } })
@@ -700,7 +706,7 @@ function Invoke-ServeOnce {
     $script:Tray.ContextMenuStrip = $dm
     $script:Tray.Visible = $true
     if ($script:ShowBalloon) {
-      $script:Tray.ShowBalloonTip(5000, 'cbhist is running', ('Hotkey: ' + $eff + '  |  double-click the tray icon for history'), [Windows.Forms.ToolTipIcon]::Info)
+      $script:Tray.ShowBalloonTip(5000, 'clipboard is running', ('Hotkey: ' + $eff + '  |  double-click the tray icon for history'), [Windows.Forms.ToolTipIcon]::Info)
     }
   } catch { Write-Log ('tray failed: ' + $_.Exception.Message) }
 
@@ -733,7 +739,7 @@ function Invoke-ServeOnce {
   $timer.Start()
 
   $shown = if ($reg) { $script:Hot } else { '(not registered, polling ' + $Hotkey + ')' }
-  Write-Host ('cbhist resident   hotkey=' + $shown + '   store=' + $StoreFile)
+  Write-Host ('clipboard resident   hotkey=' + $shown + '   store=' + $StoreFile)
   Write-Log ('serve start hotkey=' + $script:Hot + ' reg=' + $reg)
   try { [Windows.Forms.Application]::Run() }
   catch { Write-Log ('run error: ' + $_.Exception.Message) }
@@ -890,13 +896,13 @@ function Remove-Autostart([switch]$Purge) {
   if ($removed -eq 0) { Write-Host 'no shortcut found (startup / desktop / legacy)' }
 
   if ($Purge) {
-    $legacyDir = Join-Path $env:LOCALAPPDATA 'cbhist'
+    $fallbackDirs = @((Join-Path $env:LOCALAPPDATA 'cbhist'), (Join-Path $env:LOCALAPPDATA 'clipboard'))
     foreach ($f in @((Join-Path $Root 'clipboard.cfg'), (Join-Path $Root 'cb.cfg'), $IniPath)) {
       if (Test-Path -LiteralPath $f) {
         try { Remove-Item -LiteralPath $f -Force; Write-Host ('[ok] removed ' + $f) } catch { Write-Host ('[!] could not remove ' + $f) }
       }
     }
-    foreach ($d in @($StoreDir, $legacyDir)) {
+    foreach ($d in (@($StoreDir) + $fallbackDirs | Select-Object -Unique)) {
       if ((Test-Path -LiteralPath $d) -and ($d -ne $Root)) {
         try { Remove-Item -LiteralPath $d -Recurse -Force; Write-Host ('[ok] removed ' + $d) } catch { Write-Host ('[!] could not remove ' + $d) }
       }
@@ -1032,6 +1038,7 @@ function Show-Usage {
     'Options (override clipboard.ini):',
     '  -Hotkey Ctrl+Alt+V   -PasteKeys ^v    -MaxItems 300',
     '  -MaxBytes 204800     -Interval 300    -NoPaste',
+    '  -DataDir <path>      keep store + config here instead of next to the script',
     '',
     'Examples:',
     '  clipboard put "hello there"    echo hi | clipboard put    clipboard list -Count 5',
@@ -1041,6 +1048,7 @@ function Show-Usage {
 #endregion
 
 #region dispatch
+if ($Library) { return }   # dot-source mode: expose the functions only, run nothing
 Apply-Config
 if ($Command -eq '' -or @('help', '-h', '--help') -contains $Command.ToLower()) { Show-Usage; return }
 
@@ -1109,7 +1117,7 @@ switch ($Command.ToLower()) {
   }
   'pause' { Ensure-Dir; New-Item -ItemType File -Path $Paused -Force | Out-Null; Write-Host '[ok] capture paused' }
   'stop' {
-    try { $se = [System.Threading.EventWaitHandle]::OpenExisting('Local\cbhist.stop'); [void]$se.Set(); Write-Log 'stop requested'; Write-Host '[ok] stop requested' }
+    try { $se = [System.Threading.EventWaitHandle]::OpenExisting('Local\clipboard.stop'); [void]$se.Set(); Write-Log 'stop requested'; Write-Host '[ok] stop requested' }
     catch { Write-Host 'resident is not running' }
   }
   'resume' { if (Test-Path -LiteralPath $Paused) { Remove-Item -LiteralPath $Paused -Force }; Write-Host '[ok] capture resumed' }

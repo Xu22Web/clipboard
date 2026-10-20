@@ -1,5 +1,7 @@
 *.bak
 *.tmp
-_check.ps1
+_*.ps1
+_*.txt
 data/
 clipboard.ini
+clipboard.cfg
