@@ -1,8 +1,8 @@
 # Clipboard
 
-给「精简版 / 离线」Windows 10/11 用的轻量剪贴板历史，一个能替代 Win+V 的单文件 PowerShell 脚本。
+Windows 10 / 11 上的轻量剪贴板历史工具，单文件 PowerShell 脚本，提供可搜索的历史面板与全局热键。
 
-系统镜像把 `cbdhsvc` 精简掉了、Win+V 打不开，或者只是不想让剪贴板内容上云 —— 这个脚本不装服务、不要管理员、不联网，丢一个目录就能用。
+数据保存在脚本目录内，不依赖 Windows 剪贴板历史服务（`cbdhsvc`），不联网，也不需要管理员权限。
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -25,20 +25,20 @@
 ## 环境要求
 
 - Windows 10 / 11
-- PowerShell 5.1（系统自带，不需要装 .NET 或任何模块）
-- 必须以 **STA** 启动 —— 脚本里已经带了 `-Sta`，自己调用时别漏掉
+- PowerShell 5.1（系统自带，无需安装 .NET 或模块）
+- 需要 **STA** 线程模型：启动器与快捷方式均带 `-Sta`，直接调用脚本时需自行加上
 
 ## 快速开始
 
 ```powershell
 # 在项目目录里
-powershell -NoProfile -ExecutionPolicy Bypass -Sta -File .\clipboard.ps1 diag     # 先探一下环境
-powershell -NoProfile -ExecutionPolicy Bypass -Sta -File .\clipboard.ps1 serve    # 前台跑守护进程
+powershell -NoProfile -ExecutionPolicy Bypass -Sta -File .\clipboard.ps1 diag     # 检查运行环境
+powershell -NoProfile -ExecutionPolicy Bypass -Sta -File .\clipboard.ps1 serve    # 前台运行常驻进程
 ```
 
 Git Bash / MSYS2 下直接 `./clipboard`，CMD 下 `clipboard.cmd`。
 
-想常驻的话：
+常驻运行：
 
 ```powershell
 .\clipboard.cmd install     # 建开机自启 + 桌面快捷方式
@@ -50,8 +50,8 @@ Git Bash / MSYS2 下直接 `./clipboard`，CMD 下 `clipboard.cmd`。
 
 | 命令 | 说明 |
 |---|---|
-| `diag` | 探测环境（先跑这个） |
-| `restore` | 尝试修复系统原生的 Win+V 历史 |
+| `diag` | 检查运行环境 |
+| `restore` | 尝试恢复系统原生剪贴板历史的相关设置 |
 | `serve` | 运行常驻进程（捕获 + 热键 + 托盘） |
 | `stop` | 停止常驻进程 |
 | `ui` | 打开历史面板（常驻进程没跑会自动拉起） |
@@ -78,7 +78,7 @@ Git Bash / MSYS2 下直接 `./clipboard`，CMD 下 `clipboard.cmd`。
 | `HotkeyFallbacks` | 空 | 逗号分隔的回退链，按顺序尝试；空 = 内置 Ctrl+Alt+V / Win+V / Alt+反引号 / Win+Shift+V |
 | `PasteKeys` | `^v` | 选定后用 SendKeys 发送的按键（`^+v` = Ctrl+Shift+V） |
 | `ModReleaseTimeout` | `1200` | 最多等多久（毫秒）让修饰键松开再注入粘贴 |
-| `PasteSettle` | `80` | 切回原窗口后、发 `PasteKeys` 前再等一下（毫秒）；目标应用慢就调大 |
+| `PasteSettle` | `80` | 切回原窗口后、发 `PasteKeys` 前等待的时长（毫秒）；目标应用响应较慢时可增大 |
 | `MaxItems` | `300` | 最多保留条数 |
 | `MaxBytes` | `204800` | 单条上限，超出不入库 |
 | `MaxTotal` | `4194304` | 总容量上限，超出丢最旧的 |
@@ -101,9 +101,9 @@ data/                历史 / 日志 / 生效热键缓存（不入库）
 tests/run-tests.ps1  自测套件
 ```
 
-写入位置按 **`-DataDir` > `clipboard.ini` 的 `DataDir=` > 脚本旁 `data/`** 解析；`config` 的 `data dir` 与 `status` 的 `store file` 都会显示实际生效位置。
+写入位置按 **`-DataDir` > `clipboard.ini` 的 `DataDir=` > 脚本旁 `data/`** 解析；`config` 的 `data dir` 与 `status` 的 `store file` 均显示实际生效位置。
 
-**不写 `%LOCALAPPDATA%`、不建任何用户目录下的文件**：目录不可写时直接报错退出并提示怎么改，不会偷偷换个地方存。除 `install`（两个快捷方式）和 `restore`（按需修系统 Win+V 的注册表项）之外不碰注册表。
+不写入 `%LOCALAPPDATA%` 或其它用户目录：写入位置不可写时输出错误信息并以退出码 1 结束，不会回退到其它位置。除 `install`（两个快捷方式）与 `restore`（注册表项）外，脚本不写注册表。
 
 ## 开机自启与桌面快捷方式
 
@@ -114,7 +114,7 @@ tests/run-tests.ps1  自测套件
 | `Startup\clipboard.lnk` | `... clipboard.ps1 serve` | 登录时静默启动常驻进程 |
 | `Desktop\clipboard.lnk` | `... clipboard.ps1 ui` | 双击打开历史面板 |
 
-> 真正做成 Windows 服务是不可行的：服务跑在 Session 0，没有桌面和托盘、`RegisterHotKey` 收不到用户按键、剪贴板也是按会话隔离的。
+> 本工具不作为 Windows 服务运行：服务位于 Session 0，没有桌面与托盘，`RegisterHotKey` 收不到用户输入，剪贴板也按会话隔离。
 
 ## 测试
 
@@ -130,26 +130,32 @@ powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run-tests.ps1
 | 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put`/`get`/`list`/`pick`/`del`/`clear`/`pause`/`resume`/`status`/`diag`，以及 ini 与命令行开关的优先级 |
 | 端到端 | `-E2E` | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启循环 |
 
-全部用 `%TEMP%` 下的临时 `-DataDir` 跑，不碰 `data/` 和 `clipboard.ini`；真实剪贴板会在开始前备份、结束后还原。任何一项失败时退出码为 1。
+全部在 `%TEMP%` 下的临时 `-DataDir` 中运行，不修改 `data/` 与 `clipboard.ini`；真实剪贴板在开始前备份、结束后还原。任一项失败时退出码为 1。
 
-> 检测到常驻进程时会自动临时 `pause`，跑完再 `resume`（本来就处于 paused 的话不动它），所以真实历史不会被测试数据污染。
+> 检测到常驻进程时会临时 `pause`，跑完先恢复剪贴板再 `resume`（原本已处于 paused 则保持不动）。
 
-> `-E2E` 会在运行期间占用全局热键并短暂接管剪贴板；如果已经有常驻进程在跑，这组会自动跳过。
-> 图形界面（面板的实际绘制、粘贴注入）仍需手动确认，自动化覆盖不到。
+> `-E2E` 在运行期间占用全局热键并接管剪贴板；已有常驻进程时这组自动跳过。
+> 图形界面（面板绘制、粘贴注入）不在自动化范围内。
 
 ## 常见问题
 
-**杀软把 `clipboard.lnk` 报成 `Trojan/LNK.Runner`**
+### 安全软件把快捷方式判为 `Trojan/LNK.Runner`
 
-启发式误报，原因是「快捷方式 + 代理进程 + 隐藏窗口 + 绕过执行策略」这几个特征凑在一起。本项目已经刻意避开：目标直接是 `powershell.exe`，不带 `-ExecutionPolicy Bypass`（客户端默认的 `RemoteSigned` 本来就允许跑本地无签名脚本）。如果你改了 `install` 的生成逻辑，别把 `conhost`/`rundll32` 包装或 `Bypass` 加回去。
+`install` 生成的快捷方式目标为 `powershell.exe`，不带 `-ExecutionPolicy Bypass`（客户端默认策略 `RemoteSigned` 已允许运行本地无签名脚本）。部分安全软件的启发式规则会把「快捷方式 + 系统代理进程（`conhost` / `rundll32`）+ 隐藏窗口 + 执行策略绕过」的组合判为 `LNK.Runner`，因此本工具不使用代理进程包装。
 
-**热键没反应**
+### 热键无响应
 
-`status` 看 `active key`：显示 `poll:...` 说明注册被拒、退化成了轮询；显示别的键名说明被其它程序占用后自动回退了。改 `clipboard.ini` 里的 `Hotkey` 后需要重启常驻进程。
+`status` 的 `active key` 反映实际生效的按键：
 
-**想用回系统的 Win+V**
+- `poll:<键>` —— 候选热键全部注册失败，退化为 `GetAsyncKeyState` 轮询
+- 与 `Hotkey` 不同的键名 —— 首选键被其它程序占用，已按 `HotkeyFallbacks` 回退
+- `(stopped)` / `(daemon never started)` —— 常驻进程未运行
 
-先 `clipboard diag`，缺服务/缺文件它会给出下一步；`clipboard restore` 能修的只有注册表和 `cbdhsvc` 实例那部分。
+修改 `Hotkey` 后需要重启常驻进程。
+
+### 恢复系统自带的 Win+V
+
+`diag` 逐项列出环境检查结果；`restore` 针对注册表项（`EnableClipboardHistory`、策略 `AllowClipboardHistory`）与 `cbdhsvc` 实例执行恢复。文件层面的缺失（如 `TextInputHost.exe`）无法通过脚本修复。
 
 ## 许可
 
