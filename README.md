@@ -101,8 +101,6 @@ tests/run-tests.ps1  自测套件
 | `Startup\clipboard.lnk` | `... clipboard.ps1 serve` | 登录时静默启动常驻进程 |
 | `Desktop\clipboard.lnk` | `... clipboard.ps1 ui` | 双击打开历史面板 |
 
-> 旧版本用的是 `cbhist.lnk`，`install` 会自动把它删掉。
->
 > 真正做成 Windows 服务是不可行的：服务跑在 Session 0，没有桌面和托盘、`RegisterHotKey` 收不到用户按键、剪贴板也是按会话隔离的。
 
 ## 测试
@@ -120,6 +118,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run-tests.ps1
 | 端到端 | `-E2E` | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启循环 |
 
 全部用 `%TEMP%` 下的临时 `-DataDir` 跑，不碰 `data/` 和 `clipboard.ini`；真实剪贴板会在开始前备份、结束后还原。任何一项失败时退出码为 1。
+
+> 跑之前建议先 `clipboard pause`：集成分组会写真实剪贴板，正在运行的常驻进程会把测试文本记进历史。
 
 > `-E2E` 会在运行期间占用全局热键并短暂接管剪贴板；如果已经有常驻进程在跑，这组会自动跳过。
 > 图形界面（面板的实际绘制、粘贴注入）仍需手动确认，自动化覆盖不到。

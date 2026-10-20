@@ -71,6 +71,10 @@ foreach ($d in @($unitDir, $intDir, $e2eDir)) { New-Item -ItemType Directory -Pa
 $clipBak = ''
 try { $clipBak = (Get-Clipboard -Raw -ErrorAction Stop) } catch { }
 
+if (-not (Test-MutexFree 'Local\clipboard.daemon')) {
+  Write-Warning 'a resident is running: test clipboard writes will land in its history - run "clipboard pause" first'
+}
+
 try {
 
   # ---------------------------------------------------------------- unit tests

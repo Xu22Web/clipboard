@@ -827,23 +827,6 @@ function Get-DesktopPath {
   return (Join-Path ([Environment]::GetFolderPath('Desktop')) 'clipboard.lnk')
 }
 
-function Get-LegacyLnkPath {
-  return (Join-Path ([Environment]::GetFolderPath('Startup')) 'cbhist.lnk')
-}
-
-function Describe-Lnk([string]$path) {
-  if (-not (Test-Path -LiteralPath $path)) { return $null }
-  $kind = 'powershell hidden'
-  try {
-    $s = (New-Object -ComObject WScript.Shell).CreateShortcut($path)
-    $a = [string]$s.Arguments
-    if ($a -like '--headless*') { $kind = 'conhost wrapper (LNK.Runner magnet, reinstall)' }
-    elseif ($a -like '*ExecutionPolicy*Bypass*') { $kind = 'has Bypass flag (reinstall)' }
-    elseif ($a -notlike '*clipboard.ps1*') { $kind = 'points elsewhere: ' + $s.TargetPath }
-  } catch { $kind = 'unreadable' }
-  return $kind
-}
-
 function New-ClipLnk([string]$lnk, [string]$verb) {
   $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
@@ -871,12 +854,6 @@ function Install-Autostart {
     Write-Host ('[ok] desktop : ' + (New-ClipLnk (Get-DesktopPath) 'ui') + '   (double-click = history)')
   } catch { Write-Host ('[!] desktop shortcut failed: ' + $_.Exception.Message) }
 
-  # older versions created cbhist.lnk - keep only one autostart entry
-  $legacy = Get-LegacyLnkPath
-  if (Test-Path -LiteralPath $legacy) {
-    try { Remove-Item -LiteralPath $legacy -Force; Write-Host ('[ok] removed legacy: ' + $legacy) } catch { }
-  }
-
   $policy = [string](Get-ExecutionPolicy)
   if (@('Restricted', 'AllSigned') -contains $policy) {
     Write-Host ('[!] execution policy is ' + $policy + ' - the shortcut will refuse to run the script')
@@ -887,25 +864,20 @@ function Install-Autostart {
 
 function Remove-Autostart([switch]$Purge) {
   $removed = 0
-  foreach ($t in @((Get-AutostartPath), (Get-DesktopPath), (Get-LegacyLnkPath))) {
+  foreach ($t in @((Get-AutostartPath), (Get-DesktopPath))) {
     if (Test-Path -LiteralPath $t) {
       try { Remove-Item -LiteralPath $t -Force; Write-Host ('[ok] removed ' + $t); $removed++ }
       catch { Write-Host ('[!] could not remove ' + $t + ': ' + $_.Exception.Message) }
     }
   }
-  if ($removed -eq 0) { Write-Host 'no shortcut found (startup / desktop / legacy)' }
+  if ($removed -eq 0) { Write-Host 'no shortcut found (startup / desktop)' }
 
   if ($Purge) {
-    $fallbackDirs = @((Join-Path $env:LOCALAPPDATA 'cbhist'), (Join-Path $env:LOCALAPPDATA 'clipboard'))
-    foreach ($f in @((Join-Path $Root 'clipboard.cfg'), (Join-Path $Root 'cb.cfg'), $IniPath)) {
-      if (Test-Path -LiteralPath $f) {
-        try { Remove-Item -LiteralPath $f -Force; Write-Host ('[ok] removed ' + $f) } catch { Write-Host ('[!] could not remove ' + $f) }
-      }
+    if (Test-Path -LiteralPath $IniPath) {
+      try { Remove-Item -LiteralPath $IniPath -Force; Write-Host ('[ok] removed ' + $IniPath) } catch { Write-Host ('[!] could not remove ' + $IniPath) }
     }
-    foreach ($d in (@($StoreDir) + $fallbackDirs | Select-Object -Unique)) {
-      if ((Test-Path -LiteralPath $d) -and ($d -ne $Root)) {
-        try { Remove-Item -LiteralPath $d -Recurse -Force; Write-Host ('[ok] removed ' + $d) } catch { Write-Host ('[!] could not remove ' + $d) }
-      }
+    if ((Test-Path -LiteralPath $StoreDir) -and ($StoreDir -ne $Root)) {
+      try { Remove-Item -LiteralPath $StoreDir -Recurse -Force; Write-Host ('[ok] removed ' + $StoreDir) } catch { Write-Host ('[!] could not remove ' + $StoreDir) }
     }
     Write-Host '[ok] history, config and logs deleted'
   } else {
@@ -1131,11 +1103,8 @@ switch ($Command.ToLower()) {
     Write-Host ('resident    : ' + $(if ($alive) { 'running' } else { 'not running' }))
     Write-Host ('entries     : ' + @(Get-Items).Count + ' / ' + $MaxItems)
     Write-Host ('capture     : ' + $(if (Test-Path -LiteralPath $Paused) { 'paused' } else { 'active' }))
-    $autoKind = Describe-Lnk (Get-AutostartPath)
-    $deskKind = Describe-Lnk (Get-DesktopPath)
-    $legacyLnk = Get-LegacyLnkPath
-    Write-Host ('autostart   : ' + $(if ($autoKind) { 'installed (' + $autoKind + ')' } elseif (Test-Path -LiteralPath $legacyLnk) { 'legacy cbhist.lnk only - run install' } else { 'not installed' }))
-    Write-Host ('desktop     : ' + $(if ($deskKind) { 'installed (' + $deskKind + ')' } else { 'not installed' }))
+    Write-Host ('autostart   : ' + $(if (Test-Path -LiteralPath (Get-AutostartPath)) { 'installed' } else { 'not installed' }))
+    Write-Host ('desktop     : ' + $(if (Test-Path -LiteralPath (Get-DesktopPath)) { 'installed' } else { 'not installed' }))
     Write-Host ('store file  : ' + $StoreFile)
     $hkFile = Join-Path $StoreDir 'hotkey.txt'
     $eff = '(daemon never started)'
