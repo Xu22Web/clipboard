@@ -113,8 +113,6 @@ namespace Cb {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern uint GetClipboardSequenceNumber();
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
-    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int index);
-    [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr h, int index, int value);
   }
   public class HotWindow : System.Windows.Forms.NativeWindow {
     public event EventHandler Hot;
@@ -389,7 +387,7 @@ function Show-Picker {
     $form.Padding = New-Object Windows.Forms.Padding(1)
 
     $lst = New-Object Cb.FluentList
-    $lst.Dock = 'Fill'
+    $lst.Dock = 'None'
     $lst.BorderStyle = 'None'
     $lst.IntegralHeight = $false
     $lst.DrawMode = 'OwnerDrawFixed'
@@ -400,8 +398,16 @@ function Show-Picker {
     $lst.HorizontalScrollbar = $false
     $lst.ScrollAlwaysVisible = $false
 
-    # WinForms can only draw the classic Win32 scrollbar, which looks nothing like the
-    # Windows 11 one. Hide it and paint a thin rounded thumb that fades in on hover.
+    # The native Win32 scrollbar cannot be themed and ListBox has no property to hide it.
+    # So the list lives in a clipping host and is made wider than the host: the scrollbar
+    # ends up outside the visible area, while TopIndex scrolling keeps working.
+    $listHost = New-Object Windows.Forms.Panel
+    $listHost.Dock = 'Fill'
+    $listHost.BackColor = $ui.Surface
+    $lst.SetBounds(0, 0, 100, 100)
+    $listHost.Controls.Add($lst)
+
+    # A thin rounded thumb is painted instead, brightening on hover.
     $sbar = New-Object Windows.Forms.Panel
     $sbar.Dock = 'Right'
     $sbar.Width = 10
@@ -467,7 +473,7 @@ function Show-Picker {
     $head.Controls.Add($box)
     $head.Controls.Add($line)
 
-    $form.Controls.Add($lst)
+    $form.Controls.Add($listHost)
     $form.Controls.Add($sbar)
     $form.Controls.Add($foot)
     $form.Controls.Add($head)
@@ -485,20 +491,16 @@ function Show-Picker {
       return [Math]::Max(1, [int][Math]::Floor($lst.ClientSize.Height / $lst.ItemHeight))
     }
 
-    # ListBox has no VerticalScrollbar property, and setting TopIndex makes it put WS_VSCROLL
-    # back, so the style bit is stripped again after every scroll.
-    function Hide-ListBar {
-      try {
-        $ws = [Cb.Win]::GetWindowLong($lst.Handle, -16)
-        if (($ws -band 0x00200000) -ne 0) {
-          [void][Cb.Win]::SetWindowLong($lst.Handle, -16, ($ws -band (-bnot 0x00200000)))
-        }
-      } catch { }
+    # ListBox has no VerticalScrollbar property, so the scrollbar is kept just outside the
+    # visible area by the clipping host instead.
+    function Size-List {
+      $w = $listHost.ClientSize.Width
+      $h = $listHost.ClientSize.Height
+      if ($w -gt 0 -and $h -gt 0) { $lst.SetBounds(0, 0, $w + 40, $h) }
     }
 
     # recompute thumb geometry from the current TopIndex
     function Sync-Sb {
-      Hide-ListBar
       $n = $lst.Items.Count
       $vis = Get-Rows
       $h = $sbar.ClientSize.Height
@@ -575,8 +577,9 @@ function Show-Picker {
         $sbar.Capture = $false
         $sbar.Invalidate()
       })
-    $form.Add_Resize({ Sync-Sb })
+    $form.Add_Resize({ Size-List; Sync-Sb })
     $sbar.Add_SizeChanged({ Sync-Sb })
+    $listHost.Add_Resize({ Size-List; Sync-Sb })
 
     function Update-List([string]$q) {
       $lst.BeginUpdate()
@@ -649,7 +652,9 @@ function Show-Picker {
         $g = $e.Graphics
         $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $b = $e.Bounds
-        $r = New-Object Drawing.Rectangle -ArgumentList @(($b.X + 6), ($b.Y + 2), ($b.Width - 14), ($b.Height - 4))
+        $rowW = [Math]::Min($b.Width, $listHost.ClientSize.Width) - 14
+        if ($rowW -lt 10) { $rowW = 10 }
+        $r = New-Object Drawing.Rectangle -ArgumentList @(($b.X + 6), ($b.Y + 2), $rowW, ($b.Height - 4))
         $sel = (($e.State -band [Windows.Forms.DrawItemState]::Selected) -ne 0)
         if ($sel) { $fill = $ui.SelBg } elseif ($e.Index -eq $script:Hover) { $fill = $ui.HoverBg } else { $fill = $ui.Surface }
         $br = New-Object Drawing.SolidBrush $fill
@@ -741,6 +746,7 @@ function Show-Picker {
         $form.Region = New-RoundRegion $form.Width $form.Height 8
         $form.Activate()
         $txt.Focus()
+        Size-List
         Sync-Sb
         Write-Log ('picker: shown ' + $script:Theme + '/' + $script:UiFamily + ' items=' + $script:All.Count)
       })
