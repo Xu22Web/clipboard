@@ -18,7 +18,8 @@ param(
   [int]$MaxBytes = 204800,
   [int]$MaxTotal = 4194304,
   [int]$Interval = 300,
-  [switch]$NoPaste
+  [switch]$NoPaste,
+  [switch]$Purge
 )
 
 $ErrorActionPreference = 'Stop'
@@ -811,45 +812,64 @@ function Invoke-Restore {
 }
 #endregion
 
-#region autostart
+#region shortcuts
 function Get-AutostartPath {
+  return (Join-Path ([Environment]::GetFolderPath('Startup')) 'clipboard.lnk')
+}
+
+function Get-DesktopPath {
+  return (Join-Path ([Environment]::GetFolderPath('Desktop')) 'clipboard.lnk')
+}
+
+function Get-LegacyLnkPath {
   return (Join-Path ([Environment]::GetFolderPath('Startup')) 'cbhist.lnk')
 }
 
-function Get-AutostartInfo {
-  $lnk = Get-AutostartPath
-  if (-not (Test-Path -LiteralPath $lnk)) { return $null }
-  $kind = 'unknown'
+function Describe-Lnk([string]$path) {
+  if (-not (Test-Path -LiteralPath $path)) { return $null }
+  $kind = 'powershell hidden'
   try {
-    $s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
+    $s = (New-Object -ComObject WScript.Shell).CreateShortcut($path)
     $a = [string]$s.Arguments
     if ($a -like '--headless*') { $kind = 'conhost wrapper (LNK.Runner magnet, reinstall)' }
-    elseif ($a -like '*ExecutionPolicy Bypass*') { $kind = 'powershell hidden (+Bypass, reinstall)' }
-    else { $kind = 'powershell hidden' }
-  } catch { }
-  return [pscustomobject]@{ Path = $lnk; Kind = $kind }
+    elseif ($a -like '*ExecutionPolicy*Bypass*') { $kind = 'has Bypass flag (reinstall)' }
+    elseif ($a -notlike '*clipboard.ps1*') { $kind = 'points elsewhere: ' + $s.TargetPath }
+  } catch { $kind = 'unreadable' }
+  return $kind
 }
 
-function Install-Autostart {
-  $lnk = Get-AutostartPath
+function New-ClipLnk([string]$lnk, [string]$verb) {
   $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  $scriptPath = Join-Path $Root 'clipboard.ps1'
 
   # Keep the shortcut as plain as possible: point straight at powershell.exe and do NOT
   # pass -ExecutionPolicy Bypass. Client Windows defaults to RemoteSigned, which already
   # allows this local unsigned script. A conhost/rundll32 style wrapper or a Bypass flag
   # makes AV heuristics flag the .lnk as Trojan/LNK.Runner.
-  $argLine = '-NoProfile -Sta -WindowStyle Hidden -File "' + $scriptPath + '" serve'
-
   $ws = New-Object -ComObject WScript.Shell
   $s = $ws.CreateShortcut($lnk)
   $s.TargetPath = $ps
-  $s.Arguments = $argLine
+  $s.Arguments = '-NoProfile -Sta -WindowStyle Hidden -File "' + (Join-Path $Root 'clipboard.ps1') + '" ' + $verb
   $s.WorkingDirectory = $Root
   $s.WindowStyle = 7
+  $s.Description = 'clipboard history'
   $s.Save()
-  Write-Host ('[ok] startup shortcut created: ' + $lnk)
-  Write-Host '     launcher : powershell -WindowStyle Hidden (direct, no wrapper)'
+  return $lnk
+}
+
+function Install-Autostart {
+  try {
+    Write-Host ('[ok] startup : ' + (New-ClipLnk (Get-AutostartPath) 'serve') + '   (silent daemon at logon)')
+  } catch { Write-Host ('[!] startup shortcut failed: ' + $_.Exception.Message) }
+
+  try {
+    Write-Host ('[ok] desktop : ' + (New-ClipLnk (Get-DesktopPath) 'ui') + '   (double-click = history)')
+  } catch { Write-Host ('[!] desktop shortcut failed: ' + $_.Exception.Message) }
+
+  # older versions created cbhist.lnk - keep only one autostart entry
+  $legacy = Get-LegacyLnkPath
+  if (Test-Path -LiteralPath $legacy) {
+    try { Remove-Item -LiteralPath $legacy -Force; Write-Host ('[ok] removed legacy: ' + $legacy) } catch { }
+  }
 
   $policy = [string](Get-ExecutionPolicy)
   if (@('Restricted', 'AllSigned') -contains $policy) {
@@ -859,10 +879,41 @@ function Install-Autostart {
   Write-Host ('tip: add ' + $Root + ' to PATH to call clipboard directly')
 }
 
-function Remove-Autostart {
-  $lnk = Get-AutostartPath
-  if (Test-Path -LiteralPath $lnk) { Remove-Item -LiteralPath $lnk -Force; Write-Host '[ok] startup shortcut removed' }
-  else { Write-Host 'no startup shortcut found' }
+function Remove-Autostart([switch]$Purge) {
+  $removed = 0
+  foreach ($t in @((Get-AutostartPath), (Get-DesktopPath), (Get-LegacyLnkPath))) {
+    if (Test-Path -LiteralPath $t) {
+      try { Remove-Item -LiteralPath $t -Force; Write-Host ('[ok] removed ' + $t); $removed++ }
+      catch { Write-Host ('[!] could not remove ' + $t + ': ' + $_.Exception.Message) }
+    }
+  }
+  if ($removed -eq 0) { Write-Host 'no shortcut found (startup / desktop / legacy)' }
+
+  if ($Purge) {
+    $legacyDir = Join-Path $env:LOCALAPPDATA 'cbhist'
+    foreach ($f in @((Join-Path $Root 'clipboard.cfg'), (Join-Path $Root 'cb.cfg'), $IniPath)) {
+      if (Test-Path -LiteralPath $f) {
+        try { Remove-Item -LiteralPath $f -Force; Write-Host ('[ok] removed ' + $f) } catch { Write-Host ('[!] could not remove ' + $f) }
+      }
+    }
+    foreach ($d in @($StoreDir, $legacyDir)) {
+      if ((Test-Path -LiteralPath $d) -and ($d -ne $Root)) {
+        try { Remove-Item -LiteralPath $d -Recurse -Force; Write-Host ('[ok] removed ' + $d) } catch { Write-Host ('[!] could not remove ' + $d) }
+      }
+    }
+    Write-Host '[ok] history, config and logs deleted'
+  } else {
+    Write-Host ('kept: ' + $StoreDir + '   ' + $IniPath)
+    Write-Host 'run: clipboard uninstall purge   to delete history, config and logs too'
+  }
+
+  $alive = $false
+  try {
+    $m = New-Object System.Threading.Mutex($false, $MutexName)
+    if ($m.WaitOne(0)) { $m.ReleaseMutex() } else { $alive = $true }
+    $m.Dispose()
+  } catch { }
+  if ($alive) { Write-Host 'note: the resident is still running - clipboard stop' }
 }
 #endregion
 
@@ -974,7 +1025,8 @@ function Show-Usage {
     '  pause | resume      pause / resume capture',
     '  status              show daemon state and settings',
     '  config [edit|init]  show settings / edit clipboard.ini / rewrite the template',
-    '  install | uninstall add / remove the startup shortcut',
+    '  install             create the startup + desktop shortcuts',
+    '  uninstall [purge]   remove the shortcuts (purge also deletes data and config)',
     '  help                show this help',
     '',
     'Options (override clipboard.ini):',
@@ -1071,8 +1123,11 @@ switch ($Command.ToLower()) {
     Write-Host ('resident    : ' + $(if ($alive) { 'running' } else { 'not running' }))
     Write-Host ('entries     : ' + @(Get-Items).Count + ' / ' + $MaxItems)
     Write-Host ('capture     : ' + $(if (Test-Path -LiteralPath $Paused) { 'paused' } else { 'active' }))
-    $auto = Get-AutostartInfo
-    Write-Host ('autostart   : ' + $(if ($auto) { 'installed (' + $auto.Kind + ')' } else { 'not installed' }))
+    $autoKind = Describe-Lnk (Get-AutostartPath)
+    $deskKind = Describe-Lnk (Get-DesktopPath)
+    $legacyLnk = Get-LegacyLnkPath
+    Write-Host ('autostart   : ' + $(if ($autoKind) { 'installed (' + $autoKind + ')' } elseif (Test-Path -LiteralPath $legacyLnk) { 'legacy cbhist.lnk only - run install' } else { 'not installed' }))
+    Write-Host ('desktop     : ' + $(if ($deskKind) { 'installed (' + $deskKind + ')' } else { 'not installed' }))
     Write-Host ('store file  : ' + $StoreFile)
     $hkFile = Join-Path $StoreDir 'hotkey.txt'
     $eff = '(daemon never started)'
@@ -1094,7 +1149,10 @@ switch ($Command.ToLower()) {
   'diag' { Invoke-Diag }
   'restore' { Invoke-Restore }
   'install' { Install-Autostart }
-  'uninstall' { Remove-Autostart }
+  'uninstall' {
+    $doPurge = $Purge.IsPresent -or ($Value -and $Value.ToLower() -eq 'purge')
+    Remove-Autostart -Purge:$doPurge
+  }
   default {
     Write-Host ('unknown command: ' + $Command)
     Write-Host ''
