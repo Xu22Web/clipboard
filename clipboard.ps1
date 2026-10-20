@@ -1,10 +1,10 @@
 #Requires -Version 5.1
 <#
-  cb.ps1 - lightweight clipboard history for trimmed/offline Windows 10 (Win+V replacement).
+  clipboard.ps1 - lightweight clipboard history for trimmed/offline Windows 10 (Win+V replacement).
   Single file, zero dependencies, PowerShell 5.1 + .NET Framework only.
 
-  cb diag | restore | serve | ui | config [edit|init] | install | uninstall
-  cb list [-Count N] | put "text" | get | pick N | del N | clear | pause | resume | status | stop
+  clipboard diag | restore | serve | ui | config [edit|init] | install | uninstall
+  clipboard list [-Count N] | put "text" | get | pick N | del N | clear | pause | resume | status | stop
   Files copied in Explorer are captured too (CF_HDROP) and can be pasted back.
 #>
 [CmdletBinding()]
@@ -26,7 +26,7 @@ $RS        = [string][char]30
 $FILESIG   = [string][char]1
 $Root      = Split-Path -Parent $PSCommandPath
 $StoreDir  = Join-Path $Root 'data'
-$CfgPath   = Join-Path $Root 'cb.cfg'
+$IniPath   = Join-Path $Root 'clipboard.ini'
 try {
   if (-not (Test-Path $StoreDir)) { New-Item -ItemType Directory -Path $StoreDir -Force | Out-Null }
   foreach ($probe in @((Join-Path $StoreDir 'p.probe'), (Join-Path $Root 'p.probe'))) {
@@ -35,7 +35,7 @@ try {
   }
 } catch {
   $StoreDir = Join-Path $env:LOCALAPPDATA 'cbhist'
-  $CfgPath = Join-Path $StoreDir 'cb.cfg'
+  $IniPath = Join-Path $StoreDir 'clipboard.ini'
   Write-Warning ('script folder not writable, using ' + $StoreDir)
 }
 $StoreFile = Join-Path $StoreDir 'history.dat'
@@ -607,12 +607,6 @@ function Show-Picker {
 
 #region resident daemon
 function Start-Serve {
-  Load-Forms
-  Add-Native
-  try { [Windows.Forms.Application]::SetUnhandledExceptionMode([Windows.Forms.UnhandledExceptionMode]::CatchException) } catch { }
-  [Windows.Forms.Application]::add_ThreadException({ param($s, $e) Write-Log ('ui error (ignored): ' + $e.Exception.Message) })
-  [void](Write-CfgTemplate)
-
   $created = $false
   $mutex = New-Object System.Threading.Mutex($true, $MutexName, [ref]$created)
   if (-not $created) {
@@ -620,12 +614,48 @@ function Start-Serve {
       $e = [System.Threading.EventWaitHandle]::OpenExisting($EventName)
       [void]$e.Set()
       Write-Host 'cbhist already running -> asked the running instance to show the picker'
-    } catch { Write-Host 'cbhist already running (could not signal it, try: cb ui)' }
+    } catch { Write-Host 'cbhist already running (could not signal it, try: clipboard ui)' }
     return
   }
 
-  $evt = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, $EventName)
   $script:StopEvt = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, 'Local\cbhist.stop')
+  $script:ExitKind = ''
+  try {
+    Load-Forms
+    Add-Native
+    try { [Windows.Forms.Application]::SetUnhandledExceptionMode([Windows.Forms.UnhandledExceptionMode]::CatchException) } catch { }
+    [Windows.Forms.Application]::add_ThreadException({ param($s, $e) Write-Log ('ui error (ignored): ' + $e.Exception.Message) })
+    [void](Write-IniTemplate)
+
+    # supervisor: keep the daemon alive across crashes, back off when it keeps dying
+    $round = 0
+    $delay = 1000
+    while ($true) {
+      if ($script:StopEvt.WaitOne(0)) { break }
+      $script:ExitKind = ''
+      $started = Get-Date
+      try { Invoke-ServeOnce } catch { Write-Log ('serve crash: ' + $_.Exception.Message) }
+      if ($script:ExitKind) { Write-Log ('serve stop (' + $script:ExitKind + ')'); break }
+      if (((Get-Date) - $started).TotalSeconds -gt 60) { $round = 0; $delay = 1000 }
+      $round++
+      Write-Log ('serve restart #' + $round + ' in ' + $delay + 'ms')
+      if ($script:StopEvt.WaitOne($delay)) { break }
+      $delay = [Math]::Min($delay * 2, 30000)
+    }
+  } finally {
+    try { if ($script:Tray) { $script:Tray.Visible = $false; $script:Tray.Dispose() } } catch { }
+    $script:Tray = $null
+    try { [IO.File]::WriteAllText((Join-Path $StoreDir 'hotkey.txt'), '(stopped)', $Utf8) } catch { }
+    Write-Log 'supervisor exit'
+    try { $script:StopEvt.Dispose() } catch { }
+    try { $mutex.ReleaseMutex() } catch { }
+    try { $mutex.Dispose() } catch { }
+  }
+}
+
+function Invoke-ServeOnce {
+  $script:PickerOpen = $false
+  $evt = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, $EventName)
 
   $stored = @(Get-Items)
   if ($MaxItems -ge 1 -and $stored.Count -gt $MaxItems) {
@@ -665,7 +695,7 @@ function Start-Serve {
     $i2 = $dm.Items.Add('Pause capture'); $i2.Add_Click({ Ensure-Dir; New-Item -ItemType File -Path $Paused -Force | Out-Null })
     $i3 = $dm.Items.Add('Resume capture'); $i3.Add_Click({ if (Test-Path -LiteralPath $Paused) { Remove-Item -LiteralPath $Paused -Force } })
     $i4 = $dm.Items.Add('Clear history'); $i4.Add_Click({ Save-Items @() })
-    $i5 = $dm.Items.Add('Exit'); $i5.Add_Click({ [Windows.Forms.Application]::ExitThread() })
+    $i5 = $dm.Items.Add('Exit'); $i5.Add_Click({ $script:ExitKind = 'user'; [Windows.Forms.Application]::ExitThread() })
     $script:Tray.ContextMenuStrip = $dm
     $script:Tray.Visible = $true
     if ($script:ShowBalloon) {
@@ -681,7 +711,7 @@ function Start-Serve {
   $timer = New-Object Windows.Forms.Timer
   $timer.Interval = $Interval
   $timer.Add_Tick({
-      if ($script:StopEvt.WaitOne(0)) { [Windows.Forms.Application]::ExitThread(); return }
+      if ($script:StopEvt.WaitOne(0)) { $script:ExitKind = 'stop'; [Windows.Forms.Application]::ExitThread(); return }
       if ($evt.WaitOne(0)) { Show-Picker; return }
 
       if ($script:UsePoll) {
@@ -708,15 +738,13 @@ function Start-Serve {
   catch { Write-Log ('run error: ' + $_.Exception.Message) }
   finally {
     Write-Log 'serve exit'
-    try { [IO.File]::WriteAllText((Join-Path $StoreDir 'hotkey.txt'), '(stopped)', $Utf8) } catch { }
-    $timer.Stop()
+    try { $timer.Stop() } catch { }
+    try { $timer.Dispose() } catch { }
     try { if ($script:Tray) { $script:Tray.Visible = $false; $script:Tray.Dispose() } } catch { }
-    if ($reg) { [void][Cb.Win]::UnregisterHotKey($hw.Handle, 1) }
-    $hw.DestroyHandle()
-    $evt.Dispose()
-    $script:StopEvt.Dispose()
-    $mutex.ReleaseMutex()
-    $mutex.Dispose()
+    $script:Tray = $null
+    try { if ($reg) { [void][Cb.Win]::UnregisterHotKey($hw.Handle, 1) } } catch { }
+    try { $hw.DestroyHandle() } catch { }
+    try { $evt.Dispose() } catch { }
   }
 }
 #endregion
@@ -731,11 +759,11 @@ function Invoke-Diag {
   $cbs = @(Get-ChildItem "$env:SystemRoot\SystemApps" -Filter '*Client.CBS*' -ErrorAction SilentlyContinue)
   Row 'OS' ($cv.ProductName + ' ' + $cv.DisplayVersion + ' build ' + $cv.CurrentBuild) ''
   Row 'PowerShell' $PSVersionTable.PSVersion.ToString() ''
-  Row 'Apartment' ([Threading.Thread]::CurrentThread.GetApartmentState()) 'STA required; start via cb.cmd'
+  Row 'Apartment' ([Threading.Thread]::CurrentThread.GetApartmentState()) 'STA required; start via clipboard.cmd'
   try { Load-Forms; Add-Native; Row 'WinForms/Add-Type' 'OK' '' } catch { Row 'WinForms/Add-Type' ('FAIL: ' + $_.Exception.Message) 'picker off, CLI only' }
-  Row 'clip.exe' (Test-Path "$env:SystemRoot\System32\clip.exe") 'not needed: cb put / Set-Clipboard'
+  Row 'clip.exe' (Test-Path "$env:SystemRoot\System32\clip.exe") 'not needed: clipboard put / Set-Clipboard'
   Row 'Set-Clipboard' ([bool](Get-Command Set-Clipboard -ErrorAction SilentlyContinue)) ''
-  Row 'cbdhsvc instance' ($(if ($svc) { ($svc | ForEach-Object { $_.Name + ':' + $_.Status }) -join ',' } else { 'absent' })) 'absent -> cb restore'
+  Row 'cbdhsvc instance' ($(if ($svc) { ($svc | ForEach-Object { $_.Name + ':' + $_.Status }) -join ',' } else { 'absent' })) 'absent -> clipboard restore'
   Row 'cbdhsvc template' (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Services\cbdhsvc') 'absent -> component restore'
   Row 'ClipboardSvcGroup' ($(if ($grp) { $grp -join ',' } else { 'absent' })) ''
   Row 'EnableClipboardHistory' (Get-ItemProperty 'HKCU:\SOFTWARE\Microsoft\Clipboard' -Name EnableClipboardHistory -ErrorAction SilentlyContinue).EnableClipboardHistory 'must be 1'
@@ -754,7 +782,7 @@ function Invoke-Diag {
   }
   foreach ($x in $o) { Write-Host ('[ ] ' + $x.Check + ' = ' + [string]$x.Result + $(if ($x.Hint) { '   <- ' + $x.Hint } else { '' })) }
   Write-Host ''
-  Write-Host 'Next: switches missing -> cb restore | files missing -> DISM from same-build ISO | else: cb install && cb serve'
+  Write-Host 'Next: switches missing -> clipboard restore | files missing -> DISM from same-build ISO | else: clipboard install && clipboard serve'
 }
 
 function Invoke-Restore {
@@ -779,37 +807,71 @@ function Invoke-Restore {
   } else {
     Write-Host ('[x] no cbdhsvc_* instance; template present=' + (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Services\cbdhsvc'))
   }
-  Write-Host 'Now press Win+V; if nothing happens run: cb diag'
+  Write-Host 'Now press Win+V; if nothing happens run: clipboard diag'
 }
 #endregion
 
 #region autostart
+function Get-AutostartPath {
+  return (Join-Path ([Environment]::GetFolderPath('Startup')) 'cbhist.lnk')
+}
+
+function Get-AutostartInfo {
+  $lnk = Get-AutostartPath
+  if (-not (Test-Path -LiteralPath $lnk)) { return $null }
+  $kind = 'unknown'
+  try {
+    $s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
+    $a = [string]$s.Arguments
+    if ($a -like '--headless*') { $kind = 'conhost wrapper (LNK.Runner magnet, reinstall)' }
+    elseif ($a -like '*ExecutionPolicy Bypass*') { $kind = 'powershell hidden (+Bypass, reinstall)' }
+    else { $kind = 'powershell hidden' }
+  } catch { }
+  return [pscustomobject]@{ Path = $lnk; Kind = $kind }
+}
+
 function Install-Autostart {
-  $lnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'cbhist.lnk'
+  $lnk = Get-AutostartPath
+  $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  $scriptPath = Join-Path $Root 'clipboard.ps1'
+
+  # Keep the shortcut as plain as possible: point straight at powershell.exe and do NOT
+  # pass -ExecutionPolicy Bypass. Client Windows defaults to RemoteSigned, which already
+  # allows this local unsigned script. A conhost/rundll32 style wrapper or a Bypass flag
+  # makes AV heuristics flag the .lnk as Trojan/LNK.Runner.
+  $argLine = '-NoProfile -Sta -WindowStyle Hidden -File "' + $scriptPath + '" serve'
+
   $ws = New-Object -ComObject WScript.Shell
   $s = $ws.CreateShortcut($lnk)
-  $s.TargetPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  $s.Arguments = '-NoProfile -ExecutionPolicy Bypass -Sta -WindowStyle Hidden -File "' + (Join-Path $Root 'cb.ps1') + '" serve'
+  $s.TargetPath = $ps
+  $s.Arguments = $argLine
   $s.WorkingDirectory = $Root
   $s.WindowStyle = 7
   $s.Save()
   Write-Host ('[ok] startup shortcut created: ' + $lnk)
-  Write-Host ('tip: add ' + $Root + ' to PATH to call cb directly')
+  Write-Host '     launcher : powershell -WindowStyle Hidden (direct, no wrapper)'
+
+  $policy = [string](Get-ExecutionPolicy)
+  if (@('Restricted', 'AllSigned') -contains $policy) {
+    Write-Host ('[!] execution policy is ' + $policy + ' - the shortcut will refuse to run the script')
+    Write-Host '    fix once with: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned'
+  }
+  Write-Host ('tip: add ' + $Root + ' to PATH to call clipboard directly')
 }
 
 function Remove-Autostart {
-  $lnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'cbhist.lnk'
+  $lnk = Get-AutostartPath
   if (Test-Path -LiteralPath $lnk) { Remove-Item -LiteralPath $lnk -Force; Write-Host '[ok] startup shortcut removed' }
   else { Write-Host 'no startup shortcut found' }
 }
 #endregion
 
 #region config file
-function Read-Cfg {
+function Read-Ini {
   $h = @{}
-  if (-not (Test-Path -LiteralPath $CfgPath)) { return $h }
+  if (-not (Test-Path -LiteralPath $IniPath)) { return $h }
   try {
-    foreach ($line in [IO.File]::ReadAllLines($CfgPath, [Text.Encoding]::UTF8)) {
+    foreach ($line in [IO.File]::ReadAllLines($IniPath, [Text.Encoding]::UTF8)) {
       $l = $line.Trim()
       if ($l.Length -eq 0) { continue }
       if ($l.StartsWith('#') -or $l.StartsWith(';') -or $l.StartsWith('[')) { continue }
@@ -824,11 +886,12 @@ function Read-Cfg {
   return $h
 }
 
-function Write-CfgTemplate([switch]$Force) {
-  if ((Test-Path -LiteralPath $CfgPath) -and (-not $Force)) { return $CfgPath }
+function Write-IniTemplate([switch]$Force) {
+  if ((Test-Path -LiteralPath $IniPath) -and (-not $Force)) { return $IniPath }
   Ensure-Dir
   $t = @(
-    '# key=value. Restart the daemon after editing (cb stop, cb serve). CLI switches win over this file.',
+    '# clipboard.ini - flat key=value list. Restart the daemon after editing (clipboard stop, clipboard serve).',
+    '# CLI switches win over this file.',
     '# Hotkey: key may be A-Z 0-9 F1-F24 Insert Delete Home End PgUp PgDn Space.',
     '# Default is Ctrl+Alt+V. Win+V would be nicer but Windows reserves it on most builds',
     '# (RegisterHotKey fails); the tool then falls back to Alt+` / Win+Shift+V by itself.',
@@ -850,15 +913,15 @@ function Write-CfgTemplate([switch]$Force) {
     '# regex: matching clipboard text is never saved',
     'ExcludePattern='
   )
-  [IO.File]::WriteAllText($CfgPath, (($t -join [Environment]::NewLine) + [Environment]::NewLine), $Utf8)
-  return $CfgPath
+  [IO.File]::WriteAllText($IniPath, (($t -join [Environment]::NewLine) + [Environment]::NewLine), $Utf8)
+  return $IniPath
 }
 
 function Apply-Config {
   $script:ExcludePattern = ''
   $script:ShowBalloon = $true
   $script:Theme = 'dark'
-  $c = Read-Cfg
+  $c = Read-Ini
   $cli = $script:CliParams
   if ((-not $cli.ContainsKey('Hotkey')) -and $c.ContainsKey('Hotkey') -and $c['Hotkey']) { $script:Hotkey = $c['Hotkey'] }
   if ((-not $cli.ContainsKey('PasteKeys')) -and $c.ContainsKey('PasteKeys') -and $c['PasteKeys']) { $script:PasteKeys = $c['PasteKeys'] }
@@ -874,8 +937,8 @@ function Apply-Config {
 }
 
 function Show-Config {
-  [void](Write-CfgTemplate)
-  Write-Host ('config file : ' + $CfgPath)
+  [void](Write-IniTemplate)
+  Write-Host ('config file : ' + $IniPath)
   Write-Host ''
   Write-Host ('Hotkey          = ' + $Hotkey)
   Write-Host ('PasteKeys       = ' + $PasteKeys)
@@ -888,14 +951,14 @@ function Show-Config {
   Write-Host ('Theme           = ' + $script:Theme)
   Write-Host ('ExcludePattern  = ' + $(if ($script:ExcludePattern) { $script:ExcludePattern } else { '(none)' }))
   Write-Host ''
-  Write-Host 'cb config edit   open cb.cfg in notepad'
-  Write-Host 'cb config init   rewrite the template with defaults'
+  Write-Host 'clipboard config edit   open clipboard.ini in notepad'
+  Write-Host 'clipboard config init   rewrite the template with defaults'
 }
 function Show-Usage {
   @(
-    'cb - lightweight clipboard history for trimmed/offline Windows 10',
+    'clipboard - lightweight clipboard history for trimmed/offline Windows 10',
     '',
-    'Usage: cb <command> [args] [options]',
+    'Usage: clipboard <command> [args] [options]',
     '',
     '  diag                probe the environment (run this first)',
     '  restore             try to restore the native Win+V history',
@@ -910,17 +973,17 @@ function Show-Usage {
     '  clear               delete all entries',
     '  pause | resume      pause / resume capture',
     '  status              show daemon state and settings',
-    '  config [edit|init]  show settings / edit cb.cfg / rewrite the template',
+    '  config [edit|init]  show settings / edit clipboard.ini / rewrite the template',
     '  install | uninstall add / remove the startup shortcut',
     '  help                show this help',
     '',
-    'Options (override cb.cfg):',
+    'Options (override clipboard.ini):',
     '  -Hotkey Ctrl+Alt+V   -PasteKeys ^v    -MaxItems 300',
     '  -MaxBytes 204800     -Interval 300    -NoPaste',
     '',
     'Examples:',
-    '  cb put "hello there"      echo hi | cb put      cb list -Count 5',
-    '  cb serve                  cb ui                 cb config edit'
+    '  clipboard put "hello there"    echo hi | clipboard put    clipboard list -Count 5',
+    '  clipboard serve                clipboard ui               clipboard config edit'
   ) | ForEach-Object { Write-Host $_ }
 }
 #endregion
@@ -936,13 +999,13 @@ switch ($Command.ToLower()) {
     try { $e = [System.Threading.EventWaitHandle]::OpenExisting($EventName); [void]$e.Set(); $sent = $true } catch { }
     if (-not $sent) {
       Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList @(
-        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', (Join-Path $Root 'cb.ps1'), 'serve'
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', (Join-Path $Root 'clipboard.ps1'), 'serve'
       )
       for ($i = 0; $i -lt 12 -and -not $sent; $i++) {
         Start-Sleep -Milliseconds 400
         try { $e = [System.Threading.EventWaitHandle]::OpenExisting($EventName); [void]$e.Set(); $sent = $true } catch { }
       }
-      if (-not $sent) { Write-Host 'could not reach the resident process, run: cb serve' }
+      if (-not $sent) { Write-Host 'could not reach the resident process, run: clipboard serve' }
     }
   }
   'list' {
@@ -968,7 +1031,7 @@ switch ($Command.ToLower()) {
   }
   'pick' {
     $i = 0
-    if (-not [int]::TryParse($Value, [ref]$i)) { Write-Host 'usage: cb pick 3'; break }
+    if (-not [int]::TryParse($Value, [ref]$i)) { Write-Host 'usage: clipboard pick 3'; break }
     $items = @(Get-Items)
     if ($i -lt 1 -or $i -gt $items.Count) { Write-Host 'index out of range'; break }
     [void](Set-ClipItem $items[$i - 1])
@@ -977,7 +1040,7 @@ switch ($Command.ToLower()) {
   }
   'del' {
     $i = 0
-    if (-not [int]::TryParse($Value, [ref]$i)) { Write-Host 'usage: cb del 3'; break }
+    if (-not [int]::TryParse($Value, [ref]$i)) { Write-Host 'usage: clipboard del 3'; break }
     $items = @(Get-Items)
     if ($i -lt 1 -or $i -gt $items.Count) { Write-Host 'index out of range'; break }
     $victim = $items[$i - 1]
@@ -1008,19 +1071,21 @@ switch ($Command.ToLower()) {
     Write-Host ('resident    : ' + $(if ($alive) { 'running' } else { 'not running' }))
     Write-Host ('entries     : ' + @(Get-Items).Count + ' / ' + $MaxItems)
     Write-Host ('capture     : ' + $(if (Test-Path -LiteralPath $Paused) { 'paused' } else { 'active' }))
+    $auto = Get-AutostartInfo
+    Write-Host ('autostart   : ' + $(if ($auto) { 'installed (' + $auto.Kind + ')' } else { 'not installed' }))
     Write-Host ('store file  : ' + $StoreFile)
     $hkFile = Join-Path $StoreDir 'hotkey.txt'
     $eff = '(daemon never started)'
     if (Test-Path -LiteralPath $hkFile) { $eff = ([IO.File]::ReadAllText($hkFile, [Text.Encoding]::UTF8)).Trim() }
     Write-Host ('active key  : ' + $eff + '   (requested: ' + $Hotkey + ')')
-    Write-Host ('config file : ' + $CfgPath + $(if (Test-Path -LiteralPath $CfgPath) { '' } else { '   (not created yet)' }))
+    Write-Host ('config file : ' + $IniPath + $(if (Test-Path -LiteralPath $IniPath) { '' } else { '   (not created yet)' }))
   }
   'config' {
     $act = ''
     if ($Value) { $act = $Value.ToLower() }
-    if ($act -eq 'init') { Write-Host ('[ok] template written: ' + (Write-CfgTemplate -Force)) }
+    if ($act -eq 'init') { Write-Host ('[ok] template written: ' + (Write-IniTemplate -Force)) }
     elseif ($act -eq 'edit') {
-      $p = Write-CfgTemplate
+      $p = Write-IniTemplate
       Write-Host ('editing: ' + $p)
       Start-Process -FilePath 'notepad.exe' -ArgumentList ('"' + $p + '"')
     }

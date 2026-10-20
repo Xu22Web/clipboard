@@ -2,4 +2,4 @@
 *.tmp
 _check.ps1
 data/
-cb.cfg
+clipboard.ini
