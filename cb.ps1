@@ -4,18 +4,19 @@
   Single file, zero dependencies, PowerShell 5.1 + .NET Framework only.
 
   cb diag | restore | serve | ui | config [edit|init] | install | uninstall
-  cb list [-Count N] | put "text" | get | pick N | clear | pause | resume | status | stop
+  cb list [-Count N] | put "text" | get | pick N | del N | clear | pause | resume | status | stop
   Files copied in Explorer are captured too (CF_HDROP) and can be pasted back.
 #>
 [CmdletBinding()]
 param(
-  [Parameter(Position = 0)][string]$Command = 'serve',
+  [Parameter(Position = 0)][string]$Command = '',
   [Parameter(Position = 1)][string]$Value,
   [int]$Count = 0,
-  [string]$Hotkey = 'Win+V',
+  [string]$Hotkey = 'Ctrl+Alt+V',
   [string]$PasteKeys = '^v',
   [int]$MaxItems = 300,
   [int]$MaxBytes = 204800,
+  [int]$MaxTotal = 4194304,
   [int]$Interval = 300,
   [switch]$NoPaste
 )
@@ -24,13 +25,24 @@ $ErrorActionPreference = 'Stop'
 $RS        = [string][char]30
 $FILESIG   = [string][char]1
 $Root      = Split-Path -Parent $PSCommandPath
-$StoreDir  = Join-Path $env:LOCALAPPDATA 'cbhist'
+$StoreDir  = Join-Path $Root 'data'
+$CfgPath   = Join-Path $Root 'cb.cfg'
+try {
+  if (-not (Test-Path $StoreDir)) { New-Item -ItemType Directory -Path $StoreDir -Force | Out-Null }
+  foreach ($probe in @((Join-Path $StoreDir 'p.probe'), (Join-Path $Root 'p.probe'))) {
+    [IO.File]::WriteAllText($probe, 'x')
+    Remove-Item -LiteralPath $probe -Force
+  }
+} catch {
+  $StoreDir = Join-Path $env:LOCALAPPDATA 'cbhist'
+  $CfgPath = Join-Path $StoreDir 'cb.cfg'
+  Write-Warning ('script folder not writable, using ' + $StoreDir)
+}
 $StoreFile = Join-Path $StoreDir 'history.dat'
 $Paused    = Join-Path $StoreDir 'paused.flag'
 $LogFile   = Join-Path $StoreDir 'cb.log'
 $MutexName = 'Local\cbhist.daemon'
 $EventName = 'Local\cbhist.show'
-$CfgPath   = Join-Path $StoreDir 'cb.cfg'
 $Utf8      = New-Object System.Text.UTF8Encoding $false
 $script:CliParams = $PSBoundParameters
 
@@ -221,19 +233,38 @@ function Save-Items([string[]]$items) {
   Move-Item -LiteralPath $tmp -Destination $StoreFile -Force
 }
 
+function Use-StoreLock([scriptblock]$body) {
+  $m = New-Object System.Threading.Mutex($false, 'Local\cbhist.store')
+  $held = $false
+  try {
+    try { $held = $m.WaitOne(3000) } catch { $held = $true }
+    & $body
+  } finally {
+    if ($held) { try { $m.ReleaseMutex() } catch { } }
+    $m.Dispose()
+  }
+}
+
 function Add-Item([string]$text) {
   if ([string]::IsNullOrWhiteSpace($text)) { return }
   if ($script:ExcludePattern) {
     try { if ($text -match $script:ExcludePattern) { Write-Log 'skip (exclude pattern)'; return } } catch { }
   }
   if ($Utf8.GetByteCount($text) -gt $MaxBytes) { Write-Log ('skip oversize ' + $text.Length); return }
-  $items = @(Get-Items)
-  if ($items.Count -gt 0 -and $items[0] -ceq $text) { return }
-  $list = New-Object System.Collections.Generic.List[string]
-  $list.Add($text)
-  foreach ($it in $items) { if ($it -cne $text) { $list.Add($it) } }
-  while ($list.Count -gt $MaxItems) { $list.RemoveAt($list.Count - 1) }
-  Save-Items $list.ToArray()
+  Use-StoreLock {
+    $items = @(Get-Items)
+    if ($items.Count -gt 0 -and $items[0] -ceq $text) { return }
+    $list = New-Object System.Collections.Generic.List[string]
+    $list.Add($text)
+    foreach ($it in $items) { if ($it -cne $text) { $list.Add($it) } }
+    while ($list.Count -gt $MaxItems) { $list.RemoveAt($list.Count - 1) }
+    $total = 0
+    for ($i = 0; $i -lt $list.Count; $i++) {
+      $total += $Utf8.GetByteCount($list[$i])
+      if ($total -gt $MaxTotal) { $list.RemoveRange($i, $list.Count - $i); break }
+    }
+    Save-Items $list.ToArray()
+  }
 }
 
 function Format-Item([string]$t, [int]$max) {
@@ -261,7 +292,16 @@ function Parse-Hotkey([string]$spec) {
     }
   }
   $k = $parts[$parts.Count - 1].Trim().ToUpper()
-  $vk = if ($k.Length -eq 1) { [int][char]$k } else { 0 }
+  $vk = 0
+  if ($k.Length -eq 1) { $vk = [int][char]$k }
+  elseif ($k -match '^F([1-9]|1[0-9]|2[0-4])$') { $vk = 0x70 + [int]$k.Substring(1) - 1 }
+  elseif ($k -eq 'INSERT') { $vk = 0x2D }
+  elseif ($k -eq 'DELETE') { $vk = 0x2E }
+  elseif ($k -eq 'HOME') { $vk = 0x24 }
+  elseif ($k -eq 'END') { $vk = 0x23 }
+  elseif ($k -eq 'PGUP') { $vk = 0x21 }
+  elseif ($k -eq 'PGDN') { $vk = 0x22 }
+  elseif ($k -eq 'SPACE') { $vk = 0x20 }
   return @{ Mods = $mods; Vk = $vk }
 }
 
@@ -286,13 +326,16 @@ function Show-Picker {
       $script:HasMdl2 = Test-Font 'Segoe MDL2 Assets'
     }
     $prev = [Cb.Win]::GetForegroundWindow()
-    $all = @(Get-Items)
-    if ($all.Count -eq 0) { Write-Log 'picker: empty (showing hint)' }
+    $script:All = @(Get-Items)
+    if ($script:All.Count -eq 0) { Write-Log 'picker: empty (showing hint)' }
 
     $ui = Get-UiPalette
-    $fBody = New-Object Drawing.Font($script:UiFamily, 10)
-    $fSmall = New-Object Drawing.Font($script:UiFamily, 8.5)
-    $fIcon = if ($script:HasMdl2) { New-Object Drawing.Font('Segoe MDL2 Assets', 10) } else { $fBody }
+    if (-not $script:FBody) {
+      $script:FBody = New-Object Drawing.Font($script:UiFamily, 10)
+      $script:FSmall = New-Object Drawing.Font($script:UiFamily, 8.5)
+      $script:FIcon = if ($script:HasMdl2) { New-Object Drawing.Font('Segoe MDL2 Assets', 10) } else { $script:FBody }
+    }
+    $fBody = $script:FBody; $fSmall = $script:FSmall; $fIcon = $script:FIcon
     $script:Hover = -1
 
     $form = New-Object Cb.FluentForm
@@ -390,7 +433,7 @@ function Show-Picker {
       $lst.Items.Clear()
       $tokens = @($q -split '\s+' | Where-Object { $_ })
       $res = New-Object System.Collections.Generic.List[string]
-      foreach ($it in $all) {
+      foreach ($it in $script:All) {
         $ok = $true
         foreach ($t in $tokens) {
           if ($it.IndexOf($t, [StringComparison]::OrdinalIgnoreCase) -lt 0) { $ok = $false; break }
@@ -401,7 +444,7 @@ function Show-Picker {
       }
       $script:Filtered = $res.ToArray()
       if ($res.Count -eq 0) {
-        if ($all.Count -eq 0) { [void]$lst.Items.Add('history is empty - copy some text, then open again') }
+        if ($script:All.Count -eq 0) { [void]$lst.Items.Add('history is empty - copy some text, then open again') }
         elseif ($tokens.Count -gt 0) { [void]$lst.Items.Add('no match') }
         $lst.SelectedIndex = -1
       } else {
@@ -428,14 +471,25 @@ function Show-Picker {
       $form.Close()
     }
 
-    function Delete-Index([int]$idx) {
+    function Del-Index([int]$idx) {
       if ($idx -lt 0 -or $idx -ge $script:Filtered.Count) { return }
       $victim = $script:Filtered[$idx]
-      $keep = New-Object System.Collections.Generic.List[string]
-      foreach ($it in @(Get-Items)) { if ($it -cne $victim) { $keep.Add($it) } }
-      Save-Items $keep.ToArray()
+      Use-StoreLock {
+        $keep = New-Object System.Collections.Generic.List[string]
+        foreach ($it in @(Get-Items)) { if ($it -cne $victim) { $keep.Add($it) } }
+        Save-Items $keep.ToArray()
+      }
+      $script:All = @(Get-Items)
+      Write-Log ('deleted entry ' + ($idx + 1) + ', left ' + $script:All.Count)
       Update-List $txt.Text
+      if ($script:Filtered.Count -gt 0) { $lst.SelectedIndex = [Math]::Min($idx, $script:Filtered.Count - 1) }
     }
+
+    $cm = New-Object Windows.Forms.ContextMenuStrip
+    $m1 = $cm.Items.Add('Delete entry'); $m1.Add_Click({ try { Del-Index $lst.SelectedIndex } catch { } })
+    $m2 = $cm.Items.Add('Paste'); $m2.Add_Click({ Use-Index $lst.SelectedIndex })
+    $m3 = $cm.Items.Add('Clear all'); $m3.Add_Click({ Use-StoreLock { Save-Items @() }; $script:All = @(); Update-List $txt.Text })
+    $lst.ContextMenuStrip = $cm
 
     $lst.Add_DrawItem({
         param($s, $e)
@@ -448,7 +502,9 @@ function Show-Picker {
         $sel = (($e.State -band [Windows.Forms.DrawItemState]::Selected) -ne 0)
         if ($sel) { $fill = $ui.SelBg } elseif ($e.Index -eq $script:Hover) { $fill = $ui.HoverBg } else { $fill = $ui.Surface }
         $br = New-Object Drawing.SolidBrush $fill
-        $g.FillPath($br, (New-RoundPath $r.X $r.Y $r.Width $r.Height 4))
+        $gp = New-RoundPath $r.X $r.Y $r.Width $r.Height 4
+        $g.FillPath($br, $gp)
+        $gp.Dispose()
         $br.Dispose()
         $label = $lst.Items[$e.Index].ToString()
         if ($e.Index -lt $script:Filtered.Count) {
@@ -482,9 +538,14 @@ function Show-Picker {
         $script:Hover = -1
       })
     $lst.Add_DoubleClick({ if ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex } })
+    $lst.Add_MouseUp({ param($s, $e) if ($e.Button -eq 'Left') { $txt.Focus() } })
 
-    $txt.Add_TextChanged({ Update-List $txt.Text })
-    $txt.Add_KeyDown({
+    $deb = New-Object Windows.Forms.Timer
+    $deb.Interval = 150
+    $deb.Add_Tick({ $deb.Stop(); Update-List $txt.Text })
+    function Flush-List { if ($deb.Enabled) { $deb.Stop(); Update-List $txt.Text } }
+    $txt.Add_TextChanged({ Sync-Placeholder; $deb.Stop(); $deb.Start() })
+    $form.Add_KeyDown({
         param($s, $e)
         $code = [int]$e.KeyCode
         if ($e.KeyCode -eq 'Up') {
@@ -494,12 +555,14 @@ function Show-Picker {
           if ($lst.SelectedIndex -lt $lst.Items.Count - 1) { $lst.SelectedIndex++ }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.KeyCode -eq 'Enter') {
+          Flush-List
           Use-Index $lst.SelectedIndex
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.KeyCode -eq 'Escape') {
           $form.Close()
         } elseif ($e.KeyCode -eq 'Delete') {
-          Delete-Index $lst.SelectedIndex
+          Flush-List
+          try { Del-Index $lst.SelectedIndex } catch { Write-Log ('delete failed: ' + $_.Exception.Message) }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.Control -and $code -ge 49 -and $code -le 57) {
           Use-Index ($code - 49)
@@ -512,14 +575,16 @@ function Show-Picker {
         param($s, $e)
         $e.Graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $pen = New-Object Drawing.Pen $ui.Border
-        $e.Graphics.DrawPath($pen, (New-RoundPath 0 0 ($form.Width - 1) ($form.Height - 1) 8))
+        $gp = New-RoundPath 0 0 ($form.Width - 1) ($form.Height - 1) 8
+        $e.Graphics.DrawPath($pen, $gp)
+        $gp.Dispose()
         $pen.Dispose()
       })
     $form.Add_Shown({
         $form.Region = New-RoundRegion $form.Width $form.Height 8
         $form.Activate()
         $txt.Focus()
-        Write-Log ('picker: shown ' + $script:Theme + '/' + $script:UiFamily + ' items=' + $all.Count)
+        Write-Log ('picker: shown ' + $script:Theme + '/' + $script:UiFamily + ' items=' + $script:All.Count)
       })
 
     $script:ShownAt = Get-Date
@@ -529,6 +594,8 @@ function Show-Picker {
 
     Update-List ''
     [void]$form.ShowDialog()
+    $deb.Dispose()
+    $cm.Dispose()
     $form.Dispose()
   } catch {
     Write-Log ('picker error: ' + $_.Exception.Message)
@@ -562,12 +629,15 @@ function Start-Serve {
 
   $stored = @(Get-Items)
   if ($MaxItems -ge 1 -and $stored.Count -gt $MaxItems) {
-    Save-Items ($stored[0..($MaxItems - 1)])
+    Use-StoreLock {
+      $keep = @(Get-Items)
+      if ($keep.Count -gt $MaxItems) { Save-Items ($keep[0..($MaxItems - 1)]) }
+    }
     Write-Log ('trimmed store to ' + $MaxItems + ' (was ' + $stored.Count + ')')
   }
 
   $hw = New-Object Cb.HotWindow
-  $cands = @($Hotkey, 'Ctrl+Alt+V', 'Alt+`', 'Win+Shift+V')
+  $cands = @($Hotkey, 'Ctrl+Alt+V', 'Win+V', 'Alt+`', 'Win+Shift+V') | Select-Object -Unique
   $script:Hot = ''
   $reg = $false
   foreach ($c in $cands) {
@@ -621,9 +691,9 @@ function Start-Serve {
         if (-not $down) { $script:PrevHotKey = $false }
       }
 
-      if (Test-Path -LiteralPath $Paused) { return }
       $seq = [Cb.Win]::GetClipboardSequenceNumber()
       if ($seq -ne 0 -and $seq -eq $script:LastSeq) { return }
+      if (Test-Path -LiteralPath $Paused) { return }
       $t = Get-ClipItem
       if ($null -eq $t) { return }
       if ($t -cne $script:LastText) { $script:LastText = $t; Add-Item $t }
@@ -638,6 +708,7 @@ function Start-Serve {
   catch { Write-Log ('run error: ' + $_.Exception.Message) }
   finally {
     Write-Log 'serve exit'
+    try { [IO.File]::WriteAllText((Join-Path $StoreDir 'hotkey.txt'), '(stopped)', $Utf8) } catch { }
     $timer.Stop()
     try { if ($script:Tray) { $script:Tray.Visible = $false; $script:Tray.Dispose() } } catch { }
     if ($reg) { [void][Cb.Win]::UnregisterHotKey($hw.Handle, 1) }
@@ -758,12 +829,16 @@ function Write-CfgTemplate([switch]$Force) {
   Ensure-Dir
   $t = @(
     '# key=value. Restart the daemon after editing (cb stop, cb serve). CLI switches win over this file.',
-    '# Hotkey: falls back to Ctrl+Alt+V / Alt+` / Win+Shift+V when Win+V is taken by Windows.',
-    'Hotkey=Win+V',
+    '# Hotkey: key may be A-Z 0-9 F1-F24 Insert Delete Home End PgUp PgDn Space.',
+    '# Default is Ctrl+Alt+V. Win+V would be nicer but Windows reserves it on most builds',
+    '# (RegisterHotKey fails); the tool then falls back to Alt+` / Win+Shift+V by itself.',
+    'Hotkey=Ctrl+Alt+V',
     '# ^v = Ctrl+V | ^+v = Ctrl+Shift+V (terminal) | +{INS} = Shift+Insert (mintty)',
     'PasteKeys=^v',
     'MaxItems=300',
     'MaxBytes=204800',
+    '# total store size cap in bytes; oldest entries are dropped beyond it',
+    'MaxTotal=4194304',
     '# clipboard poll interval in ms',
     'Interval=300',
     '# 1 = clipboard only, never inject a paste',
@@ -790,6 +865,7 @@ function Apply-Config {
   $n = 0
   if ((-not $cli.ContainsKey('MaxItems')) -and $c.ContainsKey('MaxItems') -and [int]::TryParse($c['MaxItems'], [ref]$n) -and $n -gt 0) { $script:MaxItems = $n }
   if ((-not $cli.ContainsKey('MaxBytes')) -and $c.ContainsKey('MaxBytes') -and [int]::TryParse($c['MaxBytes'], [ref]$n) -and $n -gt 0) { $script:MaxBytes = $n }
+  if ((-not $cli.ContainsKey('MaxTotal')) -and $c.ContainsKey('MaxTotal') -and [int]::TryParse($c['MaxTotal'], [ref]$n) -and $n -gt 0) { $script:MaxTotal = $n }
   if ((-not $cli.ContainsKey('Interval')) -and $c.ContainsKey('Interval') -and [int]::TryParse($c['Interval'], [ref]$n) -and $n -ge 50) { $script:Interval = $n }
   if ((-not $cli.ContainsKey('NoPaste')) -and $c.ContainsKey('NoPaste') -and $c['NoPaste'] -eq '1') { $script:NoPaste = $true }
   if ($c.ContainsKey('ExcludePattern') -and $c['ExcludePattern']) { $script:ExcludePattern = $c['ExcludePattern'] }
@@ -805,6 +881,7 @@ function Show-Config {
   Write-Host ('PasteKeys       = ' + $PasteKeys)
   Write-Host ('MaxItems        = ' + $MaxItems)
   Write-Host ('MaxBytes        = ' + $MaxBytes)
+  Write-Host ('MaxTotal        = ' + $MaxTotal + ' bytes')
   Write-Host ('Interval        = ' + $Interval + ' ms')
   Write-Host ('NoPaste         = ' + [int][bool]$NoPaste)
   Write-Host ('Balloon         = ' + [int][bool]$script:ShowBalloon)
@@ -814,10 +891,43 @@ function Show-Config {
   Write-Host 'cb config edit   open cb.cfg in notepad'
   Write-Host 'cb config init   rewrite the template with defaults'
 }
+function Show-Usage {
+  @(
+    'cb - lightweight clipboard history for trimmed/offline Windows 10',
+    '',
+    'Usage: cb <command> [args] [options]',
+    '',
+    '  diag                probe the environment (run this first)',
+    '  restore             try to restore the native Win+V history',
+    '  serve               run the resident daemon (capture + hotkey + tray)',
+    '  stop                stop the resident daemon',
+    '  ui                  open the history picker (starts the daemon if needed)',
+    '  list [-Count N]     list entries, newest first',
+    '  put "text"          set the clipboard (reads stdin when text is omitted)',
+    '  get                 print the clipboard text',
+    '  pick N              put entry N back on the clipboard',
+    '  del N               delete entry N',
+    '  clear               delete all entries',
+    '  pause | resume      pause / resume capture',
+    '  status              show daemon state and settings',
+    '  config [edit|init]  show settings / edit cb.cfg / rewrite the template',
+    '  install | uninstall add / remove the startup shortcut',
+    '  help                show this help',
+    '',
+    'Options (override cb.cfg):',
+    '  -Hotkey Ctrl+Alt+V   -PasteKeys ^v    -MaxItems 300',
+    '  -MaxBytes 204800     -Interval 300    -NoPaste',
+    '',
+    'Examples:',
+    '  cb put "hello there"      echo hi | cb put      cb list -Count 5',
+    '  cb serve                  cb ui                 cb config edit'
+  ) | ForEach-Object { Write-Host $_ }
+}
 #endregion
 
 #region dispatch
 Apply-Config
+if ($Command -eq '' -or @('help', '-h', '--help') -contains $Command.ToLower()) { Show-Usage; return }
 
 switch ($Command.ToLower()) {
   'serve' { Start-Serve }
@@ -828,8 +938,11 @@ switch ($Command.ToLower()) {
       Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', (Join-Path $Root 'cb.ps1'), 'serve'
       )
-      Start-Sleep -Milliseconds 1500
-      try { $e = [System.Threading.EventWaitHandle]::OpenExisting($EventName); [void]$e.Set() } catch { Write-Host 'could not start the resident process, run: cb serve' }
+      for ($i = 0; $i -lt 12 -and -not $sent; $i++) {
+        Start-Sleep -Milliseconds 400
+        try { $e = [System.Threading.EventWaitHandle]::OpenExisting($EventName); [void]$e.Set(); $sent = $true } catch { }
+      }
+      if (-not $sent) { Write-Host 'could not reach the resident process, run: cb serve' }
     }
   }
   'list' {
@@ -862,8 +975,21 @@ switch ($Command.ToLower()) {
     Add-Item $items[$i - 1]
     Write-Host ('clipboard set: ' + (Format-Item $items[$i - 1] 100))
   }
+  'del' {
+    $i = 0
+    if (-not [int]::TryParse($Value, [ref]$i)) { Write-Host 'usage: cb del 3'; break }
+    $items = @(Get-Items)
+    if ($i -lt 1 -or $i -gt $items.Count) { Write-Host 'index out of range'; break }
+    $victim = $items[$i - 1]
+    Use-StoreLock {
+      $keep = New-Object System.Collections.Generic.List[string]
+      foreach ($it in @(Get-Items)) { if ($it -cne $victim) { $keep.Add($it) } }
+      Save-Items $keep.ToArray()
+    }
+    Write-Host ('deleted: ' + (Format-Item $victim 60) + '   left ' + @(Get-Items).Count)
+  }
   'clear' {
-    Save-Items @()
+    Use-StoreLock { Save-Items @() }
     Write-Host '[ok] history cleared'
   }
   'pause' { Ensure-Dir; New-Item -ItemType File -Path $Paused -Force | Out-Null; Write-Host '[ok] capture paused' }
@@ -905,7 +1031,9 @@ switch ($Command.ToLower()) {
   'install' { Install-Autostart }
   'uninstall' { Remove-Autostart }
   default {
-    Write-Host 'cb <diag|restore|serve|ui|list|put|get|pick|clear|pause|resume|status|stop|config|install|uninstall>'
+    Write-Host ('unknown command: ' + $Command)
+    Write-Host ''
+    Show-Usage
   }
 }
 #endregion
