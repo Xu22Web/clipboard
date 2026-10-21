@@ -1002,17 +1002,18 @@ function Get-DesktopPath {
   return (Join-Path ([Environment]::GetFolderPath('Desktop')) 'clipboard.lnk')
 }
 
-function New-ClipLnk([string]$lnk, [string]$verb) {
+function New-ClipLnk([string]$lnk, [string]$verb, [string]$policy) {
   $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
-  # Keep the shortcut as plain as possible: point straight at powershell.exe and do NOT
-  # pass -ExecutionPolicy Bypass. Client Windows defaults to RemoteSigned, which already
-  # allows this local unsigned script. A conhost/rundll32 style wrapper or a Bypass flag
-  # makes AV heuristics flag the .lnk as Trojan/LNK.Runner.
+  # A plain powershell.exe target without a proxy process keeps the shortcut out of the
+  # heuristics that flag "shortcut + conhost/rundll32" as Trojan/LNK.Runner.
+  # -ExecutionPolicy is required: machines whose effective policy is Restricted or
+  # AllSigned would refuse to run the script. RemoteSigned is enough for a local unsigned
+  # file and is the Windows default value, so it scores lower than Bypass.
   $ws = New-Object -ComObject WScript.Shell
   $s = $ws.CreateShortcut($lnk)
   $s.TargetPath = $ps
-  $s.Arguments = '-NoProfile -Sta -WindowStyle Hidden -File "' + (Join-Path $Root 'clipboard.ps1') + '" ' + $verb
+  $s.Arguments = '-NoProfile -ExecutionPolicy ' + $policy + ' -Sta -WindowStyle Hidden -File "' + (Join-Path $Root 'clipboard.ps1') + '" ' + $verb
   $s.WorkingDirectory = $Root
   $s.WindowStyle = 7
   $s.Description = 'clipboard history'
@@ -1020,19 +1021,30 @@ function New-ClipLnk([string]$lnk, [string]$verb) {
   return $lnk
 }
 
-function Install-Autostart {
+function Install-Autostart([string]$Policy = 'RemoteSigned') {
+  if (-not $Policy) { $Policy = 'RemoteSigned' }
   try {
-    Write-Host ('[ok] startup : ' + (New-ClipLnk (Get-AutostartPath) 'serve') + '   (silent daemon at logon)')
+    Write-Host ('[ok] startup : ' + (New-ClipLnk (Get-AutostartPath) 'serve' $Policy) + '   (silent daemon at logon)')
   } catch { Write-Host ('[!] startup shortcut failed: ' + $_.Exception.Message) }
 
   try {
-    Write-Host ('[ok] desktop : ' + (New-ClipLnk (Get-DesktopPath) 'ui') + '   (double-click = history)')
+    Write-Host ('[ok] desktop : ' + (New-ClipLnk (Get-DesktopPath) 'ui' $Policy) + '   (double-click = history)')
   } catch { Write-Host ('[!] desktop shortcut failed: ' + $_.Exception.Message) }
 
-  $policy = [string](Get-ExecutionPolicy)
-  if (@('Restricted', 'AllSigned') -contains $policy) {
-    Write-Host ('[!] execution policy is ' + $policy + ' - the shortcut will refuse to run the script')
-    Write-Host '    fix once with: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned'
+  Write-Host ('     policy  : -ExecutionPolicy ' + $Policy)
+  if ($Policy -ne 'Bypass') {
+    Write-Host '     if the shortcut still reports "running scripts is disabled", run:'
+    Write-Host '       clipboard install bypass'
+    Write-Host '     (or unblock the file first: Unblock-File .\clipboard.ps1)'
+  }
+
+  $eff = [string](Get-ExecutionPolicy)
+  if (@('Restricted', 'AllSigned') -contains $eff) {
+    Write-Host ('     note    : this machine evaluates scripts as ' + $eff + '; the shortcut overrides it with -ExecutionPolicy ' + $Policy)
+  }
+  $gpo = @('MachinePolicy', 'UserPolicy') | Where-Object { [string](Get-ExecutionPolicy -Scope $_) -ne 'Undefined' }
+  if ($gpo) {
+    Write-Host ('[!] group policy defines the execution policy (' + ($gpo -join ', ') + '); the -ExecutionPolicy switch is ignored there')
   }
   Write-Host ('tip: add ' + $Root + ' to PATH to call clipboard directly')
 }
@@ -1194,7 +1206,7 @@ function Show-Usage {
     '  pause | resume      pause / resume capture',
     '  status              show daemon state and settings',
     '  config [edit|init]  show settings / edit clipboard.ini / rewrite the template',
-    '  install             create the startup + desktop shortcuts',
+    '  install [bypass]     create the shortcuts (bypass = -ExecutionPolicy Bypass)',
     '  uninstall [purge]   remove the shortcuts (purge also deletes data and config)',
     '  help                show this help',
     '',
@@ -1317,7 +1329,11 @@ switch ($Command.ToLower()) {
   }
   'diag' { Invoke-Diag }
   'restore' { Invoke-Restore }
-  'install' { Install-Autostart }
+  'install' {
+    $pol = 'RemoteSigned'
+    if ($Value -and $Value.ToLower() -eq 'bypass') { $pol = 'Bypass' }
+    Install-Autostart -Policy $pol
+  }
   'uninstall' {
     $doPurge = $Purge.IsPresent -or ($Value -and $Value.ToLower() -eq 'purge')
     Remove-Autostart -Purge:$doPurge

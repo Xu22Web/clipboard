@@ -46,6 +46,8 @@ Git Bash / MSYS2 下直接 `./clipboard`，CMD 下 `clipboard.cmd`。
 .\clipboard.cmd uninstall purge   # 连历史、配置、日志一起删
 ```
 
+`install` 生成的快捷方式以 `-ExecutionPolicy RemoteSigned` 运行脚本，可覆盖目标机 `Restricted` / `AllSigned` 的评估结果；需要更宽松的策略时用 `install bypass`。
+
 ## 命令一览
 
 | 命令 | 说明 |
@@ -64,7 +66,7 @@ Git Bash / MSYS2 下直接 `./clipboard`，CMD 下 `clipboard.cmd`。
 | `pause` / `resume` | 暂停 / 恢复捕获 |
 | `status` | 常驻状态、自启状态、生效热键、存储路径 |
 | `config [edit\|init]` | 查看配置 / 用记事本编辑 / 重写模板 |
-| `install` / `uninstall [purge]` | 增删快捷方式（`purge` 连数据一起删） |
+| `install [bypass]` / `uninstall [purge]` | 增删快捷方式（`bypass` 改用 `-ExecutionPolicy Bypass`；`purge` 连数据一起删） |
 | `help` | 帮助 |
 
 ## 配置
@@ -107,12 +109,12 @@ tests/run-tests.ps1  自测套件
 
 ## 开机自启与桌面快捷方式
 
-`install` 会建两个快捷方式，两者的目标都是 `powershell.exe`，参数里不带任何「代理进程」或执行策略绕过：
+`install` 会建两个快捷方式，目标均为 `powershell.exe`，不使用代理进程包装；参数中的 `-ExecutionPolicy RemoteSigned` 用于覆盖目标机 `Restricted` / `AllSigned` 的本地策略：
 
 | 快捷方式 | 参数 | 用途 |
 |---|---|---|
-| `Startup\clipboard.lnk` | `... clipboard.ps1 serve` | 登录时静默启动常驻进程 |
-| `Desktop\clipboard.lnk` | `... clipboard.ps1 ui` | 双击打开历史面板 |
+| `Startup\clipboard.lnk` | `-NoProfile -ExecutionPolicy RemoteSigned -Sta -WindowStyle Hidden -File "...\clipboard.ps1" serve` | 登录时静默启动常驻进程 |
+| `Desktop\clipboard.lnk` | `-NoProfile -ExecutionPolicy RemoteSigned -Sta -WindowStyle Hidden -File "...\clipboard.ps1" ui` | 双击打开历史面板 |
 
 > 本工具不作为 Windows 服务运行：服务位于 Session 0，没有桌面与托盘，`RegisterHotKey` 收不到用户输入，剪贴板也按会话隔离。
 
@@ -142,6 +144,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run-tests.ps1
 ### 安全软件把快捷方式判为 `Trojan/LNK.Runner`
 
 `install` 生成的快捷方式目标为 `powershell.exe`，不带 `-ExecutionPolicy Bypass`（客户端默认策略 `RemoteSigned` 已允许运行本地无签名脚本）。部分安全软件的启发式规则会把「快捷方式 + 系统代理进程（`conhost` / `rundll32`）+ 隐藏窗口 + 执行策略绕过」的组合判为 `LNK.Runner`，因此本工具不使用代理进程包装。
+
+### 快捷方式提示「在此系统上禁止运行脚本」
+
+快捷方式默认带 `-ExecutionPolicy RemoteSigned`。若仍被拒绝，按顺序检查：
+
+1. 脚本带网络来源标记（从压缩包或下载目录解出）—— 执行 `Unblock-File .\clipboard.ps1`
+2. 需要更宽松的进程级策略 —— `clipboard install bypass`（改用 `-ExecutionPolicy Bypass`）
+3. 组策略（`MachinePolicy` / `UserPolicy`）已指定执行策略 —— 此时 `-ExecutionPolicy` 参数不生效，`install` 会打印 `group policy defines the execution policy` 提示
 
 ### 热键无响应
 
