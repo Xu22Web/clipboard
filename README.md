@@ -14,13 +14,19 @@ Windows 10 / 11 上的轻量剪贴板历史工具，单文件 PowerShell 脚本�
 
 ## 功能
 
+- Win11 Fluent 自绘界面：40 px 行高、分层底色、圆角行高亮 + 强调色指示条、带描边的按键胶囊、搜索框聚焦下划线、悬停变宽的细滚动条
+- 图标优先 `Segoe Fluent Icons`（Win11），退回 `Segoe MDL2 Assets`（Win10）；基础行只区分**文本**与**文件列表**，更细的类型分析由 [`entry-actions`](plugins/entry-actions.md) 提供
 - 后台轮询剪贴板，保存最近 N 条文本（默认 300 条 / 单条 200 KB / 合计 4 MB）
-- 全局热键呼出搜索面板（默认 `Ctrl+Alt+V`），边打字边过滤，回车直接粘贴到原来的窗口
-- Explorer 里复制的**文件列表**也能捕获（CF_HDROP），可以原样粘回
-- 全键盘操作：`↑` `↓` 选择、`Ctrl+1..9` 快速选取、`Del` 删除、`Esc` 关闭
-- 列表可滚动：滚轮、`PageUp`/`PageDown`，右侧是自绘的 Win11 风格细滑块（可拖动、可点轨道跳转）
-- 托盘图标：显示历史 / 暂停捕获 / 恢复 / 清空 / 退出
-- 深色 / 浅色主题，`ExcludePattern` 正则可以把密码类内容挡在历史之外
+- 全局热键呼出搜索面板（默认 `Ctrl+Alt+V`），边打字边过滤，回车直接粘贴回原窗口
+- Explorer 里复制的**文件列表**也能捕获（CF_HDROP），可原样粘回
+- 全键盘操作：`↑` `↓` `Home` `End`、`Ctrl+0..9` 按**当前可见行**快速选取、`Del` 删除、`Ctrl+Z` 撤销、`Esc` 清空搜索
+- 长文本按行宽省略（`…`），悬停时用提示显示全文；搜索命中的关键词高亮
+- 每条带类型图标与相对时间（`now` / `5m` / `3h` / `2d` / `10-24`）
+- 右键菜单作用于**鼠标下的那一行**，带快捷键提示，插件可向菜单、面板按键与行样式注册自己的条目
+- 列表可滚动（滚轮步长跟随系统设置 / `PageUp` `PageDn`），面板可拖动、可缩放、支持高 DPI，尺寸与位置可选记住
+- 空状态与无结果状态分别给出图标 + 标题 + 说明；托盘图标提供显示 / 暂停 / 恢复 / 清空 / 退出
+- 深浅两套主题，`ExcludePattern` 正则可以把密码类内容挡在历史之外
+- 可选的置顶 / 收藏 / 类型分析 / 按类型打开 / 粘贴改写 / 过期清理以插件形式提供，见 [插件](#插件)
 
 ## 环境要求
 
@@ -50,66 +56,330 @@ Git Bash / MSYS2 下直接 `./clipboard`，CMD 下 `clipboard.cmd`。
 
 ## 命令一览
 
-| 命令 | 说明 |
+| 分组 | 命令 | 说明 |
+|---|---|---|
+| **daemon** | `serve` | 运行常驻进程（捕获 + 热键 + 托盘） |
+| | `stop` | 停止常驻进程 |
+| | `ui` | 打开历史面板（常驻进程没跑会自动拉起） |
+| | `status` | 常驻状态、自启状态、生效热键、存储路径、置顶数量 |
+| | `pause` / `resume` | 暂停 / 恢复捕获 |
+| **history** | `list [-Count N]` | 列出条目，最新在前（相对时间，置顶条目前面有 `*`） |
+| | `get` | 输出剪贴板文本 |
+| | `put "text"` | 写入剪贴板（省略文本时读 stdin） |
+| | `pick N` | 把第 N 条放回剪贴板 |
+| | `del N` | 删除第 N 条（已收藏的条目需要先取消收藏） |
+| | `clear [-All]` | 清空历史（默认保留置顶，`-All` 连置顶一起删，收藏条目永远保留） |
+| **config** | `config` | 全部配置项与生效值（基础项 + 按插件分组，标注 ini / 默认值） |
+| | `config get KEY` | 单个键的生效值与 ini 原始值 |
+| | `config set KEY VAL` | 校验并写入单个键，常驻进程在跑时自动重启生效 |
+| | `config edit` / `config init` | 用记事本编辑 / 写入带默认值的模板 |
+| | `themes` | 列出可用主题（`*` = 当前生效） |
+| **setup** | `diag` | 检查运行环境 |
+| | `restore` | 尝试恢复系统原生剪贴板历史的相关设置 |
+| | `install [bypass]` / `uninstall [purge]` | 增删快捷方式（`purge` 连数据一起删） |
+| | `help` | 帮助（插件命令按插件名分组列在后面） |
+
+`clipboard help` 的分组与之对应：`[daemon]` `[history]` `[config]` `[setup]`，加上每个已加载插件的 `[plugin: <name>]`；没有设置类的命令行开关，所有取值都在 `clipboard.ini`。
+
+### 面板快捷键
+
+| 按键 | 作用 |
 |---|---|
-| `diag` | 检查运行环境 |
-| `restore` | 尝试恢复系统原生剪贴板历史的相关设置 |
-| `serve` | 运行常驻进程（捕获 + 热键 + 托盘） |
-| `stop` | 停止常驻进程 |
-| `ui` | 打开历史面板（常驻进程没跑会自动拉起） |
-| `list [-Count N]` | 列出条目，最新在前 |
-| `put "text"` | 写入剪贴板（省略文本时读 stdin） |
-| `get` | 输出剪贴板文本 |
-| `pick N` | 把第 N 条放回剪贴板 |
-| `del N` | 删除第 N 条 |
-| `clear` | 清空历史 |
-| `pause` / `resume` | 暂停 / 恢复捕获 |
-| `status` | 常驻状态、自启状态、生效热键、存储路径 |
-| `config [edit\|init]` | 查看配置 / 用记事本编辑 / 重写模板 |
-| `install [bypass]` / `uninstall [purge]` | 增删快捷方式（`bypass` 改用 `-ExecutionPolicy Bypass`；`purge` 连数据一起删） |
-| `help` | 帮助 |
+| 直接输入 | 过滤（空格分隔多关键词，需全部命中） |
+| `↑` `↓` / 滚轮 / `PgUp` `PgDn` | 移动选中 / 滚动（滚轮后选中项会跟随可见区） |
+| `Home` / `End` | 跳到第一条 / 最后一条 |
+| `Enter` | 把选中条目粘到原来的窗口 |
+| `Ctrl+Enter` | 只写入剪贴板，不自动粘贴 |
+| `Ctrl+0..9` | 选取**当前可见**的前 0~9 行；编号显示在行尾，滚动后从 0 重新编号 |
+| `Del` / `Ctrl+Z` | 删除选中项 / 撤销上一次删除 |
+| `Esc` | 有搜索词时清空搜索，空搜索时关闭面板 |
+| 拖动标题区 / 右下角手柄 | 移动面板 / 缩放面板（手柄悬停时才显示） |
+
+插件可以自己往面板里加按键（`PanelKeys`）：`item-marks` 加 `Ctrl+P` / `Ctrl+S`，`entry-actions` 加 `Ctrl+O`，按键会出现在 `clipboard help` 的 Panel keys 里并标明来源插件。
+
+底部提示做成带描边的按键胶囊，并且会随状态切换：默认是 `Enter` Paste · `Ctrl+Enter` Copy only · `Del` Delete · `Esc` Close，按住 `Ctrl` 变成 `0-9` Pick · `Enter` Copy only · `Z` Undo（启用 `item-marks` 时额外有 `P` Pin / `S` Star）；列表为空时只保留 `Esc` Close。删除 / 置顶 / 清空后短暂显示操作结果。
 
 ## 配置
 
-首次运行会在脚本旁生成 `clipboard.ini`（扁平 `key=value`，`#` 或 `;` 开头是注释，`[section]` 行会被忽略）。
+配置**只读**：脚本启动时只读取脚本旁的 `clipboard.ini`，**不创建、不改写、不删除**它（`status`、`config`、`serve`、`ui` 都不会产生文件）。文件不存在或某个键缺失时，直接用内置默认值运行。
+
+需要一份带全部键与注释的模板时执行 `clipboard config init`（已存在则报错，不覆盖）；只想改单个键用 `clipboard config set <key> <value>`。整个 ini 结构是扁平 `key=value`，`#` 或 `;` 开头是注释，`[section]` 行会被忽略。
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
-| `DataDir` | 空 | 写入位置；空 = 脚本旁的 `data/`。相对路径相对脚本目录，`-DataDir` 优先 |
+| `DataDir` | 空 | 写入位置；空 = 脚本旁的 `data/`。相对路径相对脚本目录 |
 | `Hotkey` | `Ctrl+Alt+V` | 全局热键；`Win+V` 在多数系统上被占用，注册失败会自动回退 |
 | `HotkeyFallbacks` | 空 | 逗号分隔的回退链，按顺序尝试；空 = 内置 Ctrl+Alt+V / Win+V / Alt+反引号 / Win+Shift+V |
 | `PasteKeys` | `^v` | 选定后用 SendKeys 发送的按键（`^+v` = Ctrl+Shift+V） |
 | `ModReleaseTimeout` | `1200` | 最多等多久（毫秒）让修饰键松开再注入粘贴 |
 | `PasteSettle` | `80` | 切回原窗口后、发 `PasteKeys` 前等待的时长（毫秒）；目标应用响应较慢时可增大 |
-| `MaxItems` | `300` | 最多保留条数 |
+| `MaxItems` | `300` | 最多保留条数（置顶条目不受裁剪影响） |
 | `MaxBytes` | `204800` | 单条上限，超出不入库 |
-| `MaxTotal` | `4194304` | 总容量上限，超出丢最旧的 |
+| `MaxTotal` | `4194304` | 总容量上限，超出丢最旧的（置顶条目保留） |
 | `Interval` | `300` | 剪贴板轮询间隔（毫秒） |
 | `NoPaste` | `0` | `1` = 只写剪贴板，不自动粘贴 |
 | `Balloon` | `1` | `1` = 启动时弹托盘气泡 |
-| `Theme` | `dark` | `dark` / `light` |
+| `Theme` | `win11-dark` | 主题名 = `themes/` 里的 `.ini` 文件名；`dark` / `light` 可作别名 |
 | `ExcludePattern` | 空 | 正则，匹配到的文本永远不会入库 |
+| `WindowWidth` / `WindowHeight` | `700` / `510` | 面板基准尺寸（96 dpi，高 DPI 会按比例缩放；510 = 10 行 × 40 px + 搜索栏 + 底栏） |
+| `WindowLeft` / `WindowTop` | 空 | 面板位置；空 = 在呼出窗口所在显示器的中上部 |
+| `SaveWindowSize` | `0` | `1` = 关闭面板时把缩放后的尺寸写回 ini |
+| `SaveWindowPos` | `0` | `1` = 关闭面板时把当前位置写回 ini |
+| `ShowTime` | `1` | `1` = 显示相对时间列 |
+| `ShowTypeIcon` | `1` | `1` = 显示条目类型图标 |
+| `Highlight` | `1` | `1` = 高亮搜索命中 |
+| `HighlightMaxBytes` | `8192` | 超过该大小的条目不参与高亮（`0` = 总是高亮） |
+| `ShowNewlineMarker` | `1` | `1` = 换行显示为 ` <NL> `，`0` = 折成空格 |
+| `Undo` | `1` | `1` = 面板内 `Ctrl+Z` 撤销上一次删除 |
+| `DpiAware` | `1` | `1` = 按系统 DPI 渲染，`0` = 旧渲染方式 |
+| `ScrollLines` | `0` | 滚轮步长（行），`0` = 跟随系统设置 |
+| `Autostart` | `1` | `1` = `install` 创建登录自启快捷方式（`serve`） |
+| `DesktopShortcut` | `1` | `1` = `install` 创建桌面快捷方式（`ui`） |
+| `Plugins` | 空 | 逗号分隔的插件**文件名**（不含 `.ps1`）。空 = 只加载基础功能（默认）；例如 `Plugins=item-marks` |
 
-命令行开关优先级高于配置文件，例如 `clipboard put hi -MaxItems 50`。
+命令行**不接受**设置开关：所有设置只能写在 `clipboard.ini` 里，或用 `clipboard config set <key> <value>` 改（`clipboard put hi -MaxItems 50` 会直接被参数绑定拒绝）。`config set` 先按上表的类型与范围校验，写回时只改那一行（注释与其他键原样保留），常驻进程在跑时自动重启生效。`config get <key>` 同时显示生效值与 ini 里的原始值，`config` 每行标注来源（`<- ini` / `<- default`）。
+
+> 命令行只处理位置参数与 `list -Count N`（列表长度），数据位置同样由 `clipboard.ini` 的 `DataDir=` 决定。
+
+> 唯一会写 ini 的设置是 `SaveWindowSize=1` / `SaveWindowPos=1`：关闭面板时只回写 `WindowWidth` / `WindowHeight` / `WindowLeft` / `WindowTop` 四个键，其余行原样保留。
+
+## 主题
+
+界面配色与字体不写在脚本里：每个主题是 `themes/<name>.ini`（纯 ini，不执行任何代码），`clipboard.ini` 的 `Theme=` 只写主题名。
+
+| 主题 | 简单介绍 | 说明页 |
+|---|---|---|
+| `win11-dark` | Windows 11 Fluent 深色，**默认**（也是参考布局） | [win11-dark.md](themes/win11-dark.md) |
+| `win11-light` | Windows 11 Fluent 浅色，布局相同、底色反相 | [win11-light.md](themes/win11-light.md) |
+
+```powershell
+clipboard themes                        # 列出可用主题（* = 当前生效）
+clipboard config set Theme win11-light  # 校验 + 写入 + 重启常驻
+```
+
+主题文件怎么写、有哪些 token、如何给插件的 `ThemeSettings` 换色，全部在本节。两条最容易踩的线：
+
+- **主题色不是 `clipboard.ini` 的键**，用户侧只能选主题名（`config set Theme.Accent` 会报 unknown key）；换色靠改主题文件。
+- 未知 token、非法颜色、越界字号只写日志，不影响其它项；`Theme=` 写错会回退 `win11-dark`。
+
+### 主题文件格式
+
+```ini
+# 注释用 # 或 ;
+name=my-theme
+description=my colours
+# 空 = 自动（Segoe UI Variable Text → Segoe UI）
+font_family=
+# 空 = 自动（Segoe Fluent Icons → Segoe MDL2 Assets）
+icon_family=
+
+[palette]          # #RRGGBB 或 #AARRGGBB（alpha 在前）
+Surface=#101418
+Text=#E8EAED
+Accent=#5AC8FA
+Border=#18FFFFFF
+
+[fonts]            # 字号（pt）
+Body=10.5
+Title=13
+
+[metrics]          # 可选，96 dpi 设计度量
+RowHeight=40
+
+[item-marks]       # 段名 = 插件名：重写该插件的 ThemeSettings
+StarColor=#FFD700
+```
+
+| 段 | 说明 |
+|---|---|
+| 顶层 | `name` / `description` / `font_family` / `icon_family` |
+| `[palette]` | 颜色 token，未知 token 忽略并写日志 |
+| `[fonts]` | `Body` `Small` `Tiny` `Title` `Icon` `IconSmall` `IconBig` |
+| `[metrics]` | `RowHeight` `HeadHeight` `FootHeight` `Margin` … |
+| `[<插件名>]` | 重写该插件的 **ThemeSettings**（只对这个主题生效） |
+
+可用颜色 token（全部可选，缺省沿用内置 dark 值）：
+
+```
+Surface Field FieldBorder Text Dim Faint Accent AccentSoft Border SelBg HoverBg
+BadgeBg BadgeText KeyCapBg KeyCapBorder Pin Warn
+```
+
+> 叠层色（`SelBg` / `HoverBg` / `Border` / `BadgeBg` / `AccentSoft` / `KeyCapBorder`）请保留 alpha：面板是把它们半透明地叠在 `Surface` 上，不透明就失去了 Fluent 的层次感。
+
+加载规则：
+
+- 只有 `themes/*.ini` 参与，名字 = 文件名（忽略大小写）；`dark` / `light` 是别名。
+- 解析名字只读文件名，不解析内容，所以坏主题不会影响 `config` / `status`；名字不存在或文件读不了 → 回退 `win11-dark` / 内置配色并写日志。
+- 主题切换后需重启常驻进程生效（`config set Theme` 会自动重启；手工改 ini 则 `clipboard stop` + `clipboard serve`）。
+
+## 插件
+
+插件是**显式开启**的：`Plugins=` 留空（默认）时只跑基础功能，`plugins/` 下的文件连执行都不会执行。启用方式是在 `clipboard.ini` 里列出插件名（逗号分隔，顺序即加载顺序）。
+
+| 插件 | 简单介绍 | 启用 |
+|---|---|---|
+| [`item-marks`](plugins/item-marks.md) | 置顶 / 收藏：`pin` `unpin` `star` `unstar` `marks`，面板 `Ctrl+P` `Ctrl+S`，置顶与收藏可同时生效 | `Plugins=item-marks` |
+| [`entry-actions`](plugins/entry-actions.md) | 看清条目再动手：`kind` / `kinds` 分析类型与格式，`open` 按类型打开，面板 `Ctrl+O` | `Plugins=entry-actions` |
+| [`transform`](plugins/transform.md) | 粘贴前改写文本：纯文本 / 全大写 / 小写 / 驼峰 / 蛇形 / 烤肉串 / 标题式 | `Plugins=transform` |
+| [`retention`](plugins/retention.md) | 过期清理：按天数自动删除旧条目，收藏条目永不清理 | `Plugins=retention` |
+
+点插件名进各自的说明页（命令、设置项、主题项、注意事项）。
+
+```ini
+# 启用多个：逗号分隔，顺序即加载顺序
+Plugins=item-marks,entry-actions
+```
+
+| 层 | 位置 | 职责 |
+|---|---|---|
+| 基础 | `clipboard.ps1` | 设置读取、存储、捕获循环、条目粗分类与行图标、面板绘制与交互、热键、粘贴注入、CLI |
+| 加载层 | `lib/plugins.ps1` | `Load-Plugins`（白名单）/ `Get-PluginCommand` / `Get-PluginActions` / `Get-PluginPanelKeys` / `Invoke-PluginInit` / `Get-EntryGlyph`，全部带内置回退 |
+| 加载层 | `lib/themes.ps1` | 主题发现 / 校验 / 颜色解析 / `Apply-Theme` |
+| 扩展 | `plugins/*.ps1` | 每个文件返回一个哈希表，声明命令、右键项、面板按键、行图标、设置与钩子 |
+
+插件契约：一个 `.ps1` 文件 `return` / 直接输出一个哈希表。
+
+| 键 | 必填 | 说明 |
+|---|---|---|
+| `Name` | 是 | 插件名，必须与文件名（去扩展名）一致（不一致会写一行警告） |
+| `Description` | 否 | 一句话说明，`clipboard config` 会展示 |
+| `Commands` | 否 | `@{ 'open' = { param($value) ... } }` → 变成 `clipboard open <值>` |
+| `CommandHelp` / `CommandOrder` | 否 | 每个命令的一行说明（`clipboard help` 用）/ 打印顺序 |
+| `ContextMenu` | 否 | `@( @{ Label = '...'; Test = { param($rec) ... }; Invoke = { param($rec) ... } } )`，右键菜单项；`Test` 返回 `$false` 时不显示 |
+| `PanelKeys` | 否 | `@( @{ Key = 'O'; Ctrl = $true; Label = '...'; Test = ...; Invoke = ... } )`，面板按键；不会覆盖基础按键 |
+| `Glyphs` | 否 | `@{ text = [string][char]0xE8A5 }`，条目类型 → 行图标（纯数据，最稳）；键限于基础层的 `text` / `files` / `empty` |
+| `TypeGlyph` | 否 | `{ param($payload) ... }`，需要动态判断时用；`Glyphs` 优先 |
+| `Settings` | 否 | 自己的配置项（`clipboard.ini`），`[ordered]@{ Key = @{ Kind = 'bool'; Default = 0; Desc = '...' } }` |
+| `ThemeSettings` | 否 | 外观项，**不是 ini 键**：主题用同名段（如 `[item-marks]`）重写 |
+| `Tick` / `Transform` / `RowDecor` | 否 | 常驻循环任务 / 粘贴前改写 / 行装饰（星标、强调色） |
+| `Init` | 否 | 每个进程只跑一次的初始化（设置全部解析完之后） |
+| `ClearKeepsPinned` | 否 | `{ $true }`，`clear` 与面板/托盘“清空”是否保留置顶条目 |
+
+钩子按触发时机看：
+
+| 时机 | 钩子 |
+|---|---|
+| 加载完成一次 | `Init` |
+| 命令行 | `Commands` + `CommandHelp` + `CommandOrder` |
+| 面板加载 / 按键 | `PanelKeys`、`ContextMenu`、`RowDecor`、`Glyphs` / `TypeGlyph` |
+| 粘贴前 | `Transform` |
+| 常驻循环 | `Tick` |
+| 配置 | `Settings`（ini）、`ThemeSettings`（主题） |
+
+基础按键（`Enter` / `Ctrl+Enter` / `Ctrl+0..9` / `Del` / `Ctrl+Z` / `Esc` / 翻页）永远优先，插件按键只在都不匹配时才会被询问。
+
+基础的 `Get-EntryKind` 只回答“文本还是文件列表”，行图标也只有这两类；更细的类型（链接、路径、代码、多行…）由插件自己判断，例如 `entry-actions` 的 `kind`。想换图标时用 `Glyphs` / `TypeGlyph`，其中 `Glyphs` 的键就是 `text` / `files` / `empty`。
+
+`Settings` 与 `ThemeSettings` 是两个不同通道，不要混：
+
+| | `Settings` | `ThemeSettings` |
+|---|---|---|
+| 写在哪 | `clipboard.ini`（用户设置） | `themes/*.ini`（主题文件） |
+| 键名 | `<插件名>.<Key>` | 段名 = 插件名，段内写 `<Key>` |
+| 谁改 | 用户（`config set`） | 主题作者 |
+| 适合 | 行为开关（模式、是否启用） | 颜色、字形、强调样式 |
+| 读取 | `Get-PluginSetting 'x' 'Key'` | `Get-PluginTheme 'x' 'Key'` |
+
+`ThemeSettings` 不会被写进 `clipboard.ini`，`config` 里也看不到（它不是用户可以改的东西）；优先级是插件 `Default` < 主题 ini 段（只对该主题生效），值同样按 `Kind` 校验。
+
+### 插件自己的配置项
+
+插件可以带零到多个设置，注册后与基础键共用一套校验/展示管线，键名为 `<插件名>.<Key>`：
+
+```ini
+Plugins=entry-actions
+entry-actions.Browser=C:\Tools\browser.exe
+entry-actions.Reveal=1
+```
+
+```powershell
+clipboard config                          # 基础键之后按插件分组列出
+clipboard config get entry-actions.Reveal
+clipboard config set entry-actions.Reveal 0
+```
+
+- `Kind` 与基础 schema 一致：`bool` / `int`（配 `Min`/`Max`）/ `enum`（配 `Options`）/ `regex` / `hotkey` / `list` / `string`；
+  非法值会被拒绝（`config set`）或在加载时回退默认并写日志。
+- 插件代码里用 `Get-PluginSetting 'entry-actions' 'Reveal'` 读当前生效值（已合并 ini 与默认值）；外观项用 `Get-PluginTheme`。
+- 插件未在 `Plugins=` 中启用时，它的这些键**不存在**：`config get` 会提示先启用插件，`config init` 也不会写出它的设置段。
+
+注意事项：
+
+- **默认不加载**：`Plugins=` 为空时，插件文件不会被执行；写错名字会提示 `[!] plugin not found: xxx`，基础功能照常。
+- **脚本块必须自包含**：可以调用基础函数（`Get-Records`、`Get-EntryKind`、`Write-Log`、`Format-Item`），但**不能引用插件文件作用域里的变量** —— 那个作用域在命令执行时已经销毁，捕获到的变量是 `$null`。多个脚本块要共享一段逻辑时，把它作为哈希表的一个键（如 `KindOf = { ... }`），脚本块里用 `& (Get-PluginData '<插件名>' 'KindOf') $arg` 取回并调用。
+- 插件文件保持纯 ASCII：PowerShell 5.1 把无 BOM 的 UTF-8 当 ANSI 解码，中文会直接语法错误。
+- 单个插件抛异常只在日志里记一行，不影响其它插件与主程序。
+
+写一个新插件的最小示例：
+
+```powershell
+# plugins/my-thing.ps1
+@{
+  Name     = 'my-thing'
+  Commands = @{
+    'upper' = {
+      param($value)
+      $i = 0
+      if (-not [int]::TryParse([string]$value, [ref]$i)) { Write-Host 'usage: clipboard upper 3'; return }
+      $recs = @(Get-Records)
+      if ($i -lt 1 -or $i -gt $recs.Count) { Write-Host 'index out of range'; return }
+      Write-Host ([string]$recs[$i - 1].Payload).ToUpper()
+    }
+  }
+}
+```
+
+## 兼容性（Windows 10 / 11）
+
+| 项 | 处理方式 |
+|---|---|
+| 图标字体 | 优先 `Segoe Fluent Icons`（Win11），缺失时回退 `Segoe MDL2 Assets`（Win10），字形码全部在两者中都存在 |
+| 系统 DPI | `SetProcessDPIAware` + `GetDpiForSystem` 都放在 `try/catch` 里（Win10 1607 之前没有 `GetDpiForSystem`），失败时按 96 dpi 渲染 |
+| 主题 | 深浅色由自绘调色板决定，不依赖 `DwmSetWindowAttribute` 之类的 Win11 专用 API |
+| 全局热键 | `Win+V` 在 Win10/11 上被剪贴板历史占用，注册失败按 `HotkeyFallbacks` 回退 |
+| 托盘 / 通知 | 只用 `NotifyIcon` 与气泡，不依赖 Win11 的 Toast 通道 |
+| PowerShell | 只要求 5.1（系统自带），不使用 Core 专有语法 |
 
 ## 文件与数据
 
 ```
-clipboard            Git Bash / MSYS2 启动器（sh 壳，负责把路径转成 Windows 形式）
-clipboard.cmd        CMD 启动器
-clipboard.ps1        主程序（单文件）
-clipboard.ini        配置，首次运行自动生成（不入库）
-data/                历史 / 日志 / 生效热键缓存（不入库）
-tests/run-tests.ps1  自测套件
+clipboard               Git Bash / MSYS2 启动器（sh 壳，负责把路径转成 Windows 形式）
+clipboard.cmd           CMD 启动器
+clipboard.ps1           主程序（单文件：常量 / 设置 / 存储 / 捕获 / 面板 / CLI）
+clipboard.ini           配置（只读；不存在时用内置默认，config init 才生成）
+data/                   历史 / 日志 / 生效热键缓存（不入库）
+lib/plugins.ps1         插件加载层（Load-Plugins / 命令 / 右键项 / 行图标）
+lib/themes.ps1          主题加载层（发现 / 校验 / 颜色解析 / Apply-Theme）
+plugins/*.ps1           可选插件（item-marks / entry-actions / transform / retention；默认不加载）
+plugins/*.md            每个插件的说明页
+themes/*.ini            主题（win11-dark 默认 / win11-light）
+themes/*.md             每个主题的说明页
+tests/run-tests.ps1     自测套件
 ```
 
-写入位置按 **`-DataDir` > `clipboard.ini` 的 `DataDir=` > 脚本旁 `data/`** 解析；`config` 的 `data dir` 与 `status` 的 `store file` 均显示实际生效位置。
+主程序内部按 `#region` 分区，顺序即依赖方向：常量（度量 / 字形 / 时序 / 内核对象名）→ 默认值 → 只读设置 → 存储与工具函数 → 面板 → 常驻进程 → 诊断 / 快捷方式 / 自更新 / 命令分发。
+
+写入位置由 `clipboard.ini` 的 `DataDir=` 决定，留空则用脚本旁的 `data/`（相对路径相对脚本目录）；`config` 的 `data dir` 与 `status` 的 `store file` 均显示实际生效位置。
 
 不写入 `%LOCALAPPDATA%` 或其它用户目录：写入位置不可写时输出错误信息并以退出码 1 结束，不会回退到其它位置。除 `install`（两个快捷方式）与 `restore`（注册表项）外，脚本不写注册表。
 
+### 历史文件格式
+
+`data/history.dat` 是纯文本，不是 JSON，也不依赖数据库：
+
+```
+CBHIST2 RS <flags> US <epoch 秒> US <payload> RS <flags> US ...
+```
+
+- `flags` = `t`（文本）或 `f`（文件列表），带 `p` 后缀表示置顶
+- 分隔符：`RS` = `0x1E`，`US` = `0x1F`；类型签名字符为 `0x01`
+- 只认这一种格式：没有 `CBHIST2` 签名的旧版 `history.dat` 会被当成空库忽略（不迁移、不备份），首次写入时直接被新格式覆盖
+- 入库前会把文本里的 `RS` / `US` 字符替换成空格，避免破坏记录结构
+
 ## 开机自启与桌面快捷方式
 
-`install` 会建两个快捷方式，目标均为 `powershell.exe`，不使用代理进程包装；参数中的 `-ExecutionPolicy RemoteSigned` 用于覆盖目标机 `Restricted` / `AllSigned` 的本地策略：
+`install` 建两个快捷方式（`Autostart=0` / `DesktopShortcut=0` 可分别跳过），目标均为 `powershell.exe`，不使用代理进程包装；参数中的 `-ExecutionPolicy RemoteSigned` 用于覆盖目标机 `Restricted` / `AllSigned` 的本地策略：
 
 | 快捷方式 | 参数 | 用途 |
 |---|---|---|
@@ -128,11 +398,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run-tests.ps1
 
 | 组 | 开关 | 覆盖内容 |
 |---|---|---|
-| 单元 | `-Unit` | 纯函数与存储层：`Parse-Hotkey`、`Format-Item`、`Read-Ini`/`Write-IniTemplate`、`Add-Item`/`Get-Items`/`Save-Items`（去重、裁剪、超限、排除规则）。通过 `-Library` dot-source 主脚本，不触发命令分发 |
-| 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put`/`get`/`list`/`pick`/`del`/`clear`/`pause`/`resume`/`status`/`diag`，以及 ini 与命令行开关的优先级 |
+| 单元 | `-Unit` | 纯函数与存储层：`Parse-Hotkey`、`Format-Item`/`Get-ItemLabel`、`Read-Ini`/`Write-IniTemplate`/`Set-IniKey`、`Convert-IniValue`（类型与范围校验）、`Apply-Config`、记录往返与未知格式忽略、置顶与裁剪、`Get-QuickKeyIndex`、`Get-VisibleRowCount`、`Get-PickerBounds`、`Get-HitMarks`、`Get-EntryKind` 文本 / 文件分类与基础行图标、主题（发现 / 别名 / 颜色解析 / 两套调色板 / 未知主题回退）、插件白名单（空列表=不加载 / 大小写不敏感 / 未列出的文件不执行 / 未找到名字上报 / 无 `Name` 与抛异常的文件被忽略 / 命令与右键项 / 插件设置项）。通过 `-Library` dot-source 主脚本，不触发命令分发 |
+| 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put`/`get`/`list`/`pick`/`del`/`clear`/`clear -All`/`pause`/`resume`/`status`/`themes`/`config get`/`config set`/`config init`/`diag`、主题切换与非法主题名拒绝、插件默认关闭与 `Plugins=` 开启、插件命令（`pin`/`star`/`kind`/`kinds`/`open`/`transform`/`sweep`/`marks`）、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝 |
 | 端到端 | `-E2E` | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启循环 |
 
-全部在 `%TEMP%` 下的临时 `-DataDir` 中运行，不修改 `data/` 与 `clipboard.ini`；真实剪贴板在开始前备份、结束后还原。任一项失败时退出码为 1。
+全部在 `%TEMP%` 下的沙箱副本（脚本 + `lib` + `plugins` + `themes`）中运行，不修改 `data/` 与 `clipboard.ini`；真实剪贴板在开始前备份、结束后还原。任一项失败时退出码为 1。
 
 > 检测到常驻进程时会临时 `pause`，跑完先恢复剪贴板再 `resume`（原本已处于 paused 则保持不动）。
 
