@@ -440,7 +440,8 @@ try {
     Check 'unit' 'empty Plugins list loads nothing' (@(Load-Plugins $pdir @()).Count -eq 0) ''
     Check 'unit' 'Plugins list loads one' ((@(Load-Plugins $pdir @('one') | ForEach-Object { $_.Name }) -join ',') -eq 'one') ''
     Check 'unit' 'Plugins match ignores case' (@(Load-Plugins $pdir @('ONE')).Count -eq 1) ''
-    Check 'unit' 'Plugins ignores unlisted files' ((@(Load-Plugins $pdir @('two', 'one') | ForEach-Object { $_.Name }) -join ',') -eq 'one,two') ''
+    Check 'unit' 'Plugins ignores unlisted files' ((@(Load-Plugins $pdir @('two', 'one') | ForEach-Object { $_.Name } | Sort-Object) -join ',') -eq 'one,two') ''
+    Check 'unit' 'Plugins order is the list order' ((@(Load-Plugins $pdir @('two', 'one') | ForEach-Object { $_.Name }) -join ',') -eq 'two,one') (@(Load-Plugins $pdir @('two', 'one') | ForEach-Object { $_.Name }) -join ',')
     Check 'unit' 'plugin without Name is ignored' (@(Load-Plugins $pdir @('nameless')).Count -eq 0) ''
     Check 'unit' 'broken plugin does not throw' (@(Load-Plugins $pdir @('boom')).Count -eq 0) ''
     [void](Load-Plugins $pdir @('nosuch', 'one'))
@@ -549,6 +550,7 @@ try {
     Check 'unit' 'menu caption: static label wins over the fallback' ((Get-ActionText @{ Label = 'Open' } $null) -eq 'Open') ''
     Check 'unit' 'menu caption: missing label falls back' ((Get-ActionText @{} $null) -eq 'Plugin action') ''
     Check 'unit' 'menu caption: a throwing label falls back' ((Get-ActionText @{ Label = { throw 'boom' } } $null) -eq 'Plugin action') ''
+    Check 'unit' 'menu actions carry their owner' ((@($menuActs | ForEach-Object { $_['Plugin'] } | Select-Object -Unique) -join ',') -eq 'item-marks') (@($menuActs | ForEach-Object { $_['Plugin'] } | Select-Object -Unique) -join ',')
 
     $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('transform'))
     Register-PluginSettings
@@ -559,6 +561,32 @@ try {
     Check 'unit' 'transform exposes one rewrite block' ($apply -is [scriptblock]) ''
     Check 'unit' 'transform hook uses that block' ((Invoke-PluginTransform 'Hello World') -eq (& $apply 'Hello World' 'snake')) (Invoke-PluginTransform 'Hello World')
     Check 'unit' 'transform leaves file lists alone' ((& $apply (([string][char]1) + 'C:\a.txt') 'upper') -eq (([string][char]1) + 'C:\a.txt')) ''
+    Check 'unit' 'transform reports the configured mode' ((& (Get-PluginData 'transform' 'CurrentMode')) -eq 'snake') (& (Get-PluginData 'transform' 'CurrentMode'))
+    $tActs = @(Get-PluginActions)
+    Check 'unit' 'transform registers one menu entry' (($tActs.Count -eq 1) -and ($tActs[0]['Plugin'] -eq 'transform')) ($tActs.Count -as [string])
+    $tMenu = $tActs[0]
+    Check 'unit' 'transform menu caption names the mode' ((Get-ActionText $tMenu ([pscustomobject]@{ Payload = 'Hello World'; Marks = '' })) -eq 'Transform as snake') (Get-ActionText $tMenu ([pscustomobject]@{ Payload = 'Hello World'; Marks = '' }))
+    Check 'unit' 'transform menu shows for text rows' ((Test-PluginAction $tMenu ([pscustomobject]@{ Payload = 'Hello World'; Marks = '' })) -eq $true) ''
+    Check 'unit' 'transform menu hides for file lists' ((Test-PluginAction $tMenu ([pscustomobject]@{ Payload = (([string][char]1) + 'C:\a.txt'); Marks = '' })) -eq $false) ''
+    [IO.File]::WriteAllLines($cfg, @('transform.Mode=keep'), $Utf8)
+    $script:IniCache = $null
+    Apply-PluginSettings
+    Check 'unit' 'transform menu hides while the mode is keep' ((Test-PluginAction $tMenu ([pscustomobject]@{ Payload = 'Hello World'; Marks = '' })) -eq $false) ''
+    [IO.File]::WriteAllLines($cfg, @('transform.Mode=snake'), $Utf8)
+    $script:IniCache = $null
+    Apply-PluginSettings
+
+    # two plugins keep their own block, in load order
+    $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('item-marks', 'transform'))
+    $owners = @(Get-PluginActions | ForEach-Object { [string]$_['Plugin'] })
+    Check 'unit' 'menu keeps one block per plugin' (($owners -join ',') -eq 'item-marks,item-marks,item-marks,transform') ($owners -join ',')
+
+    $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('transform', 'item-marks'))
+    $owners = @(Get-PluginActions | ForEach-Object { [string]$_['Plugin'] })
+    Check 'unit' 'load order follows the Plugins list' (($owners -join ',') -eq 'transform,item-marks,item-marks,item-marks') ($owners -join ',')
+    $names = @($script:Plugins | ForEach-Object { [string]$_['Name'] })
+    Check 'unit' 'plugin list keeps the written order' (($names -join ',') -eq 'transform,item-marks') ($names -join ',')
+    $script:Plugins = @()
 
     $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('entry-actions'))
     Register-PluginSettings

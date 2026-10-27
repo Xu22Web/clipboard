@@ -7,10 +7,11 @@
 # Settings: transform.Mode / transform.Trim
 # One-off:  clipboard transform 3            entry 3 with the configured mode
 #           clipboard transform "3 snake"    entry 3 as snake_case (quotes required)
+# Right-click  "Transform as <mode>" applies the configured mode to that row and copies it
 #
-# The rewrite itself lives in one shared block (Apply). The paste hook and the command
-# both call it through Get-PluginData - a scriptblock cannot see this file's own
-# variables, so the block is looked up by plugin name instead of captured.
+# The rewrite itself lives in one shared block (Apply). The paste hook, the command and
+# the context menu all reach it through Get-PluginData - a scriptblock cannot see this
+# file's own variables, so blocks are looked up by plugin name instead of captured.
 @{
   Name        = 'transform'
   Description = 'Paste transformed: plain text, UPPER, lower, camelCase, snake_case, kebab-case, Title Case'
@@ -61,8 +62,23 @@
   }
   Transform   = {
     param($payload)
-    $mode = [string](Get-PluginSetting 'transform' 'Mode')
+    $mode = [string](& (Get-PluginData 'transform' 'CurrentMode'))
     return (& (Get-PluginData 'transform' 'Apply') ([string]$payload) $mode)
+  }
+  # the configured mode, never empty
+  CurrentMode = {
+    $m = [string](Get-PluginSetting 'transform' 'Mode')
+    if (-not $m) { $m = 'keep' }
+    return $m
+  }
+  # rewrite + put on the clipboard + record it: what both the command and the menu do
+  CopyAs      = {
+    param($payload, $mode)
+    $out = [string](& (Get-PluginData 'transform' 'Apply') ([string]$payload) ([string]$mode))
+    if ([string]::IsNullOrEmpty($out)) { return '' }
+    [void](Set-ClipItem $out)
+    Add-Item $out
+    return $out
   }
   Commands    = @{
     'transform' = {
@@ -78,18 +94,38 @@
       $recs = @(Get-Records)
       if ($i -lt 1 -or $i -gt $recs.Count) { Write-Host 'index out of range'; return }
       $src = [string]$recs[$i - 1].Payload
-      $mode = [string](Get-PluginSetting 'transform' 'Mode')
+      $mode = [string](& (Get-PluginData 'transform' 'CurrentMode'))
       if ($parts.Count -gt 1) { $mode = $parts[1] }
       if ($modes -notcontains $mode) {
         Write-Host ('unknown mode: ' + $mode)
         Write-Host ('modes: ' + ($modes -join ' '))
         return
       }
-      $out = [string](& (Get-PluginData 'transform' 'Apply') $src $mode)
+      $out = [string](& (Get-PluginData 'transform' 'CopyAs') $src $mode)
       if ([string]::IsNullOrEmpty($out)) { Write-Host 'nothing left after the transform'; return }
-      [void](Set-ClipItem $out)
-      Add-Item $out
       Write-Host ('[' + $mode + '] ' + (Format-Item $out 100))
     }
   }
+  # acts on the row under the cursor: only when a real mode is configured and the row is
+  # text (a file list has no words to re-join)
+  ContextMenu = @(
+    @{
+      Label  = { param($rec) 'Transform as ' + [string](& (Get-PluginData 'transform' 'CurrentMode')) }
+      Test   = {
+        param($rec)
+        if ($null -eq $rec) { return $false }
+        $m = [string](& (Get-PluginData 'transform' 'CurrentMode'))
+        if (-not $m -or $m -eq 'keep') { return $false }
+        $p = [string]$rec.Payload
+        if ($p.Length -eq 0) { return $false }
+        return ($p[0] -ne [char]1)
+      }
+      Invoke = {
+        param($rec)
+        if ($null -eq $rec) { return }
+        $m = [string](& (Get-PluginData 'transform' 'CurrentMode'))
+        [void](& (Get-PluginData 'transform' 'CopyAs') ([string]$rec.Payload) $m)
+      }
+    }
+  )
 }

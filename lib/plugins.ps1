@@ -71,11 +71,6 @@ $script:PluginThemeValues = @{}  # '<plugin>.<Key>' -> effective value
 $script:PluginTimers = @{}       # 'tick:<plugin>' -> last run (epoch seconds)
 $script:PluginInitDone = $false
 
-function Test-PluginWanted([string]$fileName, [string[]]$want) {
-  foreach ($w in @($want)) { if ([string]::Equals($w, $fileName, [StringComparison]::OrdinalIgnoreCase)) { return $true } }
-  return $false
-}
-
 # Only = the allow-list from Plugins=. Nothing is executed for files that are not listed.
 function Load-Plugins([string]$Dir, [string[]]$Only) {
   $out = New-Object System.Collections.Generic.List[object]
@@ -92,12 +87,19 @@ function Load-Plugins([string]$Dir, [string[]]$Only) {
     return $out.ToArray()
   }
   $present = @{}
-  foreach ($f in $files) { $present[$f.BaseName.ToLower()] = $true }
+  foreach ($f in $files) { $present[$f.BaseName.ToLower()] = $f }
   $missing = New-Object System.Collections.Generic.List[string]
   foreach ($w in $want) { if (-not $present.ContainsKey($w.ToLower())) { $missing.Add($w) } }
   $script:PluginMissing = $missing.ToArray()
-  foreach ($f in $files) {
-    if (-not (Test-PluginWanted $f.BaseName $want)) { continue }
+  # load order follows the Plugins= list, not the file name: it decides which plugin wins
+  # a shared hook (TypeGlyph / Transform) and in which order the menu groups appear
+  $done = @{}
+  foreach ($w in $want) {
+    $key = $w.ToLower()
+    if ($done.ContainsKey($key)) { continue }
+    $done[$key] = $true
+    if (-not $present.ContainsKey($key)) { continue }
+    $f = $present[$key]
     try {
       $p = & $f.FullName
       if ($p -is [hashtable] -and $p.ContainsKey('Name')) {
@@ -495,13 +497,19 @@ function Get-PluginClearKeeps {
   return $out
 }
 
-# flattened context menu actions contributed by every plugin
+# flattened context menu actions contributed by every plugin, in load order
+# Each entry carries the owning plugin name, so the menu can keep one plugin's items
+# together and draw a separator between groups instead of one flat list.
 function Get-PluginActions {
   $out = New-Object System.Collections.Generic.List[object]
   foreach ($p in @($script:Plugins)) {
     if (-not $p.ContainsKey('ContextMenu')) { continue }
     foreach ($a in @($p['ContextMenu'])) {
-      if ($a -is [hashtable] -and $a.ContainsKey('Label') -and $a.ContainsKey('Invoke')) { $out.Add($a) }
+      if ($a -isnot [hashtable] -or -not $a.ContainsKey('Label') -or -not $a.ContainsKey('Invoke')) { continue }
+      $copy = @{}
+      foreach ($k in @($a.Keys)) { $copy[$k] = $a[$k] }
+      if (-not $copy.ContainsKey('Plugin')) { $copy['Plugin'] = [string]$p['Name'] }
+      $out.Add($copy)
     }
   }
   return $out.ToArray()

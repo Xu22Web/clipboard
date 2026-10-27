@@ -1680,6 +1680,10 @@ function Show-Picker {
     $cm = New-Object Windows.Forms.ContextMenuStrip
     $cm.Font = $fBody
     $cm.ShowImageMargin = $false
+    # Without visual styles the default system renderer paints separators invisibly, which
+    # would make the plugin groups read as one flat list; the professional renderer draws
+    # real divider lines.
+    try { $cm.Renderer = New-Object Windows.Forms.ToolStripProfessionalRenderer } catch { }
     $m1 = $cm.Items.Add('Paste'); $m1.ShortcutKeyDisplayString = 'Enter'
     $m1.Add_Click({ Use-Index $lst.SelectedIndex })
     $m2 = $cm.Items.Add('Copy only'); $m2.ShortcutKeyDisplayString = 'Ctrl+Enter'
@@ -1690,14 +1694,22 @@ function Show-Picker {
     $m6 = $cm.Items.Add('Clear history')
     $m6.Add_Click({ Request-Clear })
 
-    # plugin actions: appended after the built-in ones, hidden unless their Test passes
+    # plugin actions: appended after the built-in ones, hidden unless their Test passes.
+    # Items stay grouped per plugin - one separator between groups, none inside a group -
+    # so a menu never mixes actions from different plugins without a visible break.
     $pluginItems = New-Object System.Collections.Generic.List[object]
     try {
       if (Get-Command Get-PluginActions -ErrorAction SilentlyContinue) {
         $actions = @(Get-PluginActions)
         if ($actions.Count -gt 0) {
           [void]$cm.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
+          $lastOwner = ''
           foreach ($act in $actions) {
+            $owner = [string]$act['Plugin']
+            if ($lastOwner -and $owner -ne $lastOwner) {
+              [void]$cm.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
+            }
+            $lastOwner = $owner
             $item = $cm.Items.Add((Get-ActionText $act $null))
             if ($act.ContainsKey('Key')) { $item.ShortcutKeyDisplayString = [string]$act['Key'] }
             $item.Tag = $act
@@ -1742,6 +1754,21 @@ function Show-Picker {
               # a plugin may compute its label per row: 'Pin to top' / 'Remove pin'
               $it.Text = Get-ActionText $it.Tag $cur
             }
+          }
+          # a separator only makes sense between two visible items, so a group whose items
+          # are all hidden does not leave a stray line behind
+          $shown = @()
+          for ($k = 0; $k -lt $cm.Items.Count; $k++) {
+            $it = $cm.Items[$k]
+            if ($it -is [Windows.Forms.ToolStripSeparator]) { continue }
+            if ($it.Visible) { $shown += $k }
+          }
+          for ($k = 0; $k -lt $cm.Items.Count; $k++) {
+            $it = $cm.Items[$k]
+            if ($it -isnot [Windows.Forms.ToolStripSeparator]) { continue }
+            $before = @($shown | Where-Object { $_ -lt $k }).Count -gt 0
+            $after = @($shown | Where-Object { $_ -gt $k }).Count -gt 0
+            $it.Visible = ($before -and $after)
           }
         } catch { }
       })

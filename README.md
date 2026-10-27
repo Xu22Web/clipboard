@@ -215,13 +215,13 @@ BadgeBg BadgeText KeyCapBg KeyCapBorder Mark Warn
 
 ## 插件
 
-插件是**显式开启**的：`Plugins=` 留空（默认）时只跑基础功能，`plugins/` 下的文件连执行都不会执行。启用方式是在 `clipboard.ini` 里列出插件名（逗号分隔，顺序即加载顺序）。
+插件是**显式开启**的：`Plugins=` 留空（默认）时只跑基础功能，`plugins/` 下的文件连执行都不会执行。启用方式是在 `clipboard.ini` 里列出插件名（逗号分隔，**顺序即加载顺序**，不是文件名顺序）：先加载的插件在右键菜单里更靠前，也优先赢得 `TypeGlyph` / `Transform` 这类“只有一个插件生效”的钩子。
 
 | 插件 | 简单介绍 | 启用 |
 |---|---|---|
-| [`item-marks`](plugins/item-marks.md) | 置顶 / 收藏 / 高亮：`pin` `unpin` `star` `unstar` `highlight` `unhighlight` `marks`，面板 `Ctrl+P` `Ctrl+S` `Ctrl+H`；高亮改文字与背景色，不改左侧选择条 | `Plugins=item-marks` |
-| [`entry-actions`](plugins/entry-actions.md) | 看清条目再动手：`kind` / `kinds` 分析类型与格式，`open` 按类型打开，面板 `Ctrl+O` | `Plugins=entry-actions` |
-| [`transform`](plugins/transform.md) | 粘贴前改写文本：纯文本 / 全大写 / 小写 / 驼峰 / 蛇形 / 烤肉串 / 标题式 | `Plugins=transform` |
+| [`item-marks`](plugins/item-marks.md) | 置顶 / 收藏 / 高亮：`pin` `unpin` `star` `unstar` `highlight` `unhighlight` `marks`，面板 `Ctrl+P` `Ctrl+S` `Ctrl+H`，右键三个菜单项；高亮改文字与背景色，不改左侧选择条 | `Plugins=item-marks` |
+| [`entry-actions`](plugins/entry-actions.md) | 看清条目再动手：`kind` / `kinds` 分析类型与格式，`open` 按类型打开，面板 `Ctrl+O`，右键“Open link or path”；行图标也由它提供 | `Plugins=entry-actions` |
+| [`transform`](plugins/transform.md) | 粘贴前改写文本：纯文本 / 全大写 / 小写 / 驼峰 / 蛇形 / 烤肉串 / 标题式；右键“Transform as <模式>” | `Plugins=transform` |
 | [`retention`](plugins/retention.md) | 过期清理：按天数自动删除旧条目，受保护标记的行永不清理 | `Plugins=retention` |
 
 点插件名进各自的说明页（命令、设置项、主题项、注意事项）。
@@ -246,7 +246,7 @@ Plugins=item-marks,entry-actions
 | `Description` | 否 | 一句话说明，`clipboard config` 会展示 |
 | `Commands` | 否 | `@{ 'open' = { param($value) ... } }` → 变成 `clipboard open <值>` |
 | `CommandHelp` / `CommandOrder` | 否 | 每个命令的一行说明（`clipboard help` 用）/ 打印顺序 |
-| `ContextMenu` | 否 | `@( @{ Label = '...'; Test = { param($rec) ... }; Invoke = { param($rec) ... } } )`，右键菜单项；`Test` 返回 `$false` 时不显示 |
+| `ContextMenu` | 否 | `@( @{ Label = '...'; Test = { param($rec) ... }; Invoke = { param($rec) ... } } )`，右键菜单项；`Test` 返回 `$false` 时不显示。**按插件分组**：同一插件的项连续排列，不同插件之间自动加一条分隔线（顺序 = `Plugins=` 加载顺序），整组都被隐藏时分隔线跟着消失 |
 | `PanelKeys` | 否 | `@( @{ Key = 'O'; Ctrl = $true; Label = '...'; Test = ...; Invoke = ... } )`，面板按键；不会覆盖基础按键 |
 | `TypeGlyph` | 否 | `{ param($payload) ... }`，条目 → 行图标（返回空 = 该行不画图标）；第一个给出非空值的插件胜出 |
 | `Settings` | 否 | 自己的配置项（`clipboard.ini`），`[ordered]@{ Key = @{ Kind = 'bool'; Default = 0; Desc = '...' } }` |
@@ -270,6 +270,8 @@ Plugins=item-marks,entry-actions
 | `ClearKeeps` | `clear` 默认保留这些标记；`-All` 忽略它，但保护标记永远保留 |
 
 因此新增一个标记不需要改 `clipboard.ps1`：写插件、声明标记、在 `RowDecor` 里画出来即可。多个标记可以同时存在同一行。
+
+基础层调用 `Get-PluginActions` 时会给每个菜单项标上 `Plugin`（指向声明它的插件），画面才据此分组；插件自己声明的哈希表不会被改动。
 
 钩子按触发时机看：
 
