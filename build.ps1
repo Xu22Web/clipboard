@@ -12,8 +12,9 @@
   minify and rename, whether to verify the result by running the CLI test suite against
   it, whether to also write a zip. The only switch is -Config.
 
-  What goes in: everything under src\ (clipboard.ps1, the two launchers, lib\, the
-  selected plugins and themes) plus (by default) the documentation. What never goes in:
+  What goes in: everything under src\ (the entry file clipboard.ps1, the two launchers,
+  lib\ with its 16 required modules plus the two optional loaders, the selected plugins
+  and themes) plus (by default) the documentation. What never goes in:
   src\data\, src\clipboard.ini, tests\, build\, dist\, .git - a package carries the
   program, not your history or your settings. Reading only src\ is also what keeps the
   build from walking into its own output.

@@ -1,6 +1,8 @@
 # Clipboard
 
-Windows 10 / 11 上的轻量剪贴板历史工具，单文件 PowerShell 脚本，提供可搜索的历史面板与全局热键。
+Windows 10 / 11 上的轻量剪贴板历史工具，纯 PowerShell（零依赖，只用系统自带的 5.1），提供可搜索的历史面板与全局热键。
+
+程序是 `src\clipboard.ps1`（入口）+ `src\lib\`（16 个必需模块 + 2 个可选加载层）：分发时要把整个文件夹一起拷，链接/快捷方式仍指向 `clipboard.ps1` 就行。
 
 数据保存在脚本目录内，不依赖 Windows 剪贴板历史服务（`cbdhsvc`），不联网，也不需要管理员权限。
 
@@ -37,7 +39,7 @@ Windows 10 / 11 上的轻量剪贴板历史工具，单文件 PowerShell 脚本�
 ## 快速开始
 
 ```powershell
-# 在项目目录里（程序本体在 src\）
+# 在项目目录里（程序本体是 src\clipboard.ps1 + src\lib\，两个都要）
 powershell -NoProfile -ExecutionPolicy Bypass -Sta -File .\src\clipboard.ps1 diag     # 检查运行环境
 powershell -NoProfile -ExecutionPolicy Bypass -Sta -File .\src\clipboard.ps1 serve    # 前台运行常驻进程
 ```
@@ -233,9 +235,13 @@ Plugins=item-marks,entry-actions
 
 | 层 | 位置 | 职责 |
 |---|---|---|
-| 基础 | `clipboard.ps1` | 设置读取、记录存储与标记机制、捕获循环、面板绘制与交互、热键、粘贴注入、CLI |
+| 入口 | `clipboard.ps1` | 参数绑定、`$Root`、必需模块清单、运行时路径（ini / store / log 位置）、`Invoke-Main` |
+| 基础 | `lib/base.ps1`、`lib/ini.ps1`、`lib/util.ps1` | 常量与全部默认值、设置 schema 与读取、日志 / 程序集 / DPI / 像素与时间 |
+| 领域 | `lib/clip.ps1`、`lib/store.ps1`、`lib/entry.ps1`、`lib/hotkey.ps1` | 剪贴板读写、历史记录与标记规则、条目分类与行图标兜底、热键解析 |
+| 场景 | `lib/picker.ps1`、`lib/picker-geom.ps1`、`lib/serve.ps1`、`lib/config.ps1`、`lib/diag.ps1`、`lib/shortcut.ps1`、`lib/usage.ps1` | 面板与纯计算、常驻进程、设置面、诊断恢复、快捷方式、帮助 |
+| 装配 | `lib/dispatch.ps1` | `Invoke-Main`：先 `Apply-Config`，再按 `Plugins=` 装配插件，最后执行一个命令 |
 | 加载层 | `lib/plugins.ps1` | `Load-Plugins`（白名单）/ 命令与菜单 / 面板按键 / 标记注册（`Get-PluginMarks`、`Get-PluginProtectedMarks`、`Get-PluginSortMark`、`Get-PluginClearKeeps`）/ 行装饰 / 设置与主题，全部带内置回退 |
-| 加载层 | `lib/themes.ps1` | 主题发现 / 校验 / 颜色解析 / `Apply-Theme` |
+| 加载层 | `lib/themes.ps1` | 主题发现 / 校验 / 颜色解析 / `Apply-Theme`（缺失时 `lib/theme-stub.ps1` 的内置配色接管） |
 | 扩展 | `plugins/*.ps1` | 每个文件返回一个哈希表，声明命令、右键项、面板按键、行图标、标记与设置 |
 
 插件契约：一个 `.ps1` 文件 `return` / 直接输出一个哈希表。
@@ -269,7 +275,7 @@ Plugins=item-marks,entry-actions
 | `SortMark` | 带该标记的行排到列表最前（置顶就是这么实现的） |
 | `ClearKeeps` | `clear` 默认保留这些标记；`-All` 忽略它，但保护标记永远保留 |
 
-因此新增一个标记不需要改 `clipboard.ps1`：写插件、声明标记、在 `RowDecor` 里画出来即可。多个标记可以同时存在同一行。
+因此新增一个标记不需要改基础层（`lib\store.ps1`）：写插件、声明标记、在 `RowDecor` 里画出来即可。多个标记可以同时存在同一行。
 
 基础层调用 `Get-PluginActions` 时会给每个菜单项标上 `Plugin`（指向声明它的插件），画面才据此分组；插件自己声明的哈希表不会被改动。
 
@@ -330,7 +336,7 @@ clipboard config set entry-actions.Reveal 0
 - **一份逻辑只写一次**：钩子、命令、右键项、面板按键往往要同样的行为，把它们抽成插件的共享块再各自调用；内置的四个插件都是这个结构（`KindOf` / `CanOpen` / `OpenPayload` / `Sniff`、`Apply`、`Sweep`、`TrimPins`），所以规则不会两处走偏。
 - **用基础层给的东西，别自己读内部状态**：行装饰用 `RowDecor`、图标用 `Get-IconGlyph`、标记用 `Test-Mark` / `Get-ProtectedMarks` / `Get-SortMark`、改多行用 `Update-Records`，都不需要知道基础层的变量或记录格式。
 - 插件文件保持纯 ASCII：PowerShell 5.1 把无 BOM 的 UTF-8 当 ANSI 解码，中文会直接语法错误。
-- 单个插件抛异常只在日志里记一行，不影响其它插件与主程序。
+- 单个插件抛异常只在日志里记一行，不影响其它插件与基础命令。
 
 写一个新插件的最小示例：
 
@@ -402,7 +408,7 @@ tests/run-tests.ps1     自测套件
 
 分层顺序即依赖方向：`clipboard.ps1`（入口）→ `lib/dispatch.ps1`（装配命令）→ `picker` / `serve` / `config` / `diag` / `shortcut` / `usage`（场景）→ `store` / `clip` / `entry` / `hotkey`（领域）→ `ini` / `util`（基础）→ `base`（常量与默认值）。只允许上层调用下层。
 
-两条硬约束（拆分后由测试守住）：
+两条硬约束（违反任何一条都会在集成测试或产物验证里暴露出来，不靠自觉）：
 
 - **`$Root` 只在入口文件里算。** 点源文件里 `$PSScriptRoot` 指向 `lib\`，用它拼路径会把 `themes\`、`plugins\`、`data\` 全部指错一层。
 - **只有 `base.ps1` 与 `ini.ps1` 在加载时赋值**（默认值与设置 schema），其余模块只定义函数，所以点源顺序只对这两个文件敏感。
@@ -447,7 +453,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run-tests.ps1
 
 | 组 | 开关 | 覆盖内容 |
 |---|---|---|
-| 单元 | `-Unit` | 纯函数与存储层：`Parse-Hotkey`、`Format-Item`/`Get-ItemLabel`、`Read-Ini`/`Write-IniTemplate`/`Set-IniKey`、`Convert-IniValue`（类型与范围校验）、`Apply-Config`、记录往返与未知格式忽略、标记与保护规则、`Get-QuickKeyIndex` / 数字键位置、`Get-VisibleRowCount`、`Get-PickerBounds`、`Get-HitMarks`、`Get-EntryKind`（文本 / 文件列表）、行图标（无插件时为空、插件 `TypeGlyph` 生效）、主题（发现 / 别名 / 颜色解析 / 两套调色板 / 未知主题回退）、插件白名单与各个共享块。通过 `-Library` dot-source 主脚本，不触发命令分发 |
+| 单元 | `-Unit` | 纯函数与存储层：`Parse-Hotkey`、`Format-Item`/`Get-ItemLabel`、`Read-Ini`/`Write-IniTemplate`/`Set-IniKey`、`Convert-IniValue`（类型与范围校验）、`Apply-Config`、记录往返与未知格式忽略、标记与保护规则、`Get-QuickKeyIndex` / 数字键位置、`Get-VisibleRowCount`、`Get-PickerBounds`、`Get-HitMarks`、`Get-EntryKind`（文本 / 文件列表）、行图标（无插件时为空、插件 `TypeGlyph` 生效）、主题（发现 / 别名 / 颜色解析 / 两套调色板 / 未知主题回退）、插件白名单与各个共享块。通过 `-Library` dot-source 主脚本（入口会先把 `lib\` 全部点源进来，所以函数都在），不触发命令分发 |
 | 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put`/`get`/`list`/`pick`/`del`/`clear`/`clear -All`/`pause`/`resume`/`status`/`themes`/`config get`/`config set`/`config init`/`diag`、主题切换与非法主题名拒绝、插件默认关闭与 `Plugins=` 开启、插件命令（`pin`/`star`/`kind`/`kinds`/`open`/`transform`/`sweep`/`marks`）、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝；以及 `build.ps1` 用配置文件打包（进包内容、`Plugins=`/`Themes=` 裁剪、`Overwrite=0` 拒绝覆盖、未知插件名报错） |
 | 端到端 | `-E2E` | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启循环 |
 
@@ -510,7 +516,7 @@ Themes=win11-dark
 - 变量名必须从 `VariablePath.UserPath` 取。`VariablePath.UnqualifiedPath` 在本机运行时对 `$x` 和 `$script:x` **一律返回空串**，拿它做映射会“看起来改名了、实际一半没改”，结果 `$MaxItems` 与 `$script:MaxItems` 指向两个变量，历史写不进去。
 - 函数返回 `HashSet` 之类的空集合时会被 PowerShell 展开成 `$null`，调用方 `.Contains()` 立刻炸 —— 用 `return , $set` 包一层，或者在调用处 `@()`。
 
-实测（本仓库）：`224571 → 140865` 字节，`37.3%` 更小（只压缩不改名是 30.6%）；`clipboard.ps1` −34%、`lib/plugins.ps1` −49%、`themes.ps1` −48%。
+实测（本仓库，拆分后）：`234171 → 140221` 字节，`40.1%` 更小（只压缩不改名是 30.6%）；`picker.ps1` −40%、`lib/store.ps1` −46%、`lib/plugins.ps1` −49%、`lib/theme-stub.ps1` −60%。
 
 > `Verify=1` 的意义：包里的函数名与变量名都变了，**只有跑一遍真实 CLI 测试才能证明功能没变**；`-Source` 指向产物时单元组会跳过（它按名字调内部函数），集成与端到端照常跑。
 
@@ -519,7 +525,7 @@ Themes=win11-dark
 | 进包（来自 `src\`） | 不进包 |
 |---|---|
 | `clipboard.ps1`、`clipboard.cmd`、`clipboard`（Git Bash 壳） | `src\data\`（历史与日志） |
-| `lib\`、所选 `plugins\`（含 `.md`）、所选 `themes\`（ini 与 `.md`） | `src\clipboard.ini`（用户设置） |
+| `lib\`（18 个模块：16 必需 + `themes.ps1` / `plugins.ps1` 可选）、所选 `plugins\`（含 `.md`）、所选 `themes\`（ini 与 `.md`） | `src\clipboard.ini`（用户设置） |
 | `README.md`、`LICENSE`、`docs\`（截图，`IncludeDocs=1` 时） | `tests\`、`build\`、`build.ini`、`dist\`、`.git` |
 
 > `Plugins=` / `Themes=` 里写了不存在的名字会直接失败并指出是哪个；被选中的插件/主题会连同自己的 `.md` 一起进包（`lib\` 是基础层，永远随包走）。
