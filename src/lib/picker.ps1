@@ -332,14 +332,19 @@ function Show-Picker {
     # shortcut hints as Fluent key chips: [key] action
     function Get-FootHints {
       if ($script:Filtered.Count -eq 0) {
-        return @(@('Esc', 'Close'))
+        # the comma keeps the pair nested: a one-element array would be unrolled by the
+        # function return and each string would then be read as a list of characters
+        return ,@(@('Esc', 'Close'))
       }
       if ($script:CtrlHeld) {
-        # digits first, then whatever single-letter keys the plugins claimed (Ctrl+P pin ...)
-        $pairs = @(@('1-9,0', 'Pick'))
-        foreach ($pk in @($ctrlHints)) { $pairs += ,@([string]$pk.Key, [string]$pk.Hint) }
-        $pairs += ,@('Enter', 'Copy only')
-        $pairs += ,@('Z', 'Undo')
+        # Ctrl is held while these hints show, but a bare "1-9,0" reads as a plain digit row
+        # (and "Z"/"P" like ordinary letters), so each chip spells the whole combination out.
+        # Core combinations come first: the footer truncates whatever does not fit, and the
+        # plugin keys at the end are the optional ones.
+        $pairs = @(@('Ctrl+1-9,0', 'Pick'))
+        $pairs += ,@('Ctrl+Enter', 'Copy only')
+        $pairs += ,@('Ctrl+Z', 'Undo')
+        foreach ($pk in @($ctrlHints)) { $pairs += ,@('Ctrl+' + [string]$pk.Key, [string]$pk.Hint) }
         return $pairs
       }
       return @(@('Enter', 'Paste'), @('Ctrl+Enter', 'Copy only'), @('Del', 'Delete'), @('Esc', 'Close'))
@@ -930,8 +935,10 @@ function Show-Picker {
         }
 
         # Trailing meta column, fixed for every row so nothing shifts around:
-        #   [mark 14] [2] [mark 14] [6] [time 52] [12] [key cap 22] [10]
-        $capW = Px 22
+        #   [mark 14] [2] [mark 14] [6] [time 52] [12] [key cap 48] [10]
+        # The cap spells the combination out (Ctrl+1 ... Ctrl+0): a bare digit reads as a
+        # list number instead of a shortcut.
+        $capW = Px 48
         $capH = Px 18
         $capX = $r.Right - (Px 10) - $capW
         $capY = $r.Y + [int](($r.Height - $capH) / 2)
@@ -1032,7 +1039,7 @@ function Show-Picker {
           $capPath.Dispose()
           $capRect = New-Object Drawing.RectangleF -ArgumentList @([single]$capX, [single]$capY, [single]$capW, [single]$capH)
           $inkBrush = New-Object Drawing.SolidBrush $capInk
-          $g.DrawString((Get-QuickKeyLabel $offset), $fSmall, $inkBrush, $capRect, $sfCenter)
+          $g.DrawString(('Ctrl+' + (Get-QuickKeyLabel $offset)), $fSmall, $inkBrush, $capRect, $sfCenter)
           $inkBrush.Dispose()
         }
       })
@@ -1201,11 +1208,11 @@ function Show-Picker {
         Size-List
         Sync-Sb
         Update-List ''
-        # deliberately no Activate() and no focus on the search box: the panel appears
-        # without taking the caret away from the window the user is typing in. Clicking the
-        # list, the box or the icon focuses it; the first click also activates the window.
-        # The box still shows its active look (accent underline) right away so the panel
-        # reads as ready for typing - SearchFocus is only the paint state, not the caret.
+        # The panel owns the keyboard on purpose, the way the shell's Win+V / Win+. panels
+        # do: the caret lands in the search box, so typing filters immediately. Nobody is
+        # left without a caret - the foreground goes back to the previous window when the
+        # panel closes (see the SetForegroundWindow right after the message loop).
+        $txt.Focus()
         $script:SearchFocus = $true
         $box.Invalidate()
         Write-Log ('picker: shown ' + $script:Theme + '/' + $script:UiFamily + ' items=' + $script:Entries.Count + ' scale=' + $script:UiScale + ' size=' + $form.Width + 'x' + $form.Height + ' at ' + $form.Left + ',' + $form.Top)
@@ -1221,29 +1228,41 @@ function Show-Picker {
         if ($form.IsDisposed) { return }
         $script:PickerGeo = @{ W = $form.Width; H = $form.Height; L = $form.Left; T = $form.Top }
       })
+    $form.Add_Activated({
+        # Show() activates the form, but the control that takes the caret is decided when
+        # the window really becomes active - this is what makes typing filter immediately
+        if (-not $txt.Focused) { $txt.Focus() }
+      })
     $form.Add_Deactivate({
         $script:CtrlHeld = $false
         if (((Get-Date) - $script:ShownAt).TotalMilliseconds -gt 450) { $form.Close() }
       })
 
-    # Non-modal on purpose: ShowDialog always activates the window, and the panel must not
-    # steal the caret. FluentForm.ShowWithoutActivation keeps the foreground where it was;
-    # this loop pumps messages until the panel closes itself.
+    # Non-modal on purpose: ShowDialog would block this message pump. The form activates
+    # (that is what puts the caret in the search box) and the loop runs until it closes.
+    $form.ActiveControl = $txt
     $form.Show()
-    # HWND_TOPMOST with SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE: on top of the other
-    # windows but the foreground window and its caret stay where the user left them.
+    # a hotkey carries the right to take the foreground with it; Activate() makes sure the
+    # window is also the active one in its own thread before the caret is placed
+    $form.Activate()
+    # HWND_TOPMOST with SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE: on top of the other windows
+    # without touching the activation state Show() just established.
     [void][Cb.Win]::SetWindowPos($form.Handle, [IntPtr](-1), 0, 0, 0, 0, 0x13)
     while (-not $form.IsDisposed) {
       [Windows.Forms.Application]::DoEvents()
       if ($script:PickerClose) { $form.Close(); break }
-      # never activated: a click somewhere else is the "dismiss" gesture. Once the user has
-      # clicked inside, Add_Deactivate handles it instead.
+      # safety net: if activation never happened (Show() refused), a click elsewhere is the
+      # dismiss gesture; once the panel did activate, Add_Deactivate handles it instead.
       if (-not $form.ContainsFocus -and ((Get-Date) - $script:ShownAt).TotalMilliseconds -gt 350) {
         $fg = [Cb.Win]::GetForegroundWindow()
         if ($fg -ne $form.Handle -and $fg -ne $prev) { $form.Close(); break }
       }
       Start-Sleep -Milliseconds 12
     }
+
+    # hand the foreground back to whoever had it: Windows restores that window's own last
+    # focus control on SetForegroundWindow, so the user carries on typing where they were
+    if ($prev -ne [IntPtr]::Zero) { [void][Cb.Win]::SetForegroundWindow($prev) }
 
     if ($script:SaveWinSize -or $script:SaveWinPos) {
       try {

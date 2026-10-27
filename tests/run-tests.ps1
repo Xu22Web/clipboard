@@ -205,21 +205,21 @@ try {
     $rootHits = ([regex]::Matches([IO.File]::ReadAllText($entryPath), '(?m)^\$Root = Split-Path -Parent \$PSCommandPath\s*$')).Count
     Check 'struct' 'tool root is computed once, in the entry' ($rootHits -eq 1) ([string]$rootHits + ' occurrence(s)')
 
-    # the panel must appear without taking the caret away from the window the user is
-    # typing in: ShowDialog and Activate both steal it, and assigning the TopMost property
-    # makes WinForms raise the window through SetWindowPos without SWP_NOACTIVATE
+    # the panel takes the keyboard on purpose (Win+V style) and hands the foreground back
+    # when it closes: ShowDialog would block the message loop, and opting out of activation
+    # (ShowWithoutActivation) would leave the search box unreachable by keyboard
     $pickerText = [IO.File]::ReadAllText((Join-Path $libPath 'picker.ps1'))
-    Check 'struct' 'panel never activates itself' (-not ($pickerText -match '\$form\.Activate\(')) 'form.Activate found'
     Check 'struct' 'panel is shown without ShowDialog' (-not ($pickerText -match '\$form\.ShowDialog\(')) 'form.ShowDialog found'
     $topHits = ([regex]::Matches($pickerText, '(?m)^\s*\$form\.TopMost\s*=')).Count
     Check 'struct' 'panel is raised without the TopMost property' ($topHits -eq 0) ([string]$topHits + ' assignment(s)')
     $showHits = ([regex]::Matches($pickerText, '(?m)^\s*\$form\.Show\(\)\s*$')).Count
     Check 'struct' 'panel is shown once, non-modally' ($showHits -eq 1) ([string]$showHits + ' call(s)')
     $winText = [IO.File]::ReadAllText((Join-Path $libPath 'util.ps1'))
-    Check 'struct' 'the panel form declares ShowWithoutActivation' ($winText -match 'ShowWithoutActivation') 'override missing'
+    Check 'struct' 'the panel form does not opt out of activation' (-not ($winText -match 'ShowWithoutActivation')) 'override present'
+    Check 'struct' 'panel hands the foreground back when it closes' ($pickerText -match 'SetForegroundWindow\(\$prev\)') 'restore call missing'
 
-    # the Shown handler must not move the keyboard: the box keeps its active look through
-    # the SearchFocus paint state, the caret arrives only when the user clicks
+    # the Shown handler puts the caret in the search box (typing filters right away) and
+    # paints it active so the state is visible even before the first keystroke
     $tk = $null
     $pe = $null
     $pickerAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $libPath 'picker.ps1'), [ref]$tk, [ref]$pe)
@@ -235,7 +235,7 @@ try {
       if ($text -match '\.Focus\(') { $shownFocus++ }
       if ($text -match 'SearchFocus\s*=\s*\$true') { $shownPaint++ }
     }
-    Check 'struct' 'the Shown handler takes no keyboard focus' ($shownBlocks.Count -eq 1 -and $shownFocus -eq 0) ([string]$shownBlocks.Count + ' handler(s), ' + [string]$shownFocus + ' Focus call(s)')
+    Check 'struct' 'the Shown handler puts the caret in the search box' ($shownBlocks.Count -eq 1 -and $shownFocus -ge 1) ([string]$shownBlocks.Count + ' handler(s), ' + [string]$shownFocus + ' Focus call(s)')
     Check 'struct' 'the Shown handler paints the search box active' ($shownPaint -eq 1) ([string]$shownPaint + ' mark(s)')
   }
 
@@ -937,6 +937,27 @@ try {
         $bmp.Dispose()
       }
       Check 'unit' 'drawing helpers run on a plain bitmap' $drawOk $drawErr
+
+      # one hint pair reaches the function flattened by PowerShell's list handling; it must
+      # still be drawn as [Esc] Close instead of three single-character chips
+      $flatOk = $true
+      $flatErr = ''
+      $bmp2 = New-Object Drawing.Bitmap 240, 48
+      $gfx2 = [Drawing.Graphics]::FromImage($bmp2)
+      try {
+        Draw-KeyChips $gfx2 4 18 @('Esc', 'Close') ([Drawing.Color]::Gray) ([Drawing.Color]::DimGray) 240
+        $col = $bmp2.GetPixel(8, 18)
+        if ($col.R -eq 0 -and $col.G -eq 0 -and $col.B -eq 0) { throw 'nothing was drawn' }
+      }
+      catch {
+        $flatOk = $false
+        $flatErr = $_.Exception.Message
+      }
+      finally {
+        $gfx2.Dispose()
+        $bmp2.Dispose()
+      }
+      Check 'unit' 'a flattened single hint pair still draws a chip' $flatOk $flatErr
     }
 
   # --------------------------------------------------------- integration tests

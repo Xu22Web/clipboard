@@ -50,11 +50,10 @@ namespace Cb {
   }
   public class FluentForm : System.Windows.Forms.Form {
     public FluentForm() { DoubleBuffered = true; }
-    // The panel is shown through Show() with the message loop pumped by lib/picker.ps1
-    // (ShowDialog always activates). Setting the TopMost property would still activate the
-    // window - WinForms raises it through SetWindowPos without SWP_NOACTIVATE - so the
-    // picker puts the form on top with an explicit no-activate SetWindowPos call instead.
-    protected override bool ShowWithoutActivation { get { return true; } }
+    // The panel takes the keyboard on purpose, the way the shell's Win+V / Win+. panels do:
+    // Show() activates it and lib/picker.ps1 puts the caret in the search box. Whatever was
+    // in front gets the foreground back with SetForegroundWindow when the panel closes, and
+    // Windows then restores that window's own last focus control by itself.
     protected override System.Windows.Forms.CreateParams CreateParams {
       get { var cp = base.CreateParams; cp.ClassStyle |= 0x00020000; return cp; }
     }

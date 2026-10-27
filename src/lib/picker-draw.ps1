@@ -56,7 +56,15 @@ function Draw-KeyChips($g, [int]$x, [int]$cy, $pairs, $keyColor, $actionColor, [
   $ui = Get-UiPalette
   $chipH = Px 18
   $big = New-Object Drawing.SizeF -ArgumentList @(1000, 100)
-  foreach ($p in @($pairs)) {
+  # a caller that returns one pair from a function gets it flattened by PowerShell's list
+  # handling, so ['Esc','Close'] arrives instead of [['Esc','Close']]. Re-pair flat strings.
+  $list = @($pairs)
+  if ($list.Count -gt 0 -and $list[0] -is [string]) {
+    $repaired = @()
+    for ($i = 0; ($i + 1) -lt $list.Count; $i += 2) { $repaired += ,@([string]$list[$i], [string]$list[$i + 1]) }
+    $list = $repaired
+  }
+  foreach ($p in $list) {
     $key = [string]$p[0]
     $act = [string]$p[1]
     $kw = [single]$g.MeasureString($key, $font, $big, $formats.Seg).Width
