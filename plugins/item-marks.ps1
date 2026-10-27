@@ -40,13 +40,28 @@
   Settings      = [ordered]@{
     MaxPins          = @{ Kind = 'int'; Min = 0; Max = 1000; Default = 50; Desc = 'pinned entry cap, 0 = unlimited' }
     ClearKeepsPinned = @{ Kind = 'bool'; Default = 1; Desc = '1 = clear keeps pinned rows, 0 = clear wipes them too' }
+    # the row highlight is a plugin setting of its own; left empty it follows the theme's
+    # [item-marks] section, which stays an independent, theme-side default
+    HighlightColor   = @{ Kind = 'color'; Default = ''; Desc = 'highlight ink; empty = the theme [item-marks] EmphasisInk' }
+    HighlightBg      = @{ Kind = 'color'; Default = ''; Desc = 'highlight fill; empty = the theme [item-marks] EmphasisFill' }
   }
   ThemeSettings = [ordered]@{
     StarGlyph      = @{ Kind = 'string'; Default = [string][char]0xE735; Desc = 'glyph shown for a starred entry' }
     StarColor      = @{ Kind = 'color'; Default = '#FFC86E'; Desc = 'colour of the star mark' }
     PinColor       = @{ Kind = 'color'; Default = ''; Desc = 'colour of the pin mark, empty = theme Mark colour' }
-    HighlightColor = @{ Kind = 'color'; Default = '#FFE08A'; Desc = 'text colour of a highlighted row' }
-    HighlightBg    = @{ Kind = 'color'; Default = '#26FFC86E'; Desc = 'background of a highlighted row, empty = none' }
+    EmphasisInk    = @{ Kind = 'color'; Default = '#9FDDFF'; Desc = 'ink of an emphasised row (an ini key may override it)' }
+    EmphasisFill   = @{ Kind = 'color'; Default = '#3360CDFF'; Desc = 'fill of an emphasised row (an ini key may override it)' }
+  }
+  # effective highlight colours: the ini key wins, an empty one follows the theme
+  HighlightInk  = {
+    $v = [string](Get-PluginSetting 'item-marks' 'HighlightColor')
+    if (-not $v) { $v = [string](Get-PluginTheme 'item-marks' 'EmphasisInk') }
+    return $v
+  }
+  HighlightFill = {
+    $v = [string](Get-PluginSetting 'item-marks' 'HighlightBg')
+    if (-not $v) { $v = [string](Get-PluginTheme 'item-marks' 'EmphasisFill') }
+    return $v
   }
   # the pin cap spans several rows, so it runs as one pass over the whole record list
   TrimPins      = {
@@ -128,16 +143,19 @@
       $star = Get-PluginTheme 'item-marks' 'StarGlyph'
       $starColor = Get-PluginTheme 'item-marks' 'StarColor'
       $pinColor = Get-PluginTheme 'item-marks' 'PinColor'
-      $ink = Get-PluginTheme 'item-marks' 'HighlightColor'
-      $bg = Get-PluginTheme 'item-marks' 'HighlightBg'
+      $ink = [string](& (Get-PluginData 'item-marks' 'HighlightInk'))
+      $bg = [string](& (Get-PluginData 'item-marks' 'HighlightFill'))
+      # say where the highlight colours come from: the ini key wins, the theme fills in
+      $inkSrc = $(if ((Get-PluginSetting 'item-marks' 'HighlightColor')) { 'ini' } else { 'theme' })
+      $bgSrc = $(if ((Get-PluginSetting 'item-marks' 'HighlightBg')) { 'ini' } else { 'theme' })
       # code points, not the glyphs themselves: a console without the icon font shows
       # boxes, and this command exists to be read in a console
       $starCode = $(if ($star) { 'U+' + ([int][char]$star).ToString('X4') } else { '(none)' })
       $pinFont = $(if ((Get-IconGlyph 0xE718) -eq '*') { "plain '*'" } else { 'icon font' })
       Write-Host ('pin glyph     : U+E718   ' + $pinFont + '   colour ' + $(if ($pinColor) { $pinColor } else { '(theme mark)' }))
       Write-Host ('star glyph    : ' + $starCode + '   colour ' + $(if ($starColor) { $starColor } else { '(theme mark)' }))
-      Write-Host ('highlight ink : ' + $(if ($ink) { $ink } else { '(none)' }) + '   (text of a highlighted row)')
-      Write-Host ('highlight bg  : ' + $(if ($bg) { $bg } else { '(none)' }) + '   (fill of a highlighted row)')
+      Write-Host ('highlight ink : ' + $(if ($ink) { $ink } else { '(none)' }) + '   (' + $inkSrc + ')')
+      Write-Host ('highlight bg  : ' + $(if ($bg) { $bg } else { '(none)' }) + '   (' + $bgSrc + ')')
       Write-Host 'selection bar : theme accent (the row you are on, not a mark)'
     }
   }
@@ -235,9 +253,9 @@
     }
     if ($marks.Count -gt 0) { $d['Marks'] = $marks }
     if (Test-Mark $rec 'h') {
-      $ink = Get-PluginTheme 'item-marks' 'HighlightColor'
+      $ink = [string](& (Get-PluginData 'item-marks' 'HighlightInk'))
       if ($ink) { $d['TextColor'] = $ink }
-      $bg = Get-PluginTheme 'item-marks' 'HighlightBg'
+      $bg = [string](& (Get-PluginData 'item-marks' 'HighlightFill'))
       if ($bg) { $d['BackColor'] = $bg }
     }
     if ($d.Count -gt 0) { return $d }

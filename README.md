@@ -15,11 +15,11 @@ Windows 10 / 11 上的轻量剪贴板历史工具，单文件 PowerShell 脚本�
 ## 功能
 
 - Win11 Fluent 自绘界面：40 px 行高、分层底色、圆角行高亮 + 强调色指示条、带描边的按键胶囊、搜索框聚焦下划线、悬停变宽的细滚动条
-- 图标优先 `Segoe Fluent Icons`（Win11），退回 `Segoe MDL2 Assets`（Win10）；基础行只区分**文本**与**文件列表**，更细的类型分析由 [`entry-actions`](plugins/entry-actions.md) 提供
+- 行图标由类型插件提供（[`entry-actions`](plugins/entry-actions.md) 按链接 / 路径 / 代码 / 多行等给图标）；不启用插件时行首没有图标，文字从行首开始
 - 后台轮询剪贴板，保存最近 N 条文本（默认 300 条 / 单条 200 KB / 合计 4 MB）
 - 全局热键呼出搜索面板（默认 `Ctrl+Alt+V`），边打字边过滤，回车直接粘贴回原窗口
 - Explorer 里复制的**文件列表**也能捕获（CF_HDROP），可原样粘回
-- 全键盘操作：`↑` `↓` `Home` `End`、`Ctrl+0..9` 按**当前可见行**快速选取、`Del` 删除、`Ctrl+Z` 撤销、`Esc` 清空搜索
+- 全键盘操作：`↑` `↓` `Home` `End`、`Ctrl+1..9` / `Ctrl+0` 按**当前可见行**快速选取、`Del` 删除、`Ctrl+Z` 撤销、`Esc` 清空搜索
 - 长文本按行宽省略（`…`），悬停时用提示显示全文；搜索命中的关键词高亮
 - 每条带类型图标与相对时间（`now` / `5m` / `3h` / `2d` / `10-24`）
 - 右键菜单作用于**鼠标下的那一行**，带快捷键提示，插件可向菜单、面板按键与行样式注册自己的条目
@@ -90,14 +90,14 @@ Git Bash / MSYS2 下直接 `./clipboard`，CMD 下 `clipboard.cmd`。
 | `Home` / `End` | 跳到第一条 / 最后一条 |
 | `Enter` | 把选中条目粘到原来的窗口 |
 | `Ctrl+Enter` | 只写入剪贴板，不自动粘贴 |
-| `Ctrl+0..9` | 选取**当前可见**的前 0~9 行；编号显示在行尾，滚动后从 0 重新编号 |
+| `Ctrl+1..9` / `Ctrl+0` | 选取**当前可见**的第 1~9 / 10 行；编号显示在行尾，与小键盘位置一致（第 10 行是 `0`），滚动后从 `1` 重新编号 |
 | `Del` / `Ctrl+Z` | 删除选中项 / 撤销上一次删除 |
 | `Esc` | 有搜索词时清空搜索，空搜索时关闭面板 |
 | 拖动标题区 / 右下角手柄 | 移动面板 / 缩放面板（手柄悬停时才显示） |
 
 插件可以自己往面板里加按键（`PanelKeys`）：`item-marks` 加 `Ctrl+P` / `Ctrl+S` / `Ctrl+H`，`entry-actions` 加 `Ctrl+O`，按键会出现在 `clipboard help` 的 Panel keys 里并标明来源插件。
 
-底部提示做成带描边的按键胶囊，并且会随状态切换：默认是 `Enter` Paste · `Ctrl+Enter` Copy only · `Del` Delete · `Esc` Close，按住 `Ctrl` 变成 `0-9` Pick · `Enter` Copy only · `Z` Undo（启用 `item-marks` 时额外有 `P` Pin / `S` Star / `H` Mark）；列表为空时只保留 `Esc` Close。删除 / 置顶 / 清空后短暂显示操作结果。
+底部提示做成带描边的按键胶囊，并且会随状态切换：默认是 `Enter` Paste · `Ctrl+Enter` Copy only · `Del` Delete · `Esc` Close，按住 `Ctrl` 变成 `1-9,0` Pick · `Enter` Copy only · `Z` Undo（启用 `item-marks` 时额外有 `P` Pin / `S` Star / `H` Mark）；列表为空时只保留 `Esc` Close。删除 / 置顶 / 清空后短暂显示操作结果。
 
 ## 配置
 
@@ -126,7 +126,7 @@ Git Bash / MSYS2 下直接 `./clipboard`，CMD 下 `clipboard.cmd`。
 | `SaveWindowSize` | `0` | `1` = 关闭面板时把缩放后的尺寸写回 ini |
 | `SaveWindowPos` | `0` | `1` = 关闭面板时把当前位置写回 ini |
 | `ShowTime` | `1` | `1` = 显示相对时间列 |
-| `ShowTypeIcon` | `1` | `1` = 显示条目类型图标 |
+| `ShowTypeIcon` | `1` | `1` = 显示插件给的行图标；没有插件时本来就没有图标 |
 | `Highlight` | `1` | `1` = 高亮搜索命中 |
 | `HighlightMaxBytes` | `8192` | 超过该大小的条目不参与高亮（`0` = 总是高亮） |
 | `ShowNewlineMarker` | `1` | `1` = 换行显示为 ` <NL> `，`0` = 折成空格 |
@@ -233,7 +233,7 @@ Plugins=item-marks,entry-actions
 
 | 层 | 位置 | 职责 |
 |---|---|---|
-| 基础 | `clipboard.ps1` | 设置读取、记录存储与标记机制、捕获循环、条目粗分类与行图标、面板绘制与交互、热键、粘贴注入、CLI |
+| 基础 | `clipboard.ps1` | 设置读取、记录存储与标记机制、捕获循环、面板绘制与交互、热键、粘贴注入、CLI |
 | 加载层 | `lib/plugins.ps1` | `Load-Plugins`（白名单）/ 命令与菜单 / 面板按键 / 标记注册（`Get-PluginMarks`、`Get-PluginProtectedMarks`、`Get-PluginSortMark`、`Get-PluginClearKeeps`）/ 行装饰 / 设置与主题，全部带内置回退 |
 | 加载层 | `lib/themes.ps1` | 主题发现 / 校验 / 颜色解析 / `Apply-Theme` |
 | 扩展 | `plugins/*.ps1` | 每个文件返回一个哈希表，声明命令、右键项、面板按键、行图标、标记与设置 |
@@ -248,8 +248,7 @@ Plugins=item-marks,entry-actions
 | `CommandHelp` / `CommandOrder` | 否 | 每个命令的一行说明（`clipboard help` 用）/ 打印顺序 |
 | `ContextMenu` | 否 | `@( @{ Label = '...'; Test = { param($rec) ... }; Invoke = { param($rec) ... } } )`，右键菜单项；`Test` 返回 `$false` 时不显示 |
 | `PanelKeys` | 否 | `@( @{ Key = 'O'; Ctrl = $true; Label = '...'; Test = ...; Invoke = ... } )`，面板按键；不会覆盖基础按键 |
-| `Glyphs` | 否 | `@{ text = [string][char]0xE8A5 }`，条目类型 → 行图标（纯数据，最稳）；键限于基础层的 `text` / `files` / `empty` |
-| `TypeGlyph` | 否 | `{ param($payload) ... }`，需要动态判断时用；`Glyphs` 优先 |
+| `TypeGlyph` | 否 | `{ param($payload) ... }`，条目 → 行图标（返回空 = 该行不画图标）；第一个给出非空值的插件胜出 |
 | `Settings` | 否 | 自己的配置项（`clipboard.ini`），`[ordered]@{ Key = @{ Kind = 'bool'; Default = 0; Desc = '...' } }` |
 | `ThemeSettings` | 否 | 外观项，**不是 ini 键**：主题用同名段（如 `[item-marks]`）重写 |
 | `Tick` / `Transform` | 否 | 常驻循环任务（`@{ Seconds; Action }`，`Seconds` 可写脚本块，所以间隔能跟随自己的设置）/ 粘贴前改写 |
@@ -278,14 +277,14 @@ Plugins=item-marks,entry-actions
 |---|---|
 | 加载完成一次 | `Init` |
 | 命令行 | `Commands` + `CommandHelp` + `CommandOrder` |
-| 面板加载 / 按键 | `PanelKeys`、`ContextMenu`、`RowDecor`、`Glyphs` / `TypeGlyph` |
+| 面板加载 / 按键 | `PanelKeys`、`ContextMenu`、`RowDecor`、`TypeGlyph` |
 | 粘贴前 | `Transform` |
 | 常驻循环 | `Tick` |
 | 配置 / 标记规则 | `Settings`（ini）、`ThemeSettings`（主题）、`Marks` / `SortMark` / `ClearKeeps`（标记） |
 
-基础按键（`Enter` / `Ctrl+Enter` / `Ctrl+0..9` / `Del` / `Ctrl+Z` / `Esc` / 翻页）永远优先，插件按键只在都不匹配时才会被询问。
+基础按键（`Enter` / `Ctrl+Enter` / `Ctrl+1..9` / `Ctrl+0` / `Del` / `Ctrl+Z` / `Esc` / 翻页）永远优先，插件按键只在都不匹配时才会被询问。
 
-基础的 `Get-EntryKind` 只回答“文本还是文件列表”，行图标也只有这两类；更细的类型（链接、路径、代码、多行…）由插件自己判断，例如 `entry-actions` 的 `kind`。想换图标时用 `Glyphs` / `TypeGlyph`，其中 `Glyphs` 的键就是 `text` / `files` / `empty`。
+基础的 `Get-EntryKind` 只回答“文本还是文件列表”（存储、行内容与粘贴往返用），**基础层不画任何行图标**：图标完全由插件通过 `TypeGlyph` 提供，返回空就不画，文字也从行首开始。`entry-actions` 就是靠它按类型给图标的，所以要图标就启用它。
 
 `Settings` 与 `ThemeSettings` 是两个不同通道，不要混：
 
@@ -296,6 +295,8 @@ Plugins=item-marks,entry-actions
 | 谁改 | 用户（`config set`） | 主题作者 |
 | 适合 | 行为开关（模式、是否启用） | 颜色、字形、强调样式 |
 | 读取 | `Get-PluginSetting 'x' 'Key'` | `Get-PluginTheme 'x' 'Key'` |
+
+两者也可以叠在一起用：插件把一个外观项同时声明成 `Settings` 键（默认空）和 `ThemeSettings` 项，并在自己代码里写成「ini 有值就用 ini，否则用主题」。`item-marks` 的高亮色就是这样：`item-marks.HighlightColor` 覆盖主题 `[item-marks]` 的 `EmphasisInk`（主题侧只描述"被强调的行"，不叫高亮），ini 留空则跟随主题。
 
 `ThemeSettings` 不会被写进 `clipboard.ini`，`config` 里也看不到（它不是用户可以改的东西）；优先级是插件 `Default` < 主题 ini 段（只对该主题生效），值同样按 `Kind` 校验。
 
@@ -416,7 +417,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run-tests.ps1
 
 | 组 | 开关 | 覆盖内容 |
 |---|---|---|
-| 单元 | `-Unit` | 纯函数与存储层：`Parse-Hotkey`、`Format-Item`/`Get-ItemLabel`、`Read-Ini`/`Write-IniTemplate`/`Set-IniKey`、`Convert-IniValue`（类型与范围校验）、`Apply-Config`、记录往返与未知格式忽略、置顶与裁剪、`Get-QuickKeyIndex`、`Get-VisibleRowCount`、`Get-PickerBounds`、`Get-HitMarks`、`Get-EntryKind` 文本 / 文件分类与基础行图标、主题（发现 / 别名 / 颜色解析 / 两套调色板 / 未知主题回退）、插件白名单（空列表=不加载 / 大小写不敏感 / 未列出的文件不执行 / 未找到名字上报 / 无 `Name` 与抛异常的文件被忽略 / 命令与右键项 / 插件设置项）。通过 `-Library` dot-source 主脚本，不触发命令分发 |
+| 单元 | `-Unit` | 纯函数与存储层：`Parse-Hotkey`、`Format-Item`/`Get-ItemLabel`、`Read-Ini`/`Write-IniTemplate`/`Set-IniKey`、`Convert-IniValue`（类型与范围校验）、`Apply-Config`、记录往返与未知格式忽略、标记与保护规则、`Get-QuickKeyIndex` / 数字键位置、`Get-VisibleRowCount`、`Get-PickerBounds`、`Get-HitMarks`、`Get-EntryKind`（文本 / 文件列表）、行图标（无插件时为空、插件 `TypeGlyph` 生效）、主题（发现 / 别名 / 颜色解析 / 两套调色板 / 未知主题回退）、插件白名单与各个共享块。通过 `-Library` dot-source 主脚本，不触发命令分发 |
 | 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put`/`get`/`list`/`pick`/`del`/`clear`/`clear -All`/`pause`/`resume`/`status`/`themes`/`config get`/`config set`/`config init`/`diag`、主题切换与非法主题名拒绝、插件默认关闭与 `Plugins=` 开启、插件命令（`pin`/`star`/`kind`/`kinds`/`open`/`transform`/`sweep`/`marks`）、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝 |
 | 端到端 | `-E2E` | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启循环 |
 

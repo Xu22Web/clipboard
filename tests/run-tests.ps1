@@ -314,6 +314,13 @@ try {
     Check 'unit' 'QuickKey past the end' ((Get-QuickKeyIndex 9 15 20 10) -eq -1) ''
     Check 'unit' 'QuickKey beyond visible rows' ((Get-QuickKeyIndex 9 0 20 8) -eq -1) ''
     Check 'unit' 'QuickKey only 0-9' ((Get-QuickKeyIndex 10 0 20 10) -eq -1) ''
+    Check 'unit' 'QuickKey label: nine rows read 1-9' (((0..8 | ForEach-Object { Get-QuickKeyLabel $_ }) -join '') -eq '123456789') ((0..8 | ForEach-Object { Get-QuickKeyLabel $_ }) -join '')
+    Check 'unit' 'QuickKey label: tenth row reads 0' ((Get-QuickKeyLabel 9) -eq '0') (Get-QuickKeyLabel 9)
+    Check 'unit' 'QuickKey label: out of range is empty' ((Get-QuickKeyLabel 10) -eq '') ''
+    Check 'unit' 'QuickKey digit maps to the keypad row' (((0..9 | ForEach-Object { Get-QuickKeyOffset $_ }) -join ',') -eq '9,0,1,2,3,4,5,6,7,8') ((0..9 | ForEach-Object { Get-QuickKeyOffset $_ }) -join ',')
+    Check 'unit' 'QuickKey digit out of range' ((Get-QuickKeyOffset 12) -eq -1) ''
+    Check 'unit' 'QuickKey digit 0 picks the tenth row' ((Get-QuickKeyIndex (Get-QuickKeyOffset 0) 0 20 10) -eq 9) ''
+    Check 'unit' 'QuickKey digit 1 picks the first row' ((Get-QuickKeyIndex (Get-QuickKeyOffset 1) 4 20 10) -eq 4) ''
 
     $areas = @(
       [pscustomobject]@{ Left = 0; Top = 0; Width = 1920; Height = 1080 },
@@ -407,15 +414,16 @@ try {
     Check 'unit' 'Get-EntryKind files' ((Get-EntryKind (([string][char]1) + 'C:\a.txt')) -eq 'files') ''
     Check 'unit' 'Get-EntryKind empty' ((Get-EntryKind '') -eq 'empty') ''
 
-    # no plugin must still render a row
+    # no plugin means no row icon at all: typing an entry is a plugin's job
     $script:Plugins = @()
-    Check 'unit' 'row glyph fallback' ((Get-RowGlyph 'https://a.b/c') -eq $script:Glyphs.Text) (Get-RowGlyph 'https://a.b/c')
+    Check 'unit' 'no plugin means no row icon' ((Get-RowGlyph 'https://a.b/c') -eq '') (Get-RowGlyph 'https://a.b/c')
+    Check 'unit' 'no plugin means no icon for a file list' ((Get-RowGlyph (([string][char]1) + 'C:\a.txt')) -eq '') ''
 
     # ------------------------------------------------- plugin loader (opt-in only)
     $pdir = Join-Path $unitDir 'plugins'
     New-Item -ItemType Directory -Path $pdir -Force | Out-Null
     [IO.File]::WriteAllLines((Join-Path $pdir 'one.ps1'), @(
-        "@{ Name = 'one'; Description = 'test'; Glyphs = @{ text = 'L' };"
+        "@{ Name = 'one'; Description = 'test'; TypeGlyph = { param(`$p) 'L' };";
         "   Settings = [ordered]@{ Flag = @{ Kind = 'bool'; Default = 0; Desc = 'test flag' };"
         "     Tint = @{ Kind = 'color'; Default = '#000000'; Themeable = `$true; Desc = 'themeable tint' } };"
         "   Commands = @{ 'hi' = { param(`$v) Write-Host ('hi ' + `$v) } };"
@@ -461,13 +469,13 @@ try {
     Check 'unit' 'Init hook does not repeat' ($global:cbInitRan -eq 0) ([string]$global:cbInitRan)
     $global:cbInitRan = 0
     Check 'unit' 'Test-PluginAction non-hashtable' (-not (Test-PluginAction 'x' $rec)) ''
-    Check 'unit' 'plugin glyph map wins' ((Get-EntryGlyph 'https://a.b/c') -eq 'L') (Get-EntryGlyph 'https://a.b/c')
+    Check 'unit' 'plugin glyph block wins' ((Get-EntryGlyph 'https://a.b/c') -eq 'L') (Get-EntryGlyph 'https://a.b/c')
 
-    # the base tool maps every kind on its own, no plugin required
+    # the base never paints an icon of its own
     $script:Plugins = @()
-    Check 'unit' 'base glyph: text' ((Get-RowGlyph 'https://a.b/c') -eq $script:Glyphs.Text) (Get-RowGlyph 'https://a.b/c')
-    Check 'unit' 'base glyph: text for code' ((Get-RowGlyph 'function Foo { 1 }') -eq $script:Glyphs.Text) (Get-RowGlyph 'function Foo { 1 }')
-    Check 'unit' 'base glyph: files' ((Get-RowGlyph (([string][char]1) + 'C:\a.txt')) -eq $script:Glyphs.Files) ''
+    Check 'unit' 'base glyph: none for text' ((Get-RowGlyph 'https://a.b/c') -eq '') (Get-RowGlyph 'https://a.b/c')
+    Check 'unit' 'base glyph: none for code' ((Get-RowGlyph 'function Foo { 1 }') -eq '') (Get-RowGlyph 'function Foo { 1 }')
+    Check 'unit' 'base glyph: none for files' ((Get-RowGlyph (([string][char]1) + 'C:\a.txt')) -eq '') ''
 
     # the shipped plugin is opt-in and loads by file name
     Check 'unit' 'shipped plugin off by default' (@(Load-Plugins (Join-Path $repoRoot 'plugins') @()).Count -eq 0) ''
@@ -477,6 +485,8 @@ try {
     Check 'unit' 'shipped command: open' ((Get-PluginCommand 'open') -is [scriptblock]) ''
     Check 'unit' 'shipped command: kind' ((Get-PluginCommand 'kind') -is [scriptblock]) ''
     Check 'unit' 'shipped panel key: Ctrl+O' ($null -ne (Get-PluginPanelKey 'O' $true $false $false)) ''
+    Check 'unit' 'entry-actions supplies a row icon' ((Get-RowGlyph 'https://a.b/c') -ne '') (Get-RowGlyph 'https://a.b/c')
+    Check 'unit' 'entry-actions types a link before a path' ((Get-RowGlyph 'https://a.b/c') -ne (Get-RowGlyph 'C:\temp\a.txt')) ((Get-RowGlyph 'https://a.b/c') + ' vs ' + (Get-RowGlyph 'C:\temp\a.txt'))
 
     # -------------------------------------------------- plugin settings (own keys)
     $script:Plugins = @(Load-Plugins $pdir @('one'))
@@ -654,11 +664,27 @@ try {
     Apply-PluginSettings
     Apply-PluginTheme
     Check 'unit' 'theme restyles a plugin ThemeSetting' ((Get-PluginTheme 'item-marks' 'StarColor') -eq '#9D5D00') (Get-PluginTheme 'item-marks' 'StarColor')
-    Check 'unit' 'theme restyles the highlight ink' ((Get-PluginTheme 'item-marks' 'HighlightColor') -eq '#7A3E00') (Get-PluginTheme 'item-marks' 'HighlightColor')
+    Check 'unit' 'theme restyles the emphasis ink' ((Get-PluginTheme 'item-marks' 'EmphasisInk') -eq '#005FB8') (Get-PluginTheme 'item-marks' 'EmphasisInk')
     $hrec = [pscustomobject]@{ Payload = 'hi'; Time = 0; Marks = 'h' }
     $hdec = Get-PluginRowDecor $hrec
-    Check 'unit' 'highlight decor paints the text' ($hdec.TextColor -eq '#7A3E00') $hdec.TextColor
-    Check 'unit' 'highlight decor paints the background' ($hdec.BackColor -eq '#33FFB84D') $hdec.BackColor
+    Check 'unit' 'highlight decor paints the text' ($hdec.TextColor -eq '#005FB8') $hdec.TextColor
+    Check 'unit' 'highlight decor paints the background' ($hdec.BackColor -eq '#24005FB8') $hdec.BackColor
+
+    # the highlight colours are plugin settings; empty means "follow the theme"
+    Check 'unit' 'highlight ink is an ini key' ($script:IniSchema.Contains('item-marks.HighlightColor')) ''
+    Check 'unit' 'highlight fill is an ini key' ($script:IniSchema.Contains('item-marks.HighlightBg')) ''
+    Check 'unit' 'highlight settings default to empty' ((Get-PluginSetting 'item-marks' 'HighlightColor') -eq '') (Get-PluginSetting 'item-marks' 'HighlightColor')
+    [IO.File]::WriteAllLines($cfg, @('item-marks.HighlightColor=#123456', 'item-marks.HighlightBg=#99123456'), $Utf8)
+    $script:IniCache = $null
+    Apply-PluginSettings
+    $idec = Get-PluginRowDecor $hrec
+    Check 'unit' 'ini highlight ink wins over the theme' ($idec.TextColor -eq '#123456') $idec.TextColor
+    Check 'unit' 'ini highlight fill wins over the theme' ($idec.BackColor -eq '#99123456') $idec.BackColor
+    Check 'unit' 'theme value stays independent of the ini key' ((Get-PluginTheme 'item-marks' 'EmphasisInk') -eq '#005FB8') (Get-PluginTheme 'item-marks' 'EmphasisInk')
+    [IO.File]::WriteAllLines($cfg, @(), $Utf8)
+    $script:IniCache = $null
+    Apply-PluginSettings
+    Check 'unit' 'empty ini key follows the theme again' ((Get-PluginRowDecor $hrec).TextColor -eq '#005FB8') (Get-PluginRowDecor $hrec).TextColor
     $prec = [pscustomobject]@{ Payload = 'hi'; Time = 0; Marks = 'ps' }
     $pdec = Get-PluginRowDecor $prec
     Check 'unit' 'pin and star both become glyph marks' ($pdec.Marks.Count -eq 2) ($pdec.Marks.Count -as [string])

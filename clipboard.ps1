@@ -54,8 +54,6 @@ $script:Metric = @{
 $script:Glyphs = @{
   Search  = [string][char]0xE721
   Clear   = [string][char]0xE8BB
-  Text    = [string][char]0xE8A5
-  Files   = [string][char]0xE8B7
   History = [string][char]0xE81C
 }
 
@@ -865,6 +863,21 @@ function Get-QuickKeyIndex([int]$offset, [int]$topIndex, [int]$count, [int]$rows
   return $i
 }
 
+# key cap caption for a visible row: the first nine rows read 1..9 and the tenth reads 0,
+# so the digit under the finger is the one in the same place on a numeric keypad
+function Get-QuickKeyLabel([int]$offset) {
+  if ($offset -lt 0 -or $offset -gt 9) { return '' }
+  if ($offset -eq 9) { return '0' }
+  return [string]($offset + 1)
+}
+
+# the visible-row offset a digit means; -1 when the digit is out of range
+function Get-QuickKeyOffset([int]$digit) {
+  if ($digit -lt 0 -or $digit -gt 9) { return -1 }
+  if ($digit -eq 0) { return 9 }
+  return $digit - 1
+}
+
 # Where the panel should appear. A saved position is only honoured when the panel still
 # lands on a screen; otherwise centre on the monitor of the window we came from.
 function Get-PickerBounds([int]$w, [int]$h, [string]$rawLeft, [string]$rawTop, $areas, $fallback) {
@@ -915,11 +928,6 @@ function Get-EntryKind([string]$payload) {
   return 'text'
 }
 
-function Get-TypeGlyph([string]$payload) {
-  if ((Get-EntryKind $payload) -eq 'files') { return $script:Glyphs.Files }
-  return $script:Glyphs.Text
-}
-
 # a glyph from the icon font when this machine has one, else a plain-text fallback.
 # Plugins call this instead of inspecting IconFamily themselves.
 function Get-IconGlyph([int]$code, [string]$fallback = '*') {
@@ -927,8 +935,8 @@ function Get-IconGlyph([int]$code, [string]$fallback = '*') {
   return $fallback
 }
 
-# Row icon: a plugin may answer first, the built-in mapping is always the fallback,
-# so the panel keeps working with an empty (or missing) plugins folder.
+# Row icon: whatever a plugin asks for, and nothing otherwise. Typing an entry is a
+# plugin's job (entry-actions), so the base never paints an icon of its own.
 function Get-RowGlyph([string]$payload) {
   if (Get-Command Get-EntryGlyph -ErrorAction SilentlyContinue) {
     try {
@@ -936,7 +944,7 @@ function Get-RowGlyph([string]$payload) {
       if ($g) { return [string]$g }
     } catch { }
   }
-  return (Get-TypeGlyph $payload)
+  return ''
 }
 
 function Show-Picker {
@@ -1262,8 +1270,8 @@ function Show-Picker {
         return @(@('Esc', 'Close'))
       }
       if ($script:CtrlHeld) {
-        # 0-9 first, then whatever single-letter keys the plugins claimed (Ctrl+P pin ...)
-        $pairs = @(@('0-9', 'Pick'))
+        # digits first, then whatever single-letter keys the plugins claimed (Ctrl+P pin ...)
+        $pairs = @(@('1-9,0', 'Pick'))
         foreach ($pk in @($ctrlHints)) { $pairs += ,@([string]$pk.Key, [string]$pk.Hint) }
         $pairs += ,@('Enter', 'Copy only')
         $pairs += ,@('Z', 'Undo')
@@ -1897,7 +1905,10 @@ function Show-Picker {
         }
 
         $textX = $r.X + (Px 12)
-        if ($script:ShowTypeIcon -and $script:IconFamily) {
+        # the icon is drawn only when a plugin supplied one; without a typing plugin the
+        # row starts at the text and nothing is reserved for an icon
+        $rowGlyph = [string]$row.Glyph
+        if ($script:ShowTypeIcon -and $script:IconFamily -and $rowGlyph) {
           $glyphColor = $(if ($sel) { $ui.Text } else { $ui.Dim })
           if ($decor -and $decor.GlyphColor -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) {
             $gcc = Convert-ThemeColor $decor.GlyphColor
@@ -1905,7 +1916,6 @@ function Show-Picker {
           }
           $glyphBrush = New-Object Drawing.SolidBrush $glyphColor
           $glyphRect = New-Object Drawing.RectangleF -ArgumentList @([single]($r.X + (Px 10)), [single]$r.Y, [single](Px 20), [single]$r.Height)
-          $rowGlyph = [string]$row.Glyph
           $g.DrawString($rowGlyph, $fIcon, $glyphBrush, $glyphRect, $sfCenter)
           $glyphBrush.Dispose()
           $textX = $r.X + (Px 38)
@@ -1957,7 +1967,7 @@ function Show-Picker {
           $capPath.Dispose()
           $capRect = New-Object Drawing.RectangleF -ArgumentList @([single]$capX, [single]$capY, [single]$capW, [single]$capH)
           $inkBrush = New-Object Drawing.SolidBrush $capInk
-          $g.DrawString([string]$offset, $fSmall, $inkBrush, $capRect, $sfCenter)
+          $g.DrawString((Get-QuickKeyLabel $offset), $fSmall, $inkBrush, $capRect, $sfCenter)
           $inkBrush.Dispose()
         }
       })
@@ -2043,7 +2053,7 @@ function Show-Picker {
           $n = $code
           if ($n -ge 96) { $n = $n - 96 } else { $n = $n - 48 }
           Flush-List
-          $idx = Get-QuickKeyIndex $n $lst.TopIndex $script:Filtered.Count (Get-Rows)
+          $idx = Get-QuickKeyIndex (Get-QuickKeyOffset $n) $lst.TopIndex $script:Filtered.Count (Get-Rows)
           if ($idx -ge 0) { Use-Index $idx } else { Set-Foot 'No entry at that number' 1200 }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.Control -and $e.KeyCode -eq 'Z') {
@@ -2526,7 +2536,7 @@ $script:IniSchema = [ordered]@{
   SaveWindowSize    = @{ Kind = 'bool'; Default = 0;              Desc = '1 = write the resized panel back to this file' }
   SaveWindowPos     = @{ Kind = 'bool'; Default = 0;              Desc = '1 = write the moved panel back to this file' }
   ShowTime          = @{ Kind = 'bool'; Default = 1;              Desc = '1 = relative time column' }
-  ShowTypeIcon      = @{ Kind = 'bool'; Default = 1;              Desc = '1 = per entry type icon' }
+  ShowTypeIcon      = @{ Kind = 'bool'; Default = 1;              Desc = '1 = show the row icon a plugin provides (none without one)' }
   Highlight         = @{ Kind = 'bool'; Default = 1;              Desc = '1 = highlight search matches' }
   HighlightMaxBytes = @{ Kind = 'int'; Min = 0; Max = 1048576; Default = 8192; Desc = 'skip highlight above this size (0 = always)' }
   ShowNewlineMarker = @{ Kind = 'bool'; Default = 1;              Desc = '1 = show <NL> for line breaks, 0 = collapse to a space' }
@@ -2692,7 +2702,7 @@ function Write-IniTemplate([switch]$Force) {
     '# ---- panel behaviour ----',
     '# 1 = relative time column (now / 5m / 3h / 2d / 10-24)',
     'ShowTime=1',
-    '# 1 = per entry type icon (file / link / code / multiline)',
+    '# 1 = show the row icon a plugin provides (there is none without one)',
     'ShowTypeIcon=1',
     '# 1 = highlight the search matches',
     'Highlight=1',
@@ -3102,7 +3112,7 @@ function Show-Usage {
   Write-Host '  [list]'
   Write-Host '    Enter                paste the selected entry'
   Write-Host '    Ctrl+Enter           copy only, do not inject a paste'
-  Write-Host '    Ctrl+0..9            pick one of the visible rows'
+  Write-Host '    Ctrl+1-9 / Ctrl+0    pick one of the visible rows'
   Write-Host '    Del                  delete'
   Write-Host '    Ctrl+Z               undo the last delete'
   Write-Host '    Esc                  clear the search, a second Esc closes'

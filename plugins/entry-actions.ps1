@@ -6,7 +6,7 @@
 #   Ctrl+O, context menu  the same open, on the selected row
 #
 # The base only tells a file list from text (Get-EntryKind); the richer typing used by the
-# commands, the menu item and the Ctrl+O key lives here as the shared KindOf helper.
+# commands, the menu item, the Ctrl+O key and the row icon lives here as KindOf / TypeGlyph.
 #
 # Settings: entry-actions.Browser / Reveal / Detail / PreviewChars / Detect / ShowTargets
 #
@@ -14,7 +14,7 @@
 # variables created in this file's scope (that scope is gone when they run).
 @{
   Name         = 'entry-actions'
-  Description  = 'Inspect an entry (kind, size, target parts, sniffed format) and open links, paths and file lists'
+  Description  = 'Inspect an entry (kind, size, target parts, sniffed format), open links and paths, and give each row its icon'
   CommandOrder = @('kind', 'kinds', 'open')
   CommandHelp  = @{
     'kind'  = 'analyse entry N: kind, size, target parts and sniffed formats'
@@ -35,6 +35,26 @@
     if ($t.StartsWith('{') -or $t.StartsWith('[') -or $t.IndexOf(';') -ge 0 -or $t.IndexOf('{') -ge 0 -or $t -match '^(function|class|def|import|using|#include|const|let|var|public|private|package|select)\s') { return 'code' }
     if ($payload.IndexOf([char]10) -ge 0) { return 'multi' }
     return 'text'
+  }
+  # the row icon this plugin paints for each kind; without the icon font there is none
+  # (Get-IconGlyph turns the code point into either the glyph or the empty fallback)
+  TypeGlyph    = {
+    param($payload)
+    $k = [string](& (Get-PluginData 'entry-actions' 'KindOf') $payload)
+    $code = 0
+    switch ($k) {
+      'link' { $code = 0xE71B }
+      'mail' { $code = 0xE715 }
+      'path' { $code = 0xE8B7 }
+      'files' { $code = 0xE8B7 }
+      'code' { $code = 0xE943 }
+      'multi' { $code = 0xE7C3 }
+      'text' { $code = 0xE8A5 }
+      'empty' { $code = 0xE77F }
+    }
+    if ($code -eq 0) { return '' }
+    # the raw glyph: the panel only paints it when the icon font is present
+    return [string][char]$code
   }
   # ------------------------------------------------------------- shared behaviour
   # Which rows this plugin can act on, and the action itself. The context menu entry and

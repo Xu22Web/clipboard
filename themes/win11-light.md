@@ -28,7 +28,7 @@ clipboard config set Theme light    # dark / light 是别名，会写成完整�
 | `Mark` / `Warn` | `#9D5D00` / `#C42B1C` |
 | 字体族 | 空 = 自动（同 `win11-dark`） |
 | 字号 | Body 10.5 / Small 9 / Tiny 9 / Title 13 / Icon 12 / IconSmall 10 / IconBig 24 |
-| `[item-marks]` | `StarColor=#9D5D00`、`HighlightColor=#7A3E00` / `HighlightBg=#33FFB84D`（浅底上用更深的琥珀色才看得清） |
+| `[item-marks]` | `StarColor=#9D5D00`、`EmphasisInk=#005FB8` / `EmphasisFill=#24005FB8`（强调色本身 + 14% 蓝底） |
 
 浅色主题的叠层色是带 alpha 的**黑**，压在近白的 `Surface` 上形成同样的层次感。
 

@@ -70,6 +70,21 @@ $ clipboard open 4
 opened: https://example.com/docs/start
 ```
 
+## 行图标
+
+启用本插件后，行首会出现按类型区分的图标（`Segoe Fluent Icons`，Win10 退回 `Segoe MDL2 Assets`；没有图标字体时整个插件不画图标）：
+
+| 类型 | 图标 |
+|---|---|
+| `link` | 链接 |
+| `mail` | 邮件 |
+| `path` / `files` | 文件夹 |
+| `code` | 代码 |
+| `multi` | 多行 |
+| `text` | 文档 |
+
+图标由 `TypeGlyph` 提供，`ShowTypeIcon=0` 可以关掉它；不启用本插件时行首没有任何图标，文字从行首开始。
+
 ## 面板与右键
 
 | 位置 | 行为 |
@@ -107,7 +122,7 @@ clipboard config set entry-actions.Reveal 0
 
 ## 说明
 
-- 基础工具只区分**文本**与**文件列表**（`Get-EntryKind`，用于存储、行图标与粘贴往返）；本插件自带更细的分类器（`KindOf`），命令、右键与 `Ctrl+O` 都用它判断条目类型，不存在第二份分类规则。
+- 基础工具只区分**文本**与**文件列表**（`Get-EntryKind`，用于存储与粘贴往返），且**自己不画行图标**：行首图标全部来自本插件的 `TypeGlyph`，所以不启用本插件时行首没有图标。命令、右键与 `Ctrl+O` 用的是同一个分类器（`KindOf`），不存在第二份分类规则。
 - 条目上的标记（置顶 / 收藏 / 高亮）不写在本插件里：`kind` 的 `state` 行向基础层要标记名称（`Get-RecordMarkWords`），`kinds` 的尾行用同源计数，所以装不装 `item-marks` 都不会出错。
 - 嗅探只取前 8000 个字符，避免大段文本拖慢输出；`json` 用 `ConvertFrom-Json` 真正解析一次，解析失败会显示 `json-like (invalid)`。
 - 嗅探会读取条目内容但不会写入任何东西，也不会修改历史。

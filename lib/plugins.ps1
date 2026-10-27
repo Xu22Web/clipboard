@@ -12,7 +12,6 @@
 #                         Invoke = { param($rec) ... } } )     # right-click items
 #     PanelKeys   = @( @{ Key = 'O'; Ctrl = $true; Label = 'open'; Hint = 'Open'
 #                          Test = { param($rec) ... }; Invoke = { param($rec) ... } } )
-#     Glyphs      = @{ text = [string][char]0xE8A5 }          # entry kind -> row icon
 #     TypeGlyph   = { param($payload) [string][char]0xE71B }  # row icon, first plugin wins
 #     Settings    = [ordered]@{ Browser = @{ Kind = 'string'; Default = ''; Desc = '...' } }
 #     ThemeSettings = [ordered]@{ StarColor = @{ Kind = 'color'; Default = '#FFC86E' } }
@@ -60,7 +59,7 @@
 # variable is $null and the call fails. Share a helper by giving it its own key and
 # fetching it with Get-PluginData '<plugin>' '<key>'.
 #
-# Glyphs is preferred over TypeGlyph because it is pure data and therefore cannot break.
+# TypeGlyph is a scriptblock, not a table: only the plugin knows how it types an entry.
 #
 # The base tool works with an empty or missing plugins folder: every helper below
 # degrades to the built-in behaviour.
@@ -508,16 +507,9 @@ function Get-PluginActions {
   return $out.ToArray()
 }
 
-# Row icon: the base tool maps every kind itself (Get-TypeGlyph). A plugin may override
-# that mapping through the Glyphs table, or compute it in a TypeGlyph scriptblock.
+# Row icon: only a plugin paints one. TypeGlyph receives the payload and returns a glyph
+# (or nothing), so the typing rule stays inside the plugin that owns it.
 function Get-EntryGlyph([string]$payload) {
-  $kind = ''
-  try { $kind = Get-EntryKind $payload } catch { }
-  foreach ($p in @($script:Plugins)) {
-    if (-not $p.ContainsKey('Glyphs')) { continue }
-    $map = $p['Glyphs']
-    if ($map -is [hashtable] -and $kind -and $map.ContainsKey($kind)) { return [string]$map[$kind] }
-  }
   foreach ($p in @($script:Plugins)) {
     if (-not $p.ContainsKey('TypeGlyph')) { continue }
     try {
@@ -525,7 +517,7 @@ function Get-EntryGlyph([string]$payload) {
       if ($g) { return [string]$g }
     } catch { }
   }
-  return (Get-TypeGlyph $payload)
+  return ''
 }
 
 function Test-PluginAction($action, $record) {

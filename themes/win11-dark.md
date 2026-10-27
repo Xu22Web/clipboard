@@ -26,7 +26,7 @@ Theme=win11-dark
 | `Mark` / `Warn` | `#FFC86E` / `#FF99A4` |
 | 字体族 | 空 = 自动（`Segoe UI Variable Text` → `Segoe UI`；图标 `Segoe Fluent Icons` → `Segoe MDL2 Assets`） |
 | 字号 | Body 10.5 / Small 9 / Tiny 9 / Title 13 / Icon 12 / IconSmall 10 / IconBig 24 |
-| `[item-marks]` | `StarColor=#FFC86E`（星标与默认标记色一致）、`HighlightColor=#FFE3A3` / `HighlightBg=#26FFC86E` |
+| `[item-marks]` | `StarColor=#FFC86E`（星标与默认标记色一致）、`EmphasisInk=#9FDDFF` / `EmphasisFill=#3360CDFF`（强调色浅色 + 20% 蓝底） |
 
 叠层色（`SelBg` / `HoverBg` / `Border` / `BadgeBg` / `AccentSoft` / `KeyCapBorder`）都是带 alpha 的半透明白，面板把它们叠在 `Surface` 上做层次。
 
