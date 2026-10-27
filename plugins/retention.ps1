@@ -1,53 +1,56 @@
 # retention - delete entries older than N days.
 #
-# Starred entries are never touched, pinned ones can be kept too. The sweep runs in the
-# resident loop; `clipboard sweep force` runs it once on demand.
+# Rows carrying a protected mark (its plugin declares Protected, e.g. a star) are never
+# touched. With KeepPinned=1 the rows carrying the sort mark (what pinning declares) are
+# kept too, so this file never has to know which mark that is.
 #
 # Settings: retention.MaxAgeDays / retention.SweepMinutes / retention.KeepPinned
 #
-# Scriptblocks must be self-contained: they may call base helpers, but must not read
-# variables created in this file's scope (that scope is gone when they run).
+# The sweep is one shared block: the resident Tick calls it silently, `sweep force` runs
+# it on demand and reports. Tick.Seconds is a scriptblock, so the interval follows
+# SweepMinutes without the plugin keeping state of its own.
 @{
   Name        = 'retention'
-  Description = 'Delete entries older than N days; starred entries are always kept'
+  Description = 'Delete entries older than N days; protected entries are always kept'
   CommandHelp = @{
-    'sweep' = 'run the expiry sweep now ("sweep force" ignores the interval)'
+    'sweep' = 'run the expiry sweep now ("sweep force" reports what it did)'
   }
   Settings    = [ordered]@{
     MaxAgeDays   = @{ Kind = 'int'; Min = 0; Max = 3650; Default = 0; Desc = 'delete entries older than this many days, 0 = keep forever' }
     SweepMinutes = @{ Kind = 'int'; Min = 1; Max = 1440; Default = 30; Desc = 'how often the sweep may run, in minutes' }
-    KeepPinned   = @{ Kind = 'bool'; Default = 1; Desc = '1 = never expire pinned entries' }
+    KeepPinned   = @{ Kind = 'bool'; Default = 1; Desc = '1 = never expire the row carrying the sort mark (a pinned entry)' }
+  }
+  # returns the number of rows removed; one write for the whole list
+  Sweep       = {
+    $maxAge = [int](Get-PluginSetting 'retention' 'MaxAgeDays')
+    if ($maxAge -le 0) { return 0 }
+    $protected = @(Get-ProtectedMarks)
+    $keepSorted = ((Get-PluginSetting 'retention' 'KeepPinned') -eq '1')
+    $sortMark = Get-SortMark
+    $cutoff = (Get-Epoch) - ($maxAge * 86400)
+    # GetNewClosure keeps the values above visible inside the block that Update-Records
+    # runs, whatever scope it is invoked from
+    $body = {
+      param($list)
+      $gone = 0
+      for ($i = $list.Count - 1; $i -ge 0; $i--) {
+        $r = $list[$i]
+        if (Test-AnyMark $r $protected) { continue }
+        if ($keepSorted -and $sortMark -and (Test-Mark $r $sortMark)) { continue }
+        if ([long]$r.Time -le 0 -or [long]$r.Time -ge $cutoff) { continue }
+        $list.RemoveAt($i)
+        $gone++
+      }
+      return $gone
+    }.GetNewClosure()
+    return [int](Update-Records $body)
   }
   Commands    = @{
     'sweep' = {
       param($value)
       $maxAge = [int](Get-PluginSetting 'retention' 'MaxAgeDays')
-      if ($maxAge -le 0) {
-        if ($value -eq 'force') { Write-Host '[i] retention is off (retention.MaxAgeDays=0)' }
-        return
-      }
-      $now = Get-Epoch
-      if ($value -ne 'force') {
-        # the resident calls this every minute; only sweep when the interval has passed
-        $every = [int](Get-PluginSetting 'retention' 'SweepMinutes')
-        if ($every -lt 1) { $every = 30 }
-        if ($now -lt [long]$script:RetentionNext) { return }
-        $script:RetentionNext = $now + ($every * 60)
-      }
-      $keepPinned = (Get-PluginSetting 'retention' 'KeepPinned') -eq '1'
-      $cutoff = $now - ($maxAge * 86400)
-      $dropped = Use-StoreLock {
-        $keep = New-Object System.Collections.Generic.List[object]
-        $gone = 0
-        foreach ($r in @(Get-Records)) {
-          $protected = [bool]$r.Starred -or ($keepPinned -and [bool]$r.Pinned)
-          if (-not $protected -and [long]$r.Time -gt 0 -and [long]$r.Time -lt $cutoff) { $gone++; continue }
-          $keep.Add($r)
-        }
-        if ($gone -gt 0) { Save-Records $keep.ToArray() }
-        return $gone
-      }
-      $script:RetentionNext = $now + (([int](Get-PluginSetting 'retention' 'SweepMinutes')) * 60)
+      if ($maxAge -le 0) { Write-Host '[i] retention is off (retention.MaxAgeDays=0)'; return }
+      $dropped = [int](& (Get-PluginData 'retention' 'Sweep'))
       if ($value -eq 'force') {
         if ($dropped -gt 0) { Write-Host ('[ok] retention: removed ' + $dropped + ' entries older than ' + $maxAge + ' days') }
         else { Write-Host ('[ok] retention: nothing older than ' + $maxAge + ' days') }
@@ -57,11 +60,15 @@
     }
   }
   Tick        = @{
-    Seconds = 60
+    # follow SweepMinutes: the base throttles on this value, so no timer state is needed
+    Seconds = {
+      $m = [int](Get-PluginSetting 'retention' 'SweepMinutes')
+      if ($m -lt 1) { $m = 30 }
+      return ($m * 60)
+    }
     Action  = {
       param($now)
-      $sweep = Get-PluginCommand 'sweep'
-      if ($sweep) { & $sweep 'auto' }
+      [void](& (Get-PluginData 'retention' 'Sweep'))
     }
   }
 }

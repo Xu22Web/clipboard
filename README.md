@@ -26,7 +26,7 @@ Windows 10 / 11 上的轻量剪贴板历史工具，单文件 PowerShell 脚本�
 - 列表可滚动（滚轮步长跟随系统设置 / `PageUp` `PageDn`），面板可拖动、可缩放、支持高 DPI，尺寸与位置可选记住
 - 空状态与无结果状态分别给出图标 + 标题 + 说明；托盘图标提供显示 / 暂停 / 恢复 / 清空 / 退出
 - 深浅两套主题，`ExcludePattern` 正则可以把密码类内容挡在历史之外
-- 可选的置顶 / 收藏 / 类型分析 / 按类型打开 / 粘贴改写 / 过期清理以插件形式提供，见 [插件](#插件)
+- 可选的置顶 / 收藏 / 高亮 / 类型分析 / 按类型打开 / 粘贴改写 / 过期清理以插件形式提供，见 [插件](#插件)
 
 ## 环境要求
 
@@ -61,14 +61,14 @@ Git Bash / MSYS2 下直接 `./clipboard`，CMD 下 `clipboard.cmd`。
 | **daemon** | `serve` | 运行常驻进程（捕获 + 热键 + 托盘） |
 | | `stop` | 停止常驻进程 |
 | | `ui` | 打开历史面板（常驻进程没跑会自动拉起） |
-| | `status` | 常驻状态、自启状态、生效热键、存储路径、置顶数量 |
+| | `status` | 常驻状态、自启状态、生效热键、存储路径、各标记数量 |
 | | `pause` / `resume` | 暂停 / 恢复捕获 |
-| **history** | `list [-Count N]` | 列出条目，最新在前（相对时间，置顶条目前面有 `*`） |
+| **history** | `list [-Count N]` | 列出条目，最新在前（相对时间，排在最前的标记带 `*`） |
 | | `get` | 输出剪贴板文本 |
 | | `put "text"` | 写入剪贴板（省略文本时读 stdin） |
 | | `pick N` | 把第 N 条放回剪贴板 |
-| | `del N` | 删除第 N 条（已收藏的条目需要先取消收藏） |
-| | `clear [-All]` | 清空历史（默认保留置顶，`-All` 连置顶一起删，收藏条目永远保留） |
+| | `del N` | 删除第 N 条（受保护的行要先由插件取消标记） |
+| | `clear [-All]` | 清空历史（受保护标记的行永远保留；`-All` 连“标记保留”的行一起删） |
 | **config** | `config` | 全部配置项与生效值（基础项 + 按插件分组，标注 ini / 默认值） |
 | | `config get KEY` | 单个键的生效值与 ini 原始值 |
 | | `config set KEY VAL` | 校验并写入单个键，常驻进程在跑时自动重启生效 |
@@ -95,9 +95,9 @@ Git Bash / MSYS2 下直接 `./clipboard`，CMD 下 `clipboard.cmd`。
 | `Esc` | 有搜索词时清空搜索，空搜索时关闭面板 |
 | 拖动标题区 / 右下角手柄 | 移动面板 / 缩放面板（手柄悬停时才显示） |
 
-插件可以自己往面板里加按键（`PanelKeys`）：`item-marks` 加 `Ctrl+P` / `Ctrl+S`，`entry-actions` 加 `Ctrl+O`，按键会出现在 `clipboard help` 的 Panel keys 里并标明来源插件。
+插件可以自己往面板里加按键（`PanelKeys`）：`item-marks` 加 `Ctrl+P` / `Ctrl+S` / `Ctrl+H`，`entry-actions` 加 `Ctrl+O`，按键会出现在 `clipboard help` 的 Panel keys 里并标明来源插件。
 
-底部提示做成带描边的按键胶囊，并且会随状态切换：默认是 `Enter` Paste · `Ctrl+Enter` Copy only · `Del` Delete · `Esc` Close，按住 `Ctrl` 变成 `0-9` Pick · `Enter` Copy only · `Z` Undo（启用 `item-marks` 时额外有 `P` Pin / `S` Star）；列表为空时只保留 `Esc` Close。删除 / 置顶 / 清空后短暂显示操作结果。
+底部提示做成带描边的按键胶囊，并且会随状态切换：默认是 `Enter` Paste · `Ctrl+Enter` Copy only · `Del` Delete · `Esc` Close，按住 `Ctrl` 变成 `0-9` Pick · `Enter` Copy only · `Z` Undo（启用 `item-marks` 时额外有 `P` Pin / `S` Star / `H` Mark）；列表为空时只保留 `Esc` Close。删除 / 置顶 / 清空后短暂显示操作结果。
 
 ## 配置
 
@@ -202,7 +202,7 @@ StarColor=#FFD700
 
 ```
 Surface Field FieldBorder Text Dim Faint Accent AccentSoft Border SelBg HoverBg
-BadgeBg BadgeText KeyCapBg KeyCapBorder Pin Warn
+BadgeBg BadgeText KeyCapBg KeyCapBorder Mark Warn
 ```
 
 > 叠层色（`SelBg` / `HoverBg` / `Border` / `BadgeBg` / `AccentSoft` / `KeyCapBorder`）请保留 alpha：面板是把它们半透明地叠在 `Surface` 上，不透明就失去了 Fluent 的层次感。
@@ -219,10 +219,10 @@ BadgeBg BadgeText KeyCapBg KeyCapBorder Pin Warn
 
 | 插件 | 简单介绍 | 启用 |
 |---|---|---|
-| [`item-marks`](plugins/item-marks.md) | 置顶 / 收藏：`pin` `unpin` `star` `unstar` `marks`，面板 `Ctrl+P` `Ctrl+S`，置顶与收藏可同时生效 | `Plugins=item-marks` |
+| [`item-marks`](plugins/item-marks.md) | 置顶 / 收藏 / 高亮：`pin` `unpin` `star` `unstar` `highlight` `unhighlight` `marks`，面板 `Ctrl+P` `Ctrl+S` `Ctrl+H`；高亮改文字与背景色，不改左侧选择条 | `Plugins=item-marks` |
 | [`entry-actions`](plugins/entry-actions.md) | 看清条目再动手：`kind` / `kinds` 分析类型与格式，`open` 按类型打开，面板 `Ctrl+O` | `Plugins=entry-actions` |
 | [`transform`](plugins/transform.md) | 粘贴前改写文本：纯文本 / 全大写 / 小写 / 驼峰 / 蛇形 / 烤肉串 / 标题式 | `Plugins=transform` |
-| [`retention`](plugins/retention.md) | 过期清理：按天数自动删除旧条目，收藏条目永不清理 | `Plugins=retention` |
+| [`retention`](plugins/retention.md) | 过期清理：按天数自动删除旧条目，受保护标记的行永不清理 | `Plugins=retention` |
 
 点插件名进各自的说明页（命令、设置项、主题项、注意事项）。
 
@@ -233,10 +233,10 @@ Plugins=item-marks,entry-actions
 
 | 层 | 位置 | 职责 |
 |---|---|---|
-| 基础 | `clipboard.ps1` | 设置读取、存储、捕获循环、条目粗分类与行图标、面板绘制与交互、热键、粘贴注入、CLI |
-| 加载层 | `lib/plugins.ps1` | `Load-Plugins`（白名单）/ `Get-PluginCommand` / `Get-PluginActions` / `Get-PluginPanelKeys` / `Invoke-PluginInit` / `Get-EntryGlyph`，全部带内置回退 |
+| 基础 | `clipboard.ps1` | 设置读取、记录存储与标记机制、捕获循环、条目粗分类与行图标、面板绘制与交互、热键、粘贴注入、CLI |
+| 加载层 | `lib/plugins.ps1` | `Load-Plugins`（白名单）/ 命令与菜单 / 面板按键 / 标记注册（`Get-PluginMarks`、`Get-PluginProtectedMarks`、`Get-PluginSortMark`、`Get-PluginClearKeeps`）/ 行装饰 / 设置与主题，全部带内置回退 |
 | 加载层 | `lib/themes.ps1` | 主题发现 / 校验 / 颜色解析 / `Apply-Theme` |
-| 扩展 | `plugins/*.ps1` | 每个文件返回一个哈希表，声明命令、右键项、面板按键、行图标、设置与钩子 |
+| 扩展 | `plugins/*.ps1` | 每个文件返回一个哈希表，声明命令、右键项、面板按键、行图标、标记与设置 |
 
 插件契约：一个 `.ps1` 文件 `return` / 直接输出一个哈希表。
 
@@ -252,9 +252,25 @@ Plugins=item-marks,entry-actions
 | `TypeGlyph` | 否 | `{ param($payload) ... }`，需要动态判断时用；`Glyphs` 优先 |
 | `Settings` | 否 | 自己的配置项（`clipboard.ini`），`[ordered]@{ Key = @{ Kind = 'bool'; Default = 0; Desc = '...' } }` |
 | `ThemeSettings` | 否 | 外观项，**不是 ini 键**：主题用同名段（如 `[item-marks]`）重写 |
-| `Tick` / `Transform` / `RowDecor` | 否 | 常驻循环任务 / 粘贴前改写 / 行装饰（星标、强调色） |
+| `Tick` / `Transform` | 否 | 常驻循环任务（`@{ Seconds; Action }`，`Seconds` 可写脚本块，所以间隔能跟随自己的设置）/ 粘贴前改写 |
+| `RowDecor` | 否 | `{ param($rec) @{ Marks = @( @{ Glyph = '..'; Color = '#..' } ); TextColor = '#..'; BackColor = '#..' } }`，行尾标记字形与整行文字/背景色 |
+| `Marks` | 否 | `[ordered]@{ x = @{ Set = 'on'; Unset = 'off'; Word = 'marked'; Hint = 'Ctrl+X'; Protected = $false } }`，声明本插件用的标记字符 |
+| `SortMark` | 否 | 带该标记的行浮到列表最前（只能有一个） |
+| `ClearKeeps` | 否 | 数组或脚本块，`clear` 默认保留的标记 |
 | `Init` | 否 | 每个进程只跑一次的初始化（设置全部解析完之后） |
-| `ClearKeepsPinned` | 否 | `{ $true }`，`clear` 与面板/托盘“清空”是否保留置顶条目 |
+
+### 标记（mark）
+
+记录的 `flags` 由一个类型字符（`t` 文本 / `f` 文件列表）加若干单字符标记组成。**基础层不认识任何一个具体标记**：它只存字符、按声明排序/保护/统计，其余全由插件声明：
+
+| 声明 | 基础层的行为 |
+|---|---|
+| `Marks` | 命令行收尾提示、`status`、`clear` 文案都用声明里的词；`Protected` 决定该标记是否保护行 |
+| `Protected = $true` | `del` 拒绝、裁剪与 `clear` 跳过，直到插件用自己的 `Unset` 命令取消标记 |
+| `SortMark` | 带该标记的行排到列表最前（置顶就是这么实现的） |
+| `ClearKeeps` | `clear` 默认保留这些标记；`-All` 忽略它，但保护标记永远保留 |
+
+因此新增一个标记不需要改 `clipboard.ps1`：写插件、声明标记、在 `RowDecor` 里画出来即可。多个标记可以同时存在同一行。
 
 钩子按触发时机看：
 
@@ -265,7 +281,7 @@ Plugins=item-marks,entry-actions
 | 面板加载 / 按键 | `PanelKeys`、`ContextMenu`、`RowDecor`、`Glyphs` / `TypeGlyph` |
 | 粘贴前 | `Transform` |
 | 常驻循环 | `Tick` |
-| 配置 | `Settings`（ini）、`ThemeSettings`（主题） |
+| 配置 / 标记规则 | `Settings`（ini）、`ThemeSettings`（主题）、`Marks` / `SortMark` / `ClearKeeps`（标记） |
 
 基础按键（`Enter` / `Ctrl+Enter` / `Ctrl+0..9` / `Del` / `Ctrl+Z` / `Esc` / 翻页）永远优先，插件按键只在都不匹配时才会被询问。
 
@@ -308,6 +324,8 @@ clipboard config set entry-actions.Reveal 0
 
 - **默认不加载**：`Plugins=` 为空时，插件文件不会被执行；写错名字会提示 `[!] plugin not found: xxx`，基础功能照常。
 - **脚本块必须自包含**：可以调用基础函数（`Get-Records`、`Get-EntryKind`、`Write-Log`、`Format-Item`），但**不能引用插件文件作用域里的变量** —— 那个作用域在命令执行时已经销毁，捕获到的变量是 `$null`。多个脚本块要共享一段逻辑时，把它作为哈希表的一个键（如 `KindOf = { ... }`），脚本块里用 `& (Get-PluginData '<插件名>' 'KindOf') $arg` 取回并调用。
+- **一份逻辑只写一次**：钩子、命令、右键项、面板按键往往要同样的行为，把它们抽成插件的共享块再各自调用；内置的四个插件都是这个结构（`KindOf` / `CanOpen` / `OpenPayload` / `Sniff`、`Apply`、`Sweep`、`TrimPins`），所以规则不会两处走偏。
+- **用基础层给的东西，别自己读内部状态**：行装饰用 `RowDecor`、图标用 `Get-IconGlyph`、标记用 `Test-Mark` / `Get-ProtectedMarks` / `Get-SortMark`、改多行用 `Update-Records`，都不需要知道基础层的变量或记录格式。
 - 插件文件保持纯 ASCII：PowerShell 5.1 把无 BOM 的 UTF-8 当 ANSI 解码，中文会直接语法错误。
 - 单个插件抛异常只在日志里记一行，不影响其它插件与主程序。
 
@@ -372,7 +390,7 @@ tests/run-tests.ps1     自测套件
 CBHIST2 RS <flags> US <epoch 秒> US <payload> RS <flags> US ...
 ```
 
-- `flags` = `t`（文本）或 `f`（文件列表），带 `p` 后缀表示置顶
+- `flags` = 一个类型字符（`t` 文本 / `f` 文件列表）后面跟若干单字符标记；标记含义由插件声明，基础层只存不改，例如 `tps` = 文本条目 + `p` + `s` 两个标记
 - 分隔符：`RS` = `0x1E`，`US` = `0x1F`；类型签名字符为 `0x01`
 - 只认这一种格式：没有 `CBHIST2` 签名的旧版 `history.dat` 会被当成空库忽略（不迁移、不备份），首次写入时直接被新格式覆盖
 - 入库前会把文本里的 `RS` / `US` 字符替换成空格，避免破坏记录结构

@@ -2,15 +2,17 @@
 
 [← 回到主说明](../README.md) · [插件契约](../README.md#插件)
 
-三个互相独立的行为，一个插件承载：
+三个互相独立的标记，一个插件承载：
 
-| 行为 | 做什么 | 命令 / 按键 | 颜色 |
+| 标记 | 做什么 | 设置入口 | 行上的表现 |
 |---|---|---|---|
-| **置顶** | 浮到列表最前，不受条数 / 容量裁剪 | `pin N` / `unpin N`，`Ctrl+P`，右键 | `PinColor` |
-| **收藏** | `clear` 与裁剪永不删除，删除前必须先取消收藏 | `star N` / `unstar N`，`Ctrl+S`，右键 | `StarGlyph` / `StarColor` |
-| **高亮** | 在行左侧画一条强调色竖条 | — | `BarColor` / `PinnedBarColor` |
+| **置顶** `p` | 浮到列表最前，不受条数 / 容量裁剪 | `pin N` / `unpin N`、`Ctrl+P`、右键 | 行尾图钉字形（`PinColor`） |
+| **收藏** `s` | `clear` 与裁剪永不删除，删除前必须先取消收藏 | `star N` / `unstar N`、`Ctrl+S`、右键 | 行尾星标字形（`StarGlyph` / `StarColor`） |
+| **高亮** `h` | 只是把这一行画得显眼 | `highlight N` / `unhighlight N`、`Ctrl+H`、右键 | 文字换成高亮色、整行加高亮底色 |
 
-三者可以同时存在：一条条目可以既置顶又收藏，并且带强调色竖条。它们各管各的——收藏一条非置顶的条目不会让它浮到顶部，置顶一条未收藏的条目也不会让它免于 `clear`。
+三者可以同时存在，一条条目可以既置顶又收藏又高亮。它们各管各的：收藏不会让条目浮到顶部，置顶也不会让它免于 `clear`，高亮不保护任何东西——`del`、裁剪与 `clear` 把它当普通行处理。
+
+> 行左侧那条强调色竖条是**选中指示**（当前用键盘操作的那一行），不是标记，也不是高亮；插件不画它，主题的 `Accent` 决定它的颜色。高亮走的是文字与背景色，与竖条无关。
 
 ## 启用
 
@@ -19,21 +21,26 @@
 Plugins=item-marks
 ```
 
-不启用时：`pin` / `unpin` / `star` / `unstar` 是未知命令，面板没有 `Ctrl+P` / `Ctrl+S`，右键菜单没有置顶与星标项，行上也没有星标与竖条。记录格式里的 `p` / `s` 标记仍能正确读出，只是没有入口去设置它们。
+不启用时：上面七个命令都不存在，面板没有 `Ctrl+P` / `Ctrl+S` / `Ctrl+H`，右键菜单没有这三项，行上也没有图钉、星标与高亮。记录里已存的 `p` / `s` / `h` 仍在（`clipboard list` 的 `*`、`status` 的计数读不出来，因为没有声明），只是没有入口去改它们。
 
 ## 命令
 
 | 命令 | 作用 |
 |---|---|
-| `clipboard pin N` | 把第 N 条置顶（置顶条目浮到列表最前，`list` 里前面带 `*`） |
+| `clipboard pin N` | 把第 N 条置顶（浮到列表最前，`list` 里前面带 `*`） |
 | `clipboard unpin N` | 取消第 N 条的置顶 |
 | `clipboard star N` | 收藏第 N 条：`clear` 与自动裁剪永不删除它 |
 | `clipboard unstar N` | 取消收藏（取消后才能 `del`） |
-| `clipboard marks` | 打印当前星标字形、颜色与强调条开关，用于排查样式 |
+| `clipboard highlight N` | 把第 N 条标记为高亮 |
+| `clipboard unhighlight N` | 取消高亮 |
+| `clipboard marks` | 打印当前字形、颜色与各部分的含义，用于排查样式 |
 
 ```
 $ clipboard star 2
 starred: https://example.com/doc   clear and trimming keep it
+
+$ clipboard highlight 2
+highlighted: https://example.com/doc
 
 $ clipboard list
   1  2m    * https://example.com/doc
@@ -46,17 +53,25 @@ $ clipboard list
 |---|---|
 | `Ctrl+P` | 置顶 / 取消置顶 |
 | `Ctrl+S` | 收藏 / 取消收藏 |
-| 右键菜单 | `Pin to top`（已置顶时变成 `Remove pin`）、`Star`（已收藏时变成 `Remove star`），带快捷键提示 |
-| 行样式 | 收藏的行在保留列显示星标；置顶的行显示图钉；星标 / 置顶的行左侧有竖条（一行最多一条，两者都满足时用星标那条） |
+| `Ctrl+H` | 高亮 / 取消高亮 |
+| 右键菜单 | `Pin to top`（已置顶时变 `Remove pin`）、`Star`（已收藏时变 `Remove star`）、`Highlight`（已高亮时变 `Clear highlight`），都带快捷键提示 |
+| 行样式 | 置顶与收藏各占一个右侧固定槽位（图钉在右、星标在其左），高亮改整行文字与背景色 |
 
-删除一个已收藏的条目时，会提示先取消收藏：`[!] starred entry, unstar it first: clipboard unstar 1`。
+删除受保护的条目时会提示由谁来解除：
+
+```
+$ clipboard del 1
+[!] starred entry, unstar it first: clipboard unstar 1
+```
+
+面板里同样的操作显示为底部提示：`Starred entry. Press Ctrl+S to unstar it first`。
 
 ## 设置项（`clipboard.ini`）
 
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `item-marks.MaxPins` | `50` | 置顶条数上限，超出时自动取消最旧的置顶（`0` = 不限） |
-| `item-marks.ClearKeepsPinned` | `1` | `1` = `clear` 与面板“清空”、托盘菜单保留置顶条目；`0` = 一并清掉 |
+| `item-marks.ClearKeepsPinned` | `1` | `1` = `clear` 与面板“清空”、托盘菜单保留置顶条目；`0` = 一并清掉（收藏条目仍然保留） |
 
 ```powershell
 clipboard config set item-marks.MaxPins 10
@@ -70,18 +85,26 @@ clipboard config set item-marks.MaxPins 10
 |---|---|---|
 | `StarGlyph` | `U+E735` | 收藏行的星标字形 |
 | `StarColor` | `#FFC86E` | 星标颜色 |
-| `PinColor` | 空 | 置顶标记颜色，空 = 用主题的 `Pin` 色 |
-| `BarColor` | 空 | 收藏行的竖条颜色，空 = 用主题的 `Accent` 色 |
-| `PinnedBarColor` | 空 | 置顶行的竖条颜色，空 = 用主题的 `Accent` 色 |
+| `PinColor` | 空 | 图钉颜色，空 = 用主题的 `Mark` 色 |
+| `HighlightColor` | `#FFE08A` | 高亮行的文字颜色 |
+| `HighlightBg` | `#26FFC86E` | 高亮行的背景色（带 alpha 才不盖住选中效果），空 = 不加底色 |
 
 ```ini
 # themes/win11-light.ini
 [item-marks]
 StarColor=#9D5D00
+HighlightColor=#7A3E00
+HighlightBg=#33FFB84D
 ```
 
-## 数据层约定（不属于本插件，但由它触发）
+## 它向基础层声明了什么
 
-- 记录标记里的 `s` 位由基础工具保存，`clear` / 裁剪 / 删除都认它：**收藏条目永远不会被自动删掉**。
-- `item-marks.ClearKeepsPinned=1` 时 `clear` 保留置顶条目；`item-marks.MaxPins` 限制置顶数量。
-- 这两个开关由插件读取（`ClearKeepsPinned` 通过插件钩子交给基础层），插件没启用时不产生任何效果。
+基础层不认识 `p` / `s` / `h`，规则全部来自插件哈希表里的声明：
+
+| 键 | 值 | 基础层据此做什么 |
+|---|---|---|
+| `Marks` | `p` 不保护、`s` 保护、`h` 不保护 | 存标记、算 `status` 计数、生成 `clear` / `del` 文案 |
+| `SortMark` | `p` | 带 `p` 的行排到列表最前 |
+| `ClearKeeps` | `ClearKeepsPinned=1` 时 `@('p')` | `clear` 默认保留置顶行（`-All` 忽略它，`s` 仍然保留） |
+
+也就是说：删掉这个插件，基础层连“置顶”这个概念都不存在；换成别的插件声明别的字符同样成立。

@@ -57,6 +57,7 @@ clipboard config set transform.Trim 0
 
 ## 说明
 
+- **改写规则只有一份**：粘贴钩子与 `transform` 命令都调用插件里的 `Apply` 块（`param($text, $mode)`），不存在两套容易走偏的实现；命令行只是多了一步「取第 N 条 → 写剪贴板 → 记入历史」。
 - **文件清单条目不会被改写**：粘贴的是一批文件路径，改写会破坏路径。
 - 改写只发生在**粘贴路径**上；`clipboard get` / `clipboard put` 与历史里存的内容保持原样。
 - 常驻进程在跑时，`config set transform.Mode ...` 会自动重启常驻进程使新值生效。

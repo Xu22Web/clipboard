@@ -149,7 +149,7 @@ function Get-BasePalette {
     BadgeText    = [Drawing.Color]::FromArgb(200, 200, 200)
     KeyCapBg     = [Drawing.Color]::FromArgb(12, 255, 255, 255)
     KeyCapBorder = [Drawing.Color]::FromArgb(28, 255, 255, 255)
-    Pin          = [Drawing.Color]::FromArgb(255, 200, 110)
+    Mark         = [Drawing.Color]::FromArgb(255, 200, 110)
     Warn         = [Drawing.Color]::FromArgb(255, 153, 164)
   }
 }

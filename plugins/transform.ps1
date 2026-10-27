@@ -8,11 +8,9 @@
 # One-off:  clipboard transform 3            entry 3 with the configured mode
 #           clipboard transform "3 snake"    entry 3 as snake_case (quotes required)
 #
-# Scriptblocks must be self-contained: they may call base helpers
-# (Get-Records, Get-PluginSetting, Format-Item ...) but must never read a variable created
-# in this file's own scope - that scope is gone by the time the block runs, so the variable
-# reads as $null and any `& $var` on it fails. That is why the rewrite logic is repeated
-# instead of living in a shared helper variable.
+# The rewrite itself lives in one shared block (Apply). The paste hook and the command
+# both call it through Get-PluginData - a scriptblock cannot see this file's own
+# variables, so the block is looked up by plugin name instead of captured.
 @{
   Name        = 'transform'
   Description = 'Paste transformed: plain text, UPPER, lower, camelCase, snake_case, kebab-case, Title Case'
@@ -23,40 +21,48 @@
     Mode = @{ Kind = 'enum'; Options = @('keep', 'text', 'upper', 'lower', 'camel', 'snake', 'kebab', 'title'); Default = 'keep'; Desc = 'how a pasted entry is rewritten' }
     Trim = @{ Kind = 'bool'; Default = 1; Desc = '1 = trim leading and trailing spaces of the result' }
   }
-  Transform   = {
-    param($payload)
-    $mode = Get-PluginSetting 'transform' 'Mode'
-    if (-not $mode -or $mode -eq 'keep') { return $payload }
-    $s = [string]$payload
-    if ($s.Length -eq 0) { return $payload }
-    if ($s[0] -eq [char]1) { return $payload }   # file lists are left alone
+  # param($text, $mode) -> rewritten text; the input comes back unchanged when the mode
+  # is 'keep', the payload is a file list, or the text holds nothing to split
+  Apply       = {
+    param([string]$text, [string]$mode)
+    if (-not $mode -or $mode -eq 'keep') { return $text }
+    if ($text.Length -eq 0) { return $text }
+    if ($text[0] -eq [char]1) { return $text }
+    $out = $text
     switch ($mode) {
-      'text' { return ($s -replace '\s+', ' ').Trim() }
-      'upper' { return $s.ToUpperInvariant() }
-      'lower' { return $s.ToLowerInvariant() }
-    }
-    $words = @([regex]::Replace($s.Trim(), '([a-z0-9])([A-Z])', '$1 $2') -split '[\s_\-]+' | Where-Object { $_ })
-    if ($words.Count -eq 0) { return $payload }
-    $out = $payload
-    switch ($mode) {
-      'camel' {
-        $out = $words[0].ToLowerInvariant()
-        for ($i = 1; $i -lt $words.Count; $i++) {
-          $w = $words[$i].ToLowerInvariant()
-          $out += $w.Substring(0, 1).ToUpperInvariant() + $w.Substring(1)
+      'text' { $out = ($text -replace '\s+', ' ').Trim() }
+      'upper' { $out = $text.ToUpperInvariant() }
+      'lower' { $out = $text.ToLowerInvariant() }
+      default {
+        $words = @([regex]::Replace($text.Trim(), '([a-z0-9])([A-Z])', '$1 $2') -split '[\s_\-]+' | Where-Object { $_ })
+        if ($words.Count -eq 0) { return $text }
+        switch ($mode) {
+          'camel' {
+            $out = $words[0].ToLowerInvariant()
+            for ($i = 1; $i -lt $words.Count; $i++) {
+              $w = $words[$i].ToLowerInvariant()
+              $out += $w.Substring(0, 1).ToUpperInvariant() + $w.Substring(1)
+            }
+          }
+          'snake' { $out = (($words | ForEach-Object { $_.ToLowerInvariant() }) -join '_') }
+          'kebab' { $out = (($words | ForEach-Object { $_.ToLowerInvariant() }) -join '-') }
+          'title' {
+            $out = (($words | ForEach-Object {
+                  $w = $_.ToLowerInvariant()
+                  $w.Substring(0, 1).ToUpperInvariant() + $w.Substring(1)
+                }) -join ' ')
+          }
         }
       }
-      'snake' { $out = (($words | ForEach-Object { $_.ToLowerInvariant() }) -join '_') }
-      'kebab' { $out = (($words | ForEach-Object { $_.ToLowerInvariant() }) -join '-') }
-      'title' {
-        $out = (($words | ForEach-Object {
-              $w = $_.ToLowerInvariant()
-              $w.Substring(0, 1).ToUpperInvariant() + $w.Substring(1)
-            }) -join ' ')
-      }
     }
-    if ((Get-PluginSetting 'transform' 'Trim') -eq '1') { $out = ([string]$out).Trim() }
+    $out = [string]$out
+    if ((Get-PluginSetting 'transform' 'Trim') -eq '1') { $out = $out.Trim() }
     return $out
+  }
+  Transform   = {
+    param($payload)
+    $mode = [string](Get-PluginSetting 'transform' 'Mode')
+    return (& (Get-PluginData 'transform' 'Apply') ([string]$payload) $mode)
   }
   Commands    = @{
     'transform' = {
@@ -72,42 +78,14 @@
       $recs = @(Get-Records)
       if ($i -lt 1 -or $i -gt $recs.Count) { Write-Host 'index out of range'; return }
       $src = [string]$recs[$i - 1].Payload
-      $mode = Get-PluginSetting 'transform' 'Mode'
+      $mode = [string](Get-PluginSetting 'transform' 'Mode')
       if ($parts.Count -gt 1) { $mode = $parts[1] }
       if ($modes -notcontains $mode) {
         Write-Host ('unknown mode: ' + $mode)
         Write-Host ('modes: ' + ($modes -join ' '))
         return
       }
-      $out = $src
-      switch ($mode) {
-        'keep' { }
-        'text' { $out = ($src -replace '\s+', ' ').Trim() }
-        'upper' { $out = $src.ToUpperInvariant() }
-        'lower' { $out = $src.ToLowerInvariant() }
-        default {
-          $words = @([regex]::Replace($src.Trim(), '([a-z0-9])([A-Z])', '$1 $2') -split '[\s_\-]+' | Where-Object { $_ })
-          if ($words.Count -eq 0) { Write-Host 'nothing to transform'; return }
-          switch ($mode) {
-            'camel' {
-              $out = $words[0].ToLowerInvariant()
-              for ($k = 1; $k -lt $words.Count; $k++) {
-                $w = $words[$k].ToLowerInvariant()
-                $out += $w.Substring(0, 1).ToUpperInvariant() + $w.Substring(1)
-              }
-            }
-            'snake' { $out = (($words | ForEach-Object { $_.ToLowerInvariant() }) -join '_') }
-            'kebab' { $out = (($words | ForEach-Object { $_.ToLowerInvariant() }) -join '-') }
-            'title' {
-              $out = (($words | ForEach-Object {
-                    $w = $_.ToLowerInvariant()
-                    $w.Substring(0, 1).ToUpperInvariant() + $w.Substring(1)
-                  }) -join ' ')
-            }
-          }
-        }
-      }
-      if ((Get-PluginSetting 'transform' 'Trim') -eq '1') { $out = ([string]$out).Trim() }
+      $out = [string](& (Get-PluginData 'transform' 'Apply') $src $mode)
       if ([string]::IsNullOrEmpty($out)) { Write-Host 'nothing left after the transform'; return }
       [void](Set-ClipItem $out)
       Add-Item $out

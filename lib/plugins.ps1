@@ -18,10 +18,17 @@
 #     ThemeSettings = [ordered]@{ StarColor = @{ Kind = 'color'; Default = '#FFC86E' } }
 #     Tick        = @{ Seconds = 60; Action = { param($now) ... } }           # resident loop
 #     Transform   = { param($payload) ... }       # rewrite what gets pasted
-#     RowDecor    = { param($record) @{ Mark = '..'; MarkColor = '#..' } }    # star, bar
-#     ClearKeepsPinned = { $true }               # does `clear` keep pinned rows
+#     RowDecor    = { param($record) @{ Marks = @( @{ Glyph = '..'; Color = '#..' } ) } }
+#     Marks       = [ordered]@{ x = @{ Set = 'on'; Unset = 'off'; Word = 'marked'
+#                                      Hint = 'Ctrl+X'; Protected = $false } }
+#     SortMark    = 'x'                          # rows with this mark float to the top
+#     ClearKeeps  = @('x')                       # marks `clear` keeps (array or scriptblock)
 #     Init        = { ... }                       # once per process, after settings are read
 #   }
+#
+# The base never learns what a mark means: it stores one character per mark in the record
+# flags and asks this layer for the rules (protected / sorts first / kept on clear) and
+# for the word to print. That is why adding a mark needs no change in clipboard.ps1.
 #
 # Two kinds of knobs, deliberately kept apart:
 #   Settings      -> clipboard.ini keys named <plugin>.<Key>, the user's switches
@@ -403,17 +410,90 @@ function Get-PluginData([string]$Plugin, [string]$Key) {
   return $null
 }
 
-# Clear policy: a plugin may decide what `clear` does with pinned rows. $null = no opinion
-# (the base then keeps them). The first plugin that declares the hook wins.
-function Get-PluginClearKeepsPinned {
+# Mark registry. A mark is one character in the record flags; the plugin that declares it
+# owns its meaning, so the base can store, sort, protect and describe marks it has never
+# heard of. Declaration shape inside a plugin hash table:
+#
+#   Marks = [ordered]@{
+#     p = @{ Set = 'pin'; Unset = 'unpin'; Word = 'pinned'; Hint = 'Ctrl+P'; Protected = $false }
+#   }
+#   SortMark   = 'p'                 # rows with this mark float to the top
+#   ClearKeeps = @('p')              # marks `clear` keeps by default (array or scriptblock)
+#
+# $true Protected means the base refuses to trim, clear or delete such a row: only the
+# verb named in Unset may remove the mark first.
+
+# mark -> @{ Mark; Set; Unset; Word; Hint; Protected; Plugin }; the first declaration wins
+function Get-PluginMarks {
+  $out = [ordered]@{}
   foreach ($p in @($script:Plugins)) {
-    if (-not $p.ContainsKey('ClearKeepsPinned')) { continue }
-    try { return [bool](& $p['ClearKeepsPinned']) } catch {
-      Write-Log ('plugin clear policy failed (' + [string]$p['Name'] + '): ' + $_.Exception.Message)
-      return $null
+    if (-not $p.ContainsKey('Marks')) { continue }
+    $decl = $p['Marks']
+    if ($decl -isnot [System.Collections.IDictionary]) { continue }
+    foreach ($k in @($decl.Keys)) {
+      $m = [string]$k
+      if ($m.Length -ne 1 -or $out.Contains($m)) { continue }
+      $spec = $decl[$k]
+      if ($spec -isnot [System.Collections.IDictionary]) { continue }
+      $out[$m] = @{
+        Mark      = $m
+        Set       = [string]$spec['Set']
+        Unset     = [string]$spec['Unset']
+        Word      = [string]$spec['Word']
+        Hint      = [string]$spec['Hint']
+        Protected = [bool]$spec['Protected']
+        Plugin    = [string]$p['Name']
+      }
     }
   }
+  return $out
+}
+
+function Get-PluginMarkNames {
+  $all = Get-PluginMarks
+  return @($all.Keys)
+}
+
+function Get-PluginMarkInfo([string]$mark) {
+  if (-not $mark) { return $null }
+  $all = Get-PluginMarks
+  if ($all.Contains($mark)) { return $all[$mark] }
   return $null
+}
+
+function Get-PluginProtectedMarks {
+  $all = Get-PluginMarks
+  $out = @()
+  foreach ($k in @($all.Keys)) { if ($all[$k].Protected) { $out += [string]$k } }
+  return $out
+}
+
+# the mark whose rows sort first; ignored when the mark is not declared
+function Get-PluginSortMark {
+  foreach ($p in @($script:Plugins)) {
+    if (-not $p.ContainsKey('SortMark')) { continue }
+    $m = [string]$p['SortMark']
+    if ($m -and (Get-PluginMarkInfo $m)) { return $m }
+  }
+  return ''
+}
+
+# marks `clear` keeps without -All
+function Get-PluginClearKeeps {
+  $out = @()
+  foreach ($p in @($script:Plugins)) {
+    if (-not $p.ContainsKey('ClearKeeps')) { continue }
+    $v = $p['ClearKeeps']
+    try { if ($v -is [scriptblock]) { $v = & $v } } catch {
+      Write-Log ('plugin clear policy failed (' + [string]$p['Name'] + '): ' + $_.Exception.Message)
+      continue
+    }
+    foreach ($m in @($v)) {
+      $s = [string]$m
+      if ($s -and ($out -notcontains $s)) { $out += $s }
+    }
+  }
+  return $out
 }
 
 # flattened context menu actions contributed by every plugin
@@ -455,8 +535,9 @@ function Test-PluginAction($action, $record) {
 }
 
 # ---------------------------------------------------------------- lifecycle hooks
-# Tick: a plugin may ask to be called while the resident runs. Seconds is the minimum
-# gap; the base timer checks every poll and keeps the last run time per plugin.
+# Tick: a plugin may ask to be called while the resident runs. Seconds is the minimum gap
+# and may be a scriptblock, so a plugin can derive it from its own setting without keeping
+# state; the base timer checks every poll and remembers the last run per plugin.
 function Get-PluginTicks {
   $out = New-Object System.Collections.Generic.List[object]
   foreach ($p in @($script:Plugins)) {
@@ -464,7 +545,12 @@ function Get-PluginTicks {
     $t = $p['Tick']
     if ($t -isnot [hashtable] -or -not $t.ContainsKey('Action')) { continue }
     $sec = 60
-    if ($t.ContainsKey('Seconds')) { $sec = [int]$t['Seconds'] }
+    if ($t.ContainsKey('Seconds')) {
+      $v = $t['Seconds']
+      if ($v -is [scriptblock]) { try { $v = & $v } catch { $v = 60 } }
+      $sec = 0
+      if (-not [int]::TryParse([string]$v, [ref]$sec)) { $sec = 60 }
+    }
     if ($sec -lt 1) { $sec = 1 }
     $out.Add(@{ Name = [string]$p['Name']; Seconds = $sec; Action = $t['Action'] })
   }
@@ -503,24 +589,32 @@ function Invoke-PluginTransform([string]$payload) {
   return $payload
 }
 
-# Row decor: marks / accents a plugin wants on a row.
-# Returns @{ Glyph; GlyphColor; Mark; MarkColor; PinColor; Emphasis; EmphasisColor } - empty = none.
+# Row decor: everything a plugin wants painted on a row. The base only knows slots and
+# colours, so a plugin styles rows without the base knowing why.
+# Returns @{ Glyph; GlyphColor; Marks = @(@{ Glyph; Color }, ...); TextColor; BackColor }.
 function Get-PluginRowDecor($record) {
-  $d = @{ Glyph = ''; GlyphColor = ''; Mark = ''; MarkColor = ''; PinColor = ''; Emphasis = $false; EmphasisColor = '' }
+  $d = @{ Glyph = ''; GlyphColor = ''; Marks = @(); TextColor = ''; BackColor = '' }
   if ($null -eq $record) { return $d }
+  $marks = New-Object System.Collections.Generic.List[object]
   foreach ($p in @($script:Plugins)) {
     if (-not $p.ContainsKey('RowDecor')) { continue }
     try {
       $r = & $p['RowDecor'] $record
       if ($r -isnot [hashtable]) { continue }
-      foreach ($k in @('Glyph', 'GlyphColor', 'Mark', 'MarkColor', 'PinColor', 'EmphasisColor')) {
+      foreach ($k in @('Glyph', 'GlyphColor', 'TextColor', 'BackColor')) {
         if ($r.ContainsKey($k) -and $r[$k] -and -not $d[$k]) { $d[$k] = [string]$r[$k] }
       }
-      if ($r.ContainsKey('Emphasis') -and $r['Emphasis']) { $d.Emphasis = $true }
+      foreach ($mk in @($r['Marks'])) {
+        if ($mk -isnot [hashtable]) { continue }
+        $g = [string]$mk['Glyph']
+        if (-not $g) { continue }
+        $marks.Add(@{ Glyph = $g; Color = [string]$mk['Color'] })
+      }
     } catch {
       Write-Log ('plugin row decor failed (' + [string]$p['Name'] + '): ' + $_.Exception.Message)
     }
   }
+  $d.Marks = $marks.ToArray()
   return $d
 }
 

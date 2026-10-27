@@ -44,7 +44,7 @@ $script:Metric = @{
   Margin = 14; FieldHeight = 40
   RowInset = 6; RowRadius = 4; PanelRadius = 8
   IconSlot = 20; TextGap = 38
-  PinSlot = 16; TimeWidth = 52
+  MarkSlot = 16; MarkCount = 2; TimeWidth = 52
   CapWidth = 22; CapHeight = 18; BadgeGap = 12
   ScrollIdle = 3; ScrollHot = 6
   ChipHeight = 18
@@ -56,7 +56,6 @@ $script:Glyphs = @{
   Clear   = [string][char]0xE8BB
   Text    = [string][char]0xE8A5
   Files   = [string][char]0xE8B7
-  Pin     = [string][char]0xE718
   History = [string][char]0xE81C
 }
 
@@ -306,7 +305,7 @@ function Get-BasePalette {
     BadgeText    = [Drawing.Color]::FromArgb(200, 200, 200)
     KeyCapBg     = [Drawing.Color]::FromArgb(12, 255, 255, 255)
     KeyCapBorder = [Drawing.Color]::FromArgb(28, 255, 255, 255)
-    Pin          = [Drawing.Color]::FromArgb(255, 200, 110)
+    Mark         = [Drawing.Color]::FromArgb(255, 200, 110)
     Warn         = [Drawing.Color]::FromArgb(255, 153, 164)
   }
 }
@@ -440,11 +439,116 @@ function Set-ClipItem([string]$entry) {
 
 #region storage (plain text: CBHIST2 + RS-separated records, no JSON)
 # One record: <flags> US <epoch seconds> US <payload>
-#   flags = 't' (text) or 'f' (file list), plus optional 'p' (pinned) and 's' (starred)
-# Starred = favourited: never trimmed, never cleared, delete needs an explicit unstar.
+#   flags = one type char - 't' (text) or 'f' (file list) - followed by mark chars
+# A mark is one character owned by a plugin. The base stores it, keeps the list order and
+# enforces the rules the plugin declares (protected / sorts first / kept on clear), but it
+# never knows what a mark means. A flag string such as "tps" is therefore read as "text
+# entry, marks p and s".
 # Only this format is read. A file without the CBHIST2 tag is ignored as unknown.
-function New-Record([string]$payload, [long]$time, [bool]$pinned, [bool]$starred = $false) {
-  return [pscustomobject]@{ Payload = $payload; Time = $time; Pinned = $pinned; Starred = $starred }
+function New-Record([string]$payload, [long]$time, [string]$marks = '') {
+  return [pscustomobject]@{ Payload = $payload; Time = $time; Marks = $marks }
+}
+
+# does this record carry the mark?
+function Test-Mark($record, [string]$mark) {
+  if ($null -eq $record -or -not $mark) { return $false }
+  return (([string]$record.Marks).IndexOf($mark) -ge 0)
+}
+
+# any of these marks? (an empty list answers $false, so an unprotected row is deletable)
+function Test-AnyMark($record, [string[]]$marks) {
+  foreach ($m in @($marks)) { if (Test-Mark $record $m) { return $true } }
+  return $false
+}
+
+# set or clear one mark in memory; returns $true when the record actually changed
+function Set-RecordMark($record, [string]$mark, [bool]$on) {
+  if ($null -eq $record -or -not $mark) { return $false }
+  $cur = [string]$record.Marks
+  if (($cur.IndexOf($mark) -ge 0) -eq $on) { return $false }
+  if ($on) { $record.Marks = $cur + $mark } else { $record.Marks = $cur.Replace($mark, '') }
+  return $true
+}
+
+# mark declarations come from the plugin layer; without plugins every list is empty, so
+# nothing is protected, nothing sorts first and nothing can be marked at all
+function Get-MarkNames {
+  if (Get-Command Get-PluginMarkNames -ErrorAction SilentlyContinue) {
+    try { return @(Get-PluginMarkNames) } catch { }
+  }
+  return @()
+}
+
+function Get-MarkInfo([string]$mark) {
+  if (-not $mark) { return $null }
+  if (Get-Command Get-PluginMarkInfo -ErrorAction SilentlyContinue) {
+    try { return (Get-PluginMarkInfo $mark) } catch { }
+  }
+  return $null
+}
+
+# the word the owner uses for the mark, else the raw character
+function Get-MarkWord([string]$mark) {
+  $info = Get-MarkInfo $mark
+  if ($info -and $info.Word) { return [string]$info.Word }
+  return $mark
+}
+
+function Get-ProtectedMarks {
+  if (Get-Command Get-PluginProtectedMarks -ErrorAction SilentlyContinue) {
+    try { return @(Get-PluginProtectedMarks) } catch { }
+  }
+  return @()
+}
+
+# the mark whose rows float to the top of the list (plugins declare at most one)
+function Get-SortMark {
+  if (Get-Command Get-PluginSortMark -ErrorAction SilentlyContinue) {
+    try { return [string](Get-PluginSortMark) } catch { }
+  }
+  return ''
+}
+
+# marks `clear` keeps: protected ones always, the ones a plugin asks for unless -All.
+# The result follows the declaration order, so messages read the same everywhere.
+function Get-ClearKeepMarks([switch]$All) {
+  $prot = @(Get-ProtectedMarks)
+  $extra = @()
+  if (-not $All.IsPresent -and (Get-Command Get-PluginClearKeeps -ErrorAction SilentlyContinue)) {
+    try { $extra = @(Get-PluginClearKeeps) } catch { }
+  }
+  $keep = @()
+  foreach ($m in @(Get-MarkNames)) {
+    if (($prot -contains $m) -or ($extra -contains $m)) { $keep += $m }
+  }
+  # a plugin may ask to keep a mark it never declares: honour the request
+  foreach ($m in $extra) { if ($m -and ($keep -notcontains $m)) { $keep += $m } }
+  return $keep
+}
+
+# the first protected mark this record carries; empty = the row may be deleted
+function Get-ProtectorMark($record) {
+  foreach ($m in @(Get-ProtectedMarks)) { if (Test-Mark $record $m) { return $m } }
+  return ''
+}
+
+# words of the marks a record carries, in declaration order (for CLI output)
+function Get-RecordMarkWords($record) {
+  $words = @()
+  foreach ($m in @(Get-MarkNames)) { if (Test-Mark $record $m) { $words += (Get-MarkWord $m) } }
+  return $words
+}
+
+# '1 starred', '2 pinned' ... one entry per mark that occurs in the list
+function Get-MarkCountWords($records) {
+  $src = @($records)
+  $out = @()
+  foreach ($m in @(Get-MarkNames)) {
+    $c = 0
+    foreach ($r in $src) { if (Test-Mark $r $m) { $c++ } }
+    if ($c -gt 0) { $out += ($c.ToString() + ' ' + (Get-MarkWord $m)) }
+  }
+  return $out
 }
 
 function Get-Records {
@@ -481,7 +585,7 @@ function Get-Records {
       [void][long]::TryParse($rec.Substring($a + 1, $b - $a - 1), [ref]$tick)
       $payload = $rec.Substring($b + 1)
       if ($payload.Length -eq 0) { continue }
-      $out.Add((New-Record $payload $tick ($flags.IndexOf('p') -ge 0) ($flags.IndexOf('s') -ge 0)))
+      $out.Add((New-Record $payload $tick $flags.Substring(1)))
     }
   } catch { return @() }
   $script:RecCache = @{ Stamp = $stamp; Records = $out.ToArray() }
@@ -496,9 +600,7 @@ function Save-Records($records) {
     foreach ($r in $records) {
       $flags = 't'
       if ($r.Payload.Length -gt 0 -and $r.Payload[0] -eq [char]1) { $flags = 'f' }
-      if ($r.Pinned) { $flags = $flags + 'p' }
-      if ($r.Starred) { $flags = $flags + 's' }
-      [void]$sb.Append($RS).Append($flags).Append($US).Append([string][long]$r.Time).Append($US).Append($r.Payload)
+      [void]$sb.Append($RS).Append($flags + [string]$r.Marks).Append($US).Append([string][long]$r.Time).Append($US).Append($r.Payload)
     }
   }
   $tmp = $StoreFile + '.tmp'
@@ -519,21 +621,24 @@ function Use-StoreLock([scriptblock]$body) {
   }
 }
 
-# pinned entries always sit at the top, each block keeps its own order
-function Sort-PinnedFirst($list) {
+# rows carrying the sort mark float to the top, each block keeps its own order
+function Sort-Records($list) {
+  $sm = Get-SortMark
+  if (-not $sm) { return ,$list }
   $out = New-Object System.Collections.Generic.List[object]
-  foreach ($r in $list) { if ($r.Pinned) { $out.Add($r) } }
-  foreach ($r in $list) { if (-not $r.Pinned) { $out.Add($r) } }
+  foreach ($r in $list) { if (Test-Mark $r $sm) { $out.Add($r) } }
+  foreach ($r in $list) { if (-not (Test-Mark $r $sm)) { $out.Add($r) } }
   return ,$out
 }
 
-# enforce MaxItems / MaxTotal in place; pinned and starred entries are never dropped
+# enforce MaxItems / MaxTotal in place; rows carrying a protected mark are never dropped
 function Trim-Records($list) {
+  $protected = @(Get-ProtectedMarks)
   if ($list.Count -gt $MaxItems) {
     $over = $list.Count - $MaxItems
     $drop = New-Object System.Collections.Generic.List[object]
     for ($i = $list.Count - 1; $i -ge 0 -and $drop.Count -lt $over; $i--) {
-      if (-not $list[$i].Pinned -and -not $list[$i].Starred) { $drop.Add($list[$i]) }
+      if (-not (Test-AnyMark $list[$i] $protected)) { $drop.Add($list[$i]) }
     }
     foreach ($d in $drop) { [void]$list.Remove($d) }
   }
@@ -541,9 +646,10 @@ function Trim-Records($list) {
   $cut = $false
   $keep = New-Object System.Collections.Generic.List[object]
   foreach ($r in $list) {
-    if ($cut) { if ($r.Pinned -or $r.Starred) { $keep.Add($r) }; continue }
+    $prot = Test-AnyMark $r $protected
+    if ($cut) { if ($prot) { $keep.Add($r) }; continue }
     $total += $Utf8.GetByteCount($r.Payload)
-    if ($total -gt $MaxTotal -and -not $r.Pinned -and -not $r.Starred) { $cut = $true; continue }
+    if ($total -gt $MaxTotal -and -not $prot) { $cut = $true; continue }
     $keep.Add($r)
   }
   $list.Clear()
@@ -564,36 +670,40 @@ function Add-Item([string]$text) {
   Use-StoreLock {
     $recs = @(Get-Records)
     if ($recs.Count -gt 0 -and $recs[0].Payload -ceq $text) { return }
-    $wasPinned = $false
-    $wasStarred = $false
+    # a re-captured payload keeps the marks it already had
+    $prevMarks = ''
     foreach ($r in $recs) {
-      if ($r.Payload -ceq $text) { $wasPinned = [bool]$r.Pinned; $wasStarred = [bool]$r.Starred; break }
+      if ($r.Payload -ceq $text) { $prevMarks = [string]$r.Marks; break }
     }
     $list = New-Object System.Collections.Generic.List[object]
-    $list.Add((New-Record $text (Get-Epoch) $wasPinned $wasStarred))
+    $list.Add((New-Record $text (Get-Epoch) $prevMarks))
     foreach ($r in $recs) { if ($r.Payload -cne $text) { $list.Add($r) } }
-    $list = Sort-PinnedFirst $list
+    $list = Sort-Records $list
     Trim-Records $list
     Save-Records $list.ToArray()
   }
 }
 
-# Starred entries are protected: Remove-Record refuses unless -Force is given.
+# a row carrying a protected mark is kept: the verb that removes the mark belongs to the
+# plugin that declared it, so the base only reports which mark blocked the delete
 function Remove-Record([string]$payload, [switch]$Force) {
   $r = Use-StoreLock {
     $keep = New-Object System.Collections.Generic.List[object]
     $removed = $false
-    $blocked = $false
+    $blocked = ''
     foreach ($rec in @(Get-Records)) {
       if (-not $removed -and $rec.Payload -ceq $payload) {
-        if ($rec.Starred -and -not $Force.IsPresent) { $blocked = $true; $keep.Add($rec); continue }
+        if (-not $Force.IsPresent) {
+          $pm = Get-ProtectorMark $rec
+          if ($pm) { $blocked = $pm; $keep.Add($rec); continue }
+        }
         $removed = $true
         continue
       }
       $keep.Add($rec)
     }
     if ($removed) { Save-Records $keep.ToArray() }
-    if ($blocked) { return 'starred' }
+    if ($blocked) { return ('protected:' + $blocked) }
     if ($removed) { return 'removed' }
     return 'missing'
   }
@@ -610,86 +720,54 @@ function Restore-Record($record, [int]$index) {
     if ($index -lt 0) { $index = 0 }
     if ($index -gt $recs.Count) { $index = $recs.Count }
     $recs.Insert($index, $record)
-    $recs = Sort-PinnedFirst $recs
+    $recs = Sort-Records $recs
     Save-Records $recs.ToArray()
   }
 }
 
-function Set-Pin([string]$payload, [bool]$on, [int]$maxPins = 0) {
+# toggle one mark on the entry that carries this payload; the record list is re-sorted so
+# a mark that sorts first takes effect immediately
+function Set-Mark([string]$payload, [string]$mark, [bool]$on) {
   $r = Use-StoreLock {
     $recs = @(Get-Records)
     $target = $null
     foreach ($rec in $recs) { if ($rec.Payload -ceq $payload) { $target = $rec; break } }
     if ($null -eq $target) { return $false }
-    if ([bool]$target.Pinned -eq $on) { return $false }
-    $target.Pinned = $on
-    if ($on -and $maxPins -gt 0) {
-      $pinnedCount = 0
-      foreach ($rec in $recs) { if ($rec.Pinned) { $pinnedCount++ } }
-      while ($pinnedCount -gt $maxPins) {
-        for ($i = $recs.Count - 1; $i -ge 0; $i--) {
-          if ($recs[$i].Pinned -and -not [object]::ReferenceEquals($recs[$i], $target)) {
-            $recs[$i].Pinned = $false
-            $pinnedCount--
-            Write-Log ('unpinned oldest entry, pin cap=' + $maxPins)
-            break
-          }
-        }
-      }
-    }
+    if (-not (Set-RecordMark $target $mark $on)) { return $false }
     $list = New-Object System.Collections.Generic.List[object]
     foreach ($rec in $recs) { $list.Add($rec) }
-    $list = Sort-PinnedFirst $list
+    $list = Sort-Records $list
     Save-Records $list.ToArray()
     return $true
   }
   return [bool]$r
 }
 
-# Does `clear` keep pinned rows? A plugin owns that rule (the pin feature does); with no
-# plugin loaded nothing can be pinned, so keeping them is the safe default.
-function Get-KeepPinnedOnClear {
-  if (Get-Command Get-PluginClearKeepsPinned -ErrorAction SilentlyContinue) {
-    try {
-      $v = Get-PluginClearKeepsPinned
-      if ($null -ne $v) { return [bool]$v }
-    } catch { }
+# mutate the record list under the store lock. A plugin needs this when one change spans
+# several rows (a cap on its own mark, for example) and must stay a single write.
+# The parameter is deliberately not called $body: Use-StoreLock uses that name, and a
+# scriptblock would resolve it to the lock's own copy and call itself forever.
+function Update-Records([scriptblock]$mutate) {
+  return Use-StoreLock {
+    $rows = New-Object System.Collections.Generic.List[object]
+    foreach ($r in @(Get-Records)) { $rows.Add($r) }
+    $out = & $mutate $rows
+    $rows = Sort-Records $rows
+    Save-Records $rows.ToArray()
+    return $out
   }
-  return $true
 }
 
-function Clear-Store([bool]$keepPinned) {
+# keep the rows carrying any of these marks; the caller decides which marks those are
+function Clear-Store([string[]]$keepMarks = @()) {
   Use-StoreLock {
-    # starred entries are favourites: clear never removes them, that is the whole point of
-    # the flag. Unstar first when they really have to go.
     $keep = New-Object System.Collections.Generic.List[object]
     foreach ($rec in @(Get-Records)) {
-      if ($rec.Starred) { $keep.Add($rec); continue }
-      if ($keepPinned -and $rec.Pinned) { $keep.Add($rec) }
+      if (Test-AnyMark $rec $keepMarks) { $keep.Add($rec) }
     }
     Save-Records $keep.ToArray()
   }
 }
-
-# favourite toggle: starred entries survive trimming and clearing
-function Set-Star([string]$payload, [bool]$on) {
-  $r = Use-StoreLock {
-    $recs = @(Get-Records)
-    $target = $null
-    foreach ($rec in $recs) { if ($rec.Payload -ceq $payload) { $target = $rec; break } }
-    if ($null -eq $target) { return $false }
-    if ([bool]$target.Starred -eq $on) { return $false }
-    $target.Starred = $on
-    $list = New-Object System.Collections.Generic.List[object]
-    foreach ($rec in $recs) { $list.Add($rec) }
-    Save-Records $list.ToArray()
-    return $true
-  }
-  return [bool]$r
-}
-
-# The base stores the p/s flag and enforces the data protection rules; the verbs, keys and
-# menu items come from plugins (PanelKeys / ContextMenu).
 
 # single-line display text for one payload (picker rows and CLI listings)
 function Get-ItemLabel([string]$t, [bool]$nlMarker = $true) {
@@ -824,6 +902,13 @@ function Get-EntryKind([string]$payload) {
 function Get-TypeGlyph([string]$payload) {
   if ((Get-EntryKind $payload) -eq 'files') { return $script:Glyphs.Files }
   return $script:Glyphs.Text
+}
+
+# a glyph from the icon font when this machine has one, else a plain-text fallback.
+# Plugins call this instead of inspecting IconFamily themselves.
+function Get-IconGlyph([int]$code, [string]$fallback = '*') {
+  if ($script:IconFamily) { return [string][char]$code }
+  return $fallback
 }
 
 # Row icon: a plugin may answer first, the built-in mapping is always the fallback,
@@ -1502,12 +1587,18 @@ function Show-Picker {
       if ($idx -lt 0 -or $idx -ge $script:Filtered.Count) { return }
       $victim = $script:Filtered[$idx]
       $removed = Remove-Record $victim.Payload
-      if ($removed -eq 'starred') {
-        # the unstar verb belongs to the star plugin, so say what is actually available
-        $hasUnstar = $false
-        try { if (Get-Command Get-PluginCommand -ErrorAction SilentlyContinue) { $hasUnstar = [bool](Get-PluginCommand 'unstar') } } catch { }
-        if ($hasUnstar) { Set-Foot 'Starred entry. Press Ctrl+S to unstar it first' 2600 }
-        else { Set-Foot 'Starred entry. Enable the star plugin to unstar it' 2600 }
+      if ($removed -like 'protected:*') {
+        # only the plugin that declared the mark knows how to remove it
+        $pm = $removed.Substring(10)
+        $info = Get-MarkInfo $pm
+        $word = Get-MarkWord $pm
+        $word = $word.Substring(0, 1).ToUpper() + $word.Substring(1)
+        if ($info -and $info.Unset) {
+          if ($info.Hint) { Set-Foot ($word + ' entry. Press ' + $info.Hint + ' to ' + $info.Unset + ' it first') 2600 }
+          else { Set-Foot ($word + ' entry. ' + $info.Unset + ' it first, then delete') 2600 }
+        } else {
+          Set-Foot ($word + ' entry. Load the plugin that owns the ' + $pm + ' mark first') 2600
+        }
         return
       }
       if ($removed -eq 'removed') {
@@ -1544,7 +1635,7 @@ function Show-Picker {
       $script:Confirm = $true
       $footTimer.Stop()
       $script:FootMode = 'confirm'
-      if (Get-KeepPinnedOnClear) { $script:FootMsg = 'Delete all unpinned entries?   Enter to confirm, Esc to cancel' }
+      if (@(Get-ClearKeepMarks).Count -gt 0) { $script:FootMsg = 'Delete the entries no mark keeps?   Enter to confirm, Esc to cancel' }
       else { $script:FootMsg = 'Delete the entire history?   Enter to confirm, Esc to cancel' }
       $footL.Invalidate()
       $confirmTimer.Stop()
@@ -1554,12 +1645,11 @@ function Show-Picker {
     function Clear-All {
       $script:Confirm = $false
       $confirmTimer.Stop()
-      Clear-Store (Get-KeepPinnedOnClear)
+      Clear-Store (Get-ClearKeepMarks)
       $script:Entries = @(Get-Records)
       Update-List $txt.Text
-      $starred = 0
-      foreach ($r in $script:Entries) { if ($r.Starred) { $starred++ } }
-      if ($starred -gt 0) { Set-Foot ('History cleared, ' + $starred + ' starred kept') 2600 }
+      $kept = @(Get-MarkCountWords $script:Entries)
+      if ($kept.Count -gt 0) { Set-Foot ('History cleared, ' + ($kept -join ', ') + ' kept') 2600 }
       else { Set-Foot 'History cleared' 2000 }
     }
 
@@ -1628,8 +1718,7 @@ function Show-Picker {
             $it.Visible = $show
             $it.Enabled = $show
             if ($show) {
-              # a plugin may compute its label per row: 'Pin to top' / 'Remove pin'
-              $lb = $it.Tag['Label']
+              # a plugin may compute its label per row: 'Pin to top' / 'Remove pin'              $lb = $it.Tag['Label']
               if ($lb -is [scriptblock]) { try { $it.Text = [string](& $lb $cur) } catch { } }
             }
           }
@@ -1704,6 +1793,38 @@ function Show-Picker {
         $sel = (($e.State -band [Windows.Forms.DrawItemState]::Selected) -ne 0)
         $isData = ($e.Index -lt $script:Filtered.Count)
         $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+        # decoration / glyph / byte size are cached per entry: DrawItem runs on every hover
+        $rec = $null
+        $row = $null
+        $decor = $null
+        if ($isData) {
+          $rec = $script:Filtered[$e.Index]
+          $row = $rowCache[$rec.Payload]
+          if ($null -eq $row) {
+            $dec = $null
+            if (Get-Command Get-PluginRowDecor -ErrorAction SilentlyContinue) {
+              try { $dec = Get-PluginRowDecor $rec } catch { $dec = $null }
+            }
+            $glyph = ''
+            if ($dec -and $dec.Glyph) { $glyph = [string]$dec.Glyph } else { $glyph = Get-RowGlyph $rec.Payload }
+            $bytes = 0
+            try { $bytes = $Utf8.GetByteCount($rec.Payload) } catch { }
+            $row = @{ Decor = $dec; Glyph = $glyph; Bytes = $bytes }
+            $rowCache[$rec.Payload] = $row
+          }
+          $decor = $row.Decor
+        }
+        # highlight is a row fill of its own, drawn under the hover / selection overlay
+        if ($decor -and $decor.BackColor -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) {
+          $bgc = Convert-ThemeColor $decor.BackColor
+          if ($null -ne $bgc) {
+            $bgBrush = New-Object Drawing.SolidBrush $bgc
+            $bgPath = New-RoundPath $r.X $r.Y $r.Width $r.Height (Px 4)
+            $g.FillPath($bgBrush, $bgPath)
+            $bgPath.Dispose()
+            $bgBrush.Dispose()
+          }
+        }
         # Fluent rows stay flat at rest; hover / selection are translucent overlays
         if ($sel -or $e.Index -eq $script:Hover) {
           if ($sel) { $fill = $ui.SelBg } else { $fill = $ui.HoverBg }
@@ -1721,33 +1842,17 @@ function Show-Picker {
           $db.Dispose()
           return
         }
-        $rec = $script:Filtered[$e.Index]
-        # decoration / glyph / byte size are cached per entry: DrawItem runs on every hover
-        $row = $rowCache[$rec.Payload]
-        if ($null -eq $row) {
-          $dec = $null
-          if (Get-Command Get-PluginRowDecor -ErrorAction SilentlyContinue) {
-            try { $dec = Get-PluginRowDecor $rec } catch { $dec = $null }
-          }
-          $glyph = ''
-          if ($dec -and $dec.Glyph) { $glyph = [string]$dec.Glyph } else { $glyph = Get-RowGlyph $rec.Payload }
-          $bytes = 0
-          try { $bytes = $Utf8.GetByteCount($rec.Payload) } catch { }
-          $row = @{ Decor = $dec; Glyph = $glyph; Bytes = $bytes }
-          $rowCache[$rec.Payload] = $row
-        }
-        $decor = $row.Decor
 
         # Trailing meta column, fixed for every row so nothing shifts around:
-        #   [mark 14] [2] [pin 14] [6] [time 52] [12] [key cap 22] [10]
+        #   [mark 14] [2] [mark 14] [6] [time 52] [12] [key cap 22] [10]
         $capW = Px 22
         $capH = Px 18
         $capX = $r.Right - (Px 10) - $capW
         $capY = $r.Y + [int](($r.Height - $capH) / 2)
         $timeW = Px 52
         $timeX = $capX - (Px 12) - $timeW
-        $pinX = $timeX - (Px 6) - (Px 14)
-        $markX = $pinX - (Px 2) - (Px 14)
+        $markR = $timeX - (Px 6) - (Px $script:Metric.MarkSlot)
+        $markL = $markR - (Px 2) - (Px $script:Metric.MarkSlot)
         $offset = $e.Index - $lst.TopIndex
         $showCap = ($offset -ge 0 -and $offset -le 9 -and $offset -lt (Get-Rows) -and -not $script:Confirm)
 
@@ -1757,40 +1862,25 @@ function Show-Picker {
           $g.DrawString((Get-RelTime $rec.Time), $fSmall, $timeBrush, $timeRect, $sfRight)
           $timeBrush.Dispose()
         }
-        if ($rec.Pinned) {
-          $pinColor = $ui.Pin
-          if ($decor -and $decor.PinColor -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) {
-            $pcc = Convert-ThemeColor $decor.PinColor
-            if ($null -ne $pcc) { $pinColor = $pcc }
+        # marks are pure decoration handed over by a plugin: fixed slots, right to left,
+        # so a row with two marks never shifts the time column
+        if ($decor -and $decor.Marks) {
+          $slots = @($markR, $markL)
+          $marks = @($decor.Marks)
+          $n = [Math]::Min($marks.Count, $slots.Count)
+          for ($mi = 0; $mi -lt $n; $mi++) {
+            $mk = $marks[$mi]
+            if (-not $mk -or -not $mk.Glyph) { continue }
+            $mkColor = $ui.Mark
+            if ($mk.Color -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) {
+              $mcc = Convert-ThemeColor ([string]$mk.Color)
+              if ($null -ne $mcc) { $mkColor = $mcc }
+            }
+            $mkBrush = New-Object Drawing.SolidBrush $mkColor
+            $mkRect = New-Object Drawing.RectangleF -ArgumentList @([single]$slots[$mi], [single]$r.Y, [single](Px 14), [single]$r.Height)
+            $g.DrawString([string]$mk.Glyph, $fIconSmall, $mkBrush, $mkRect, $sfCenter)
+            $mkBrush.Dispose()
           }
-          $pinBrush = New-Object Drawing.SolidBrush $pinColor
-          $pinRect = New-Object Drawing.RectangleF -ArgumentList @([single]$pinX, [single]$r.Y, [single](Px 14), [single]$r.Height)
-          $g.DrawString($(if ($script:IconFamily) { [string][char]0xE718 } else { '*' }), $fIconSmall, $pinBrush, $pinRect, $sfCenter)
-          $pinBrush.Dispose()
-        }
-        if ($decor -and $decor.Mark) {
-          $markColor = $ui.Pin
-          if ($decor.MarkColor -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) {
-            $mc = Convert-ThemeColor $decor.MarkColor
-            if ($null -ne $mc) { $markColor = $mc }
-          }
-          $markBrush = New-Object Drawing.SolidBrush $markColor
-          $markRect = New-Object Drawing.RectangleF -ArgumentList @([single]$markX, [single]$r.Y, [single](Px 14), [single]$r.Height)
-          $g.DrawString([string]$decor.Mark, $fIconSmall, $markBrush, $markRect, $sfCenter)
-          $markBrush.Dispose()
-        }
-
-        if ($decor -and $decor.Emphasis -and -not $sel) {
-          $emColor = $ui.Accent
-          if ($decor.EmphasisColor -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) {
-            $ec = Convert-ThemeColor $decor.EmphasisColor
-            if ($null -ne $ec) { $emColor = $ec }
-          }
-          $emBrush = New-Object Drawing.SolidBrush $emColor
-          $emPath = New-RoundPath ($r.X + (Px 3)) ($r.Y + (Px 11)) (Px 3) ($r.Height - (Px 22)) (Px 1)
-          $g.FillPath($emBrush, $emPath)
-          $emPath.Dispose()
-          $emBrush.Dispose()
         }
 
         $textX = $r.X + (Px 12)
@@ -1808,12 +1898,13 @@ function Show-Picker {
           $textX = $r.X + (Px 38)
         }
 
-        $textW = $markX - (Px 8) - $textX
+        $textW = $markL - (Px 8) - $textX
         if ($textW -lt (Px 20)) { $textW = Px 20 }
         $tr = New-Object Drawing.RectangleF -ArgumentList @([single]$textX, [single]$r.Y, [single]$textW, [single]$r.Height)
 
         if ($sel) {
-          # Win11 selection indicator: short accent pill on the leading edge
+          # selection indicator only: a short accent pill on the leading edge. It marks the
+          # row the keys act on and never doubles as an entry highlight.
           $barBrush = New-Object Drawing.SolidBrush $ui.Accent
           $barPath = New-RoundPath ($r.X + (Px 3)) ($r.Y + (Px 11)) (Px 3) ($r.Height - (Px 22)) (Px 1)
           $g.FillPath($barBrush, $barPath)
@@ -1822,6 +1913,11 @@ function Show-Picker {
         }
 
         $tb = New-Object Drawing.SolidBrush $ui.Text
+        # highlight ink: a plugin sets the text colour, the row keeps its own background
+        if ($decor -and $decor.TextColor -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) {
+          $tcc = Convert-ThemeColor $decor.TextColor
+          if ($null -ne $tcc) { $tb.Color = $tcc }
+        }
         $hb = New-Object Drawing.SolidBrush $ui.Accent
         $hi = $script:HighlightOn -and $script:Tokens.Count -gt 0 -and ($label.Length -le 400)
         if ($hi -and $script:HighlightMax -gt 0) {
@@ -2157,7 +2253,7 @@ function Invoke-ServeOnce {
     $i1 = $dm.Items.Add('Show history'); $i1.Add_Click({ try { Show-Picker } catch { } })
     $i2 = $dm.Items.Add('Pause capture'); $i2.Add_Click({ Ensure-Dir; New-Item -ItemType File -Path $Paused -Force | Out-Null })
     $i3 = $dm.Items.Add('Resume capture'); $i3.Add_Click({ if (Test-Path -LiteralPath $Paused) { Remove-Item -LiteralPath $Paused -Force } })
-    $i4 = $dm.Items.Add('Clear history'); $i4.Add_Click({ Clear-Store (Get-KeepPinnedOnClear) })
+    $i4 = $dm.Items.Add('Clear history'); $i4.Add_Click({ Clear-Store (Get-ClearKeepMarks) })
     $i5 = $dm.Items.Add('Exit'); $i5.Add_Click({ $script:ExitKind = 'user'; [Windows.Forms.Application]::ExitThread() })
     $script:Tray.ContextMenuStrip = $dm
     $script:Tray.Visible = $true
@@ -2402,7 +2498,7 @@ $script:IniSchema = [ordered]@{
   PasteKeys         = @{ Kind = 'string'; Default = '^v';          Desc = 'SendKeys sent after picking' }
   ModReleaseTimeout = @{ Kind = 'int'; Min = 0; Max = 60000; Default = 1200; Desc = 'ms to wait for the modifiers to be released' }
   PasteSettle       = @{ Kind = 'int'; Min = 0; Max = 10000; Default = 80;   Desc = 'ms to wait before sending PasteKeys' }
-  MaxItems          = @{ Kind = 'int'; Min = 1; Max = 100000; Default = 300; Desc = 'entry cap (pinned entries are exempt)' }
+  MaxItems          = @{ Kind = 'int'; Min = 1; Max = 100000; Default = 300; Desc = 'entry cap (rows a mark protects are exempt)' }
   MaxBytes          = @{ Kind = 'int'; Min = 1; Max = 104857600; Default = 204800; Desc = 'per entry size cap' }
   MaxTotal          = @{ Kind = 'int'; Min = 1024; Max = 1073741824; Default = 4194304; Desc = 'total store size cap in bytes' }
   Interval          = @{ Kind = 'int'; Min = 50; Max = 60000; Default = 300; Desc = 'clipboard poll interval in ms' }
@@ -2924,8 +3020,8 @@ function Restart-ResidentIfRunning {
 
 function Show-Usage {
   # Commands are printed as groups with a sub-list, the same shape `config` uses:
-  # base categories first, then one group per loaded plugin. Pin / star are a plugin
-  # feature (item-marks), so they only ever appear in that plugin's group.
+  # base categories first, then one group per loaded plugin. Everything a plugin owns
+  # (pin, star, highlight, open, ...) only ever appears in that plugin's group.
   $groups = [ordered]@{
     'daemon'  = @(
       @('serve', 'run the resident daemon (capture + hotkey + tray)'),
@@ -2940,8 +3036,8 @@ function Show-Usage {
       @('get', 'print the clipboard text'),
       @('put "text"', 'set the clipboard (reads stdin when text is omitted)'),
       @('pick N', 'put entry N back on the clipboard'),
-      @('del N', 'delete entry N (a starred row must be unstarred first)'),
-      @('clear [-All]', 'delete entries (pinned survive unless -All, starred always stay)')
+      @('del N', 'delete entry N (a row a mark protects must be unprotected first)'),
+      @('clear [-All]', 'delete entries (protected rows always stay, marks may keep more)')
     )
     'config'  = @(
       @('config', 'show every key grouped by base / plugin'),
@@ -3087,12 +3183,13 @@ switch ($Command.ToLower()) {
     $recs = @(Get-Records)
     if ($recs.Count -eq 0) { Write-Host '(history is empty)'; break }
     $n = if ($Count -gt 0) { [Math]::Min($Count, $recs.Count) } else { $recs.Count }
+    $sortMark = Get-SortMark
     for ($i = 0; $i -lt $n; $i++) {
       $rt = Get-RelTime $recs[$i].Time
       if (-not $rt) { $rt = '-' }
-      $pin = ' '
-      if ($recs[$i].Pinned) { $pin = '*' }
-      Write-Host ('{0,3}  {1,-5} {2} {3}' -f ($i + 1), $rt, $pin, (Format-Item $recs[$i].Payload 100))
+      $head = ' '
+      if ($sortMark -and (Test-Mark $recs[$i] $sortMark)) { $head = '*' }
+      Write-Host ('{0,3}  {1,-5} {2} {3}' -f ($i + 1), $rt, $head, (Format-Item $recs[$i].Payload 100))
     }
   }
   'put' {
@@ -3126,26 +3223,35 @@ switch ($Command.ToLower()) {
     if ($i -lt 1 -or $i -gt $recs.Count) { Write-Host 'index out of range'; break }
     $victim = $recs[$i - 1]
     $res = Remove-Record $victim.Payload
-    if ($res -eq 'starred') {
-      # the unstar verb belongs to the item-marks plugin, so say what is actually available
-      if (Get-PluginCommand 'unstar') { Write-Host ('[!] starred entry, unstar it first: clipboard unstar ' + $i) }
-      else { Write-Host '[!] starred entry, enable the star plugin to unstar it' }
+    if ($res -like 'protected:*') {
+      # the verb that removes the mark belongs to the plugin that declared it
+      $pm = $res.Substring(10)
+      $info = Get-MarkInfo $pm
+      $word = Get-MarkWord $pm
+      if ($info -and $info.Unset) { Write-Host ('[!] ' + $word + ' entry, ' + $info.Unset + ' it first: clipboard ' + $info.Unset + ' ' + $i) }
+      else { Write-Host ('[!] entry is protected by the ' + $pm + ' mark; load the plugin that owns it') }
       break
     }
     if ($res -eq 'removed') { Write-Host ('deleted: ' + (Format-Item $victim.Payload 60) + '   left ' + @(Get-Records).Count) }
     else { Write-Host 'index out of range' }
   }
   'clear' {
-    $keep = Get-KeepPinnedOnClear
-    if ($All.IsPresent) { $keep = $false }
+    $keep = @(Get-ClearKeepMarks -All:$All.IsPresent)
     Clear-Store $keep
     $left = @(Get-Records)
-    $starred = 0
-    foreach ($r in $left) { if ($r.Starred) { $starred++ } }
-    if ($starred -gt 0) { Write-Host ('[ok] history cleared, ' + $starred + ' starred kept (unstar to remove them)') }
-    elseif ($keep -and $left.Count -gt 0) { Write-Host ('[ok] history cleared, ' + $left.Count + ' pinned kept (clear -All removes them)') }
-    elseif ($keep) { Write-Host '[ok] history cleared' }
-    else { Write-Host '[ok] history cleared, pinned included' }
+    # report what survived, and for every protected mark say which verb removes it
+    $parts = @()
+    foreach ($pm in @(Get-ProtectedMarks)) {
+      $c = 0
+      foreach ($r in $left) { if (Test-Mark $r $pm) { $c++ } }
+      if ($c -le 0) { continue }
+      $info = Get-MarkInfo $pm
+      if ($info -and $info.Unset) { $parts += ($c.ToString() + ' ' + (Get-MarkWord $pm) + ' kept (' + $info.Unset + ' to remove them)') }
+      else { $parts += ($c.ToString() + ' ' + (Get-MarkWord $pm) + ' kept') }
+    }
+    if ($parts.Count -gt 0) { Write-Host ('[ok] history cleared, ' + ($parts -join ', ')) }
+    elseif ($left.Count -gt 0) { Write-Host ('[ok] history cleared, ' + $left.Count + ' kept by marks (clear -All drops them)') }
+    else { Write-Host '[ok] history cleared' }
   }
   'pause' { Ensure-Dir; New-Item -ItemType File -Path $Paused -Force | Out-Null; Write-Host '[ok] capture paused' }
   'stop' {
@@ -3162,13 +3268,10 @@ switch ($Command.ToLower()) {
     } catch { }
     Write-Host ('resident    : ' + $(if ($alive) { 'running' } else { 'not running' }))
     $recs = @(Get-Records)
-    $pinCount = 0
-    $starCount = 0
-    foreach ($r in $recs) {
-      if ($r.Pinned) { $pinCount++ }
-      if ($r.Starred) { $starCount++ }
-    }
-    Write-Host ('entries     : ' + $recs.Count + ' / ' + $MaxItems + '   pinned ' + $pinCount + '   starred ' + $starCount)
+    $markWords = @(Get-MarkCountWords $recs)
+    $line = 'entries     : ' + $recs.Count + ' / ' + $MaxItems
+    if ($markWords.Count -gt 0) { $line = $line + '   ' + ($markWords -join '   ') }
+    Write-Host $line
     Write-Host ('capture     : ' + $(if (Test-Path -LiteralPath $Paused) { 'paused' } else { 'active' }))
     Write-Host ('autostart   : ' + $(if (Test-Path -LiteralPath (Get-AutostartPath)) { 'installed' } else { 'not installed' }))
     Write-Host ('desktop     : ' + $(if (Test-Path -LiteralPath (Get-DesktopPath)) { 'installed' } else { 'not installed' }))

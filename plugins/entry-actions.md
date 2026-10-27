@@ -53,7 +53,7 @@ kinds in 42 entries:
   code      2     5%
   multi     6    14%
   text     14    33%
-  pinned 2   starred 1   chars 18422
+  1 pinned   1 starred   chars 18422
 ```
 
 ### `clipboard open N` —— 按类型打开
@@ -79,6 +79,15 @@ opened: https://example.com/docs/start
 
 `Ctrl+O` 与右键项共用同一套判断与执行逻辑，所以两者行为永远一致。
 
+两个入口都调用插件里的共享块，不是各自复制一份：
+
+| 块 | 作用 |
+|---|---|
+| `KindOf` | 条目 → 类型（命令、菜单、按键、`kinds` 统计都用它） |
+| `CanOpen` | 这一行能不能打开（右键项与 `Ctrl+O` 的 `Test`） |
+| `OpenPayload` | 真正执行打开（命令、右键项、`Ctrl+O` 都调它） |
+| `Sniff` | 格式嗅探（只返回结果，不管输出格式） |
+
 ## 设置项（`clipboard.ini`）
 
 | 键 | 默认 | 说明 |
@@ -98,6 +107,7 @@ clipboard config set entry-actions.Reveal 0
 
 ## 说明
 
-- 基础工具只区分**文本**与**文件列表**（`Get-EntryKind`，用于存储、行图标与粘贴往返）；本插件自带更细的分类器，命令、右键与 `Ctrl+O` 都用它判断条目类型。
+- 基础工具只区分**文本**与**文件列表**（`Get-EntryKind`，用于存储、行图标与粘贴往返）；本插件自带更细的分类器（`KindOf`），命令、右键与 `Ctrl+O` 都用它判断条目类型，不存在第二份分类规则。
+- 条目上的标记（置顶 / 收藏 / 高亮）不写在本插件里：`kind` 的 `state` 行向基础层要标记名称（`Get-RecordMarkWords`），`kinds` 的尾行用同源计数，所以装不装 `item-marks` 都不会出错。
 - 嗅探只取前 8000 个字符，避免大段文本拖慢输出；`json` 用 `ConvertFrom-Json` 真正解析一次，解析失败会显示 `json-like (invalid)`。
 - 嗅探会读取条目内容但不会写入任何东西，也不会修改历史。

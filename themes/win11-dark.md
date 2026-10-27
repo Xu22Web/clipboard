@@ -23,10 +23,10 @@ Theme=win11-dark
 | `Border` / `SelBg` / `HoverBg` | `#16FFFFFF` / `#1AFFFFFF` / `#12FFFFFF` |
 | `BadgeBg` / `BadgeText` | `#10FFFFFF` / `#C8C8C8` |
 | `KeyCapBg` / `KeyCapBorder` | `#0CFFFFFF` / `#1CFFFFFF` |
-| `Pin` / `Warn` | `#FFC86E` / `#FF99A4` |
+| `Mark` / `Warn` | `#FFC86E` / `#FF99A4` |
 | 字体族 | 空 = 自动（`Segoe UI Variable Text` → `Segoe UI`；图标 `Segoe Fluent Icons` → `Segoe MDL2 Assets`） |
 | 字号 | Body 10.5 / Small 9 / Tiny 9 / Title 13 / Icon 12 / IconSmall 10 / IconBig 24 |
-| `[item-marks]` | `StarColor=#FFC86E`（收藏星标与置顶色一致） |
+| `[item-marks]` | `StarColor=#FFC86E`（星标与默认标记色一致）、`HighlightColor=#FFE3A3` / `HighlightBg=#26FFC86E` |
 
 叠层色（`SelBg` / `HoverBg` / `Border` / `BadgeBg` / `AccentSoft` / `KeyCapBorder`）都是带 alpha 的半透明白，面板把它们叠在 `Surface` 上做层次。
 

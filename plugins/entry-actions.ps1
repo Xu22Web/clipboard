@@ -36,6 +36,98 @@
     if ($payload.IndexOf([char]10) -ge 0) { return 'multi' }
     return 'text'
   }
+  # ------------------------------------------------------------- shared behaviour
+  # Which rows this plugin can act on, and the action itself. The context menu entry and
+  # the Ctrl+O key both call these, so the rule and the behaviour exist exactly once.
+  CanOpen      = {
+    param($rec)
+    if ($null -eq $rec) { return $false }
+    $k = [string](& (Get-PluginData 'entry-actions' 'KindOf') ([string]$rec.Payload))
+    return ($k -eq 'link' -or $k -eq 'path' -or $k -eq 'files')
+  }
+  OpenPayload  = {
+    param($payload)
+    $target = [string]$payload
+    $kind = [string](& (Get-PluginData 'entry-actions' 'KindOf') $target)
+    if ($target.Length -gt 0 -and $target[0] -eq [char]1) {
+      $parts = @($target.Substring(1) -split "`n" | Where-Object { $_ })
+      if ($parts.Count -eq 0) { throw 'nothing to open' }
+      $target = $parts[0]
+      $kind = 'files'
+    }
+    $target = $target.Trim()
+    if ($kind -eq 'link') {
+      $browser = Get-PluginSetting 'entry-actions' 'Browser'
+      if ($browser) { Start-Process $browser @($target) } else { Start-Process $target }
+    } elseif (($kind -eq 'path' -or $kind -eq 'files') -and (Get-PluginSetting 'entry-actions' 'Reveal') -eq '1') {
+      Start-Process 'explorer.exe' @('/select,"' + $target + '"')
+    } else {
+      Start-Process $target
+    }
+    return $target
+  }
+  # param($sample) -> flavour strings; entry-actions.Detect decides which sniffers run,
+  # a hit is additive and an unknown name in the list is simply skipped
+  Sniff        = {
+    param([string]$sample)
+    $out = @()
+    if (-not $sample) { return $out }
+    $want = @((Get-PluginSetting 'entry-actions' 'Detect') -split '[,;]' | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ })
+    if (($want -contains 'json') -and ($sample.StartsWith('{') -or $sample.StartsWith('['))) {
+      $ok = $false
+      try { [void]($sample | ConvertFrom-Json); $ok = $true } catch { }
+      if ($ok) { $out += 'json' } else { $out += 'json-like (invalid)' }
+    }
+    if (($want -contains 'xml') -and $sample.StartsWith('<')) {
+      $ok = $false
+      try { [void][xml]$sample; $ok = $true } catch { }
+      if ($ok) { $out += 'xml' } else { $out += 'markup-like (invalid)' }
+    }
+    if (($want -contains 'yaml') -and ($sample -match '(?m)^[A-Za-z0-9_.-]+:\s*\S') -and -not ($sample -match '[{}]')) {
+      $out += 'yaml-like'
+    }
+    if ($want -contains 'color') {
+      if ($sample -match '^#?(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{3}|[0-9A-Fa-f]{8})$') {
+        $hex = $sample.TrimStart('#')
+        $out += ('colour #' + $hex.ToUpper())
+        if ($hex.Length -eq 6) {
+          $r = [Convert]::ToInt32($hex.Substring(0, 2), 16)
+          $g = [Convert]::ToInt32($hex.Substring(2, 2), 16)
+          $b = [Convert]::ToInt32($hex.Substring(4, 2), 16)
+          $out += ('rgb(' + $r + ',' + $g + ',' + $b + ')')
+        }
+      }
+    }
+    if (($want -contains 'base64') -and $sample -match '^[A-Za-z0-9+/]+={0,2}$' -and $sample.Length -ge 16 -and ($sample.Length % 4) -eq 0) {
+      try {
+        $bytes = [Convert]::FromBase64String($sample)
+        $out += ('base64 ' + $bytes.Length + ' bytes')
+      } catch { }
+    }
+    if (($want -contains 'ip') -and ($sample -match '^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$')) {
+      if (([int]$matches[1] -le 255) -and ([int]$matches[2] -le 255) -and ([int]$matches[3] -le 255) -and ([int]$matches[4] -le 255)) {
+        $out += 'ipv4'
+      }
+    }
+    if (($want -contains 'uuid') -and ($sample -match '^\{?[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}?$')) {
+      $out += 'uuid'
+    }
+    if (($want -contains 'number') -and ($sample -match '^-?\d{1,3}(,\d{3})*(\.\d+)?$')) {
+      $out += ('number ' + $sample.Replace(',', ''))
+    }
+    if (($want -contains 'version') -and ($sample -match '^v?\d+\.\d+(\.\d+)*$')) {
+      $out += 'version'
+    }
+    if (($want -contains 'date') -and ($sample -match '^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?)?')) {
+      $out += 'date'
+    }
+    if ($want -contains 'hash') {
+      if ($sample -match '^[0-9A-Fa-f]{32}$') { $out += 'hash md5' }
+      elseif ($sample -match '^[0-9A-Fa-f]{40}$') { $out += 'hash sha1' }
+      elseif ($sample -match '^[0-9A-Fa-f]{64}$') { $out += 'hash sha256' }
+    }
+    return $out
+  }
   Settings     = [ordered]@{
     Detail       = @{ Kind = 'enum'; Options = @('short', 'full'); Default = 'full'; Desc = 'kind: short = one summary line, full = the whole block' }
     PreviewChars = @{ Kind = 'int'; Min = 20; Max = 400; Default = 100; Desc = 'kind: characters of the entry shown in the preview' }
@@ -51,24 +143,8 @@
       if (-not [int]::TryParse([string]$value, [ref]$i)) { Write-Host 'usage: clipboard open 3'; return }
       $recs = @(Get-Records)
       if ($i -lt 1 -or $i -gt $recs.Count) { Write-Host 'index out of range'; return }
-      $target = [string]$recs[$i - 1].Payload
-      $kind = [string](& (Get-PluginData 'entry-actions' 'KindOf') $target)
-      if ($target.Length -gt 0 -and $target[0] -eq [char]1) {
-        $parts = @($target.Substring(1) -split "`n" | Where-Object { $_ })
-        if ($parts.Count -eq 0) { Write-Host 'nothing to open'; return }
-        $target = $parts[0]
-        $kind = 'files'
-      }
-      $target = $target.Trim()
       try {
-        if ($kind -eq 'link') {
-          $browser = Get-PluginSetting 'entry-actions' 'Browser'
-          if ($browser) { Start-Process $browser @($target) } else { Start-Process $target }
-        } elseif (($kind -eq 'path' -or $kind -eq 'files') -and (Get-PluginSetting 'entry-actions' 'Reveal') -eq '1') {
-          Start-Process 'explorer.exe' @('/select,"' + $target + '"')
-        } else {
-          Start-Process $target
-        }
+        [void](& (Get-PluginData 'entry-actions' 'OpenPayload') ([string]$recs[$i - 1].Payload))
         Write-Host ('opened: ' + (Format-Item $recs[$i - 1].Payload 60))
       } catch {
         Write-Log ('entry-actions open failed: ' + $_.Exception.Message)
@@ -152,66 +228,11 @@
       }
 
       # ------------------------------------------------------------- format sniffers
-      # entry-actions.Detect decides which sniffers run; a hit is additive, so adding one
-      # needs no other change and an unknown name in the list is simply skipped.
-      $flavours = New-Object System.Collections.Generic.List[string]
-      $want = @((Get-PluginSetting 'entry-actions' 'Detect') -split '[,;]' | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ })
-      $sample = $trimmed
-      if ($sample.Length -gt 8000) { $sample = $sample.Substring(0, 8000) }
-      if ($sample -and -not $isFiles) {
-        if (($want -contains 'json') -and ($sample.StartsWith('{') -or $sample.StartsWith('['))) {
-          $ok = $false
-          try { [void]($sample | ConvertFrom-Json); $ok = $true } catch { }
-          if ($ok) { $flavours.Add('json') } else { $flavours.Add('json-like (invalid)') }
-        }
-        if (($want -contains 'xml') -and $sample.StartsWith('<')) {
-          $ok = $false
-          try { [void][xml]$sample; $ok = $true } catch { }
-          if ($ok) { $flavours.Add('xml') } else { $flavours.Add('markup-like (invalid)') }
-        }
-        if (($want -contains 'yaml') -and ($sample -match '(?m)^[A-Za-z0-9_.-]+:\s*\S') -and -not ($sample -match '[{}]')) {
-          $flavours.Add('yaml-like')
-        }
-        if ($want -contains 'color') {
-          if ($sample -match '^#?(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{3}|[0-9A-Fa-f]{8})$') {
-            $hex = $sample.TrimStart('#')
-            $flavours.Add('colour #' + $hex.ToUpper())
-            if ($hex.Length -eq 6) {
-              $r = [Convert]::ToInt32($hex.Substring(0, 2), 16)
-              $g = [Convert]::ToInt32($hex.Substring(2, 2), 16)
-              $b = [Convert]::ToInt32($hex.Substring(4, 2), 16)
-              $flavours.Add('rgb(' + $r + ',' + $g + ',' + $b + ')')
-            }
-          }
-        }
-        if (($want -contains 'base64') -and $sample -match '^[A-Za-z0-9+/]+={0,2}$' -and $sample.Length -ge 16 -and ($sample.Length % 4) -eq 0) {
-          try {
-            $bytes = [Convert]::FromBase64String($sample)
-            $flavours.Add('base64 ' + $bytes.Length + ' bytes')
-          } catch { }
-        }
-        if (($want -contains 'ip') -and ($sample -match '^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$')) {
-          if (([int]$matches[1] -le 255) -and ([int]$matches[2] -le 255) -and ([int]$matches[3] -le 255) -and ([int]$matches[4] -le 255)) {
-            $flavours.Add('ipv4')
-          }
-        }
-        if (($want -contains 'uuid') -and ($sample -match '^\{?[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}?$')) {
-          $flavours.Add('uuid')
-        }
-        if (($want -contains 'number') -and ($sample -match '^-?\d{1,3}(,\d{3})*(\.\d+)?$')) {
-          $flavours.Add('number ' + $sample.Replace(',', ''))
-        }
-        if (($want -contains 'version') -and ($sample -match '^v?\d+\.\d+(\.\d+)*$')) {
-          $flavours.Add('version')
-        }
-        if (($want -contains 'date') -and ($sample -match '^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?)?')) {
-          $flavours.Add('date')
-        }
-        if ($want -contains 'hash') {
-          if ($sample -match '^[0-9A-Fa-f]{32}$') { $flavours.Add('hash md5') }
-          elseif ($sample -match '^[0-9A-Fa-f]{40}$') { $flavours.Add('hash sha1') }
-          elseif ($sample -match '^[0-9A-Fa-f]{64}$') { $flavours.Add('hash sha256') }
-        }
+      $flavours = @()
+      if (-not $isFiles) {
+        $sample = $trimmed
+        if ($sample.Length -gt 8000) { $sample = $sample.Substring(0, 8000) }
+        $flavours = @(& (Get-PluginData 'entry-actions' 'Sniff') $sample)
       }
 
       $pv = Get-ItemLabel $raw $true
@@ -222,11 +243,8 @@
         return
       }
 
-      $age = ''
-      if (Get-Command Get-RelTime -ErrorAction SilentlyContinue) {
-        $age = [string](Get-RelTime $rec.Time)
-        if (-not $age) { $age = '-' }
-      }
+      $age = [string](Get-RelTime $rec.Time)
+      if (-not $age) { $age = '-' }
       Write-Host ('entry ' + $i + '   kind ' + $kind)
       Write-Host ('  {0,-8}: {1} chars   {2} line(s)   {3} word(s)' -f 'size', $chars, $lines, $words)
       if ($showTargets) {
@@ -235,9 +253,7 @@
       $fmt = '(none)'
       if ($flavours.Count -gt 0) { $fmt = ($flavours -join ', ') }
       Write-Host ('  {0,-8}: {1}' -f 'format', $fmt)
-      $flags = @()
-      if ($rec.Pinned) { $flags += 'pinned' }
-      if ($rec.Starred) { $flags += 'starred' }
+      $flags = @(Get-RecordMarkWords $rec)
       if ($flags.Count -eq 0) { $flags += 'plain' }
       if ($age) { $flags += ('age ' + $age) }
       Write-Host ('  {0,-8}: {1}' -f 'state', ($flags -join ', '))
@@ -251,15 +267,11 @@
       $counts = @{}
       foreach ($k in $order) { $counts[$k] = 0 }
       $chars = 0
-      $pinned = 0
-      $starred = 0
       foreach ($r in $recs) {
         $k = [string](& (Get-PluginData 'entry-actions' 'KindOf') ([string]$r.Payload))
         if (-not $counts.ContainsKey($k)) { $counts[$k] = 0 }
         $counts[$k] = [int]$counts[$k] + 1
         $chars = $chars + ([string]$r.Payload).Length
-        if ($r.Pinned) { $pinned++ }
-        if ($r.Starred) { $starred++ }
       }
       Write-Host ('kinds in ' + $recs.Count + ' entries:')
       foreach ($k in $order) {
@@ -272,7 +284,7 @@
         if ([int]$counts[$k] -le 0) { continue }
         Write-Host ('  {0,-6} {1,4}' -f $k, [int]$counts[$k])
       }
-      Write-Host ('  pinned ' + $pinned + '   starred ' + $starred + '   chars ' + $chars)
+      Write-Host ('  ' + ((@(Get-MarkCountWords $recs) + ('chars ' + $chars)) -join '   '))
     }
   }
   # Rows this plugin can act on: a link, a path or a file list. Shared by the context menu
@@ -280,21 +292,8 @@
   ContextMenu  = @(
     @{
       Label  = 'Open link or path'
-      Test   = {
-        param($rec)
-        if ($null -eq $rec) { return $false }
-        $k = [string](& (Get-PluginData 'entry-actions' 'KindOf') ([string]$rec.Payload))
-        return ($k -eq 'link' -or $k -eq 'path' -or $k -eq 'files')
-      }
-      Invoke = {
-        param($rec)
-        if ($null -eq $rec) { return }
-        # reuse the command instead of copying the open logic a second time
-        $recs = @(Get-Records)
-        for ($i = 0; $i -lt $recs.Count; $i++) {
-          if ($recs[$i].Payload -ceq $rec.Payload) { & (Get-PluginCommand 'open') ([string]($i + 1)); return }
-        }
-      }
+      Test   = { param($rec) [bool](& (Get-PluginData 'entry-actions' 'CanOpen') $rec) }
+      Invoke = { param($rec) if ($null -ne $rec) { [void](& (Get-PluginData 'entry-actions' 'OpenPayload') ([string]$rec.Payload)) } }
     }
   )
   PanelKeys    = @(
@@ -302,20 +301,8 @@
       Key    = 'O'
       Ctrl   = $true
       Label  = 'open link or path'
-      Test   = {
-        param($rec)
-        if ($null -eq $rec) { return $false }
-        $k = [string](& (Get-PluginData 'entry-actions' 'KindOf') ([string]$rec.Payload))
-        return ($k -eq 'link' -or $k -eq 'path' -or $k -eq 'files')
-      }
-      Invoke = {
-        param($rec)
-        if ($null -eq $rec) { return }
-        $recs = @(Get-Records)
-        for ($i = 0; $i -lt $recs.Count; $i++) {
-          if ($recs[$i].Payload -ceq $rec.Payload) { & (Get-PluginCommand 'open') ([string]($i + 1)); return }
-        }
-      }
+      Test   = { param($rec) [bool](& (Get-PluginData 'entry-actions' 'CanOpen') $rec) }
+      Invoke = { param($rec) if ($null -ne $rec) { [void](& (Get-PluginData 'entry-actions' 'OpenPayload') ([string]$rec.Payload)) } }
     }
   )
 }

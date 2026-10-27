@@ -211,15 +211,35 @@ try {
     # ------------------------------------------------------------- record store
     Check 'unit' 'v2 tag written' (([IO.File]::ReadAllText($StoreFile)).StartsWith($V2TAG)) ''
 
+    # ------------------------------------------- generic marks (base owns no mark meaning)
+    $markPlugin = @{
+      Name       = 'marks'
+      Marks      = [ordered]@{
+        p = @{ Set = 'pin'; Unset = 'unpin'; Word = 'pinned'; Hint = 'Ctrl+P'; Protected = $false }
+        s = @{ Set = 'star'; Unset = 'unstar'; Word = 'starred'; Hint = 'Ctrl+S'; Protected = $true }
+      }
+      SortMark   = 'p'
+      ClearKeeps = @('p')
+    }
+    $script:Plugins = @($markPlugin)
+    Check 'unit' 'mark names come from the declaration' ((@(Get-MarkNames) -join ',') -eq 'p,s') (@(Get-MarkNames) -join ',')
+    Check 'unit' 'mark word lookup' ((Get-MarkWord 's') -eq 'starred') (Get-MarkWord 's')
+    Check 'unit' 'undeclared mark falls back to its character' ((Get-MarkWord 'z') -eq 'z') (Get-MarkWord 'z')
+    Check 'unit' 'protected marks come from the declaration' ((@(Get-ProtectedMarks) -join ',') -eq 's') (@(Get-ProtectedMarks) -join ',')
+    Check 'unit' 'sort mark comes from the declaration' ((Get-SortMark) -eq 'p') (Get-SortMark)
+    Check 'unit' 'clear keeps the declared marks' ((@(Get-ClearKeepMarks) -join ',') -eq 'p,s') (@(Get-ClearKeepMarks) -join ',')
+    Check 'unit' 'clear -All keeps only protected marks' ((@(Get-ClearKeepMarks -All) -join ',') -eq 's') (@(Get-ClearKeepMarks -All) -join ',')
+
     $now = Get-Epoch
     $recList = New-Object System.Collections.Generic.List[object]
-    $recList.Add((New-Record 'alpha' ($now - 60) $true))
-    $recList.Add((New-Record 'beta' ($now - 30) $false))
+    $recList.Add((New-Record 'alpha' ($now - 60) 'p'))
+    $recList.Add((New-Record 'beta' ($now - 30) ''))
     Save-Records $recList.ToArray()
     $r2 = @(Get-Records)
     Check 'unit' 'records roundtrip payloads' (((Payloads) -join '|') -eq 'alpha|beta') ((Payloads) -join '|')
     Check 'unit' 'record roundtrip time' (($r2[0].Time -eq ($now - 60)) -and ($r2[1].Time -eq ($now - 30))) ($r2[0].Time -as [string])
-    Check 'unit' 'record roundtrip pin' (($r2[0].Pinned -eq $true) -and ($r2[1].Pinned -eq $false)) ''
+    Check 'unit' 'record roundtrip marks' ((Test-Mark $r2[0] 'p') -and (-not (Test-Mark $r2[1] 'p'))) ''
+    Check 'unit' 'record keeps a mark the base never heard of' ((Test-Mark (New-Record 'x' 0 'zq') 'z') -and (Test-Mark (New-Record 'x' 0 'zq') 'q')) ''
 
     # no legacy format support: a store without the CBHIST2 tag is ignored
     [IO.File]::WriteAllText($StoreFile, ('alpha' + $RS + 'beta'), $Utf8)
@@ -229,43 +249,50 @@ try {
     Save-Records $recList.ToArray()
     Add-Item 'alpha'
     $r3 = @(Get-Records)
-    Check 'unit' 'pinned stays on top after add' ($r3[0].Payload -eq 'alpha') $r3[0].Payload
-    [void](Set-Pin 'beta' $true)
+    Check 'unit' 'sorted mark stays on top after add' ($r3[0].Payload -eq 'alpha') $r3[0].Payload
+    [void](Set-Mark 'beta' 'p' $true)
     Add-Item 'beta'
-    $stillPinned = $false
-    foreach ($r in @(Get-Records)) { if ($r.Payload -ceq 'beta' -and $r.Pinned) { $stillPinned = $true } }
-    Check 'unit' 'dedupe keeps pin flag' $stillPinned ''
+    $stillMarked = $false
+    foreach ($r in @(Get-Records)) { if ($r.Payload -ceq 'beta' -and (Test-Mark $r 'p')) { $stillMarked = $true } }
+    Check 'unit' 'dedupe keeps the marks' $stillMarked ''
 
     $savedItems = $MaxItems
     $MaxItems = 2
     Save-Records @()
     Add-Item 'p1'
-    [void](Set-Pin 'p1' $true)
+    [void](Set-Mark 'p1' 's' $true)
     foreach ($t in @('n1', 'n2', 'n3', 'n4')) { Add-Item $t }
     $r5 = @(Get-Records)
-    $hasPin = $false
-    foreach ($r in $r5) { if ($r.Payload -ceq 'p1' -and $r.Pinned) { $hasPin = $true } }
-    Check 'unit' 'trim keeps pinned entries' ($r5.Count -eq 2 -and $hasPin) (($r5.Count -as [string]) + ' ' + ((Payloads) -join '|'))
+    $hasMark = $false
+    foreach ($r in $r5) { if ($r.Payload -ceq 'p1' -and (Test-Mark $r 's')) { $hasMark = $true } }
+    Check 'unit' 'trim keeps a protected mark' ($r5.Count -eq 2 -and $hasMark) (($r5.Count -as [string]) + ' ' + ((Payloads) -join '|'))
     $MaxItems = $savedItems
 
+    # a plugin that limits its own mark needs one pass over the whole list
     Save-Records @()
     Add-Item 'a1'
     Add-Item 'a2'
-    [void](Set-Pin 'a1' $true 1)
-    [void](Set-Pin 'a2' $true 1)
-    $pinCount = 0
-    foreach ($r in @(Get-Records)) { if ($r.Pinned) { $pinCount++ } }
-    Check 'unit' 'pin cap keeps the newest' ($pinCount -eq 1) ($pinCount -as [string])
+    [void](Set-Mark 'a1' 'p' $true)
+    [void](Set-Mark 'a2' 'p' $true)
+    $cleared = Update-Records {
+      param($list)
+      $n = 0
+      foreach ($r in $list) { if (Test-Mark $r 'p') { [void](Set-RecordMark $r 'p' $false); $n++ } }
+      return $n
+    }
+    Check 'unit' 'Update-Records returns the body result' ($cleared -eq 2) ($cleared -as [string])
+    Check 'unit' 'Update-Records saved in one write' (-not (@(Get-Records) | Where-Object { Test-Mark $_ 'p' })) ''
 
     Save-Records @()
     Add-Item 'c1'
     Add-Item 'c2'
-    [void](Set-Pin 'c1' $true)
-    Clear-Store $true
+    [void](Set-Mark 'c1' 'p' $true)
+    Clear-Store (Get-ClearKeepMarks)
     $afterKeep = @(Get-Records)
-    Check 'unit' 'clear keeps pinned' ($afterKeep.Count -eq 1 -and $afterKeep[0].Payload -eq 'c1') ((Payloads) -join '|')
-    Clear-Store $false
-    Check 'unit' 'clear -All removes everything' (@(Get-Records).Count -eq 0) ''
+    Check 'unit' 'clear keeps marked rows' ($afterKeep.Count -eq 1 -and $afterKeep[0].Payload -eq 'c1') ((Payloads) -join '|')
+    Clear-Store (Get-ClearKeepMarks -All)
+    Check 'unit' 'clear -All drops an unprotected mark' (@(Get-Records).Count -eq 0) ''
+    $script:Plugins = @()
 
     Save-Records @()
     Add-Item 'u1'
@@ -393,7 +420,7 @@ try {
         "     Tint = @{ Kind = 'color'; Default = '#000000'; Themeable = `$true; Desc = 'themeable tint' } };"
         "   Commands = @{ 'hi' = { param(`$v) Write-Host ('hi ' + `$v) } };"
         "   Transform = { param(`$p) ('T:' + `$p) };"
-        "   RowDecor = { param(`$r) if (`$r.Starred) { @{ Mark = 'M'; MarkColor = '#112233'; Emphasis = `$true } } } ;"
+        "   RowDecor = { param(`$r) if (`$r.Marks -match 's') { @{ Marks = @( @{ Glyph = 'M'; Color = '#112233' } ); TextColor = '#445566' } } } ;"
         "   Tick = @{ Seconds = 5; Action = { param(`$now) } };"
         "   PanelKeys = @( @{ Key = 'O'; Ctrl = `$true; Label = 'open it'; Test = { param(`$r) `$true }; Invoke = { param(`$r) } } );"
         "   Init = { `$global:cbInitRan = 1 };"
@@ -479,12 +506,13 @@ try {
 
     # ------------------------------------------------------ plugin lifecycle hooks
     $script:Plugins = @(Load-Plugins $pdir @('one'))
-    $decorRec = [pscustomobject]@{ Payload = 'x'; Flags = 't'; Time = 0; Pinned = $false; Starred = $true }
+    $decorRec = [pscustomobject]@{ Payload = 'x'; Time = 0; Marks = 's' }
     $dec = Get-PluginRowDecor $decorRec
-    Check 'unit' 'RowDecor mark' ($dec.Mark -eq 'M') $dec.Mark
-    Check 'unit' 'RowDecor colour' ($dec.MarkColor -eq '#112233') $dec.MarkColor
-    Check 'unit' 'RowDecor emphasis' ($dec.Emphasis) ''
-    Check 'unit' 'RowDecor empty when nothing applies' ((Get-PluginRowDecor ([pscustomobject]@{ Payload = 'x'; Starred = $false })).Mark -eq '') ''
+    Check 'unit' 'RowDecor marks list' (($dec.Marks.Count -eq 1) -and ($dec.Marks[0].Glyph -eq 'M')) ($dec.Marks.Count -as [string])
+    Check 'unit' 'RowDecor mark colour' ($dec.Marks[0].Color -eq '#112233') $dec.Marks[0].Color
+    Check 'unit' 'RowDecor text colour' ($dec.TextColor -eq '#445566') $dec.TextColor
+    Check 'unit' 'RowDecor has no leading-bar key' (-not $dec.ContainsKey('Emphasis')) ''
+    Check 'unit' 'RowDecor empty when nothing applies' (((Get-PluginRowDecor ([pscustomobject]@{ Payload = 'x'; Marks = '' })).Marks).Count -eq 0) ''
     Check 'unit' 'Transform applied' ((Invoke-PluginTransform 'abc') -eq 'T:abc') (Invoke-PluginTransform 'abc')
     $ticks = @(Get-PluginTicks)
     Check 'unit' 'Tick registered' (($ticks.Count -eq 1) -and ($ticks[0].Name -eq 'one') -and ($ticks[0].Seconds -eq 5)) ($ticks.Count -as [string])
@@ -493,36 +521,106 @@ try {
     Check 'unit' 'Tick ran once' ($script:PluginTimers.ContainsKey('tick:one')) ''
     $script:Plugins = @()
     Check 'unit' 'no plugin transform is passthrough' ((Invoke-PluginTransform 'abc') -eq 'abc') ''
-    Check 'unit' 'no plugin decor is empty' (-not (Get-PluginRowDecor $decorRec).Emphasis) ''
+    Check 'unit' 'no plugin decor is empty' (((Get-PluginRowDecor $decorRec).Marks).Count -eq 0) ''
     Check 'unit' 'no plugin ticks' (@(Get-PluginTicks).Count -eq 0) ''
 
-    # ------------------------------------------------------------ starred records
+    # ------------------------------------------ shipped plugins share their own logic
+    # a Tick interval may be computed at runtime, so a plugin needs no timer state
+    $script:Plugins = @(@{ Name = 'timed'; Tick = @{ Seconds = { 120 }; Action = { param($now) } } })
+    $timed = @(Get-PluginTicks)
+    Check 'unit' 'Tick seconds may be a scriptblock' (($timed.Count -eq 1) -and ($timed[0].Seconds -eq 120)) ($timed[0].Seconds -as [string])
+
+    $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('transform'))
+    Register-PluginSettings
+    [IO.File]::WriteAllLines($cfg, @('transform.Mode=snake'), $Utf8)
+    $script:IniCache = $null
+    Apply-PluginSettings
+    $apply = Get-PluginData 'transform' 'Apply'
+    Check 'unit' 'transform exposes one rewrite block' ($apply -is [scriptblock]) ''
+    Check 'unit' 'transform hook uses that block' ((Invoke-PluginTransform 'Hello World') -eq (& $apply 'Hello World' 'snake')) (Invoke-PluginTransform 'Hello World')
+    Check 'unit' 'transform leaves file lists alone' ((& $apply (([string][char]1) + 'C:\a.txt') 'upper') -eq (([string][char]1) + 'C:\a.txt')) ''
+
+    $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('entry-actions'))
+    Register-PluginSettings
+    [IO.File]::WriteAllLines($cfg, @(), $Utf8)
+    $script:IniCache = $null
+    Apply-PluginSettings
+    Check 'unit' 'entry-actions exposes one open rule' ((& (Get-PluginData 'entry-actions' 'CanOpen') ([pscustomobject]@{ Payload = 'https://a.b/c' })) -eq $true) ''
+    Check 'unit' 'open rule rejects plain text' ((& (Get-PluginData 'entry-actions' 'CanOpen') ([pscustomobject]@{ Payload = 'hello world' })) -eq $false) ''
+    Check 'unit' 'open rule accepts a file list' ((& (Get-PluginData 'entry-actions' 'CanOpen') ([pscustomobject]@{ Payload = (([string][char]1) + 'C:\a.txt') })) -eq $true) ''
+    Check 'unit' 'open rule ignores a null row' ((& (Get-PluginData 'entry-actions' 'CanOpen') $null) -eq $false) ''
+    Check 'unit' 'sniffers live in one block' (((& (Get-PluginData 'entry-actions' 'Sniff') '{"a":1}') -join ',') -match 'json') ''
+
+    # retention: protected rows survive, the sort mark can be kept too
+    $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('item-marks', 'retention'))
+    Register-PluginSettings
+    [IO.File]::WriteAllLines($cfg, @('retention.MaxAgeDays=1', 'retention.KeepPinned=1'), $Utf8)
+    $script:IniCache = $null
+    Apply-PluginSettings
+    $now = Get-Epoch
+    $old = $now - (3 * 86400)
+    $age = New-Object System.Collections.Generic.List[object]
+    $age.Add((New-Record 'old-plain' $old ''))
+    $age.Add((New-Record 'old-star' $old 's'))
+    $age.Add((New-Record 'old-pin' $old 'p'))
+    $age.Add((New-Record 'fresh' $now ''))
+    Save-Records $age.ToArray()
+    $dropped = [int](& (Get-PluginData 'retention' 'Sweep'))
+    $leftSet = (@((Get-Records) | ForEach-Object { $_.Payload }) | Sort-Object) -join ','
+    Check 'unit' 'retention drops only the unprotected old row' ($dropped -eq 1) ([string]$dropped)
+    Check 'unit' 'retention keeps protected and pinned rows' ($leftSet -eq 'fresh,old-pin,old-star') $leftSet
+    [IO.File]::WriteAllLines($cfg, @('retention.MaxAgeDays=0'), $Utf8)
+    $script:IniCache = $null
+    Apply-PluginSettings
+    Check 'unit' 'retention off removes nothing' ((& (Get-PluginData 'retention' 'Sweep')) -eq 0) ''
+    $script:Plugins = @()
+    Use-StoreLock { Save-Records @() }
+
+    # ----------------------------------------------- protected marks and the store
+    $script:Plugins = @($markPlugin)
     Use-StoreLock { Save-Records @() }
     Add-Item 'star-me'
     $r0 = @(Get-Records)[0]
-    Check 'unit' 'record starts unstarred' (-not $r0.Starred) ''
-    Check 'unit' 'Set-Star on' (Set-Star 'star-me' $true) ''
-    Check 'unit' 'starred survives a reload' ([bool]@(Get-Records)[0].Starred) ''
-    Check 'unit' 'Set-Star is idempotent' (-not (Set-Star 'star-me' $true)) ''
-    Check 'unit' 'delete refuses a starred entry' ((Remove-Record 'star-me') -eq 'starred') ''
+    Check 'unit' 'record starts unmarked' ([string]$r0.Marks -eq '') ([string]$r0.Marks)
+    Check 'unit' 'Set-Mark on' (Set-Mark 'star-me' 's' $true) ''
+    Check 'unit' 'mark survives a reload' (Test-Mark @(Get-Records)[0] 's') ''
+    Check 'unit' 'Set-Mark is idempotent' (-not (Set-Mark 'star-me' 's' $true)) ''
+    Check 'unit' 'delete refuses a protected row' ((Remove-Record 'star-me') -eq 'protected:s') (Remove-Record 'star-me')
     Check 'unit' 'delete -Force removes it' ((Remove-Record 'star-me' -Force) -eq 'removed') ''
 
     $tl = New-Object System.Collections.Generic.List[object]
-    $tl.Add((New-Record 'keep-star' 1 $false $true))
-    $tl.Add((New-Record 'drop-1' 2 $false $false))
-    $tl.Add((New-Record 'drop-2' 3 $false $false))
+    $tl.Add((New-Record 'keep-star' 1 's'))
+    $tl.Add((New-Record 'drop-1' 2 ''))
+    $tl.Add((New-Record 'drop-2' 3 ''))
     $oldMax = $MaxItems
     $MaxItems = 1
     Trim-Records $tl
     $MaxItems = $oldMax
-    Check 'unit' 'trim keeps starred' (($tl.Count -eq 1) -and ($tl[0].Payload -eq 'keep-star')) (($tl | ForEach-Object { $_.Payload }) -join ',')
+    Check 'unit' 'trim keeps a protected row' (($tl.Count -eq 1) -and ($tl[0].Payload -eq 'keep-star')) (($tl | ForEach-Object { $_.Payload }) -join ',')
 
     Use-StoreLock { Save-Records @() }
     Add-Item 'keep-on-clear'
-    [void](Set-Star 'keep-on-clear' $true)
+    [void](Set-Mark 'keep-on-clear' 's' $true)
     Add-Item 'drop-on-clear'
-    Clear-Store $false
-    Check 'unit' 'clear keeps starred' (((@(Get-Records) | ForEach-Object { $_.Payload }) -join ',') -eq 'keep-on-clear') (((@(Get-Records) | ForEach-Object { $_.Payload }) -join ','))
+    Clear-Store (Get-ClearKeepMarks)
+    Check 'unit' 'clear keeps a protected row' (((@(Get-Records) | ForEach-Object { $_.Payload }) -join ',') -eq 'keep-on-clear') (((@(Get-Records) | ForEach-Object { $_.Payload }) -join ','))
+    Use-StoreLock { Save-Records @() }
+
+    # a mark nobody protects is stored, printed and dropped like any other row
+    Add-Item 'mark-me'
+    $h0 = @(Get-Records)[0]
+    Check 'unit' 'record starts unhighlighted' (-not (Test-Mark $h0 'h')) ''
+    Check 'unit' 'Set-Mark on an undeclared mark' (Set-Mark 'mark-me' 'h' $true) ''
+    Check 'unit' 'undeclared mark survives a reload' (Test-Mark @(Get-Records)[0] 'h') ''
+    $rawStore = [IO.File]::ReadAllText($StoreFile)
+    Check 'unit' 'mark stored in the flag string' ($rawStore.Contains([string][char]30 + 'th' + [string][char]31)) ''
+    Check 'unit' 'Set-Mark is idempotent for a display mark' (-not (Set-Mark 'mark-me' 'h' $true)) ''
+    Check 'unit' 'unprotected mark does not block a delete' ((Remove-Record 'mark-me') -eq 'removed') ''
+    Add-Item 'mark-clear'
+    [void](Set-Mark 'mark-clear' 'h' $true)
+    Clear-Store (Get-ClearKeepMarks -All)
+    Check 'unit' 'clear drops unprotected marks' (@(Get-Records).Count -eq 0) ([string]@(Get-Records).Count)
+    $script:Plugins = @()
     Use-StoreLock { Save-Records @() }
 
     # -------------------------------------- theme is a package, not ini colour knobs
@@ -546,6 +644,15 @@ try {
     Apply-PluginSettings
     Apply-PluginTheme
     Check 'unit' 'theme restyles a plugin ThemeSetting' ((Get-PluginTheme 'item-marks' 'StarColor') -eq '#9D5D00') (Get-PluginTheme 'item-marks' 'StarColor')
+    Check 'unit' 'theme restyles the highlight ink' ((Get-PluginTheme 'item-marks' 'HighlightColor') -eq '#7A3E00') (Get-PluginTheme 'item-marks' 'HighlightColor')
+    $hrec = [pscustomobject]@{ Payload = 'hi'; Time = 0; Marks = 'h' }
+    $hdec = Get-PluginRowDecor $hrec
+    Check 'unit' 'highlight decor paints the text' ($hdec.TextColor -eq '#7A3E00') $hdec.TextColor
+    Check 'unit' 'highlight decor paints the background' ($hdec.BackColor -eq '#33FFB84D') $hdec.BackColor
+    $prec = [pscustomobject]@{ Payload = 'hi'; Time = 0; Marks = 'ps' }
+    $pdec = Get-PluginRowDecor $prec
+    Check 'unit' 'pin and star both become glyph marks' ($pdec.Marks.Count -eq 2) ($pdec.Marks.Count -as [string])
+    Check 'unit' 'pin and star draw no leading bar' (-not $pdec.ContainsKey('Emphasis')) ''
     Check 'unit' 'theme leaves plugin Settings alone' (-not $script:IniSchema.Contains('item-marks.StarGlyph')) ''
     Check 'unit' 'plugin ThemeSettings are not ini keys' (-not $script:IniSchema.Contains('item-marks.StarColor')) ''
     $script:Plugins = @()
@@ -658,11 +765,11 @@ try {
     $pinLine = @($o -split "`n" | Where-Object { $_ -match 'pin-me' })
     Check 'int' 'pin floats to the top' ($pinLine.Count -gt 0 -and $pinLine[0] -match '\*') $o.Trim()
     $o = Clip $intDir @('status')
-    Check 'int' 'status shows pinned count' ($o -match 'pinned 1 ') $o.Trim()
+    Check 'int' 'status shows the pin count' ($o -match '1 pinned') $o.Trim()
     $o = Clip $intDir @('clear')
-    Check 'int' 'clear keeps pinned' ((($o -match 'pinned kept')) -and ((Clip $intDir @('list')) -match 'pin-me')) $o.Trim()
+    Check 'int' 'clear keeps the pin mark' ((($o -match 'kept by marks')) -and ((Clip $intDir @('list')) -match 'pin-me')) $o.Trim()
     $o = Clip $intDir @('clear', '-All')
-    Check 'int' 'clear -All removes pinned' ((($o -match 'pinned included'))) $o.Trim()
+    Check 'int' 'clear -All drops the pin mark' (($o -match 'history cleared')) $o.Trim()
     $o = Clip $intDir @('list')
     Check 'int' 'list empty after clear -All' ($o -match 'history is empty') $o.Trim()
 
@@ -780,7 +887,7 @@ try {
     $o = Clip $intDir @('star', '1')
     Check 'int' 'star command' ($o -match 'starred:') $o.Trim()
     $o = Clip $intDir @('status')
-    Check 'int' 'status counts starred' ($o -match 'starred 1') $o.Trim()
+    Check 'int' 'status counts starred' ($o -match '1 starred') $o.Trim()
     $o = Clip $intDir @('del', '1')
     Check 'int' 'starred entry cannot be deleted' ($o -match 'starred entry, unstar it first') $o.Trim()
     $o = Clip $intDir @('clear', '-All')
@@ -789,6 +896,15 @@ try {
     Check 'int' 'unstar command' ($o -match 'unstarred:') $o.Trim()
     $o = Clip $intDir @('del', '1')
     Check 'int' 'delete works after unstar' ($o -match 'deleted:') $o.Trim()
+    [void](Clip $intDir @('put', 'mark-gamma'))
+    $o = Clip $intDir @('highlight', '1')
+    Check 'int' 'highlight command' ($o -match 'highlighted:') $o.Trim()
+    $o = Clip $intDir @('highlight', '1')
+    Check 'int' 'highlight is repeatable-safe' ($o -match 'already highlighted') $o.Trim()
+    $o = Clip $intDir @('unhighlight', '1')
+    Check 'int' 'unhighlight command' ($o -match 'highlight cleared:') $o.Trim()
+    $o = Clip $intDir @('unhighlight', '1')
+    Check 'int' 'unhighlight reports the empty state' ($o -match 'not highlighted') $o.Trim()
 
     [IO.File]::WriteAllLines($cfg2, @('MaxItems=300', 'Plugins=transform,retention,item-marks,entry-actions', 'transform.Mode=snake'), $Utf8)
     [void](Clip $intDir @('clear', '-All'))
@@ -798,7 +914,7 @@ try {
     $o = Clip $intDir @('transform', '1')
     Check 'int' 'transform uses configured mode' ($o -match '\[snake\] hello_world_demo') $o.Trim()
     $o = Clip $intDir @('marks')
-    Check 'int' 'marks command' (($o -match 'star glyph') -and ($o -match 'bar starred')) $o.Trim()
+    Check 'int' 'marks command' (($o -match 'star glyph') -and ($o -match 'highlight ink')) $o.Trim()
     $o = Clip $intDir @('sweep', 'force')
     Check 'int' 'sweep command' ($o -match 'retention') $o.Trim()
     $o = Clip $intDir @('kind', '1')
@@ -814,6 +930,7 @@ try {
     $o = Clip $intDir @('help')
     Check 'int' 'help groups every plugin' (($o -match '\[plugin: transform\]') -and ($o -match '\[plugin: retention\]') -and ($o -match 'transform entry N')) ''
     Check 'int' 'help groups pin and star' (($o -match '(?s)\[plugin: item-marks\].*pin\s+pin entry N.*unstar')) ''
+    Check 'int' 'help lists the highlight verbs' (($o -match '(?s)\[plugin: item-marks\].*highlight\s+highlight entry N.*unhighlight')) ''
     Check 'int' 'help puts kind under entry-actions' ($o -match '(?s)\[plugin: entry-actions\].*kind\s+analyse entry N.*kinds') ''
     $o = Clip $intDir @('config', 'set', 'transform.Mode', 'kebab')
     Check 'int' 'plugin setting is writable' (($o -match 'transform\.Mode') -and ((Clip $intDir @('config', 'get', 'transform.Mode')) -match 'kebab')) $o.Trim()

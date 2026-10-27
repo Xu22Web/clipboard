@@ -25,10 +25,10 @@ clipboard config set Theme light    # dark / light 是别名，会写成完整�
 | `Border` / `SelBg` / `HoverBg` | `#12000000` / `#16000000` / `#0D000000` |
 | `BadgeBg` / `BadgeText` | `#0E000000` / `#5D5D5D` |
 | `KeyCapBg` / `KeyCapBorder` | `#FFFFFF` / `#1A000000` |
-| `Pin` / `Warn` | `#9D5D00` / `#C42B1C` |
+| `Mark` / `Warn` | `#9D5D00` / `#C42B1C` |
 | 字体族 | 空 = 自动（同 `win11-dark`） |
 | 字号 | Body 10.5 / Small 9 / Tiny 9 / Title 13 / Icon 12 / IconSmall 10 / IconBig 24 |
-| `[item-marks]` | `StarColor=#9D5D00`（浅底上用更深的琥珀色才看得清） |
+| `[item-marks]` | `StarColor=#9D5D00`、`HighlightColor=#7A3E00` / `HighlightBg=#33FFB84D`（浅底上用更深的琥珀色才看得清） |
 
 浅色主题的叠层色是带 alpha 的**黑**，压在近白的 `Surface` 上形成同样的层次感。
 
@@ -36,4 +36,4 @@ clipboard config set Theme light    # dark / light 是别名，会写成完整�
 
 - 换一两个颜色：复制成 `themes/<你的名字>.ini`，改 `name=` 与 token，再把 `Theme=` 指过去。
 - token 名单与各段写法：见 [主说明的主题一节](../README.md#主题)。
-- 浅色主题里请特别注意 `Pin` / `Warn` / 星标这类"彩色小字"：在 `#F3F3F3` 上要压暗，直接用深色主题的亮色会看不清。
+- 浅色主题里请特别注意 `Mark` / `Warn` / 星标这类"彩色小字"：在 `#F3F3F3` 上要压暗，直接用深色主题的亮色会看不清。
