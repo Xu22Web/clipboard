@@ -769,6 +769,22 @@ function Clear-Store([string[]]$keepMarks = @()) {
   }
 }
 
+# one context-menu action's caption for a row: a scriptblock label is evaluated, a plain
+# string is used as is, and anything else falls back to a neutral caption
+function Get-ActionText($action, $record) {
+  $label = $null
+  if ($action -is [hashtable] -and $action.ContainsKey('Label')) { $label = $action['Label'] }
+  if ($label -is [scriptblock]) {
+    try {
+      $text = [string](& $label $record)
+      if ($text) { return $text }
+    } catch { }
+    return 'Plugin action'
+  }
+  if ($label) { return [string]$label }
+  return 'Plugin action'
+}
+
 # single-line display text for one payload (picker rows and CLI listings)
 function Get-ItemLabel([string]$t, [bool]$nlMarker = $true) {
   $one = $t
@@ -1674,10 +1690,7 @@ function Show-Picker {
         if ($actions.Count -gt 0) {
           [void]$cm.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
           foreach ($act in $actions) {
-            $lb = $act['Label']
-            $text = 'Plugin action'
-            if ($lb -isnot [scriptblock] -and $lb) { $text = [string]$lb }
-            $item = $cm.Items.Add($text)
+            $item = $cm.Items.Add((Get-ActionText $act $null))
             if ($act.ContainsKey('Key')) { $item.ShortcutKeyDisplayString = [string]$act['Key'] }
             $item.Tag = $act
             $item.Add_Click([System.EventHandler]{
@@ -1718,8 +1731,8 @@ function Show-Picker {
             $it.Visible = $show
             $it.Enabled = $show
             if ($show) {
-              # a plugin may compute its label per row: 'Pin to top' / 'Remove pin'              $lb = $it.Tag['Label']
-              if ($lb -is [scriptblock]) { try { $it.Text = [string](& $lb $cur) } catch { } }
+              # a plugin may compute its label per row: 'Pin to top' / 'Remove pin'
+              $it.Text = Get-ActionText $it.Tag $cur
             }
           }
         } catch { }

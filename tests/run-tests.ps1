@@ -530,6 +530,16 @@ try {
     $timed = @(Get-PluginTicks)
     Check 'unit' 'Tick seconds may be a scriptblock' (($timed.Count -eq 1) -and ($timed[0].Seconds -eq 120)) ($timed[0].Seconds -as [string])
 
+    $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('item-marks'))
+    $menuActs = @(Get-PluginActions)
+    $allMarks = [pscustomobject]@{ Payload = 'x'; Time = 0; Marks = 'psh' }
+    $noMarks = [pscustomobject]@{ Payload = 'x'; Time = 0; Marks = '' }
+    Check 'unit' 'menu caption: every action resolves its own text' ((@($menuActs | ForEach-Object { Get-ActionText $_ $allMarks }) -join '|') -eq 'Remove pin|Remove star|Clear highlight') (@($menuActs | ForEach-Object { Get-ActionText $_ $allMarks }) -join '|')
+    Check 'unit' 'menu caption: plain labels for an unmarked row' ((@($menuActs | ForEach-Object { Get-ActionText $_ $noMarks }) -join '|') -eq 'Pin to top|Star|Highlight') (@($menuActs | ForEach-Object { Get-ActionText $_ $noMarks }) -join '|')
+    Check 'unit' 'menu caption: static label wins over the fallback' ((Get-ActionText @{ Label = 'Open' } $null) -eq 'Open') ''
+    Check 'unit' 'menu caption: missing label falls back' ((Get-ActionText @{} $null) -eq 'Plugin action') ''
+    Check 'unit' 'menu caption: a throwing label falls back' ((Get-ActionText @{ Label = { throw 'boom' } } $null) -eq 'Plugin action') ''
+
     $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('transform'))
     Register-PluginSettings
     [IO.File]::WriteAllLines($cfg, @('transform.Mode=snake'), $Utf8)
