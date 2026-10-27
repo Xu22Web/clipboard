@@ -15,7 +15,7 @@ Windows 10 / 11 上的轻量剪贴板历史工具，单文件 PowerShell 脚本�
 ## 功能
 
 - Win11 Fluent 自绘界面：40 px 行高、分层底色、圆角行高亮 + 强调色指示条、带描边的按键胶囊、搜索框聚焦下划线、悬停变宽的细滚动条
-- 行图标由类型插件提供（[`entry-actions`](plugins/entry-actions.md) 按链接 / 路径 / 代码 / 多行等给图标）；不启用插件时行首没有图标，文字从行首开始
+- 行图标由类型插件提供（[`entry-actions`](src/plugins/entry-actions.md) 按链接 / 路径 / 代码 / 多行等给图标）；不启用插件时行首没有图标，文字从行首开始
 - 后台轮询剪贴板，保存最近 N 条文本（默认 300 条 / 单条 200 KB / 合计 4 MB）
 - 全局热键呼出搜索面板（默认 `Ctrl+Alt+V`），边打字边过滤，回车直接粘贴回原窗口
 - Explorer 里复制的**文件列表**也能捕获（CF_HDROP），可原样粘回
@@ -37,19 +37,19 @@ Windows 10 / 11 上的轻量剪贴板历史工具，单文件 PowerShell 脚本�
 ## 快速开始
 
 ```powershell
-# 在项目目录里
-powershell -NoProfile -ExecutionPolicy Bypass -Sta -File .\clipboard.ps1 diag     # 检查运行环境
-powershell -NoProfile -ExecutionPolicy Bypass -Sta -File .\clipboard.ps1 serve    # 前台运行常驻进程
+# 在项目目录里（程序本体在 src\）
+powershell -NoProfile -ExecutionPolicy Bypass -Sta -File .\src\clipboard.ps1 diag     # 检查运行环境
+powershell -NoProfile -ExecutionPolicy Bypass -Sta -File .\src\clipboard.ps1 serve    # 前台运行常驻进程
 ```
 
-Git Bash / MSYS2 下直接 `./clipboard`，CMD 下 `clipboard.cmd`。
+Git Bash / MSYS2 下直接 `./src/clipboard`，CMD 下 `src\clipboard.cmd`。
 
 常驻运行：
 
 ```powershell
-.\clipboard.cmd install     # 建开机自启 + 桌面快捷方式
-.\clipboard.cmd uninstall   # 只删快捷方式，保留历史与配置
-.\clipboard.cmd uninstall purge   # 连历史、配置、日志一起删
+.\src\clipboard.cmd install     # 建开机自启 + 桌面快捷方式
+.\src\clipboard.cmd uninstall   # 只删快捷方式，保留历史与配置
+.\src\clipboard.cmd uninstall purge   # 连历史、配置、日志一起删
 ```
 
 `install` 生成的快捷方式以 `-ExecutionPolicy RemoteSigned` 运行脚本，可覆盖目标机 `Restricted` / `AllSigned` 的评估结果；需要更宽松的策略时用 `install bypass`。
@@ -107,7 +107,7 @@ Git Bash / MSYS2 下直接 `./clipboard`，CMD 下 `clipboard.cmd`。
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
-| `DataDir` | 空 | 写入位置；空 = 脚本旁的 `data/`。相对路径相对脚本目录 |
+| `DataDir` | 空 | 写入位置；空 = 脚本旁的 `data/`（即 `src\data\`）。相对路径相对脚本目录 |
 | `Hotkey` | `Ctrl+Alt+V` | 全局热键；`Win+V` 在多数系统上被占用，注册失败会自动回退 |
 | `HotkeyFallbacks` | 空 | 逗号分隔的回退链，按顺序尝试；空 = 内置 Ctrl+Alt+V / Win+V / Alt+反引号 / Win+Shift+V |
 | `PasteKeys` | `^v` | 选定后用 SendKeys 发送的按键（`^+v` = Ctrl+Shift+V） |
@@ -149,8 +149,8 @@ Git Bash / MSYS2 下直接 `./clipboard`，CMD 下 `clipboard.cmd`。
 
 | 主题 | 简单介绍 | 说明页 |
 |---|---|---|
-| `win11-dark` | Windows 11 Fluent 深色，**默认**（也是参考布局） | [win11-dark.md](themes/win11-dark.md) |
-| `win11-light` | Windows 11 Fluent 浅色，布局相同、底色反相 | [win11-light.md](themes/win11-light.md) |
+| `win11-dark` | Windows 11 Fluent 深色，**默认**（也是参考布局） | [win11-dark.md](src/themes/win11-dark.md) |
+| `win11-light` | Windows 11 Fluent 浅色，布局相同、底色反相 | [win11-light.md](src/themes/win11-light.md) |
 
 ```powershell
 clipboard themes                        # 列出可用主题（* = 当前生效）
@@ -219,10 +219,10 @@ BadgeBg BadgeText KeyCapBg KeyCapBorder Mark Warn
 
 | 插件 | 简单介绍 | 启用 |
 |---|---|---|
-| [`item-marks`](plugins/item-marks.md) | 置顶 / 收藏 / 高亮：`pin` `unpin` `star` `unstar` `highlight` `unhighlight` `marks`，面板 `Ctrl+P` `Ctrl+S` `Ctrl+H`，右键三个菜单项；高亮改文字与背景色，不改左侧选择条 | `Plugins=item-marks` |
-| [`entry-actions`](plugins/entry-actions.md) | 看清条目再动手：`kind` / `kinds` 分析类型与格式，`open` 按类型打开，面板 `Ctrl+O`，右键“Open link or path”；行图标也由它提供 | `Plugins=entry-actions` |
-| [`transform`](plugins/transform.md) | 粘贴前改写文本：纯文本 / 全大写 / 小写 / 驼峰 / 蛇形 / 烤肉串 / 标题式；右键按 `transform.Modes` 逐个列出 `Transform as <模式>` | `Plugins=transform` |
-| [`retention`](plugins/retention.md) | 过期清理：按天数自动删除旧条目，受保护标记的行永不清理 | `Plugins=retention` |
+| [`item-marks`](src/plugins/item-marks.md) | 置顶 / 收藏 / 高亮：`pin` `unpin` `star` `unstar` `highlight` `unhighlight` `marks`，面板 `Ctrl+P` `Ctrl+S` `Ctrl+H`，右键三个菜单项；高亮改文字与背景色，不改左侧选择条 | `Plugins=item-marks` |
+| [`entry-actions`](src/plugins/entry-actions.md) | 看清条目再动手：`kind` / `kinds` 分析类型与格式，`open` 按类型打开，面板 `Ctrl+O`，右键“Open link or path”；行图标也由它提供 | `Plugins=entry-actions` |
+| [`transform`](src/plugins/transform.md) | 粘贴前改写文本：纯文本 / 全大写 / 小写 / 驼峰 / 蛇形 / 烤肉串 / 标题式；右键按 `transform.Modes` 逐个列出 `Transform as <模式>` | `Plugins=transform` |
+| [`retention`](src/plugins/retention.md) | 过期清理：按天数自动删除旧条目，受保护标记的行永不清理 | `Plugins=retention` |
 
 点插件名进各自的说明页（命令、设置项、主题项、注意事项）。
 
@@ -365,17 +365,22 @@ clipboard config set entry-actions.Reveal 0
 ## 文件与数据
 
 ```
-clipboard               Git Bash / MSYS2 启动器（sh 壳，负责把路径转成 Windows 形式）
-clipboard.cmd           CMD 启动器
-clipboard.ps1           主程序（单文件：常量 / 设置 / 存储 / 捕获 / 面板 / CLI）
-clipboard.ini           配置（只读；不存在时用内置默认，config init 才生成）
-data/                   历史 / 日志 / 生效热键缓存（不入库）
-lib/plugins.ps1         插件加载层（Load-Plugins / 命令 / 右键项 / 行图标）
-lib/themes.ps1          主题加载层（发现 / 校验 / 颜色解析 / Apply-Theme）
-plugins/*.ps1           可选插件（item-marks / entry-actions / transform / retention；默认不加载）
-plugins/*.md            每个插件的说明页
-themes/*.ini            主题（win11-dark 默认 / win11-light）
-themes/*.md             每个主题的说明页
+src/                    程序本体（打包只读这个目录）
+  clipboard               Git Bash / MSYS2 启动器（sh 壳，负责把路径转成 Windows 形式）
+  clipboard.cmd           CMD 启动器
+  clipboard.ps1           主程序（单文件：常量 / 设置 / 存储 / 捕获 / 面板 / CLI）
+  clipboard.ini           配置（只读；不存在时用内置默认，config init 才生成）
+  data/                   历史 / 日志 / 生效热键缓存（不入库）
+  lib/plugins.ps1         插件加载层（Load-Plugins / 命令 / 右键项 / 行图标）
+  lib/themes.ps1          主题加载层（发现 / 校验 / 颜色解析 / Apply-Theme）
+  plugins/*.ps1           可选插件（item-marks / entry-actions / transform / retention；默认不加载）
+  plugins/*.md            每个插件的说明页
+  themes/*.ini            主题（win11-dark 默认 / win11-light）
+  themes/*.md             每个主题的说明页
+build/minify.ps1        压缩器（按语法树删注释/缩进、重命名内部函数与局部变量）
+build.ps1               打包脚本（读 src\，输出 dist\clipboard-<版本>\）
+build.ini               打包设置（版本 / 输出目录 / 压缩 / 重命名 / 验证 / 打哪些插件与主题）
+dist/                   打包产物（不入库）
 tests/run-tests.ps1     自测套件
 ```
 
@@ -387,7 +392,7 @@ tests/run-tests.ps1     自测套件
 
 ### 历史文件格式
 
-`data/history.dat` 是纯文本，不是 JSON，也不依赖数据库：
+`src/data/history.dat` 是纯文本，不是 JSON，也不依赖数据库：
 
 ```
 CBHIST2 RS <flags> US <epoch 秒> US <payload> RS <flags> US ...
@@ -420,7 +425,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run-tests.ps1
 | 组 | 开关 | 覆盖内容 |
 |---|---|---|
 | 单元 | `-Unit` | 纯函数与存储层：`Parse-Hotkey`、`Format-Item`/`Get-ItemLabel`、`Read-Ini`/`Write-IniTemplate`/`Set-IniKey`、`Convert-IniValue`（类型与范围校验）、`Apply-Config`、记录往返与未知格式忽略、标记与保护规则、`Get-QuickKeyIndex` / 数字键位置、`Get-VisibleRowCount`、`Get-PickerBounds`、`Get-HitMarks`、`Get-EntryKind`（文本 / 文件列表）、行图标（无插件时为空、插件 `TypeGlyph` 生效）、主题（发现 / 别名 / 颜色解析 / 两套调色板 / 未知主题回退）、插件白名单与各个共享块。通过 `-Library` dot-source 主脚本，不触发命令分发 |
-| 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put`/`get`/`list`/`pick`/`del`/`clear`/`clear -All`/`pause`/`resume`/`status`/`themes`/`config get`/`config set`/`config init`/`diag`、主题切换与非法主题名拒绝、插件默认关闭与 `Plugins=` 开启、插件命令（`pin`/`star`/`kind`/`kinds`/`open`/`transform`/`sweep`/`marks`）、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝 |
+| 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put`/`get`/`list`/`pick`/`del`/`clear`/`clear -All`/`pause`/`resume`/`status`/`themes`/`config get`/`config set`/`config init`/`diag`、主题切换与非法主题名拒绝、插件默认关闭与 `Plugins=` 开启、插件命令（`pin`/`star`/`kind`/`kinds`/`open`/`transform`/`sweep`/`marks`）、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝；以及 `build.ps1` 用配置文件打包（进包内容、`Plugins=`/`Themes=` 裁剪、`Overwrite=0` 拒绝覆盖、未知插件名报错） |
 | 端到端 | `-E2E` | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启循环 |
 
 全部在 `%TEMP%` 下的沙箱副本（脚本 + `lib` + `plugins` + `themes`）中运行，不修改 `data/` 与 `clipboard.ini`；真实剪贴板在开始前备份、结束后还原。任一项失败时退出码为 1。
@@ -429,6 +434,68 @@ powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run-tests.ps1
 
 > `-E2E` 在运行期间占用全局热键并接管剪贴板；已有常驻进程时这组自动跳过。
 > 图形界面（面板绘制、粘贴注入）不在自动化范围内。
+
+## 打包分发
+
+`build.ps1` 读 `src\` 并输出 `dist\clipboard-<版本>\`：**目录结构不变、仍是 PowerShell**，但每个 `.ps1` 都按语法树重写（删注释与缩进、重命名内部函数与局部变量），所以既能用（功能不变）又更小。不编译、不生成 exe、默认也不打压缩包。**打包配置全部写在 `build.ini` 里，不走命令行参数**：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1                    # 用 build.ini
+powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1 -Config other.ini  # 换一份配置
+```
+
+`build.ini`（与 `clipboard.ini` 同一套写法：扁平 `key=value`，`#` 开头是注释）：
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `Version` | 空 | 目录名里的版本；空 = `git describe --tags --always --dirty`，没有 git 时用日期。只保留 `0-9 A-Z a-z . - _` |
+| `OutDir` | `dist` | 输出目录；相对路径按本目录解析 |
+| `Minify` | `1` | `1` = 按语法树压缩脚本（删注释 / 缩进 / 空行） |
+| `Rename` | `1` | `1` = 同时重命名内部函数（全项目一套映射）与局部变量（每文件一套）；`0` = 只压缩不改名 |
+| `Verify` | `1` | `1` = 打包后拿产物再跑一遍 `tests\run-tests.ps1 -Source <产物>`，不通过就删掉产物并失败 |
+| `IncludeDocs` | `1` | `1` = 把 `README.md`、`LICENSE`、`docs\` 也放进产物 |
+| `Overwrite` | `0` | `1` = 覆盖同版本已存在的目录 |
+| `Plugins` | 空 | 只打这些插件（逗号分隔，名字 = `src\plugins\` 下的文件名去 `.ps1`）；空 = 全部 |
+| `Themes` | 空 | 只打这些主题（同上）；空 = 全部 |
+| `Zip` | `0` | `1` = 另外再打一个 `clipboard-<版本>.zip` |
+
+```ini
+# 只发一个精简包：两个插件 + 一套主题，不压缩不验证
+Version=1.2.0
+OutDir=D:\release
+Minify=0
+Rename=0
+Verify=0
+IncludeDocs=0
+Overwrite=1
+Plugins=item-marks,transform
+Themes=win11-dark
+```
+
+**压缩是怎么做的**（`build\minify.ps1`，思路同前端 bundler，只是对象是 PowerShell 的 AST）：
+
+| 阶段 | 做什么 |
+|---|---|
+| 词法 | 删注释（`#Requires` 保留）、删行首缩进、合并空行；token 之间的分隔符按原偏移判断，不做危险的空白猜测 |
+| 语法 | 内部函数名 → `zz0`、`zz1`…（**全项目一套映射**，避免 `fl` 这类被别名截胡的名字）；局部变量 → `a`、`b`…（每文件一套） |
+| 不改名 | `param()` 里的名字（按名传参：`-Library`、`-Count`、`-NoInject`）、带作用域/驱动器前缀的变量（`$script:`、`$env:`）、PowerShell 自动变量、`Get-Command <名字>` 查过的函数、成员名与哈希键 |
+| 校验 | 改名后与压缩后各解析一次；语法有任何错误就中止，不会产出坏包 |
+
+> `Verify=1` 的意义：包里的函数名与变量名都变了，**只有跑一遍真实 CLI 测试才能证明功能没变**；`-Source` 指向产物时单元组会跳过（它按名字调内部函数），集成与端到端照常跑。
+
+产物里是什么、不是什么：
+
+| 进包（来自 `src\`） | 不进包 |
+|---|---|
+| `clipboard.ps1`、`clipboard.cmd`、`clipboard`（Git Bash 壳） | `src\data\`（历史与日志） |
+| `lib\`、所选 `plugins\`（含 `.md`）、所选 `themes\`（ini 与 `.md`） | `src\clipboard.ini`（用户设置） |
+| `README.md`、`LICENSE`、`docs\`（截图，`IncludeDocs=1` 时） | `tests\`、`build\`、`build.ini`、`dist\`、`.git` |
+
+> `Plugins=` / `Themes=` 里写了不存在的名字会直接失败并指出是哪个；被选中的插件/主题会连同自己的 `.md` 一起进包（`lib\` 是基础层，永远随包走）。
+
+> 拿到产物后：`clipboard.cmd config init` 生成带注释的 `clipboard.ini`，再 `clipboard.cmd install` 建开机自启与桌面快捷方式。`clipboard` 那个 Git Bash 启动器在 zip 里会丢可执行位，用 `sh ./clipboard` 即可（或 `chmod +x clipboard`）。
+
+插件不用打包器操心：它就是 `plugins\` 目录 + `Plugins=` 白名单，目录跟着包走就能用；想分发自己写的插件，把 `.ps1` 放进产物里的 `plugins\` 也生效。
 
 ## 常见问题
 
@@ -440,7 +507,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run-tests.ps1
 
 快捷方式默认带 `-ExecutionPolicy RemoteSigned`。若仍被拒绝，按顺序检查：
 
-1. 脚本带网络来源标记（从压缩包或下载目录解出）—— 执行 `Unblock-File .\clipboard.ps1`
+1. 脚本带网络来源标记（从压缩包或下载目录解出）—— 执行 `Unblock-File .\src\clipboard.ps1`
 2. 需要更宽松的进程级策略 —— `clipboard install bypass`（改用 `-ExecutionPolicy Bypass`）
 3. 组策略（`MachinePolicy` / `UserPolicy`）已指定执行策略 —— 此时 `-ExecutionPolicy` 参数不生效，`install` 会打印 `group policy defines the execution policy` 提示
 

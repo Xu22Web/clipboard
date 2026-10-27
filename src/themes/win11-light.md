@@ -1,6 +1,6 @@
 # win11-light —— Windows 11 Fluent 浅色
 
-[← 主说明](../README.md) · [主题格式](../README.md#主题)
+[← 主说明](../../README.md) · [主题格式](../../README.md#主题)
 
 和 [`win11-dark`](win11-dark.md) 是同一套布局，只把底色与文字反相：白天或亮屏环境更省眼。
 
@@ -35,5 +35,5 @@ clipboard config set Theme light    # dark / light 是别名，会写成完整�
 ## 想改它
 
 - 换一两个颜色：复制成 `themes/<你的名字>.ini`，改 `name=` 与 token，再把 `Theme=` 指过去。
-- token 名单与各段写法：见 [主说明的主题一节](../README.md#主题)。
+- token 名单与各段写法：见 [主说明的主题一节](../../README.md#主题)。
 - 浅色主题里请特别注意 `Mark` / `Warn` / 星标这类"彩色小字"：在 `#F3F3F3` 上要压暗，直接用深色主题的亮色会看不清。

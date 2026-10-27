@@ -2,5 +2,6 @@
 *.tmp
 _*.ps1
 _*.txt
-data/
-clipboard.ini
+src/data/
+src/clipboard.ini
+dist/

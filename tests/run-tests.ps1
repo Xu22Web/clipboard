@@ -20,16 +20,32 @@
 param(
   [switch]$Unit,
   [switch]$Integration,
-  [switch]$E2E
+  [switch]$E2E,
+  # directory holding clipboard.ps1 + lib + plugins + themes; default is this repo.
+  # build.ps1 points it at the packaged copy to prove the minified code still behaves.
+  [string]$Source = ''
 )
 
 $ErrorActionPreference = 'Continue'
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
-$clipPs1 = Join-Path $repoRoot 'clipboard.ps1'
+$defaultSource = Join-Path $repoRoot 'src'
+if (-not $Source) { $Source = $defaultSource }
+if (-not (Test-Path -LiteralPath $Source)) { Write-Error ('no such -Source: ' + $Source); exit 2 }
+$srcRoot = (Resolve-Path -LiteralPath $Source).Path
+$clipPs1 = Join-Path $srcRoot 'clipboard.ps1'
 if (-not (Test-Path -LiteralPath $clipPs1)) { Write-Error ('cannot find ' + $clipPs1); exit 2 }
 
 if (-not ($Unit -or $Integration -or $E2E)) { $Unit = $true; $Integration = $true; $E2E = $true }
+
+# A packaged copy has its internal function names minified, so the unit group (which calls
+# them by name through -Library) cannot run against it - the CLI groups can.
+$isPackaged = -not [string]::Equals($srcRoot.TrimEnd([char]92, [char]47), (Resolve-Path -LiteralPath $defaultSource).Path.TrimEnd([char]92, [char]47), [StringComparison]::OrdinalIgnoreCase)
+if ($isPackaged) {
+  if ($Unit) { Write-Output 'unit group skipped: a packaged copy has renamed internals' }
+  $Unit = $false
+  if (-not ($Integration -or $E2E)) { $Integration = $true }
+}
 
 $script:results = New-Object System.Collections.Generic.List[object]
 
@@ -53,7 +69,7 @@ function New-Sandbox([string]$name) {
   New-Item -ItemType Directory -Path $dir -Force | Out-Null
   Copy-Item -LiteralPath $clipPs1 -Destination $dir -Force
   foreach ($sub in @('lib', 'plugins', 'themes')) {
-    $src = Join-Path $repoRoot $sub
+    $src = Join-Path $srcRoot $sub
     if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $dir -Recurse -Force }
   }
   return $dir
@@ -87,6 +103,9 @@ $tmpRoot = Join-Path $env:TEMP ('clipboard-tests-' + [guid]::NewGuid().ToString(
 $unitDir = New-Sandbox 'unit'
 $intDir = New-Sandbox 'integration'
 $e2eDir = New-Sandbox 'e2e'
+# -Integration and -E2E run without dot-sourcing the tool, so the encoding the fixtures
+# write with has to exist here instead of coming from the main script
+$Utf8 = New-Object System.Text.UTF8Encoding $false
 
 $clipBak = ''
 try { $clipBak = (Get-Clipboard -Raw -ErrorAction Stop) } catch { }
@@ -479,8 +498,8 @@ try {
     Check 'unit' 'base glyph: none for files' ((Get-RowGlyph (([string][char]1) + 'C:\a.txt')) -eq '') ''
 
     # the shipped plugin is opt-in and loads by file name
-    Check 'unit' 'shipped plugin off by default' (@(Load-Plugins (Join-Path $repoRoot 'plugins') @()).Count -eq 0) ''
-    $real = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('entry-actions'))
+    Check 'unit' 'shipped plugin off by default' (@(Load-Plugins (Join-Path $srcRoot 'plugins') @()).Count -eq 0) ''
+    $real = @(Load-Plugins (Join-Path $srcRoot 'plugins') @('entry-actions'))
     Check 'unit' 'shipped plugin loads by name' ((@($real | ForEach-Object { $_.Name }) -join ',') -eq 'entry-actions') (@($real | ForEach-Object { $_.Name }) -join ',')
     $script:Plugins = $real
     Check 'unit' 'shipped command: open' ((Get-PluginCommand 'open') -is [scriptblock]) ''
@@ -505,7 +524,7 @@ try {
     Check 'unit' 'plugin setting falls back on bad value' ((Get-PluginSetting 'one' 'Flag') -eq '0') (Get-PluginSetting 'one' 'Flag')
     Check 'unit' 'unknown plugin setting is empty' ((Get-PluginSetting 'one' 'Nope') -eq '') ''
 
-    $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('entry-actions'))
+    $script:Plugins = @(Load-Plugins (Join-Path $srcRoot 'plugins') @('entry-actions'))
     Register-PluginSettings
     [IO.File]::WriteAllLines($cfg, @(), $Utf8)
     $script:IniCache = $null
@@ -552,7 +571,7 @@ try {
     Check 'unit' 'a broken menu scriptblock is skipped' (@(Get-PluginActions).Count -eq 0) ''
     $script:Plugins = @()
 
-    $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('item-marks'))
+    $script:Plugins = @(Load-Plugins (Join-Path $srcRoot 'plugins') @('item-marks'))
     $menuActs = @(Get-PluginActions)
     $allMarks = [pscustomobject]@{ Payload = 'x'; Time = 0; Marks = 'psh' }
     $noMarks = [pscustomobject]@{ Payload = 'x'; Time = 0; Marks = '' }
@@ -563,7 +582,7 @@ try {
     Check 'unit' 'menu caption: a throwing label falls back' ((Get-ActionText @{ Label = { throw 'boom' } } $null) -eq 'Plugin action') ''
     Check 'unit' 'menu actions carry their owner' ((@($menuActs | ForEach-Object { $_['Plugin'] } | Select-Object -Unique) -join ',') -eq 'item-marks') (@($menuActs | ForEach-Object { $_['Plugin'] } | Select-Object -Unique) -join ',')
 
-    $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('transform'))
+    $script:Plugins = @(Load-Plugins (Join-Path $srcRoot 'plugins') @('transform'))
     Register-PluginSettings
     [IO.File]::WriteAllLines($cfg, @('transform.Mode=snake'), $Utf8)
     $script:IniCache = $null
@@ -614,7 +633,7 @@ try {
 
     # several items from one plugin stay one block: a setting changes the count, the
     # grouping follows the plugin, and the plugins follow the load order
-    $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('item-marks', 'transform'))
+    $script:Plugins = @(Load-Plugins (Join-Path $srcRoot 'plugins') @('item-marks', 'transform'))
     Register-PluginSettings
     [IO.File]::WriteAllLines($cfg, @('transform.Modes=upper,snake,kebab'), $Utf8)
     $script:IniCache = $null
@@ -623,7 +642,7 @@ try {
     Check 'unit' 'menu keeps one block per plugin' (($owners -join ',') -eq 'item-marks,item-marks,item-marks,transform,transform,transform') ($owners -join ',')
     Check 'unit' 'a plugin block stays contiguous' ((@($owners | Select-Object -Unique) -join ',') -eq 'item-marks,transform') (@($owners | Select-Object -Unique) -join ',')
 
-    $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('transform', 'item-marks'))
+    $script:Plugins = @(Load-Plugins (Join-Path $srcRoot 'plugins') @('transform', 'item-marks'))
     Register-PluginSettings
     [IO.File]::WriteAllLines($cfg, @('transform.Mode=snake'), $Utf8)
     $script:IniCache = $null
@@ -634,7 +653,7 @@ try {
     Check 'unit' 'plugin list keeps the written order' (($names -join ',') -eq 'transform,item-marks') ($names -join ',')
     $script:Plugins = @()
 
-    $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('entry-actions'))
+    $script:Plugins = @(Load-Plugins (Join-Path $srcRoot 'plugins') @('entry-actions'))
     Register-PluginSettings
     [IO.File]::WriteAllLines($cfg, @(), $Utf8)
     $script:IniCache = $null
@@ -646,7 +665,7 @@ try {
     Check 'unit' 'sniffers live in one block' (((& (Get-PluginData 'entry-actions' 'Sniff') '{"a":1}') -join ',') -match 'json') ''
 
     # retention: protected rows survive, the sort mark can be kept too
-    $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('item-marks', 'retention'))
+    $script:Plugins = @(Load-Plugins (Join-Path $srcRoot 'plugins') @('item-marks', 'retention'))
     Register-PluginSettings
     [IO.File]::WriteAllLines($cfg, @('retention.MaxAgeDays=1', 'retention.KeepPinned=1'), $Utf8)
     $script:IniCache = $null
@@ -732,7 +751,7 @@ try {
     $script:Theme = 'win11-light'
     Apply-Theme
     Check 'unit' 'light palette still switches by name' ((Get-UiPalette).Surface.ToArgb() -eq [Drawing.Color]::FromArgb(243, 243, 243).ToArgb()) (Get-UiPalette).Surface.ToString()
-    $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('item-marks'))
+    $script:Plugins = @(Load-Plugins (Join-Path $srcRoot 'plugins') @('item-marks'))
     Register-PluginSettings
     Register-PluginThemeSettings
     Apply-PluginSettings
@@ -773,7 +792,7 @@ try {
     $script:Theme = 'win11-dark'
     Apply-Theme
     $script:ThemeOverrides = @{}
-    $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('item-marks'))
+    $script:Plugins = @(Load-Plugins (Join-Path $srcRoot 'plugins') @('item-marks'))
     Register-PluginThemeSettings
     Apply-PluginTheme
     Check 'unit' 'ThemeSettings fall back to the plugin default' ((Get-PluginTheme 'item-marks' 'StarGlyph') -eq [string][char]0xE735) ''
@@ -853,7 +872,7 @@ try {
     Check 'int' 'help advertises no setting switches' ((-not ($o -match 'Options \(override')) -and ($o -match 'clipboard\.ini only') -and (-not ($o -match '-MaxItems'))) ''
 
     # the sandbox keeps its store next to its own script, never in the repo
-    Check 'int' 'data dir isolate' ((Test-Path -LiteralPath (Join-Path $intDir 'data\history.dat')) -and -not (Test-Path -LiteralPath (Join-Path $repoRoot 'data\integration'))) ''
+    Check 'int' 'data dir isolate' ((Test-Path -LiteralPath (Join-Path $intDir 'data\history.dat')) -and -not (Test-Path -LiteralPath (Join-Path $srcRoot 'data\integration'))) ''
 
     # DataDir= in clipboard.ini decides the write location
     $altDir = Join-Path $tmpRoot 'alt'
@@ -1049,6 +1068,62 @@ try {
     $o = Clip $intDir @('config', 'set', 'Theme', 'win11-light')
     Check 'int' 'theme name is still settable' ($o -match 'win11-light') $o.Trim()
     Remove-Item -LiteralPath $cfg2 -Force -ErrorAction SilentlyContinue
+
+    # build.ps1 is driven by a settings file and rewrites the scripts from their syntax
+    # tree, never packing the history
+    $pkgOut = Join-Path $tmpRoot 'pkg'
+    $build = Join-Path $repoRoot 'build.ps1'
+    $buildCfg = Join-Path $tmpRoot 'build-test.ini'
+    Check 'int' 'build.ps1 exists' (Test-Path -LiteralPath $build) ''
+    Check 'int' 'build settings ship with the repo' (Test-Path -LiteralPath (Join-Path $repoRoot 'build.ini')) ''
+    Check 'int' 'minifier ships with the repo' (Test-Path -LiteralPath (Join-Path $repoRoot 'build\minify.ps1')) ''
+    [IO.File]::WriteAllLines($buildCfg, @('Version=0.0.0-test', ('OutDir=' + $pkgOut), 'Verify=0', 'Minify=1', 'Rename=1', 'IncludeDocs=1', 'Overwrite=1'), $Utf8)
+    $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
+    $pkgDir = Join-Path $pkgOut 'clipboard-0.0.0-test'
+    Check 'int' 'build.ps1 writes a folder from its settings' (Test-Path -LiteralPath $pkgDir) (($bout | Select-Object -Last 1) -as [string])
+    if (Test-Path -LiteralPath $pkgDir) {
+      $names = @(Get-ChildItem -LiteralPath $pkgDir -Recurse -File | ForEach-Object { $_.FullName.Substring($pkgDir.Length) })
+      Check 'int' 'package keeps the program files' ((Test-Path -LiteralPath (Join-Path $pkgDir 'clipboard.ps1')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'clipboard.cmd')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'lib\plugins.ps1'))) ''
+      Check 'int' 'package keeps plugins and themes' ((Test-Path -LiteralPath (Join-Path $pkgDir 'plugins\item-marks.ps1')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'themes\win11-dark.ini'))) ''
+      Check 'int' 'package leaves history and settings out' ((@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|dist)([\\/]|$)' }).Count -eq 0) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir 'build.ini'))) (@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|dist)' }) -join ', ')
+
+      # the point of the build: same scripts, smaller, still parsing
+      $srcText = [IO.File]::ReadAllText((Join-Path $srcRoot 'clipboard.ps1'))
+      $outText = [IO.File]::ReadAllText((Join-Path $pkgDir 'clipboard.ps1'))
+      Check 'int' 'minified script is smaller' ($outText.Length -lt $srcText.Length) ($srcText.Length -as [string] + ' -> ' + $outText.Length)
+      Check 'int' 'minified script drops comments' (-not ($outText -match 'lightweight clipboard history for Windows')) ''
+      Check 'int' 'minified script renames internals' ((-not ($outText -match 'function Get-Record\b')) -and (-not ($outText -match 'function Show-Usage\b'))) ''
+      $pe = $null
+      [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $pkgDir 'clipboard.ps1'), [ref]$null, [ref]$pe)
+      Check 'int' 'minified script still parses' ($pe.Count -eq 0) (($pe | Select-Object -First 1 | ForEach-Object { $_.Message }) -as [string])
+      Check 'int' 'minified script keeps the requires line' ($outText -match '(?m)^#Requires -Version 5\.1') ''
+      Check 'int' 'minified script keeps cli parameter names' (($outText -match '\[string\]\$Command') -and ($outText -match '\$Library')) ''
+      $o2 = & powershell -NoProfile -ExecutionPolicy Bypass -Sta -File (Join-Path $pkgDir 'clipboard.ps1') status 2>&1
+      Check 'int' 'packaged copy runs' ((($o2 -join ' ') -match 'plugins\s+:') -and -not (($o2 -join ' ') -match 'not recognized')) ((@($o2) | Select-Object -First 1) -as [string])
+    }
+    # Overwrite=0 refuses to replace an existing package
+    [IO.File]::WriteAllLines($buildCfg, @('Version=0.0.0-test', ('OutDir=' + $pkgOut), 'Verify=0', 'Overwrite=0'), $Utf8)
+    $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
+    Check 'int' 'Overwrite=0 keeps the existing folder' (($bout -join ' ') -match 'already exists') (($bout | Select-Object -Last 1) -as [string])
+
+    # Plugins= / Themes= trim the package; an unknown name stops the build
+    $pkgOut2 = Join-Path $tmpRoot 'pkg2'
+    [IO.File]::WriteAllLines($buildCfg, @('Version=0.0.0-test2', ('OutDir=' + $pkgOut2), 'Verify=0', 'IncludeDocs=0', 'Plugins=transform', 'Themes=win11-light'), $Utf8)
+    $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
+    $pkgDir2 = Join-Path $pkgOut2 'clipboard-0.0.0-test2'
+    if (Test-Path -LiteralPath $pkgDir2) {
+      Check 'int' 'Plugins= ships only the listed plugin' ((Test-Path -LiteralPath (Join-Path $pkgDir2 'plugins\transform.ps1')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir2 'plugins\item-marks.ps1'))) ''
+      Check 'int' 'Themes= ships only the listed theme' ((Test-Path -LiteralPath (Join-Path $pkgDir2 'themes\win11-light.ini')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir2 'themes\win11-dark.ini'))) ''
+      Check 'int' 'IncludeDocs=0 drops the readme' (-not (Test-Path -LiteralPath (Join-Path $pkgDir2 'README.md'))) ''
+      Check 'int' 'plugin page travels with its plugin' (Test-Path -LiteralPath (Join-Path $pkgDir2 'plugins\transform.md')) ''
+    } else {
+      Check 'int' 'Plugins= ships only the listed plugin' $false (($bout | Select-Object -Last 1) -as [string])
+    }
+    [IO.File]::WriteAllLines($buildCfg, @('Version=0.0.0-test3', ('OutDir=' + $pkgOut2), 'Verify=0', 'Plugins=nosuchplugin'), $Utf8)
+    $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
+    Check 'int' 'unknown plugin name stops the build' (($bout -join ' ') -match 'nosuchplugin') (($bout | Select-Object -Last 1) -as [string])
+    Remove-Item -LiteralPath $pkgOut -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $pkgOut2 -Recurse -Force -ErrorAction SilentlyContinue
   }
 
   # ------------------------------------------------------------------ e2e tests

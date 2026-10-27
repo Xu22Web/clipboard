@@ -1,6 +1,6 @@
 # win11-dark —— Windows 11 Fluent 深色（默认）
 
-[← 主说明](../README.md) · [主题格式](../README.md#主题)
+[← 主说明](../../README.md) · [主题格式](../../README.md#主题)
 
 默认主题，也是界面的**参考布局**：行高、栏高、字体与圆角都以它为准，其余主题在它之上换色。
 
@@ -33,5 +33,5 @@ Theme=win11-dark
 ## 想改它
 
 - 只想换一两个颜色：复制 `themes/win11-dark.ini` 为 `themes/<你的名字>.ini`，改 `name=` 与对应 token，再把 `Theme=` 指过去（别直接改默认主题，升级时容易被覆盖）。
-- token 名单、`[fonts]` / `[metrics]` / `[<插件名>]` 段的写法：见 [主说明的主题一节](../README.md#主题)。
+- token 名单、`[fonts]` / `[metrics]` / `[<插件名>]` 段的写法：见 [主说明的主题一节](../../README.md#主题)。
 - 切换后需重启常驻进程生效（`clipboard config set Theme <name>` 会自动重启）。
