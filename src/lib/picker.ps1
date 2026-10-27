@@ -1,0 +1,1300 @@
+# lib/picker.ps1 - the history panel.
+#
+# One function owns the whole window lifecycle (create, filter, draw, keys, paste) because
+# its parts share the control tree and the per-open state. The pieces that stand alone live
+# elsewhere: geometry and quick keys in lib/picker-geom.ps1, entry classification in
+# lib/entry.ps1, plugin hooks through lib/plugins.ps1.
+
+function Show-Picker {
+  if ($script:PickerOpen) { return }
+  $script:PickerOpen = $true
+  try {
+    Load-Forms
+    Add-Native
+    Initialize-Dpi
+    if (-not $script:UiFamily) {
+      $script:UiFamily = 'Tahoma'
+      $wantFace = [string]$script:ThemeFace.Font
+      if ($wantFace -and (Test-Font $wantFace)) { $script:UiFamily = $wantFace }
+      elseif (Test-Font 'Segoe UI Variable Text') { $script:UiFamily = 'Segoe UI Variable Text' }
+      elseif (Test-Font 'Segoe UI') { $script:UiFamily = 'Segoe UI' }
+      # Win11 ships Segoe Fluent Icons; Win10 only has Segoe MDL2 Assets
+      $wantIcon = [string]$script:ThemeFace.Icon
+      $script:IconFamily = ''
+      if ($wantIcon -and (Test-Font $wantIcon)) { $script:IconFamily = $wantIcon }
+      elseif (Test-Font 'Segoe Fluent Icons') { $script:IconFamily = 'Segoe Fluent Icons' }
+      elseif (Test-Font 'Segoe MDL2 Assets') { $script:IconFamily = 'Segoe MDL2 Assets' }
+      $script:HasMdl2 = [bool]$script:IconFamily
+    }
+    $prev = [Cb.Win]::GetForegroundWindow()
+    $script:Entries = @(Get-Records)
+    if ($script:Entries.Count -eq 0) { Write-Log 'picker: empty (showing hint)' }
+
+    $ui = Get-UiPalette
+    if (-not $script:FBody) {
+      # Win11 type ramp by default; a theme may override any of the sizes through Fonts.
+      $tf = $script:ThemeFonts
+      $szBody = 10.5; $szSmall = 9.0; $szTiny = 9.0; $szTitle = 13.0
+      $szIcon = 12.0; $szIconSmall = 10.0; $szIconBig = 24.0
+      if ($tf.ContainsKey('Body')) { $szBody = [double]$tf['Body'] }
+      if ($tf.ContainsKey('Small')) { $szSmall = [double]$tf['Small'] }
+      if ($tf.ContainsKey('Tiny')) { $szTiny = [double]$tf['Tiny'] }
+      if ($tf.ContainsKey('Title')) { $szTitle = [double]$tf['Title'] }
+      if ($tf.ContainsKey('Icon')) { $szIcon = [double]$tf['Icon'] }
+      if ($tf.ContainsKey('IconSmall')) { $szIconSmall = [double]$tf['IconSmall'] }
+      if ($tf.ContainsKey('IconBig')) { $szIconBig = [double]$tf['IconBig'] }
+      $script:FBody = New-Object Drawing.Font($script:UiFamily, [single]$szBody)
+      $script:FSmall = New-Object Drawing.Font($script:UiFamily, [single]$szSmall)
+      $script:FTiny = New-Object Drawing.Font($script:UiFamily, [single]$szTiny)
+      $script:FTitle = New-Object Drawing.Font($script:UiFamily, [single]$szTitle, [Drawing.FontStyle]::Bold)
+      if ($script:IconFamily) {
+        # 12 pt renders a 16 px glyph, 10 pt a 13 px one, 24 pt the empty-state art
+        $script:FIcon = New-Object Drawing.Font($script:IconFamily, [single]$szIcon)
+        $script:FIconSmall = New-Object Drawing.Font($script:IconFamily, [single]$szIconSmall)
+        $script:FIconBig = New-Object Drawing.Font($script:IconFamily, [single]$szIconBig)
+      } else {
+        $script:FIcon = $script:FBody
+        $script:FIconSmall = $script:FSmall
+        $script:FIconBig = $script:FTitle
+      }
+    }
+    $fBody = $script:FBody; $fSmall = $script:FSmall; $fTiny = $script:FTiny
+    $fTitle = $script:FTitle; $fIcon = $script:FIcon; $fIconSmall = $script:FIconSmall; $fIconBig = $script:FIconBig
+    $script:Hover = -1
+    $script:Confirm = $false
+    $script:CtrlHeld = $false
+    $script:SearchFocus = $false
+    $script:FootMode = 'hints'
+    $script:FootMsg = ''
+    $script:CapturePaused = (Test-Path -LiteralPath $Paused)
+    $script:UndoRec = $null
+    $script:UndoIdx = 0
+    $script:Filtered = @()
+    $script:Labels = @()
+    $script:Tokens = @()
+    # Plugin keys and per-row decoration are resolved once per entry, not per key press / paint.
+    $panelKeys = @()
+    if (Get-Command Get-PluginPanelKeys -ErrorAction SilentlyContinue) { $panelKeys = @(Get-PluginPanelKeys) }
+    $ctrlHints = @($panelKeys | Where-Object { $_.Ctrl -and -not $_.Alt -and -not $_.Shift -and ([string]$_.Key).Length -eq 1 })
+    $rowCache = @{}
+    function Find-PanelKey([string]$keyName, [bool]$ctrl, [bool]$alt, [bool]$shift) {
+      $name = ([string]$keyName).ToUpperInvariant()
+      foreach ($k in $panelKeys) {
+        if ($k.Key -ne $name) { continue }
+        if ([bool]$k.Ctrl -ne $ctrl) { continue }
+        if ([bool]$k.Alt -ne $alt) { continue }
+        if ([bool]$k.Shift -ne $shift) { continue }
+        return $k
+      }
+      return $null
+    }
+
+    $form = New-Object Cb.FluentForm
+    $form.FormBorderStyle = 'None'
+    $form.StartPosition = 'Manual'
+    $form.TopMost = $true
+    $form.ShowInTaskbar = $false
+    $form.KeyPreview = $true
+    $form.Text = 'Clipboard history'
+    $form.AccessibleName = 'Clipboard history'
+    $form.Width = Px $script:WinWidth
+    $form.Height = Px $script:WinHeight
+    $form.MinimumSize = New-Object Drawing.Size -ArgumentList @((Px 520), (Px 320))
+    $form.BackColor = $ui.Surface
+    $form.Padding = New-Object Windows.Forms.Padding(1)
+
+    $lst = New-Object Cb.FluentList
+    $lst.Dock = 'None'
+    $lst.BorderStyle = 'None'
+    $lst.IntegralHeight = $false
+    $lst.DrawMode = 'OwnerDrawFixed'
+    # Win11 list items are 40 px tall
+    $lst.ItemHeight = Px 40
+    $lst.BackColor = $ui.Surface
+    $lst.ForeColor = $ui.Text
+    $lst.Font = $fBody
+    $lst.HorizontalScrollbar = $false
+    $lst.ScrollAlwaysVisible = $false
+    $lst.AccessibleName = 'Clipboard entries'
+
+    # The native Win32 scrollbar cannot be themed and ListBox has no property to hide it.
+    # So the list lives in a clipping host and is made wider than the host: the scrollbar
+    # ends up outside the visible area, while TopIndex scrolling keeps working.
+    $listHost = New-Object Windows.Forms.Panel
+    $listHost.Dock = 'Fill'
+    $listHost.BackColor = $ui.Surface
+    $lst.SetBounds(0, 0, 100, 100)
+    $listHost.Controls.Add($lst)
+
+    # empty state: a centered Fluent block (glyph + title + hint) drawn over the list
+    $script:EmptyGlyph = [string][char]0xE721
+    $script:EmptyTitle = ''
+    $script:EmptySub = ''
+    $empty = New-Object Windows.Forms.Panel
+    $empty.Dock = 'Fill'
+    $empty.BackColor = $ui.Surface
+    $empty.Visible = $false
+    $empty.Add_Paint({
+        param($s, $e)
+        try {
+          $g = $e.Graphics
+          $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+          $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+          $w = $empty.ClientSize.Width
+          $cy = [int]($empty.ClientSize.Height / 2) - (Px 56)
+          if ($script:IconFamily) {
+            $gb = New-Object Drawing.SolidBrush $ui.Faint
+            $gr = New-Object Drawing.RectangleF -ArgumentList @(0, [single]$cy, [single]$w, [single](Px 34))
+            $g.DrawString($script:EmptyGlyph, $fIconBig, $gb, $gr, $sfCenter)
+            $gb.Dispose()
+            $cy = $cy + (Px 36)
+          }
+          if ($script:EmptyTitle) {
+            $tb = New-Object Drawing.SolidBrush $ui.Dim
+            $tr = New-Object Drawing.RectangleF -ArgumentList @(0, [single]$cy, [single]$w, [single](Px 26))
+            $g.DrawString($script:EmptyTitle, $fTitle, $tb, $tr, $sfCenter)
+            $tb.Dispose()
+            $cy = $cy + (Px 28)
+          }
+          if ($script:EmptySub) {
+            $sb = New-Object Drawing.SolidBrush $ui.Faint
+            $sr = New-Object Drawing.RectangleF -ArgumentList @(0, [single]$cy, [single]$w, [single](Px 22))
+            $g.DrawString($script:EmptySub, $fSmall, $sb, $sr, $sfCenter)
+            $sb.Dispose()
+          }
+        } catch { }
+      })
+    $listHost.Controls.Add($empty)
+    $empty.Add_Click({ $txt.Focus() })
+
+    # A thin rounded thumb is painted instead, brightening on hover.
+    $sbar = New-Object Windows.Forms.Panel
+    $sbar.Dock = 'Right'
+    $sbar.Width = Px 10
+    $sbar.BackColor = $ui.Surface
+    $script:SbTop = 0
+    $script:SbLen = 0
+    $script:SbDrag = -1
+    $script:SbHot = $false
+
+    $foot = New-Object Windows.Forms.Panel
+    $foot.Dock = 'Bottom'
+    $foot.Height = Px 40
+    $foot.BackColor = $ui.Surface
+
+    $footR = New-Object Windows.Forms.Label
+    $footR.Dock = 'None'
+    $footR.TextAlign = 'MiddleRight'
+    $footR.Font = $fSmall
+    $footR.ForeColor = $ui.Faint
+    $footR.BackColor = $ui.Surface
+    $footR.AutoEllipsis = $true
+    $footR.Text = ''
+
+    $footL = New-Object Windows.Forms.Panel
+    $footL.Dock = 'Fill'
+    $footL.BackColor = $ui.Surface
+
+    $foot.Controls.Add($footR)
+    $foot.Controls.Add($footL)
+
+    $head = New-Object Windows.Forms.Panel
+    $head.Dock = 'Top'
+    $head.Height = Px 68
+    $head.BackColor = $ui.Surface
+
+    $box = New-Object Windows.Forms.Panel
+    $box.SetBounds((Px 14), (Px 14), ($form.ClientSize.Width - (Px 30)), (Px 40))
+    $box.BackColor = $ui.Field
+    $box.Add_Paint({
+        param($s, $e)
+        try {
+          $g = $e.Graphics
+          $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+          $w = $box.ClientSize.Width
+          $h = $box.ClientSize.Height
+          # 1 px resting border; 2 px accent underline while the field has focus
+          $pen = New-Object Drawing.Pen $ui.FieldBorder, 1
+          $path = New-RoundPath 0 0 ($w - 1) ($h - 1) (Px 4)
+          $g.DrawPath($pen, $path)
+          $path.Dispose()
+          $pen.Dispose()
+          if ($script:SearchFocus) {
+            $accentPen = New-Object Drawing.Pen $ui.Accent, (Px 2)
+            $g.DrawLine($accentPen, (Px 4), ($h - (Px 2)), ($w - (Px 4)), ($h - (Px 2)))
+            $accentPen.Dispose()
+          }
+        } catch { }
+      })
+
+    $icon = New-Object Windows.Forms.Label
+    $icon.SetBounds((Px 12), (Px 10), (Px 20), (Px 20))
+    $icon.Text = $(if ($script:IconFamily) { [string][char]0xE721 } else { '' })
+    $icon.Font = $fIcon
+    $icon.ForeColor = $ui.Faint
+    $icon.BackColor = $ui.Field
+    $icon.TextAlign = 'MiddleCenter'
+    $icon.Cursor = 'IBeam'
+    $icon.Add_Click({ $txt.Focus() })
+
+    $txt = New-Object Windows.Forms.TextBox
+    $txt.BorderStyle = 'None'
+    $txt.SetBounds((Px 38), (Px 10), ($box.Width - (Px 80)), (Px 22))
+    $txt.BackColor = $ui.Field
+    $txt.ForeColor = $ui.Text
+    $txt.Font = $fBody
+    $txt.AccessibleName = 'Search clipboard history'
+
+    $ph = New-Object Windows.Forms.Label
+    $ph.SetBounds((Px 40), (Px 10), ($box.Width - (Px 106)), (Px 22))
+    $ph.Text = 'Search clipboard history'
+    $ph.Font = $fBody
+    $ph.ForeColor = $ui.Faint
+    $ph.BackColor = $ui.Field
+    $ph.TextAlign = 'MiddleLeft'
+    $ph.Cursor = 'IBeam'
+
+    $clr = New-Object Windows.Forms.Label
+    $clr.SetBounds(($box.Width - (Px 30)), (Px 10), (Px 20), (Px 22))
+    $clr.Text = $(if ($script:IconFamily) { [string][char]0xE8BB } else { 'x' })
+    $clr.Font = $fSmall
+    $clr.ForeColor = $ui.Dim
+    $clr.BackColor = $ui.Field
+    $clr.TextAlign = 'MiddleCenter'
+    $clr.Cursor = 'Hand'
+    $clr.Visible = $false
+    $clr.AccessibleName = 'Clear search'
+    $clr.Add_MouseEnter({ $clr.ForeColor = $ui.Text })
+    $clr.Add_MouseLeave({ $clr.ForeColor = $ui.Dim })
+
+    $line = New-Object Windows.Forms.Panel
+    $line.Dock = 'Bottom'
+    $line.Height = 1
+    $line.BackColor = $ui.Border
+
+    $box.Controls.Add($icon)
+    $box.Controls.Add($txt)
+    $box.Controls.Add($clr)
+    $box.Controls.Add($ph)
+    $ph.BringToFront()
+    $head.Controls.Add($box)
+    $head.Controls.Add($line)
+
+    # drag grip for resizing the borderless panel from the bottom-right corner
+    $grip = New-Object Windows.Forms.Panel
+    $grip.Size = New-Object Drawing.Size -ArgumentList @((Px 16), (Px 16))
+    $grip.BackColor = $ui.Surface
+    $grip.Cursor = 'SizeNWSE'
+
+    $form.Controls.Add($listHost)
+    $form.Controls.Add($sbar)
+    $form.Controls.Add($foot)
+    $form.Controls.Add($head)
+    $form.Controls.Add($grip)
+
+    # A remembered position wins only when the panel still lands on a screen.
+    $areas = @()
+    try { foreach ($sc in [Windows.Forms.Screen]::AllScreens) { $areas += $sc.WorkingArea } } catch { }
+    $fallback = $null
+    try { $fallback = [Windows.Forms.Screen]::FromHandle($prev).WorkingArea } catch { }
+    if (-not $fallback) { try { $fallback = [Windows.Forms.Screen]::FromPoint([Windows.Forms.Cursor]::Position).WorkingArea } catch { } }
+    if (-not $fallback) { $fallback = New-Object Drawing.Rectangle -ArgumentList @(0, 0, $form.Width, $form.Height) }
+    $pb = Get-PickerBounds $form.Width $form.Height ([string]$script:WinLeft) ([string]$script:WinTop) $areas $fallback
+    $form.Left = [int]$pb.Left
+    $form.Top = [int]$pb.Top
+
+    function Layout-Chrome {
+      try {
+        $cw = $form.ClientSize.Width
+        $box.SetBounds((Px 14), (Px 14), ($cw - (Px 30)), (Px 40))
+        $txt.SetBounds((Px 38), (Px 10), ($box.Width - (Px 80)), (Px 22))
+        $ph.SetBounds((Px 40), (Px 10), ($box.Width - (Px 106)), (Px 22))
+        $clr.SetBounds(($box.Width - (Px 30)), (Px 10), (Px 20), (Px 22))
+        $box.Region = New-RoundRegion $box.Width $box.Height (Px 4)
+      } catch { }
+      try {
+        $grip.SetBounds(($form.ClientSize.Width - (Px 18)), ($form.ClientSize.Height - (Px 18)), (Px 16), (Px 16))
+        $grip.BringToFront()
+      } catch { }
+      try {
+        $footR.SetBounds(($foot.ClientSize.Width - (Px 176)), 0, (Px 162), $foot.ClientSize.Height)
+      } catch { }
+      $footL.Invalidate()
+    }
+
+    # shortcut hints as Fluent key chips: [key] action
+    function Get-FootHints {
+      if ($script:Filtered.Count -eq 0) {
+        return @(@('Esc', 'Close'))
+      }
+      if ($script:CtrlHeld) {
+        # digits first, then whatever single-letter keys the plugins claimed (Ctrl+P pin ...)
+        $pairs = @(@('1-9,0', 'Pick'))
+        foreach ($pk in @($ctrlHints)) { $pairs += ,@([string]$pk.Key, [string]$pk.Hint) }
+        $pairs += ,@('Enter', 'Copy only')
+        $pairs += ,@('Z', 'Undo')
+        return $pairs
+      }
+      return @(@('Enter', 'Paste'), @('Ctrl+Enter', 'Copy only'), @('Del', 'Delete'), @('Esc', 'Close'))
+    }
+
+    # key caps: rounded chip with a 1 px stroke, action text beside it (Win11 hint style)
+    function Draw-KeyChips($g, [int]$x, [int]$cy, $pairs, $keyColor, $actionColor) {
+      $chipH = Px 18
+      $limit = $footR.Left - (Px 8)
+      if ($limit -lt (Px 60)) { $limit = $footL.ClientSize.Width - (Px 8) }
+      $big = New-Object Drawing.SizeF -ArgumentList @(1000, 100)
+      foreach ($p in @($pairs)) {
+        $key = [string]$p[0]
+        $act = [string]$p[1]
+        $kw = [single]$g.MeasureString($key, $fSmall, $big, $sfSeg).Width
+        $aw = [single]$g.MeasureString($act, $fSmall, $big, $sfSeg).Width
+        $chipW = [int]($kw + (Px 14))
+        if (($x + $chipW + (Px 6) + $aw) -gt $limit) { return }
+        $chipY = $cy - [int]($chipH / 2)
+        $kp = New-RoundPath $x $chipY $chipW $chipH (Px 4)
+        $kb = New-Object Drawing.SolidBrush $ui.KeyCapBg
+        $g.FillPath($kb, $kp)
+        $kb.Dispose()
+        $kpen = New-Object Drawing.Pen $ui.KeyCapBorder, 1
+        $g.DrawPath($kpen, $kp)
+        $kpen.Dispose()
+        $kp.Dispose()
+        $kbr = New-Object Drawing.SolidBrush $keyColor
+        $kr = New-Object Drawing.RectangleF -ArgumentList @([single]$x, [single]$chipY, [single]$chipW, [single]$chipH)
+        $g.DrawString($key, $fSmall, $kbr, $kr, $sfCenter)
+        $kbr.Dispose()
+        $x = $x + $chipW + (Px 6)
+        $ar = New-Object Drawing.RectangleF -ArgumentList @([single]$x, [single]$chipY, [single]$aw, [single]$chipH)
+        $abr = New-Object Drawing.SolidBrush $actionColor
+        $g.DrawString($act, $fSmall, $abr, $ar, $sfNone)
+        $abr.Dispose()
+        $x = $x + [int]$aw + (Px 16)
+      }
+    }
+
+    $footL.Add_Paint({
+        param($s, $e)
+        try {
+          $g = $e.Graphics
+          $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+          $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+          $cy = [int]($footL.ClientSize.Height / 2)
+          if ($script:FootMode -eq 'confirm') {
+            $wb = New-Object Drawing.SolidBrush $ui.Warn
+            $wr = New-Object Drawing.RectangleF -ArgumentList @([single](Px 14), 0, [single]($footL.ClientSize.Width - (Px 20)), [single]$footL.ClientSize.Height)
+            $g.DrawString($script:FootMsg, $fSmall, $wb, $wr, $sfNone)
+            $wb.Dispose()
+            return
+          }
+          if ($script:FootMode -eq 'message') {
+            $mb = New-Object Drawing.SolidBrush $ui.Dim
+            $mr = New-Object Drawing.RectangleF -ArgumentList @([single](Px 14), 0, [single]($footL.ClientSize.Width - (Px 20)), [single]$footL.ClientSize.Height)
+            $g.DrawString($script:FootMsg, $fSmall, $mb, $mr, $sfNone)
+            $mb.Dispose()
+            return
+          }
+          Draw-KeyChips $g (Px 14) $cy (Get-FootHints) $ui.Dim $ui.Faint
+        } catch { }
+      })
+
+    function Restore-Foot {
+      try {
+        if ($script:Confirm) { return }
+        $script:FootMode = 'hints'
+        $script:FootMsg = ''
+        $footL.Invalidate()
+        $count = ([string]$script:Filtered.Count) + ' of ' + ([string]$script:Entries.Count)
+        if ($script:CapturePaused) { $count = 'Paused: ' + $count }
+        $footR.Text = $count
+      } catch { }
+    }
+
+    function Set-Foot([string]$msg, [int]$ms) {
+      if ($script:Confirm) { return }
+      $script:FootMode = 'message'
+      $script:FootMsg = $msg
+      $footL.Invalidate()
+      try {
+        $footTimer.Stop()
+        if ($ms -gt 0) { $footTimer.Interval = $ms; $footTimer.Start() }
+      } catch { }
+    }
+
+    function Sync-Placeholder {
+      $ph.Visible = ($txt.Text.Length -eq 0)
+      $clr.Visible = ($txt.Text.Length -gt 0)
+    }
+
+    function Get-Rows {
+      return (Get-VisibleRowCount $lst.ClientSize.Height $lst.ItemHeight)
+    }
+
+    # one Graphics for text measurement, reused for the lifetime of the panel
+    $script:MeasureG = $null
+    function Get-MeasureGraphics {
+      if ($null -eq $script:MeasureG -or $script:MeasureG.IsDisposed) { $script:MeasureG = $lst.CreateGraphics() }
+      return $script:MeasureG
+    }
+
+    # ListBox has no VerticalScrollbar property, so the scrollbar is kept just outside the
+    # visible area by the clipping host instead.
+    function Size-List {
+      $w = $listHost.ClientSize.Width
+      $h = $listHost.ClientSize.Height
+      if ($w -gt 0 -and $h -gt 0) { $lst.SetBounds(0, 0, $w + (Px 40), $h) }
+    }
+
+    # recompute thumb geometry from the current TopIndex
+    function Sync-Sb {
+      $n = $lst.Items.Count
+      $vis = Get-Rows
+      $h = $sbar.ClientSize.Height
+      if ($n -le $vis -or $h -le (Px 12)) { $script:SbLen = 0; $sbar.Invalidate(); return }
+      $track = $h - (Px 6)
+      $script:SbLen = [Math]::Max((Px 28), [int]($track * $vis / $n))
+      $span = $track - $script:SbLen
+      $maxTop = $n - $vis
+      $t = 0
+      if ($maxTop -gt 0 -and $span -gt 0) { $t = [int]($span * $lst.TopIndex / $maxTop) }
+      $script:SbTop = (Px 3) + $t
+      $sbar.Invalidate()
+    }
+
+    # keep the selection inside the visible window so Enter never pastes a row that is
+    # scrolled out of sight
+    function Keep-SelectionVisible {
+      if ($lst.Items.Count -eq 0) { return }
+      $vis = Get-Rows
+      $top = $lst.TopIndex
+      $sel = $lst.SelectedIndex
+      if ($sel -lt $top -or $sel -ge ($top + $vis)) {
+        $lst.SelectedIndex = [Math]::Min($top, $lst.Items.Count - 1)
+      }
+    }
+
+    # move the list so the thumb lands at $thumbTop
+    function Sb-ScrollTo([int]$thumbTop) {
+      if ($script:SbLen -le 0) { return }
+      $vis = Get-Rows
+      $maxTop = $lst.Items.Count - $vis
+      $span = ($sbar.ClientSize.Height - (Px 6)) - $script:SbLen
+      if ($maxTop -le 0 -or $span -le 0) { return }
+      $i = [int][Math]::Round(($thumbTop - (Px 3)) * $maxTop / $span)
+      if ($i -lt 0) { $i = 0 }
+      if ($i -gt $maxTop) { $i = $maxTop }
+      if ($i -ne $lst.TopIndex) { $lst.TopIndex = $i }
+      Keep-SelectionVisible
+      Sync-Sb
+      $lst.Invalidate()
+    }
+
+    function Scroll-By([int]$rows) {
+      $maxTop = $lst.Items.Count - (Get-Rows)
+      if ($maxTop -le 0) { return }
+      $i = $lst.TopIndex + $rows
+      if ($i -lt 0) { $i = 0 }
+      if ($i -gt $maxTop) { $i = $maxTop }
+      if ($i -ne $lst.TopIndex) { $lst.TopIndex = $i }
+      Keep-SelectionVisible
+      Sync-Sb
+      $lst.Invalidate()
+    }
+
+    # focus stays in the search box, so wheel events bubble up here instead of the list
+    $form.Add_MouseWheel({
+        param($s, $e)
+        $lines = 0
+        try { $lines = [Windows.Forms.SystemInformation]::MouseWheelScrollLines } catch { }
+        if ($script:ScrollLines -gt 0) { $step = [int]$script:ScrollLines }
+        elseif ($lines -lt 1) { $step = (Get-Rows) }
+        else { $step = [int]$lines }
+        if ($e.Delta -gt 0) { Scroll-By (-$step) } else { Scroll-By $step }
+      })
+
+    $head.Add_MouseDown({
+        param($s, $e)
+        if ($e.Button -ne [Windows.Forms.MouseButtons]::Left) { return }
+        [void][Cb.Win]::ReleaseCapture()
+        [void][Cb.Win]::SendMessage($form.Handle, 0xA1, [IntPtr]2, [IntPtr]::Zero)
+      })
+    $grip.Add_Paint({
+        param($s, $e)
+        if (-not $script:GripHot) { return }
+        try {
+          $e.Graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+          $pen = New-Object Drawing.Pen ([Drawing.Color]::FromArgb(120, $ui.Dim)), 1
+          $cw = $grip.ClientSize.Width
+          $e.Graphics.DrawLine($pen, ($cw - (Px 4)), ($cw - (Px 9)), ($cw - (Px 9)), ($cw - (Px 4)))
+          $e.Graphics.DrawLine($pen, ($cw - (Px 4)), ($cw - (Px 13)), ($cw - (Px 13)), ($cw - (Px 4)))
+          $pen.Dispose()
+        } catch { }
+      })
+    $grip.Add_MouseEnter({ $script:GripHot = $true; $grip.Invalidate() })
+    $grip.Add_MouseLeave({ $script:GripHot = $false; $grip.Invalidate() })
+    $grip.Add_MouseDown({
+        [void][Cb.Win]::ReleaseCapture()
+        [void][Cb.Win]::SendMessage($form.Handle, 0xA1, [IntPtr]0x11, [IntPtr]::Zero)
+      })
+
+    $sbar.Add_Paint({
+        param($s, $e)
+        if ($script:SbLen -le 0) { return }
+        $e.Graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+        $hot = ($script:SbHot -or $script:SbDrag -ge 0)
+        $w = Px 3
+        $alpha = 110
+        if ($hot) { $w = Px 6; $alpha = 190 }
+        $x = [int](($sbar.ClientSize.Width - $w) / 2)
+        $br = New-Object Drawing.SolidBrush ([Drawing.Color]::FromArgb($alpha, $ui.Dim))
+        $gp = New-RoundPath $x $script:SbTop $w $script:SbLen ([Math]::Max(1, [int]($w / 2)))
+        $e.Graphics.FillPath($br, $gp)
+        $gp.Dispose()
+        $br.Dispose()
+      })
+    $sbar.Add_MouseEnter({ $script:SbHot = $true; $sbar.Invalidate() })
+    $sbar.Add_MouseLeave({ $script:SbHot = $false; $sbar.Invalidate() })
+    $sbar.Add_MouseDown({
+        param($s, $e)
+        if ($script:SbLen -le 0) { return }
+        if ($e.Y -ge $script:SbTop -and $e.Y -le ($script:SbTop + $script:SbLen)) {
+          $script:SbDrag = $e.Y - $script:SbTop
+        } else {
+          $script:SbDrag = [int]($script:SbLen / 2)
+          Sb-ScrollTo ($e.Y - $script:SbDrag)
+        }
+        $sbar.Capture = $true
+        $sbar.Invalidate()
+      })
+    $sbar.Add_MouseMove({
+        param($s, $e)
+        if ($script:SbDrag -lt 0) { return }
+        Sb-ScrollTo ($e.Y - $script:SbDrag)
+      })
+    $sbar.Add_MouseUp({
+        $script:SbDrag = -1
+        $sbar.Capture = $false
+        $sbar.Invalidate()
+      })
+    $form.Add_Resize({
+        if ($form.WindowState -ne [Windows.Forms.FormWindowState]::Normal) { return }
+        try { $form.Region = New-RoundRegion $form.ClientSize.Width $form.ClientSize.Height (Px 8) } catch { }
+        Layout-Chrome
+        Size-List
+        Sync-Sb
+        $lst.Invalidate()
+      })
+    $sbar.Add_SizeChanged({ Sync-Sb })
+    $listHost.Add_Resize({ Size-List; Sync-Sb })
+
+    function Update-List([string]$q) {
+      $lst.BeginUpdate()
+      $lst.Items.Clear()
+      # entries and their flags may have changed, so the per-row cache starts over
+      $rowCache.Clear()
+      $tokens = @($q -split '\s+' | Where-Object { $_ })
+      $script:Tokens = $tokens
+      $res = New-Object System.Collections.Generic.List[object]
+      $labs = New-Object System.Collections.Generic.List[string]
+      foreach ($rec in $script:Entries) {
+        $ok = $true
+        if ($tokens.Count -gt 0) {
+          foreach ($t in $tokens) {
+            if ($rec.Payload.IndexOf($t, [StringComparison]::OrdinalIgnoreCase) -lt 0) { $ok = $false; break }
+          }
+        }
+        if (-not $ok) { continue }
+        $res.Add($rec)
+        $labs.Add((Get-ItemLabel $rec.Payload $script:ShowNewlineMarker))
+      }
+      $script:Filtered = $res.ToArray()
+      $script:Labels = $labs.ToArray()
+      for ($i = 0; $i -lt $script:Labels.Count; $i++) { [void]$lst.Items.Add($script:Labels[$i]) }
+      if ($script:Labels.Count -gt 0) { $lst.SelectedIndex = 0 } else { $lst.SelectedIndex = -1 }
+      $lst.TopIndex = 0
+      $lst.EndUpdate()
+      if ($script:Labels.Count -eq 0) {
+        if ($script:Entries.Count -eq 0) {
+          $script:EmptyGlyph = $script:Glyphs.History
+          $script:EmptyTitle = 'Clipboard history is empty'
+          $script:EmptySub = 'Copy something and it will appear here'
+        } elseif ($tokens.Count -gt 0) {
+          $script:EmptyGlyph = $script:Glyphs.Search
+          $script:EmptyTitle = 'No results for "' + $q.Trim() + '"'
+          $script:EmptySub = 'Try another keyword, or press Esc to clear the search'
+        } else {
+          $script:EmptyTitle = ''
+          $script:EmptySub = ''
+        }
+        $empty.Visible = $true
+        $empty.BringToFront()
+        $empty.Invalidate()
+      } else {
+        $empty.Visible = $false
+      }
+      Sync-Placeholder
+      $lst.Invalidate()
+      Sync-Sb
+      Restore-Foot
+    }
+
+    # The picker already put the text on the clipboard: hide it and paste into the window
+    # that was in front. Shared by Enter and by a plugin action that asks for
+    # After = 'paste' (transform copies the rewritten text, then wants it pasted).
+    function Paste-Clip {
+      $form.Hide()
+      if ($script:NoPaste) { $form.Close(); return }
+      $sw = [Diagnostics.Stopwatch]::StartNew()
+      while ($sw.ElapsedMilliseconds -lt $script:ModReleaseTimeout) {
+        if (Test-Modifiers-Up) { break }
+        Start-Sleep -Milliseconds 30
+      }
+      [void][Cb.Win]::SetForegroundWindow($prev)
+      Start-Sleep -Milliseconds $script:PasteSettle
+      try { [Windows.Forms.SendKeys]::SendWait($PasteKeys) } catch { Write-Log ('sendkeys fail: ' + $_.Exception.Message) }
+      $form.Close()
+    }
+
+    function Use-Index([int]$idx, [switch]$NoInject) {
+      if ($idx -lt 0 -or $idx -ge $script:Filtered.Count) { return }
+      $payload = $script:Filtered[$idx].Payload
+      # a plugin may rewrite what gets pasted (text only, upper case, snake case ...)
+      if (Get-Command Invoke-PluginTransform -ErrorAction SilentlyContinue) {
+        try {
+          $t = Invoke-PluginTransform $payload
+          if ($null -ne $t -and [string]$t -ne '' -and [string]$t -cne $payload) {
+            $payload = [string]$t
+            Write-Log ('pasted via transform (' + $payload.Length + ' chars)')
+          }
+        } catch { Write-Log ('transform skipped: ' + $_.Exception.Message) }
+      }
+      if ($script:NoPaste -or $NoInject.IsPresent) { $form.Hide(); [void](Set-ClipItem $payload); $form.Close(); return }
+      if (-not (Set-ClipItem $payload)) { Write-Log 'set clipboard failed'; $form.Close(); return }
+      Paste-Clip
+    }
+
+    function Del-Index([int]$idx) {
+      if ($idx -lt 0 -or $idx -ge $script:Filtered.Count) { return }
+      $victim = $script:Filtered[$idx]
+      $removed = Remove-Record $victim.Payload
+      if ($removed -like 'protected:*') {
+        # only the plugin that declared the mark knows how to remove it
+        $pm = $removed.Substring(10)
+        $info = Get-MarkInfo $pm
+        $word = Get-MarkWord $pm
+        $word = $word.Substring(0, 1).ToUpper() + $word.Substring(1)
+        if ($info -and $info.Unset) {
+          if ($info.Hint) { Set-Foot ($word + ' entry. Press ' + $info.Hint + ' to ' + $info.Unset + ' it first') 2600 }
+          else { Set-Foot ($word + ' entry. ' + $info.Unset + ' it first, then delete') 2600 }
+        } else {
+          Set-Foot ($word + ' entry. Load the plugin that owns the ' + $pm + ' mark first') 2600
+        }
+        return
+      }
+      if ($removed -eq 'removed') {
+        if ($script:UndoOn) { $script:UndoRec = $victim; $script:UndoIdx = $idx }
+      }
+      $script:Entries = @(Get-Records)
+      if ($removed -eq 'removed') { Write-Log ('deleted entry (' + $victim.Payload.Length + ' chars), left ' + $script:Entries.Count) }
+      Update-List $txt.Text
+      if ($script:Filtered.Count -gt 0) { $lst.SelectedIndex = [Math]::Min($idx, $script:Filtered.Count - 1) }
+      if ($script:UndoOn -and $removed -eq 'removed') { Set-Foot 'Deleted. Press Ctrl+Z to undo' 4000 }
+    }
+
+    function Undo-Delete {
+      if (-not $script:UndoOn) { Set-Foot 'Undo is off. Set Undo=1 in clipboard.ini to enable it' 2200; return }
+      if ($null -eq $script:UndoRec) { Set-Foot 'Nothing to undo' 1500; return }
+      $rec = $script:UndoRec
+      $at = $script:UndoIdx
+      $script:UndoRec = $null
+      Restore-Record $rec $at
+      $script:Entries = @(Get-Records)
+      Update-List $txt.Text
+      Set-Foot 'Restored to its original position' 2000
+    }
+
+    function Cancel-Confirm {
+      $confirmTimer.Stop()
+      if (-not $script:Confirm) { return }
+      $script:Confirm = $false
+      Restore-Foot
+    }
+
+    function Request-Clear {
+      if ($script:Entries.Count -eq 0) { Set-Foot 'Nothing to clear' 1500; return }
+      $script:Confirm = $true
+      $footTimer.Stop()
+      $script:FootMode = 'confirm'
+      if (@(Get-ClearKeepMarks).Count -gt 0) { $script:FootMsg = 'Delete the entries no mark keeps?   Enter to confirm, Esc to cancel' }
+      else { $script:FootMsg = 'Delete the entire history?   Enter to confirm, Esc to cancel' }
+      $footL.Invalidate()
+      $confirmTimer.Stop()
+      $confirmTimer.Start()
+    }
+
+    function Clear-All {
+      $script:Confirm = $false
+      $confirmTimer.Stop()
+      Clear-Store (Get-ClearKeepMarks)
+      $script:Entries = @(Get-Records)
+      Update-List $txt.Text
+      $kept = @(Get-MarkCountWords $script:Entries)
+      if ($kept.Count -gt 0) { Set-Foot ('History cleared, ' + ($kept -join ', ') + ' kept') 2600 }
+      else { Set-Foot 'History cleared' 2000 }
+    }
+
+    $cm = New-Object Windows.Forms.ContextMenuStrip
+    $cm.Font = $fBody
+    $cm.ShowImageMargin = $false
+    # Without visual styles the default system renderer paints separators invisibly, which
+    # would make the plugin groups read as one flat list; the professional renderer draws
+    # real divider lines.
+    try { $cm.Renderer = New-Object Windows.Forms.ToolStripProfessionalRenderer } catch { }
+    # a group header is a grey, non-clickable line naming the plugin that owns the items
+    $groupFont = $null
+    try { $groupFont = New-Object Drawing.Font($fBody.FontFamily, [Math]::Max(7, $fBody.Size - 1)) } catch { $groupFont = $null }
+    $m1 = $cm.Items.Add('Paste'); $m1.ShortcutKeyDisplayString = 'Enter'
+    $m1.Add_Click({ Use-Index $lst.SelectedIndex })
+    $m2 = $cm.Items.Add('Copy only'); $m2.ShortcutKeyDisplayString = 'Ctrl+Enter'
+    $m2.Add_Click({ Use-Index $lst.SelectedIndex -NoInject })
+    $m5 = $cm.Items.Add('Delete'); $m5.ShortcutKeyDisplayString = 'Del'
+    $m5.Add_Click({ try { Del-Index $lst.SelectedIndex } catch { } })
+    [void]$cm.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
+    $m6 = $cm.Items.Add('Clear history')
+    $m6.Add_Click({ Request-Clear })
+
+    # plugin actions: appended after the built-in ones, hidden unless their Test passes.
+    # Items stay grouped per plugin - a header names the plugin, a separator closes the
+    # previous group - so a menu never mixes actions from different plugins.
+    $pluginItems = New-Object System.Collections.Generic.List[object]
+    $groupHeads = New-Object System.Collections.Generic.List[object]
+    try {
+      if (Get-Command Get-PluginActions -ErrorAction SilentlyContinue) {
+        $actions = @(Get-PluginActions)
+        if ($actions.Count -gt 0) {
+          [void]$cm.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
+          $lastOwner = ''
+          foreach ($act in $actions) {
+            $owner = [string]$act['Plugin']
+            if ($owner -ne $lastOwner) {
+              if ($lastOwner) { [void]$cm.Items.Add((New-Object Windows.Forms.ToolStripSeparator)) }
+              $head = $cm.Items.Add($owner)
+              $head.Enabled = $false
+              if ($null -ne $groupFont) { $head.Font = $groupFont }
+              $groupHeads.Add(@{ Item = $head; Owner = $owner; Index = ($cm.Items.Count - 1) })
+              $lastOwner = $owner
+            }
+            $item = $cm.Items.Add((Get-ActionText $act $null))
+            if ($act.ContainsKey('Key')) { $item.ShortcutKeyDisplayString = [string]$act['Key'] }
+            $item.Tag = $act
+            $item.Add_Click([System.EventHandler]{
+                param($sn, $ev)
+                try {
+                  $a = $sn.Tag
+                  if ($null -eq $a -or $lst.SelectedIndex -lt 0) { return }
+                  if ($lst.SelectedIndex -ge $script:Filtered.Count) { return }
+                  & $a['Invoke'] $script:Filtered[$lst.SelectedIndex]
+                  $script:Entries = @(Get-Records)
+                  # After = 'paste': the action put its result on the clipboard and wants
+                  # it pasted into the window the picker came from (transform does this)
+                  if ($a.ContainsKey('After') -and [string]$a['After'] -eq 'paste') { Paste-Clip }
+                  else { Update-List $txt.Text }
+                } catch { Write-Log ('plugin action failed: ' + $_.Exception.Message) }
+              })
+            $pluginItems.Add(@{ Item = $item; Owner = $owner; Index = ($cm.Items.Count - 1) })
+          }
+        }
+      }
+    } catch { Write-Log ('plugin menu failed: ' + $_.Exception.Message) }
+
+    # right click acts on the row under the cursor, never on a stale selection
+    $cm.Add_Opening({
+        try {
+          $pt = $lst.PointToClient([Windows.Forms.Cursor]::Position)
+          $i = $lst.IndexFromPoint($pt)
+          if ($i -ge 0 -and $i -lt $script:Filtered.Count) { $lst.SelectedIndex = $i } else { $lst.SelectedIndex = -1 }
+          $has = ($lst.SelectedIndex -ge 0 -and $lst.SelectedIndex -lt $script:Filtered.Count)
+          $m1.Enabled = $has
+          $m2.Enabled = $has
+          $m5.Enabled = $has
+          $m6.Enabled = ($script:Entries.Count -gt 0)
+          $cur = $null
+          if ($has) { $cur = $script:Filtered[$lst.SelectedIndex] }
+          # A drop-down that is still opening reports Visible=false for every item, so the
+          # layout is tracked here and applied afterwards instead of read back.
+          $keep = [bool[]]::new($cm.Items.Count)
+          for ($k = 0; $k -lt $keep.Length; $k++) {
+            $keep[$k] = ($cm.Items[$k] -isnot [Windows.Forms.ToolStripSeparator])
+          }
+          $ownerShown = @{}
+          foreach ($slot in $pluginItems) {
+            $it = $slot.Item
+            $show = $false
+            if ($null -ne $cur -and (Get-Command Test-PluginAction -ErrorAction SilentlyContinue)) {
+              $show = Test-PluginAction $it.Tag $cur
+            }
+            $it.Visible = $show
+            $it.Enabled = $show
+            $keep[$slot.Index] = $show
+            if ($show) {
+              # a plugin may compute its label per row: 'Pin to top' / 'Remove pin'
+              $it.Text = Get-ActionText $it.Tag $cur
+              $ownerShown[[string]$slot.Owner] = $true
+            }
+          }
+          # a header follows its group: when every item of a plugin is hidden the name goes
+          # away with them, and the separators around it collapse
+          foreach ($h in $groupHeads) {
+            $any = $ownerShown.ContainsKey([string]$h.Owner)
+            $h.Item.Visible = $any
+            $keep[$h.Index] = $any
+          }
+          # a separator only makes sense between two items that stay on screen
+          for ($k = 0; $k -lt $cm.Items.Count; $k++) {
+            $it = $cm.Items[$k]
+            if ($it -isnot [Windows.Forms.ToolStripSeparator]) { continue }
+            $before = $false
+            for ($j = 0; $j -lt $k; $j++) { if ($keep[$j]) { $before = $true; break } }
+            $after = $false
+            for ($j = $k + 1; $j -lt $keep.Length; $j++) { if ($keep[$j]) { $after = $true; break } }
+            $it.Visible = ($before -and $after)
+          }
+        } catch { }
+      })
+    $lst.ContextMenuStrip = $cm
+
+    $sfEll = New-Object Drawing.StringFormat
+    $sfEll.Trimming = [Drawing.StringTrimming]::EllipsisCharacter
+    $sfEll.FormatFlags = [Drawing.StringFormatFlags]::NoWrap
+    $sfEll.HotkeyPrefix = [Drawing.Text.HotkeyPrefix]::None
+    $sfEll.LineAlignment = [Drawing.StringAlignment]::Center
+
+    $sfNone = New-Object Drawing.StringFormat
+    $sfNone.Trimming = [Drawing.StringTrimming]::None
+    $sfNone.FormatFlags = [Drawing.StringFormatFlags]::NoWrap
+    $sfNone.HotkeyPrefix = [Drawing.Text.HotkeyPrefix]::None
+    $sfNone.LineAlignment = [Drawing.StringAlignment]::Center
+
+    $sfRight = $sfNone.Clone()
+    $sfRight.Alignment = [Drawing.StringAlignment]::Far
+    $sfCenter = $sfNone.Clone()
+    $sfCenter.Alignment = [Drawing.StringAlignment]::Center
+
+    $sfSeg = [Drawing.StringFormat]::GenericTypographic.Clone()
+    $sfSeg.FormatFlags = [Drawing.StringFormatFlags]::NoWrap -bor [Drawing.StringFormatFlags]::MeasureTrailingSpaces
+    $sfSeg.HotkeyPrefix = [Drawing.Text.HotkeyPrefix]::None
+    $sfSeg.LineAlignment = [Drawing.StringAlignment]::Center
+
+    # draw one label in pieces so the matched tokens can be tinted; the tail is trimmed
+    # with an ellipsis once the available width is exhausted
+    function Draw-Highlight($g, [string]$text, $rect, [string[]]$tokens, $normal, $hit) {
+      $marks = Get-HitMarks $text $tokens
+      $x = [single]$rect.X
+      $limit = [single]$rect.Right
+      $i = 0
+      $n = $text.Length
+      $big = New-Object Drawing.SizeF -ArgumentList @(100000, 100)
+      while ($i -lt $n) {
+        $isHit = $marks[$i]
+        $j = $i
+        while ($j -lt $n -and $marks[$j] -eq $isHit) { $j++ }
+        $seg = $text.Substring($i, $j - $i)
+        $size = $g.MeasureString($seg, $fBody, $big, $sfSeg)
+        $w = [single]$size.Width
+        $brush = if ($isHit) { $hit } else { $normal }
+        if (($x + $w) -gt $limit) {
+          $rem = $limit - $x
+          if ($rem -gt (Px 6)) {
+            $r2 = New-Object Drawing.RectangleF -ArgumentList @($x, [single]$rect.Y, [single]$rem, [single]$rect.Height)
+            $g.DrawString($seg, $fBody, $brush, $r2, $sfEll)
+          }
+          return
+        }
+        $r2 = New-Object Drawing.RectangleF -ArgumentList @($x, [single]$rect.Y, [single]($w + (Px 2)), [single]$rect.Height)
+        $g.DrawString($seg, $fBody, $brush, $r2, $sfSeg)
+        $x = $x + $w
+        $i = $j
+      }
+    }
+
+    $lst.Add_DrawItem({
+        param($s, $e)
+        if ($lst.IsDisposed) { return }
+        if ($e.Index -lt 0) { return }
+        $g = $e.Graphics
+        $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+        $b = $e.Bounds
+        $rowW = [Math]::Min($b.Width, $listHost.ClientSize.Width) - (Px 12)
+        if ($rowW -lt (Px 60)) { $rowW = Px 60 }
+        $r = New-Object Drawing.Rectangle -ArgumentList @(($b.X + (Px 6)), ($b.Y + (Px 2)), $rowW, ($b.Height - (Px 4)))
+        $sel = (($e.State -band [Windows.Forms.DrawItemState]::Selected) -ne 0)
+        $isData = ($e.Index -lt $script:Filtered.Count)
+        $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+        # decoration / glyph / byte size are cached per entry: DrawItem runs on every hover
+        $rec = $null
+        $row = $null
+        $decor = $null
+        if ($isData) {
+          $rec = $script:Filtered[$e.Index]
+          $row = $rowCache[$rec.Payload]
+          if ($null -eq $row) {
+            $dec = $null
+            if (Get-Command Get-PluginRowDecor -ErrorAction SilentlyContinue) {
+              try { $dec = Get-PluginRowDecor $rec } catch { $dec = $null }
+            }
+            $glyph = ''
+            if ($dec -and $dec.Glyph) { $glyph = [string]$dec.Glyph } else { $glyph = Get-RowGlyph $rec.Payload }
+            $bytes = 0
+            try { $bytes = $Utf8.GetByteCount($rec.Payload) } catch { }
+            $row = @{ Decor = $dec; Glyph = $glyph; Bytes = $bytes }
+            $rowCache[$rec.Payload] = $row
+          }
+          $decor = $row.Decor
+        }
+        # highlight is a row fill of its own, drawn under the hover / selection overlay
+        if ($decor -and $decor.BackColor -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) {
+          $bgc = Convert-ThemeColor $decor.BackColor
+          if ($null -ne $bgc) {
+            $bgBrush = New-Object Drawing.SolidBrush $bgc
+            $bgPath = New-RoundPath $r.X $r.Y $r.Width $r.Height (Px 4)
+            $g.FillPath($bgBrush, $bgPath)
+            $bgPath.Dispose()
+            $bgBrush.Dispose()
+          }
+        }
+        # Fluent rows stay flat at rest; hover / selection are translucent overlays
+        if ($sel -or $e.Index -eq $script:Hover) {
+          if ($sel) { $fill = $ui.SelBg } else { $fill = $ui.HoverBg }
+          $br = New-Object Drawing.SolidBrush $fill
+          $gp = New-RoundPath $r.X $r.Y $r.Width $r.Height (Px 4)
+          $g.FillPath($br, $gp)
+          $gp.Dispose()
+          $br.Dispose()
+        }
+        $label = [string]$lst.Items[$e.Index]
+        if (-not $isData) {
+          $db = New-Object Drawing.SolidBrush $ui.Faint
+          $rr = New-Object Drawing.RectangleF -ArgumentList @([single]($r.X + (Px 10)), [single]$r.Y, [single]($r.Width - (Px 20)), [single]$r.Height)
+          $g.DrawString($label, $fBody, $db, $rr, $sfEll)
+          $db.Dispose()
+          return
+        }
+
+        # Trailing meta column, fixed for every row so nothing shifts around:
+        #   [mark 14] [2] [mark 14] [6] [time 52] [12] [key cap 22] [10]
+        $capW = Px 22
+        $capH = Px 18
+        $capX = $r.Right - (Px 10) - $capW
+        $capY = $r.Y + [int](($r.Height - $capH) / 2)
+        $timeW = Px 52
+        $timeX = $capX - (Px 12) - $timeW
+        $markR = $timeX - (Px 6) - (Px $script:Metric.MarkSlot)
+        $markL = $markR - (Px 2) - (Px $script:Metric.MarkSlot)
+        $offset = $e.Index - $lst.TopIndex
+        $showCap = ($offset -ge 0 -and $offset -le 9 -and $offset -lt (Get-Rows) -and -not $script:Confirm)
+
+        if ($script:ShowTime) {
+          $timeBrush = New-Object Drawing.SolidBrush $ui.Faint
+          $timeRect = New-Object Drawing.RectangleF -ArgumentList @([single]$timeX, [single]$r.Y, [single]$timeW, [single]$r.Height)
+          $g.DrawString((Get-RelTime $rec.Time), $fSmall, $timeBrush, $timeRect, $sfRight)
+          $timeBrush.Dispose()
+        }
+        # marks are pure decoration handed over by a plugin: fixed slots, right to left,
+        # so a row with two marks never shifts the time column
+        if ($decor -and $decor.Marks) {
+          $slots = @($markR, $markL)
+          $marks = @($decor.Marks)
+          $n = [Math]::Min($marks.Count, $slots.Count)
+          for ($mi = 0; $mi -lt $n; $mi++) {
+            $mk = $marks[$mi]
+            if (-not $mk -or -not $mk.Glyph) { continue }
+            $mkColor = $ui.Mark
+            if ($mk.Color -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) {
+              $mcc = Convert-ThemeColor ([string]$mk.Color)
+              if ($null -ne $mcc) { $mkColor = $mcc }
+            }
+            $mkBrush = New-Object Drawing.SolidBrush $mkColor
+            $mkRect = New-Object Drawing.RectangleF -ArgumentList @([single]$slots[$mi], [single]$r.Y, [single](Px 14), [single]$r.Height)
+            $g.DrawString([string]$mk.Glyph, $fIconSmall, $mkBrush, $mkRect, $sfCenter)
+            $mkBrush.Dispose()
+          }
+        }
+
+        $textX = $r.X + (Px 12)
+        # the icon is drawn only when a plugin supplied one; without a typing plugin the
+        # row starts at the text and nothing is reserved for an icon
+        $rowGlyph = [string]$row.Glyph
+        if ($script:ShowTypeIcon -and $script:IconFamily -and $rowGlyph) {
+          $glyphColor = $(if ($sel) { $ui.Text } else { $ui.Dim })
+          if ($decor -and $decor.GlyphColor -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) {
+            $gcc = Convert-ThemeColor $decor.GlyphColor
+            if ($null -ne $gcc) { $glyphColor = $gcc }
+          }
+          $glyphBrush = New-Object Drawing.SolidBrush $glyphColor
+          $glyphRect = New-Object Drawing.RectangleF -ArgumentList @([single]($r.X + (Px 10)), [single]$r.Y, [single](Px 20), [single]$r.Height)
+          $g.DrawString($rowGlyph, $fIcon, $glyphBrush, $glyphRect, $sfCenter)
+          $glyphBrush.Dispose()
+          $textX = $r.X + (Px 38)
+        }
+
+        $textW = $markL - (Px 8) - $textX
+        if ($textW -lt (Px 20)) { $textW = Px 20 }
+        $tr = New-Object Drawing.RectangleF -ArgumentList @([single]$textX, [single]$r.Y, [single]$textW, [single]$r.Height)
+
+        if ($sel) {
+          # selection indicator only: a short accent pill on the leading edge. It marks the
+          # row the keys act on and never doubles as an entry highlight.
+          $barBrush = New-Object Drawing.SolidBrush $ui.Accent
+          $barPath = New-RoundPath ($r.X + (Px 3)) ($r.Y + (Px 11)) (Px 3) ($r.Height - (Px 22)) (Px 1)
+          $g.FillPath($barBrush, $barPath)
+          $barPath.Dispose()
+          $barBrush.Dispose()
+        }
+
+        $tb = New-Object Drawing.SolidBrush $ui.Text
+        # highlight ink: a plugin sets the text colour, the row keeps its own background
+        if ($decor -and $decor.TextColor -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) {
+          $tcc = Convert-ThemeColor $decor.TextColor
+          if ($null -ne $tcc) { $tb.Color = $tcc }
+        }
+        $hb = New-Object Drawing.SolidBrush $ui.Accent
+        $hi = $script:HighlightOn -and $script:Tokens.Count -gt 0 -and ($label.Length -le 400)
+        if ($hi -and $script:HighlightMax -gt 0) {
+          if ([int]$row.Bytes -gt $script:HighlightMax) { $hi = $false }
+        }
+        if ($hi) { Draw-Highlight $g $label $tr $script:Tokens $tb $hb }
+        else { $g.DrawString($label, $fBody, $tb, $tr, $sfEll) }
+        $tb.Dispose()
+        $hb.Dispose()
+
+        if ($showCap) {
+          # a key cap, not a data badge: neutral by default, accent while Ctrl is held
+          $capFill = $ui.KeyCapBg
+          $capStroke = $ui.KeyCapBorder
+          $capInk = $ui.BadgeText
+          if ($script:CtrlHeld) { $capFill = $ui.AccentSoft; $capStroke = $ui.Accent; $capInk = $ui.Accent }
+          $capPath = New-RoundPath $capX $capY $capW $capH (Px 4)
+          $capBrush = New-Object Drawing.SolidBrush $capFill
+          $g.FillPath($capBrush, $capPath)
+          $capBrush.Dispose()
+          $capPen = New-Object Drawing.Pen $capStroke, 1
+          $g.DrawPath($capPen, $capPath)
+          $capPen.Dispose()
+          $capPath.Dispose()
+          $capRect = New-Object Drawing.RectangleF -ArgumentList @([single]$capX, [single]$capY, [single]$capW, [single]$capH)
+          $inkBrush = New-Object Drawing.SolidBrush $capInk
+          $g.DrawString((Get-QuickKeyLabel $offset), $fSmall, $inkBrush, $capRect, $sfCenter)
+          $inkBrush.Dispose()
+        }
+      })
+    $tip = New-Object Windows.Forms.ToolTip
+    $tip.InitialDelay = 700
+    $tip.ReshowDelay = 100
+    $tip.AutoPopDelay = 30000
+    $lst.Add_SelectedIndexChanged({ if (-not $lst.IsDisposed) { $lst.Invalidate() } })
+    $lst.Add_MouseMove({
+        param($s, $e)
+        if ($lst.IsDisposed) { return }
+        $i = $lst.IndexFromPoint($e.Location)
+        if ($i -ne $script:Hover) {
+          $old = $script:Hover
+          $script:Hover = $i
+          foreach ($k in @($old, $i)) {
+            if ($k -ge 0 -and $k -lt $lst.Items.Count) { $lst.Invalidate($lst.GetItemRectangle($k)) }
+          }
+          # Win11 shows a tooltip when a row is truncated
+          try {
+            if ($i -ge 0 -and $i -lt $script:Filtered.Count) {
+              $full = [string]$script:Labels[$i]
+              $mw = [single](Get-MeasureGraphics).MeasureString($full, $fBody, 100000, $sfSeg).Width
+              $avail = [single]($listHost.ClientSize.Width - (Px 168))
+              if ($mw -gt $avail -and $full.Length -gt 0) {
+                if ($full.Length -gt 800) { $full = $full.Substring(0, 800) + '...' }
+                $tip.SetToolTip($lst, $full)
+              } else {
+                $tip.SetToolTip($lst, '')
+              }
+            } else {
+              $tip.SetToolTip($lst, '')
+            }
+          } catch { }
+        }
+      })
+    $lst.Add_MouseLeave({
+        try { $tip.SetToolTip($lst, '') } catch { }
+        if ($lst.IsDisposed) { $script:Hover = -1; return }
+        if ($script:Hover -ge 0 -and $script:Hover -lt $lst.Items.Count) { $lst.Invalidate($lst.GetItemRectangle($script:Hover)) }
+        $script:Hover = -1
+      })
+    $lst.Add_DoubleClick({ if ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex } })
+    $lst.Add_MouseUp({ param($s, $e) if ($e.Button -eq 'Left') { Sync-Sb; $txt.Focus() } })
+    # the list can also scroll itself when it owns the focus: keep the painted thumb and
+    # the selection in sync when that happens
+    $lst.Add_MouseWheel({ Keep-SelectionVisible; Sync-Sb; $lst.Invalidate() })
+
+    $footTimer = New-Object Windows.Forms.Timer
+    $footTimer.Interval = 3200
+    $footTimer.Add_Tick({ $footTimer.Stop(); Restore-Foot })
+
+    $confirmTimer = New-Object Windows.Forms.Timer
+    $confirmTimer.Interval = 5000
+    $confirmTimer.Add_Tick({ $confirmTimer.Stop(); $script:Confirm = $false; Restore-Foot })
+
+    $deb = New-Object Windows.Forms.Timer
+    $deb.Interval = 150
+    $deb.Add_Tick({ $deb.Stop(); Update-List $txt.Text })
+    function Flush-List { if ($deb.Enabled) { $deb.Stop(); Update-List $txt.Text } }
+    $txt.Add_TextChanged({ Sync-Placeholder; $deb.Stop(); $deb.Start() })
+    $txt.Add_GotFocus({ $script:SearchFocus = $true; $box.Invalidate() })
+    $txt.Add_LostFocus({ $script:SearchFocus = $false; $box.Invalidate() })
+    $clr.Add_Click({ $txt.Text = ''; $txt.Focus() })
+    $form.Add_KeyDown({
+        param($s, $e)
+        $code = [int]$e.KeyCode
+        if ($e.Control -and -not $script:CtrlHeld) {
+          $script:CtrlHeld = $true
+          $lst.Invalidate()
+          $footL.Invalidate()
+        }
+        if ($script:Confirm) {
+          if ($e.KeyCode -eq 'Enter') { Clear-All } else { Cancel-Confirm }
+          $e.Handled = $true; $e.SuppressKeyPress = $true
+          return
+        }
+        if ($e.Control -and $e.KeyCode -eq 'Enter') {
+          Flush-List
+          if ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex -NoInject } else { Set-Foot 'Nothing to copy' 1500 }
+          $e.Handled = $true; $e.SuppressKeyPress = $true
+        } elseif ($e.Control -and (($code -ge 48 -and $code -le 57) -or ($code -ge 96 -and $code -le 105))) {
+          $n = $code
+          if ($n -ge 96) { $n = $n - 96 } else { $n = $n - 48 }
+          Flush-List
+          $idx = Get-QuickKeyIndex (Get-QuickKeyOffset $n) $lst.TopIndex $script:Filtered.Count (Get-Rows)
+          if ($idx -ge 0) { Use-Index $idx } else { Set-Foot 'No entry at that number' 1200 }
+          $e.Handled = $true; $e.SuppressKeyPress = $true
+        } elseif ($e.Control -and $e.KeyCode -eq 'Z') {
+          try { Undo-Delete } catch { Write-Log ('undo failed: ' + $_.Exception.Message) }
+          $e.Handled = $true; $e.SuppressKeyPress = $true
+        } elseif ($pluginKey = Find-PanelKey ([string]$e.KeyCode) $e.Control $e.Alt $e.Shift) {
+          # a key a plugin claimed (PanelKeys): run it on the selected record, then refresh
+          Flush-List
+          $idx = $lst.SelectedIndex
+          if ($idx -ge 0 -and $idx -lt $script:Filtered.Count) {
+            $rec = $script:Filtered[$idx]
+            $go = $true
+            if ($pluginKey.Test) { try { $go = [bool](& $pluginKey.Test $rec) } catch { $go = $false } }
+            if ($go) {
+              try { & $pluginKey.Invoke $rec } catch { Write-Log ('plugin key failed: ' + $pluginKey.Plugin + ' - ' + $_.Exception.Message) }
+              $script:Entries = @(Get-Records)
+              Update-List $txt.Text
+            }
+          }
+          $e.Handled = $true; $e.SuppressKeyPress = $true
+        } elseif ($e.KeyCode -eq 'Home') {
+          if ($lst.Items.Count -gt 0) { $lst.SelectedIndex = 0 }
+          $e.Handled = $true; $e.SuppressKeyPress = $true
+        } elseif ($e.KeyCode -eq 'End') {
+          if ($lst.Items.Count -gt 0) { $lst.SelectedIndex = $lst.Items.Count - 1 }
+          $e.Handled = $true; $e.SuppressKeyPress = $true
+        } elseif ($e.KeyCode -eq 'PageDown') {
+          Scroll-By (Get-Rows)
+          $e.Handled = $true; $e.SuppressKeyPress = $true
+        } elseif ($e.KeyCode -eq 'PageUp') {
+          Scroll-By (-(Get-Rows))
+          $e.Handled = $true; $e.SuppressKeyPress = $true
+        } elseif ($e.KeyCode -eq 'Up') {
+          if ($lst.SelectedIndex -gt 0) { $lst.SelectedIndex-- }
+          $e.Handled = $true; $e.SuppressKeyPress = $true
+        } elseif ($e.KeyCode -eq 'Down') {
+          if ($lst.SelectedIndex -lt $lst.Items.Count - 1) { $lst.SelectedIndex++ }
+          $e.Handled = $true; $e.SuppressKeyPress = $true
+        } elseif ($e.KeyCode -eq 'Enter') {
+          Flush-List
+          if ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex } else { Set-Foot 'Nothing to paste' 1500 }
+          $e.Handled = $true; $e.SuppressKeyPress = $true
+        } elseif ($e.KeyCode -eq 'Escape') {
+          if ($txt.Text.Length -gt 0) {
+            $txt.Text = ''
+            Flush-List
+          } else {
+            $form.Close()
+          }
+        } elseif ($e.KeyCode -eq 'Delete') {
+          Flush-List
+          try { Del-Index $lst.SelectedIndex } catch { Write-Log ('delete failed: ' + $_.Exception.Message) }
+          $e.Handled = $true; $e.SuppressKeyPress = $true
+        }
+      })
+    $form.Add_KeyUp({
+        param($s, $e)
+        $held = [bool]$e.Control
+        if ($e.KeyCode -eq [Windows.Forms.Keys]::ControlKey -or $e.KeyCode -eq [Windows.Forms.Keys]::RControlKey) { $held = $false }
+        if ($held -ne $script:CtrlHeld) {
+          $script:CtrlHeld = $held
+          $lst.Invalidate()
+          $footL.Invalidate()
+        }
+      })
+    $ph.Add_Click({ $txt.Focus() })
+
+    $form.Add_Paint({
+        param($s, $e)
+        $e.Graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+        $pen = New-Object Drawing.Pen $ui.Border
+        $gp = New-RoundPath 0 0 ($form.ClientSize.Width - 1) ($form.ClientSize.Height - 1) (Px 8)
+        $e.Graphics.DrawPath($pen, $gp)
+        $gp.Dispose()
+        $pen.Dispose()
+      })
+    $form.Add_Shown({
+        try { $form.Region = New-RoundRegion $form.ClientSize.Width $form.ClientSize.Height (Px 8) } catch { }
+        Layout-Chrome
+        Size-List
+        Sync-Sb
+        Update-List ''
+        $form.Activate()
+        $txt.Focus()
+        Write-Log ('picker: shown ' + $script:Theme + '/' + $script:UiFamily + ' items=' + $script:Entries.Count + ' scale=' + $script:UiScale + ' size=' + $form.Width + 'x' + $form.Height + ' at ' + $form.Left + ',' + $form.Top)
+      })
+
+    $script:ShownAt = Get-Date
+    $form.Add_Deactivate({
+        $script:CtrlHeld = $false
+        if (((Get-Date) - $script:ShownAt).TotalMilliseconds -gt 450) { $form.Close() }
+      })
+
+    [void]$form.ShowDialog()
+
+    if ($script:SaveWinSize -or $script:SaveWinPos) {
+      try {
+        if ($script:SaveWinSize) {
+          [void](Set-IniKey 'WindowWidth' ([string][int]($form.Width / [double]$script:UiScale)))
+          [void](Set-IniKey 'WindowHeight' ([string][int]($form.Height / [double]$script:UiScale)))
+        }
+        if ($script:SaveWinPos) {
+          [void](Set-IniKey 'WindowLeft' ([string]$form.Left))
+          [void](Set-IniKey 'WindowTop' ([string]$form.Top))
+        }
+      } catch { Write-Log ('save window state failed: ' + $_.Exception.Message) }
+    }
+
+    $deb.Dispose()
+    $footTimer.Dispose()
+    $confirmTimer.Dispose()
+    $tip.Dispose()
+    try { if ($script:MeasureG) { $script:MeasureG.Dispose() } } catch { }
+    $script:MeasureG = $null
+    $cm.Dispose()
+    $form.Dispose()
+  } catch {
+    Write-Log ('picker error: ' + $_.Exception.Message)
+    try {
+      $pos = [string]$_.InvocationInfo.PositionMessage
+      $pos = ($pos -replace '\s+', ' ').Trim()
+      if ($pos.Length -gt 200) { $pos = $pos.Substring(0, 200) }
+      Write-Log ('picker at: ' + $pos)
+    } catch { }
+  } finally {
+    $script:PickerOpen = $false
+  }
+}

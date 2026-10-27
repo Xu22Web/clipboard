@@ -175,9 +175,71 @@ function New-ScriptVariableMap([string[]]$paths) {
   return $map
 }
 
+# Names assigned at script scope (outside every function) plus every $script: name. The
+# modules of one build share one scope once they are dot-sourced, so these names must be
+# renamed consistently across files; a per-file table would let lib\base.ps1 pick the same
+# short name as the entry file and silently overwrite $Root.
+function New-GlobalVariableMap([string[]]$paths) {
+  $names = New-Object System.Collections.Generic.List[string]
+  $taken = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
+  # a name written as $script:x somewhere belongs to New-ScriptVariableMap (or is left alone
+  # when the same name is read bare); renaming it here too would split it into two variables
+  $scripted = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
+  foreach ($path in $paths) {
+    $scanned = Get-ParsedScript ([IO.File]::ReadAllText($path))
+    if ($scanned.Errors.Count -gt 0) { continue }
+    foreach ($v in $scanned.Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true)) {
+      if (-not $v.VariablePath.IsScript) { continue }
+      $nm = Get-ScriptVariableName $v.VariablePath
+      if ($nm) { [void]$scripted.Add($nm) }
+    }
+  }
+  foreach ($path in $paths) {
+    $parsed = Get-ParsedScript ([IO.File]::ReadAllText($path))
+    if ($parsed.Errors.Count -gt 0) { continue }
+    $ast = $parsed.Ast
+    foreach ($a in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {
+      $parent = $a.Parent
+      $inFunction = $false
+      while ($null -ne $parent) {
+        if ($parent -is [System.Management.Automation.Language.FunctionDefinitionAst]) { $inFunction = $true; break }
+        $parent = $parent.Parent
+      }
+      if ($inFunction) { continue }
+      $left = $a.Left
+      if ($left -is [System.Management.Automation.Language.VariableExpressionAst]) {
+        $nm = Get-VariableName $left.VariablePath
+        if ($nm -and -not $names.Contains($nm)) { $names.Add($nm) }
+      }
+    }
+    foreach ($v in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true)) {
+      if (-not $v.VariablePath.IsScript) { continue }
+      $nm = Get-ScriptVariableName $v.VariablePath
+      if ($nm -and -not $names.Contains($nm)) { $names.Add($nm) }
+    }
+  }
+  foreach ($r in $script:ReservedVariables) { [void]$taken.Add($r) }
+  $map = @{}
+  $slot = 0
+  foreach ($nm in $names) {
+    if ($script:ReservedVariables -contains $nm) { continue }
+    if ($scripted.Contains($nm)) {
+      # also spelled $script:x somewhere: keep the spelling so both forms stay one variable
+      $map[$nm] = $nm
+      [void]$taken.Add($nm)
+      continue
+    }
+    $candidate = 'g' + [string]$slot
+    while ($taken.Contains($candidate)) { $slot++; $candidate = 'g' + [string]$slot }
+    $slot++
+    [void]$taken.Add($candidate)
+    $map[$nm] = $candidate
+  }
+  return $map
+}
+
 # Replace the text of a set of parser extents, right to left so earlier offsets stay valid.
-function Apply-Edits([string]$text, $edits) {
-  $seen = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
+function Apply-Edits([string]$text, $edits) {  $seen = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
   $clean = New-Object System.Collections.Generic.List[object]
   foreach ($e in $edits) {
     $off = [int]$e.Offset
@@ -329,6 +391,7 @@ function Invoke-MinifyFile {
     [string]$OutPath,
     [hashtable]$FunctionMap = @{},
     [hashtable]$ScriptVarMap = @{},
+    [hashtable]$GlobalVarMap = @{},
     [switch]$NoRename
   )
   $text = [IO.File]::ReadAllText($Path)
@@ -382,6 +445,7 @@ function Invoke-MinifyFile {
     $qualified = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
     $taken = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
     foreach ($r in $script:ReservedVariables) { [void]$taken.Add($r) }
+    foreach ($gv in $GlobalVarMap.Values) { [void]$taken.Add([string]$gv) }
     foreach ($v in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true)) {
       $vp = $v.VariablePath
       $plain = Get-VariableName $vp
@@ -398,6 +462,11 @@ function Invoke-MinifyFile {
       if ($keep.Contains($name)) { continue }
       if ($qualified.Contains($name)) { continue }
       if ($script:ReservedVariables -contains $name) { continue }
+      # a script-scope name keeps the one short name the whole project agreed on
+      if ($GlobalVarMap.ContainsKey($name)) {
+        $edits.Add(@{ Offset = $v.Extent.StartOffset; Length = $v.Extent.EndOffset - $v.Extent.StartOffset; Text = '$' + [string]$GlobalVarMap[$name] })
+        continue
+      }
       if (-not $varMap.ContainsKey($name)) {
         $new = New-ShortName $slot
         while ($taken.Contains($new)) { $slot++; $new = New-ShortName $slot }

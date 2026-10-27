@@ -368,9 +368,25 @@ clipboard config set entry-actions.Reveal 0
 src/                    程序本体（打包只读这个目录）
   clipboard               Git Bash / MSYS2 启动器（sh 壳，负责把路径转成 Windows 形式）
   clipboard.cmd           CMD 启动器
-  clipboard.ps1           主程序（单文件：常量 / 设置 / 存储 / 捕获 / 面板 / CLI）
+  clipboard.ps1           入口：参数绑定 / $Root / 必需模块清单 / 运行时路径 / 调用 Invoke-Main
   clipboard.ini           配置（只读；不存在时用内置默认，config init 才生成）
   data/                   历史 / 日志 / 生效热键缓存（不入库）
+  lib/base.ps1            常量、记录格式、运行时标识、度量/字形/时序与全部默认值
+  lib/ini.ps1             clipboard.ini 读取 + 全部键的 schema（类型 / 范围 / 默认 / 说明）
+  lib/util.ps1            日志、程序集、DPI、像素换算、时间、圆角路径
+  lib/theme-stub.ps1      内置配色与主题空实现（lib/themes.ps1 会覆盖它们）
+  lib/clip.ps1            剪贴板读写（文本 + CF_HDROP 文件清单）
+  lib/store.ps1           历史文件：CBHIST2 读写、加锁、标记、排序裁剪、条目文案
+  lib/hotkey.ps1          热键解析与修饰键状态
+  lib/entry.ps1           条目基础分类（text / files / empty）与图标兜底
+  lib/picker-geom.ps1     面板纯计算：行数、数字快选、窗口位置、命中高亮
+  lib/picker.ps1          历史面板（窗体、过滤、绘制、按键、粘贴）
+  lib/serve.ps1           常驻进程：捕获循环、热键、托盘、崩溃重启
+  lib/diag.ps1            diag 报告与 restore
+  lib/shortcut.ps1        开机自启 / 桌面快捷方式的安装与卸载
+  lib/config.ps1          config 系列：应用、展示、校验、写单个键、重启常驻
+  lib/usage.ps1           help 输出（基础命令分组 + 每个插件的分组）
+  lib/dispatch.ps1        Invoke-Main：先 Apply-Config，再装配插件，最后执行一个命令
   lib/plugins.ps1         插件加载层（Load-Plugins / 命令 / 右键项 / 行图标）
   lib/themes.ps1          主题加载层（发现 / 校验 / 颜色解析 / Apply-Theme）
   plugins/*.ps1           可选插件（item-marks / entry-actions / transform / retention；默认不加载）
@@ -384,7 +400,14 @@ dist/                   打包产物（不入库）
 tests/run-tests.ps1     自测套件
 ```
 
-主程序内部按 `#region` 分区，顺序即依赖方向：常量（度量 / 字形 / 时序 / 内核对象名）→ 默认值 → 只读设置 → 存储与工具函数 → 面板 → 常驻进程 → 诊断 / 快捷方式 / 自更新 / 命令分发。
+分层顺序即依赖方向：`clipboard.ps1`（入口）→ `lib/dispatch.ps1`（装配命令）→ `picker` / `serve` / `config` / `diag` / `shortcut` / `usage`（场景）→ `store` / `clip` / `entry` / `hotkey`（领域）→ `ini` / `util`（基础）→ `base`（常量与默认值）。只允许上层调用下层。
+
+两条硬约束（拆分后由测试守住）：
+
+- **`$Root` 只在入口文件里算。** 点源文件里 `$PSScriptRoot` 指向 `lib\`，用它拼路径会把 `themes\`、`plugins\`、`data\` 全部指错一层。
+- **只有 `base.ps1` 与 `ini.ps1` 在加载时赋值**（默认值与设置 schema），其余模块只定义函数，所以点源顺序只对这两个文件敏感。
+
+除 `lib/themes.ps1` 与 `lib/plugins.ps1` 外，模块缺失会直接报 `missing: …\lib\<name>.ps1` 并以退出码 1 结束 —— 分发时必须整个文件夹一起给，不能只拷 `clipboard.ps1`。
 
 写入位置由 `clipboard.ini` 的 `DataDir=` 决定，留空则用脚本旁的 `data/`（相对路径相对脚本目录）；`config` 的 `data dir` 与 `status` 的 `store file` 均显示实际生效位置。
 

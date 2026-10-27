@@ -879,6 +879,8 @@ try {
     $cfgRoot = Join-Path $tmpRoot 'cfgroot'
     foreach ($d in @($altDir, $cfgRoot)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
     Copy-Item -LiteralPath $clipPs1 -Destination (Join-Path $cfgRoot 'clipboard.ps1')
+    # the program is entry file + lib\: a lone clipboard.ps1 cannot start any more
+    Copy-Item -LiteralPath (Join-Path $srcRoot 'lib') -Destination $cfgRoot -Recurse -Force
     [IO.File]::WriteAllLines((Join-Path $cfgRoot 'clipboard.ini'), @('DataDir=' + $altDir), $Utf8)
     & powershell -NoProfile -ExecutionPolicy Bypass -Sta -File (Join-Path $cfgRoot 'clipboard.ps1') put 'ini-datadir' 2>&1 | Out-Null
     Check 'int' 'DataDir from ini' (Test-Path -LiteralPath (Join-Path $altDir 'history.dat')) $altDir

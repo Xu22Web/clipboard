@@ -147,6 +147,7 @@ try {
 
   $map = @{}
   $scopeMaps = @{}
+  $globalMap = @{}
   if ($minify) {
     . (Join-Path $root 'build\minify.ps1')
     if ($rename) {
@@ -162,6 +163,11 @@ try {
       foreach ($k in $scopeMaps.Keys) { $scopeCount += $scopeMaps[$k].Count }
       Write-Step ('script variables renamed: ' + $scopeCount)
       $scopeMaps['*'] = $shared
+      # Names assigned outside every function (constants, defaults, paths) live in the one
+      # scope the dot-sourced modules share, so they need one project-wide table. Without
+      # it lib\base.ps1 could pick the same short name as the entry file and overwrite $Root.
+      $globalMap = New-GlobalVariableMap $sharedFiles
+      Write-Step ('shared scope variables renamed: ' + $globalMap.Count)
     }
   }
 
@@ -177,7 +183,9 @@ try {
       if ($rename) {
         $vars = $scopeMaps['*']
         if ($scopeMaps.ContainsKey($file)) { $vars = $scopeMaps[$file] }
-        $r = Invoke-MinifyFile -Path $file -OutPath $target -FunctionMap $map -ScriptVarMap $vars
+        $globals = $globalMap
+        if ($scopeMaps.ContainsKey($file)) { $globals = @{} }   # a plugin has a scope of its own
+        $r = Invoke-MinifyFile -Path $file -OutPath $target -FunctionMap $map -ScriptVarMap $vars -GlobalVarMap $globals
       } else { $r = Invoke-MinifyFile -Path $file -OutPath $target -NoRename }
       $before += $r.Before
       $after += $r.After
