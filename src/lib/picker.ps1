@@ -6,8 +6,9 @@
 # lib/entry.ps1, plugin hooks through lib/plugins.ps1.
 
 function Show-Picker {
-  if ($script:PickerOpen) { return }
+  if ($script:PickerOpen) { $script:PickerClose = $true; return }   # a second hotkey press closes it
   $script:PickerOpen = $true
+  $script:PickerClose = $false
   try {
     Load-Forms
     Add-Native
@@ -92,7 +93,9 @@ function Show-Picker {
     $form = New-Object Cb.FluentForm
     $form.FormBorderStyle = 'None'
     $form.StartPosition = 'Manual'
-    $form.TopMost = $true
+    # no TopMost property here: assigning it makes WinForms call SetWindowPos without
+    # SWP_NOACTIVATE, which activates the panel and takes the caret away from the user.
+    # The panel is raised with a no-activate SetWindowPos right after Show() instead.
     $form.ShowInTaskbar = $false
     $form.KeyPreview = $true
     $form.Text = 'Clipboard history'
@@ -202,10 +205,14 @@ function Show-Picker {
     $head.Dock = 'Top'
     $head.Height = Px 68
     $head.BackColor = $ui.Surface
+    # an empty piece of the header is still "the search area": clicking it puts the caret
+    # in the box (the panel opens without the keyboard, so the first click brings it over)
+    $head.Add_Click({ $txt.Focus() })
 
     $box = New-Object Windows.Forms.Panel
     $box.SetBounds((Px 14), (Px 14), ($form.ClientSize.Width - (Px 30)), (Px 40))
     $box.BackColor = $ui.Field
+    $box.Add_Click({ $txt.Focus() })
     $box.Add_Paint({
         param($s, $e)
         try {
@@ -611,14 +618,30 @@ function Show-Picker {
     # that was in front. Shared by Enter and by a plugin action that asks for
     # After = 'paste' (transform copies the rewritten text, then wants it pasted).
     function Paste-Clip {
-      $form.Hide()
-      if ($script:NoPaste) { $form.Close(); return }
+      $target = $prev
+      if ($script:NoPaste) { $form.Hide(); $form.Close(); return }
+      # the hotkey is usually still held when the panel opens: pasting now would send
+      # Ctrl+V with Alt/Ctrl down and land as something else entirely
       $sw = [Diagnostics.Stopwatch]::StartNew()
       while ($sw.ElapsedMilliseconds -lt $script:ModReleaseTimeout) {
         if (Test-Modifiers-Up) { break }
         Start-Sleep -Milliseconds 30
       }
-      [void][Cb.Win]::SetForegroundWindow($prev)
+      # SetForegroundWindow can be refused by the foreground lock, and SendKeys types into
+      # whatever is in front at that moment - so hand over, then verify before typing. A
+      # refused hand-over used to paste into the wrong window.
+      $ready = $false
+      for ($try = 0; $try -lt 24 -and -not $ready; $try++) {
+        [void][Cb.Win]::SetForegroundWindow($target)
+        Start-Sleep -Milliseconds 25
+        if ([Cb.Win]::GetForegroundWindow() -eq $target) { $ready = $true }
+      }
+      if (-not $ready) {
+        Write-Log 'paste skipped: the target window did not take the foreground'
+        Set-Foot 'Copied to the clipboard. The window did not come back to the front - press Ctrl+V there' 2800
+        return
+      }
+      $form.Hide()
       Start-Sleep -Milliseconds $script:PasteSettle
       try { [Windows.Forms.SendKeys]::SendWait($PasteKeys) } catch { Write-Log ('sendkeys fail: ' + $_.Exception.Message) }
       $form.Close()
@@ -1178,28 +1201,66 @@ function Show-Picker {
         Size-List
         Sync-Sb
         Update-List ''
-        $form.Activate()
-        $txt.Focus()
+        # deliberately no Activate() and no focus on the search box: the panel appears
+        # without taking the caret away from the window the user is typing in. Clicking the
+        # list, the box or the icon focuses it; the first click also activates the window.
+        # The box still shows its active look (accent underline) right away so the panel
+        # reads as ready for typing - SearchFocus is only the paint state, not the caret.
+        $script:SearchFocus = $true
+        $box.Invalidate()
         Write-Log ('picker: shown ' + $script:Theme + '/' + $script:UiFamily + ' items=' + $script:Entries.Count + ' scale=' + $script:UiScale + ' size=' + $form.Width + 'x' + $form.Height + ' at ' + $form.Left + ',' + $form.Top)
       })
 
     $script:ShownAt = Get-Date
+    # Close() disposes a non-modal form, so the geometry has to be read while it is still
+    # alive - the window-size save below happens after the loop and would otherwise throw
+    $script:PickerGeo = $null
+    $form.Add_FormClosing({
+        # Close() can arrive a second time right after Dispose() (Hide then Close, plus the
+        # deactivate timer); reading Width on a disposed form throws
+        if ($form.IsDisposed) { return }
+        $script:PickerGeo = @{ W = $form.Width; H = $form.Height; L = $form.Left; T = $form.Top }
+      })
     $form.Add_Deactivate({
         $script:CtrlHeld = $false
         if (((Get-Date) - $script:ShownAt).TotalMilliseconds -gt 450) { $form.Close() }
       })
 
-    [void]$form.ShowDialog()
+    # Non-modal on purpose: ShowDialog always activates the window, and the panel must not
+    # steal the caret. FluentForm.ShowWithoutActivation keeps the foreground where it was;
+    # this loop pumps messages until the panel closes itself.
+    $form.Show()
+    # HWND_TOPMOST with SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE: on top of the other
+    # windows but the foreground window and its caret stay where the user left them.
+    [void][Cb.Win]::SetWindowPos($form.Handle, [IntPtr](-1), 0, 0, 0, 0, 0x13)
+    while (-not $form.IsDisposed) {
+      [Windows.Forms.Application]::DoEvents()
+      if ($script:PickerClose) { $form.Close(); break }
+      # never activated: a click somewhere else is the "dismiss" gesture. Once the user has
+      # clicked inside, Add_Deactivate handles it instead.
+      if (-not $form.ContainsFocus -and ((Get-Date) - $script:ShownAt).TotalMilliseconds -gt 350) {
+        $fg = [Cb.Win]::GetForegroundWindow()
+        if ($fg -ne $form.Handle -and $fg -ne $prev) { $form.Close(); break }
+      }
+      Start-Sleep -Milliseconds 12
+    }
 
     if ($script:SaveWinSize -or $script:SaveWinPos) {
       try {
-        if ($script:SaveWinSize) {
-          [void](Set-IniKey 'WindowWidth' ([string][int]($form.Width / [double]$script:UiScale)))
-          [void](Set-IniKey 'WindowHeight' ([string][int]($form.Height / [double]$script:UiScale)))
-        }
-        if ($script:SaveWinPos) {
-          [void](Set-IniKey 'WindowLeft' ([string]$form.Left))
-          [void](Set-IniKey 'WindowTop' ([string]$form.Top))
+        $geo = $script:PickerGeo
+        if ($null -eq $geo) {
+          # the form is gone by now: without the capture from FormClosing there is nothing
+          # safe to read, so leave the stored geometry alone
+          Write-Log 'save window state skipped: geometry was not captured'
+        } else {
+          if ($script:SaveWinSize) {
+            [void](Set-IniKey 'WindowWidth' ([string][int]([double]$geo.W / [double]$script:UiScale)))
+            [void](Set-IniKey 'WindowHeight' ([string][int]([double]$geo.H / [double]$script:UiScale)))
+          }
+          if ($script:SaveWinPos) {
+            [void](Set-IniKey 'WindowLeft' ([string]$geo.L))
+            [void](Set-IniKey 'WindowTop' ([string]$geo.T))
+          }
         }
       } catch { Write-Log ('save window state failed: ' + $_.Exception.Message) }
     }

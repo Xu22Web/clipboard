@@ -31,6 +31,7 @@ namespace Cb {
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
     [DllImport("user32.dll")] public static extern bool ReleaseCapture();
     [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern uint GetDpiForSystem();
   }
@@ -49,6 +50,11 @@ namespace Cb {
   }
   public class FluentForm : System.Windows.Forms.Form {
     public FluentForm() { DoubleBuffered = true; }
+    // The panel is shown through Show() with the message loop pumped by lib/picker.ps1
+    // (ShowDialog always activates). Setting the TopMost property would still activate the
+    // window - WinForms raises it through SetWindowPos without SWP_NOACTIVATE - so the
+    // picker puts the form on top with an explicit no-activate SetWindowPos call instead.
+    protected override bool ShowWithoutActivation { get { return true; } }
     protected override System.Windows.Forms.CreateParams CreateParams {
       get { var cp = base.CreateParams; cp.ClassStyle |= 0x00020000; return cp; }
     }

@@ -204,6 +204,39 @@ try {
     Check 'struct' 'no module grows past 1400 lines' ($huge.Count -eq 0) ($huge -join ', ')
     $rootHits = ([regex]::Matches([IO.File]::ReadAllText($entryPath), '(?m)^\$Root = Split-Path -Parent \$PSCommandPath\s*$')).Count
     Check 'struct' 'tool root is computed once, in the entry' ($rootHits -eq 1) ([string]$rootHits + ' occurrence(s)')
+
+    # the panel must appear without taking the caret away from the window the user is
+    # typing in: ShowDialog and Activate both steal it, and assigning the TopMost property
+    # makes WinForms raise the window through SetWindowPos without SWP_NOACTIVATE
+    $pickerText = [IO.File]::ReadAllText((Join-Path $libPath 'picker.ps1'))
+    Check 'struct' 'panel never activates itself' (-not ($pickerText -match '\$form\.Activate\(')) 'form.Activate found'
+    Check 'struct' 'panel is shown without ShowDialog' (-not ($pickerText -match '\$form\.ShowDialog\(')) 'form.ShowDialog found'
+    $topHits = ([regex]::Matches($pickerText, '(?m)^\s*\$form\.TopMost\s*=')).Count
+    Check 'struct' 'panel is raised without the TopMost property' ($topHits -eq 0) ([string]$topHits + ' assignment(s)')
+    $showHits = ([regex]::Matches($pickerText, '(?m)^\s*\$form\.Show\(\)\s*$')).Count
+    Check 'struct' 'panel is shown once, non-modally' ($showHits -eq 1) ([string]$showHits + ' call(s)')
+    $winText = [IO.File]::ReadAllText((Join-Path $libPath 'util.ps1'))
+    Check 'struct' 'the panel form declares ShowWithoutActivation' ($winText -match 'ShowWithoutActivation') 'override missing'
+
+    # the Shown handler must not move the keyboard: the box keeps its active look through
+    # the SearchFocus paint state, the caret arrives only when the user clicks
+    $tk = $null
+    $pe = $null
+    $pickerAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $libPath 'picker.ps1'), [ref]$tk, [ref]$pe)
+    $shownBlocks = @($pickerAst.FindAll({
+          param($node)
+          $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+          [string]$node.Member.Value -eq 'Add_Shown' -and $node.Arguments.Count -gt 0
+        }, $true))
+    $shownFocus = 0
+    $shownPaint = 0
+    foreach ($b in $shownBlocks) {
+      $text = $b.Arguments[0].Extent.Text
+      if ($text -match '\.Focus\(') { $shownFocus++ }
+      if ($text -match 'SearchFocus\s*=\s*\$true') { $shownPaint++ }
+    }
+    Check 'struct' 'the Shown handler takes no keyboard focus' ($shownBlocks.Count -eq 1 -and $shownFocus -eq 0) ([string]$shownBlocks.Count + ' handler(s), ' + [string]$shownFocus + ' Focus call(s)')
+    Check 'struct' 'the Shown handler paints the search box active' ($shownPaint -eq 1) ([string]$shownPaint + ' mark(s)')
   }
 
   # ---------------------------------------------------------------- unit tests
