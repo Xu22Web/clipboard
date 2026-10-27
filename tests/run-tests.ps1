@@ -127,6 +127,79 @@ if (-not (Test-MutexFree 'Local\clipboard.daemon')) {
 
 try {
 
+  # ------------------------------------------------------------ structure guards
+  # The program is one entry file plus lib\ modules that are dot-sourced into a single
+  # scope. These assertions keep that contract from decaying: a module must not derive
+  # paths from its own location, must not take parameters, and must not redefine a name
+  # another module already owns. They run for a packaged copy too, where the only extra
+  # rule (sizes, the $Root line) would not survive renaming.
+  $entryPath = Join-Path $srcRoot 'clipboard.ps1'
+  $libPath = Join-Path $srcRoot 'lib'
+  $libFiles = @()
+  if (Test-Path -LiteralPath $libPath) { $libFiles = @(Get-ChildItem -LiteralPath $libPath -Filter '*.ps1' -File | Sort-Object -Property Name) }
+
+  # the entry file names these; a package must carry all of them
+  $requiredLib = @('base', 'ini', 'util', 'theme-stub', 'clip', 'store', 'hotkey', 'entry',
+    'picker-geom', 'picker', 'serve', 'diag', 'shortcut', 'config', 'usage', 'dispatch')
+  $missingLib = @()
+  foreach ($m in $requiredLib) {
+    if (-not (Test-Path -LiteralPath (Join-Path $libPath ($m + '.ps1')))) { $missingLib += $m }
+  }
+  Check 'struct' 'every required module exists' ($missingLib.Count -eq 0) ($missingLib -join ', ')
+
+  $badParse = @()
+  $badParam = @()
+  $badPath = @()
+  foreach ($f in $libFiles) {
+    $tk = $null
+    $pe = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$tk, [ref]$pe)
+    if ($pe.Count -gt 0) { $badParse += ($f.Name + ': ' + $pe[0].Message); continue }
+    if ($ast.ParamBlock) { $badParam += $f.Name }
+    # $PSScriptRoot inside lib\ points at lib\, so any path built from it is one level
+    # deep. Look at the code, not at the prose: the module headers explain this rule.
+    $selfPaths = @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.VariableExpressionAst] -and [string]$node.VariablePath.UserPath -match '(?i)(^|:)(PSScriptRoot|PSCommandPath)$' }, $true))
+    if ($selfPaths.Count -gt 0) { $badPath += $f.Name }
+  }
+  Check 'struct' 'every module parses' ($badParse.Count -eq 0) ($badParse -join '; ')
+  Check 'struct' 'modules declare no param block' ($badParam.Count -eq 0) ($badParam -join ', ')
+  Check 'struct' 'modules never derive paths from their own file' ($badPath.Count -eq 0) ($badPath -join ', ')
+
+  # a duplicate top-level name lets one module silently overwrite another (shared scope);
+  # theme-stub.ps1 is the documented exception - lib/themes.ps1 replaces its stubs
+  $owner = @{}
+  $dups = @()
+  foreach ($f in @(Get-Item -LiteralPath $entryPath) + $libFiles) {
+    $tk = $null
+    $pe = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$tk, [ref]$pe)
+    if ($pe.Count -gt 0 -or -not $ast.EndBlock) { continue }
+    foreach ($st in $ast.EndBlock.Statements) {
+      if ($st -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) { continue }
+      $fnName = [string]$st.Name
+      if (-not $owner.ContainsKey($fnName)) { $owner[$fnName] = $f.Name; continue }
+      $prevOwner = [string]$owner[$fnName]
+      $both = @($prevOwner, $f.Name)
+      if (($both -contains 'theme-stub.ps1') -and ($both -contains 'themes.ps1')) { continue }
+      $dups += ($fnName + ' (' + $prevOwner + ', ' + $f.Name + ')')
+    }
+  }
+  Check 'struct' 'no duplicate function names' ($dups.Count -eq 0) ($dups -join ', ')
+
+  # sizes and the single $Root line only make sense in the readable source
+  if (-not $isPackaged) {
+    $entryLines = @([IO.File]::ReadAllLines($entryPath)).Count
+    Check 'struct' 'entry file stays an entry point' ($entryLines -le 200) ([string]$entryLines + ' lines')
+    $huge = @()
+    foreach ($f in $libFiles) {
+      $count = @([IO.File]::ReadAllLines($f.FullName)).Count
+      if ($count -gt 1400) { $huge += ($f.Name + '(' + $count + ')') }
+    }
+    Check 'struct' 'no module grows past 1400 lines' ($huge.Count -eq 0) ($huge -join ', ')
+    $rootHits = ([regex]::Matches([IO.File]::ReadAllText($entryPath), '(?m)^\$Root = Split-Path -Parent \$PSCommandPath\s*$')).Count
+    Check 'struct' 'tool root is computed once, in the entry' ($rootHits -eq 1) ([string]$rootHits + ' occurrence(s)')
+  }
+
   # ---------------------------------------------------------------- unit tests
   if ($Unit) {
     . (Join-Path $unitDir 'clipboard.ps1') -Library
