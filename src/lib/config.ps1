@@ -286,3 +286,112 @@ function Restart-ResidentIfRunning {
   Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList $argList
   Write-Host '     resident restarted to pick up the new settings'
 }
+
+
+function Write-IniTemplate([switch]$Force) {
+  if ((Test-Path -LiteralPath $IniPath) -and (-not $Force)) { return $IniPath }
+  Ensure-Dir
+  $t = @(
+    '# clipboard.ini - flat key=value list. Restart the daemon after editing (clipboard stop, clipboard serve).',
+    '# CLI switches win over this file. Every key below can also be written with:',
+    '#   clipboard config set <key> <value>',
+    '# write location, empty = <script dir>\data. relative paths resolve against the script dir.',
+    'DataDir=',
+    '# Hotkey: key may be A-Z 0-9 F1-F24 Insert Delete Home End PgUp PgDn Space.',
+    '# Default is Ctrl+Alt+V. Win+V would be nicer but Windows reserves it on most builds',
+    '# (RegisterHotKey fails); the tool then falls back to Alt+` / Win+Shift+V by itself.',
+    'Hotkey=Ctrl+Alt+V',
+    '# comma separated list tried in order when Hotkey is taken. empty = built-in chain:',
+    '# Ctrl+Alt+V, Win+V, Alt+`, Win+Shift+V',
+    'HotkeyFallbacks=',
+    '# ^v = Ctrl+V | ^+v = Ctrl+Shift+V (terminal) | +{INS} = Shift+Insert (mintty)',
+    'PasteKeys=^v',
+    '# ms to wait for the modifiers to be released before injecting the paste',
+    'ModReleaseTimeout=1200',
+    '# ms to wait after focusing the previous window before sending PasteKeys',
+    'PasteSettle=80',
+    '# entry cap; pinned entries are never trimmed away',
+    'MaxItems=300',
+    'MaxBytes=204800',
+    '# total store size cap in bytes; oldest entries are dropped beyond it',
+    'MaxTotal=4194304',
+    '# clipboard poll interval in ms',
+    'Interval=300',
+    '# 1 = clipboard only, never inject a paste',
+    'NoPaste=0',
+    '# 1 = tray balloon on startup',
+    'Balloon=1',
+    '# dark | light; a theme lives in themes\<name>.ps1 (win11-dark is the default)',
+    'Theme=win11-dark',
+    '# regex: matching clipboard text is never saved',
+    'ExcludePattern=',
+    '',
+    '# ---- panel geometry (96 dpi baseline, scaled by the system DPI) ----',
+    'WindowWidth=700',
+    'WindowHeight=510',
+    '# empty = centre the panel on the monitor of the window you came from',
+    'WindowLeft=',
+    'WindowTop=',
+    '# 1 = remember the size / position after the panel is closed',
+    'SaveWindowSize=0',
+    'SaveWindowPos=0',
+    '',
+    '# ---- panel behaviour ----',
+    '# 1 = relative time column (now / 5m / 3h / 2d / 10-24)',
+    'ShowTime=1',
+    '# 1 = show the row icon a plugin provides (there is none without one)',
+    'ShowTypeIcon=1',
+    '# 1 = highlight the search matches',
+    'Highlight=1',
+    '# skip the highlight above this payload size in bytes, 0 = always highlight',
+    'HighlightMaxBytes=8192',
+    '# 1 = show <NL> for line breaks, 0 = collapse them into a single space',
+    'ShowNewlineMarker=1',
+    '# wheel step in rows, 0 = follow the system setting',
+    'ScrollLines=0',
+    '# 1 = per-monitor DPI aware rendering, 0 = legacy rendering',
+    'DpiAware=1',
+    '',
+    '# ---- history ----',
+    '# entry cap, 0 = unlimited',
+    'MaxItems=300',
+    '# 1 = Ctrl+Z in the panel restores the last deleted entry',
+    'Undo=1',
+    '',
+    '# ---- install ----',
+    '# 1 = install creates the logon shortcut that runs serve',
+    'Autostart=1',
+    '# 1 = install creates the desktop shortcut that runs ui',
+    'DesktopShortcut=1',
+    '',
+    '# ---- plugins (optional, see README.md) ----',
+    '# comma separated plugin names to load, empty = base tool only (default)',
+    '# e.g. Plugins=item-marks,entry-actions',
+    # the whole expression needs its own parentheses: inside an array literal a bare
+    # `-join ','` turns the comma into an element separator and the line comes out empty
+    ('Plugins=' + (@($script:PluginList) -join ','))
+  )
+  # Settings declared by the loaded plugins, as <plugin>.<Key>. $t is a fixed array, so
+  # the extra lines are collected separately and joined at the end.
+  $pset = $script:PluginSettings
+  if ($null -eq $pset) { $pset = @{} }
+  $extra = New-Object System.Collections.Generic.List[string]
+  foreach ($pname in @($pset.Keys)) {
+    $extra.Add('')
+    $extra.Add('# ---- plugin: ' + $pname + ' (only used when listed in Plugins=) ----')
+    foreach ($full in @($pset[$pname].Keys)) {
+      $spec = $pset[$pname][$full]
+      $desc = ''
+      if ($spec.Contains('Desc')) { $desc = [string]$spec['Desc'] }
+      if ($desc) { $extra.Add('# ' + $desc) }
+      $dv = ''
+      if ($spec.Contains('Default')) { $dv = [string]$spec['Default'] }
+      $extra.Add($full + '=' + $dv)
+    }
+  }
+  $all = New-Object System.Collections.Generic.List[string]
+  foreach ($l in $t) { $all.Add($l) }
+  foreach ($l in $extra) { $all.Add($l) }
+  [IO.File]::WriteAllText($IniPath, (($all -join [Environment]::NewLine) + [Environment]::NewLine), $Utf8)
+  return $IniPath
+}

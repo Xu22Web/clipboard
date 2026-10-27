@@ -3,9 +3,15 @@
 > 目标：`clipboard.ps1` 只保留「入口 + 初始化 + 装配」，其余按层拆进 `src/lib/`；
 > **对外行为、CLI 输出、ini 键、插件契约、打包产物一律不变**。
 >
-> **状态（2026-10-27）**：P0–P4 已完成 —— 入口文件 3439 → 110 行，新增 16 个 `lib/` 模块，
-> 源码全量 377/377、压缩产物 119/119 通过，压缩率 37.3% → 40.1%；`struct` 结构守卫已并入
-> `tests\run-tests.ps1`（无开关，任何模式先跑）。未做：P5 的面板内部再切分。
+> **状态（2026-10-27）**：P0–P4 已完成 —— 入口文件 3439 → 110 行，`lib/` 共 22 个模块，
+> 源码全量 378/378、压缩产物 120/120 通过，压缩率 37.3% → 40%；`struct` 结构守卫已并入
+> `tests\run-tests.ps1`（无开关，任何模式先跑）。
+> P5 第一步已完成（绘制件拆到 `lib/picker-draw.ps1`，可脱离窗口单测）；剩下的
+> `Show-Picker` 主体（窗体 + 24 个闭包）仍是一个函数，需要 `$P` 状态哈希重构 + 真机回归。
+>
+> **耦合复查（同日晚些）**：模块依赖图无环；`ini` 不再反向调用 `hotkey`/`themes`；
+> `config` 与 `plugin-settings` 的循环依赖靠新增 `lib/values.ps1`（值解析层）解开；
+> `store` 的条目文案归位 `entry`；`plugins.ps1` 拆成运行时 / 设置 / 标记三个文件。
 
 ---
 
@@ -205,6 +211,7 @@ Invoke-Main
 
 | 新文件 | 搬出内容 | 传参方式 |
 |---|---|---|
+| `picker-draw.ps1` | `Draw-KeyChips`、`Draw-Highlight`、`New-PickerStringFormats`（已完成：只要 Graphics + 参数） | — |
 | `picker-layout.ps1` | `Layout-Chrome`、`Size-List`、`Sync-Sb`、`Sb-ScrollTo`、`Scroll-By`、`Keep-SelectionVisible` | 收 `$P`（控件与状态哈希） |
 | `picker-draw.ps1` | `Draw-KeyChips`、`Draw-Highlight`、行/空状态绘制、`Get-MeasureGraphics` | 收 `$P` + 绘制参数 |
 | `picker-list.ps1` | `Get-Rows`、`Update-List`、过滤/高亮 token、`Sync-Placeholder`、`$rowCache` | 收 `$P`，返回新状态 |

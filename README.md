@@ -2,7 +2,7 @@
 
 Windows 10 / 11 上的轻量剪贴板历史工具，纯 PowerShell（零依赖，只用系统自带的 5.1），提供可搜索的历史面板与全局热键。
 
-程序是 `src\clipboard.ps1`（入口）+ `src\lib\`（16 个必需模块 + 2 个可选加载层）：分发时要把整个文件夹一起拷，链接/快捷方式仍指向 `clipboard.ps1` 就行。
+程序是 `src\clipboard.ps1`（入口）+ `src\lib\`（18 个必需模块 + 4 个可选加载层）：分发时要把整个文件夹一起拷，链接/快捷方式仍指向 `clipboard.ps1` 就行。
 
 数据保存在脚本目录内，不依赖 Windows 剪贴板历史服务（`cbdhsvc`），不联网，也不需要管理员权限。
 
@@ -236,12 +236,13 @@ Plugins=item-marks,entry-actions
 | 层 | 位置 | 职责 |
 |---|---|---|
 | 入口 | `clipboard.ps1` | 参数绑定、`$Root`、必需模块清单、运行时路径（ini / store / log 位置）、`Invoke-Main` |
-| 基础 | `lib/base.ps1`、`lib/ini.ps1`、`lib/util.ps1` | 常量与全部默认值、设置 schema 与读取、日志 / 程序集 / DPI / 像素与时间 |
-| 领域 | `lib/clip.ps1`、`lib/store.ps1`、`lib/entry.ps1`、`lib/hotkey.ps1` | 剪贴板读写、历史记录与标记规则、条目分类与行图标兜底、热键解析 |
-| 场景 | `lib/picker.ps1`、`lib/picker-geom.ps1`、`lib/serve.ps1`、`lib/config.ps1`、`lib/diag.ps1`、`lib/shortcut.ps1`、`lib/usage.ps1` | 面板与纯计算、常驻进程、设置面、诊断恢复、快捷方式、帮助 |
 | 装配 | `lib/dispatch.ps1` | `Invoke-Main`：先 `Apply-Config`，再按 `Plugins=` 装配插件，最后执行一个命令 |
-| 加载层 | `lib/plugins.ps1` | `Load-Plugins`（白名单）/ 命令与菜单 / 面板按键 / 标记注册（`Get-PluginMarks`、`Get-PluginProtectedMarks`、`Get-PluginSortMark`、`Get-PluginClearKeeps`）/ 行装饰 / 设置与主题，全部带内置回退 |
-| 加载层 | `lib/themes.ps1` | 主题发现 / 校验 / 颜色解析 / `Apply-Theme`（缺失时 `lib/theme-stub.ps1` 的内置配色接管） |
+| 场景 | `lib/picker.ps1`、`lib/picker-draw.ps1`、`lib/serve.ps1`、`lib/config.ps1`、`lib/diag.ps1`、`lib/shortcut.ps1`、`lib/usage.ps1` | 面板窗与交互、可复用的绘制件、常驻进程、设置命令面、诊断恢复、快捷方式、帮助 |
+| 领域 | `lib/clip.ps1`、`lib/store.ps1`、`lib/entry.ps1`、`lib/hotkey.ps1`、`lib/picker-geom.ps1` | 剪贴板读写、历史记录与标记存储、条目分类与文案、热键解析、面板纯计算 |
+| 基础 | `lib/ini.ps1`、`lib/values.ps1`、`lib/util.ps1` | schema 与原始读取、单个键的校验/解析/写入、日志 / 程序集 / DPI / 像素与时间 |
+| 底 | `lib/base.ps1`、`lib/theme-stub.ps1` | 常量与全部默认值；内置配色与主题空实现（`lib/themes.ps1` 覆盖它们） |
+| 加载层 | `lib/plugins.ps1`、`lib/plugin-settings.ps1`、`lib/plugin-marks.ps1` | 插件运行时（白名单 / 命令 / 右键项 / 按键 / 行图标 / 钩子）、插件设置面、标记含义（保护 / 置顶 / `clear` 保留 / 打印用词） |
+| 加载层 | `lib/themes.ps1` | 主题发现 / 校验 / 颜色解析 / `Apply-Theme`（缺失时 `theme-stub` 的内置配色接管） |
 | 扩展 | `plugins/*.ps1` | 每个文件返回一个哈希表，声明命令、右键项、面板按键、行图标、标记与设置 |
 
 插件契约：一个 `.ps1` 文件 `return` / 直接输出一个哈希表。
@@ -379,21 +380,25 @@ src/                    程序本体（打包只读这个目录）
   data/                   历史 / 日志 / 生效热键缓存（不入库）
   lib/base.ps1            常量、记录格式、运行时标识、度量/字形/时序与全部默认值
   lib/ini.ps1             clipboard.ini 读取 + 全部键的 schema（类型 / 范围 / 默认 / 说明）
+  lib/values.ps1          单个键的校验与解析（Convert-IniValue / Get-CfgValue / Set-IniKey）
   lib/util.ps1            日志、程序集、DPI、像素换算、时间、圆角路径
   lib/theme-stub.ps1      内置配色与主题空实现（lib/themes.ps1 会覆盖它们）
   lib/clip.ps1            剪贴板读写（文本 + CF_HDROP 文件清单）
-  lib/store.ps1           历史文件：CBHIST2 读写、加锁、标记、排序裁剪、条目文案
+  lib/store.ps1           历史文件：CBHIST2 读写、加锁、标记存储、排序裁剪
   lib/hotkey.ps1          热键解析与修饰键状态
-  lib/entry.ps1           条目基础分类（text / files / empty）与图标兜底
+  lib/entry.ps1           条目分类（text / files / empty）、图标兜底与条目文案
   lib/picker-geom.ps1     面板纯计算：行数、数字快选、窗口位置、命中高亮
-  lib/picker.ps1          历史面板（窗体、过滤、绘制、按键、粘贴）
+  lib/picker-draw.ps1     可复用绘制：按键胶囊、搜索命中着色（只要 Graphics + 参数）
+  lib/picker.ps1          历史面板：窗体、过滤、列表、按键、右键菜单、粘贴
   lib/serve.ps1           常驻进程：捕获循环、热键、托盘、崩溃重启
   lib/diag.ps1            diag 报告与 restore
   lib/shortcut.ps1        开机自启 / 桌面快捷方式的安装与卸载
-  lib/config.ps1          config 系列：应用、展示、校验、写单个键、重启常驻
+  lib/config.ps1          config 命令面：应用设置、打印有效值、写模板、重启常驻
   lib/usage.ps1           help 输出（基础命令分组 + 每个插件的分组）
   lib/dispatch.ps1        Invoke-Main：先 Apply-Config，再装配插件，最后执行一个命令
-  lib/plugins.ps1         插件加载层（Load-Plugins / 命令 / 右键项 / 行图标）
+  lib/plugins.ps1         插件运行时（Load-Plugins / 命令 / 右键项 / 按键 / 行图标 / 钩子）
+  lib/plugin-settings.ps1 插件设置面（Settings → ini 键，ThemeSettings → 主题段）
+  lib/plugin-marks.ps1    标记含义（保护 / 置顶 / clear 保留 / 打印用词）
   lib/themes.ps1          主题加载层（发现 / 校验 / 颜色解析 / Apply-Theme）
   plugins/*.ps1           可选插件（item-marks / entry-actions / transform / retention；默认不加载）
   plugins/*.md            每个插件的说明页
@@ -406,14 +411,14 @@ dist/                   打包产物（不入库）
 tests/run-tests.ps1     自测套件
 ```
 
-分层顺序即依赖方向：`clipboard.ps1`（入口）→ `lib/dispatch.ps1`（装配命令）→ `picker` / `serve` / `config` / `diag` / `shortcut` / `usage`（场景）→ `store` / `clip` / `entry` / `hotkey`（领域）→ `ini` / `util`（基础）→ `base`（常量与默认值）。只允许上层调用下层。
+分层顺序即依赖方向：`clipboard.ps1`（入口）→ `dispatch`（装配命令）→ `picker` / `serve` / `config` / `diag` / `shortcut` / `usage`（场景）→ `store` / `clip` / `entry` / `hotkey` / `picker-geom`（领域）→ `values` / `ini` / `util`（基础）→ `base` / `theme-stub`（常量、默认值与兜底配色）。只允许上层调用下层：`values` 单独一层是因为「校验一个值」要用到热键解析与主题名，把它放在 `config` 里会让 `config` 与 `plugin-settings` 互相依赖。
 
 两条硬约束（违反任何一条，`struct` 组会直接报出来）：
 
 - **`$Root` 只在入口文件里算。** 点源文件里 `$PSScriptRoot` 指向 `lib\`，用它拼路径会把 `themes\`、`plugins\`、`data\` 全部指错一层。
 - **只有 `base.ps1` 与 `ini.ps1` 在加载时赋值**（默认值与设置 schema），其余模块只定义函数，所以点源顺序只对这两个文件敏感。
 
-除 `lib/themes.ps1` 与 `lib/plugins.ps1` 外，模块缺失会直接报 `missing: …\lib\<name>.ps1` 并以退出码 1 结束 —— 分发时必须整个文件夹一起给，不能只拷 `clipboard.ps1`。
+除 `lib/themes.ps1` 与插件三件套（`plugins.ps1` / `plugin-settings.ps1` / `plugin-marks.ps1`，要么全有要么全无）外，模块缺失会直接报 `missing: …\lib\<name>.ps1` 并以退出码 1 结束 —— 分发时必须整个文件夹一起给，不能只拷 `clipboard.ps1`。
 
 写入位置由 `clipboard.ini` 的 `DataDir=` 决定，留空则用脚本旁的 `data/`（相对路径相对脚本目录）；`config` 的 `data dir` 与 `status` 的 `store file` 均显示实际生效位置。
 
@@ -526,7 +531,7 @@ Themes=win11-dark
 | 进包（来自 `src\`） | 不进包 |
 |---|---|
 | `clipboard.ps1`、`clipboard.cmd`、`clipboard`（Git Bash 壳） | `src\data\`（历史与日志） |
-| `lib\`（18 个模块：16 必需 + `themes.ps1` / `plugins.ps1` 可选）、所选 `plugins\`（含 `.md`）、所选 `themes\`（ini 与 `.md`） | `src\clipboard.ini`（用户设置） |
+| `lib\`（22 个模块：18 必需 + `themes.ps1` 与插件三件套）、所选 `plugins\`（含 `.md`）、所选 `themes\`（ini 与 `.md`） | `src\clipboard.ini`（用户设置） |
 | `README.md`、`LICENSE`、`docs\`（截图，`IncludeDocs=1` 时） | `tests\`、`build\`、`build.ini`、`dist\`、`.git` |
 
 > `Plugins=` / `Themes=` 里写了不存在的名字会直接失败并指出是哪个；被选中的插件/主题会连同自己的 `.md` 一起进包（`lib\` 是基础层，永远随包走）。

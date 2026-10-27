@@ -42,8 +42,8 @@ $libDir = Join-Path $Root 'lib'
 # too deep. Only base.ps1 and ini.ps1 assign anything while loading (the defaults and the
 # settings schema); the order below matters for those two and is otherwise for readers.
 $requiredModules = @(
-  'base', 'ini', 'util', 'theme-stub', 'clip', 'store', 'hotkey', 'entry',
-  'picker-geom', 'picker', 'serve', 'diag', 'shortcut', 'config', 'usage', 'dispatch'
+  'base', 'ini', 'values', 'util', 'theme-stub', 'clip', 'store', 'hotkey', 'entry',
+  'picker-geom', 'picker-draw', 'picker', 'serve', 'diag', 'shortcut', 'config', 'usage', 'dispatch'
 )
 foreach ($module in $requiredModules) {
   $modulePath = Join-Path $libDir ($module + '.ps1')
@@ -57,8 +57,15 @@ foreach ($module in $requiredModules) {
 # optional layers: without them the tool runs on the built-in palette and the base commands
 $themeModule = Join-Path $libDir 'themes.ps1'
 if (Test-Path -LiteralPath $themeModule) { . $themeModule }
+# the plugin layer is three files: the runtime, what a mark means, and the settings surface
 $pluginModule = Join-Path $libDir 'plugins.ps1'
-if (Test-Path -LiteralPath $pluginModule) { . $pluginModule }
+if (Test-Path -LiteralPath $pluginModule) {
+  . $pluginModule
+  foreach ($extra in @('plugin-settings', 'plugin-marks')) {
+    $extraPath = Join-Path $libDir ($extra + '.ps1')
+    if (Test-Path -LiteralPath $extraPath) { . $extraPath }
+  }
+}
 #endregion
 
 #region runtime paths

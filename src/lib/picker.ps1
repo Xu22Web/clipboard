@@ -338,40 +338,7 @@ function Show-Picker {
       return @(@('Enter', 'Paste'), @('Ctrl+Enter', 'Copy only'), @('Del', 'Delete'), @('Esc', 'Close'))
     }
 
-    # key caps: rounded chip with a 1 px stroke, action text beside it (Win11 hint style)
-    function Draw-KeyChips($g, [int]$x, [int]$cy, $pairs, $keyColor, $actionColor) {
-      $chipH = Px 18
-      $limit = $footR.Left - (Px 8)
-      if ($limit -lt (Px 60)) { $limit = $footL.ClientSize.Width - (Px 8) }
-      $big = New-Object Drawing.SizeF -ArgumentList @(1000, 100)
-      foreach ($p in @($pairs)) {
-        $key = [string]$p[0]
-        $act = [string]$p[1]
-        $kw = [single]$g.MeasureString($key, $fSmall, $big, $sfSeg).Width
-        $aw = [single]$g.MeasureString($act, $fSmall, $big, $sfSeg).Width
-        $chipW = [int]($kw + (Px 14))
-        if (($x + $chipW + (Px 6) + $aw) -gt $limit) { return }
-        $chipY = $cy - [int]($chipH / 2)
-        $kp = New-RoundPath $x $chipY $chipW $chipH (Px 4)
-        $kb = New-Object Drawing.SolidBrush $ui.KeyCapBg
-        $g.FillPath($kb, $kp)
-        $kb.Dispose()
-        $kpen = New-Object Drawing.Pen $ui.KeyCapBorder, 1
-        $g.DrawPath($kpen, $kp)
-        $kpen.Dispose()
-        $kp.Dispose()
-        $kbr = New-Object Drawing.SolidBrush $keyColor
-        $kr = New-Object Drawing.RectangleF -ArgumentList @([single]$x, [single]$chipY, [single]$chipW, [single]$chipH)
-        $g.DrawString($key, $fSmall, $kbr, $kr, $sfCenter)
-        $kbr.Dispose()
-        $x = $x + $chipW + (Px 6)
-        $ar = New-Object Drawing.RectangleF -ArgumentList @([single]$x, [single]$chipY, [single]$aw, [single]$chipH)
-        $abr = New-Object Drawing.SolidBrush $actionColor
-        $g.DrawString($act, $fSmall, $abr, $ar, $sfNone)
-        $abr.Dispose()
-        $x = $x + [int]$aw + (Px 16)
-      }
-    }
+    # key caps are drawn by lib/picker-draw.ps1; the footer only decides where they stop
 
     $footL.Add_Paint({
         param($s, $e)
@@ -394,7 +361,9 @@ function Show-Picker {
             $mb.Dispose()
             return
           }
-          Draw-KeyChips $g (Px 14) $cy (Get-FootHints) $ui.Dim $ui.Faint
+          $chipLimit = $footR.Left - (Px 8)
+          if ($chipLimit -lt (Px 60)) { $chipLimit = $footL.ClientSize.Width - (Px 8) }
+          Draw-KeyChips $g (Px 14) $cy (Get-FootHints) $ui.Dim $ui.Faint $chipLimit
         } catch { }
       })
 
@@ -863,59 +832,16 @@ function Show-Picker {
       })
     $lst.ContextMenuStrip = $cm
 
-    $sfEll = New-Object Drawing.StringFormat
-    $sfEll.Trimming = [Drawing.StringTrimming]::EllipsisCharacter
-    $sfEll.FormatFlags = [Drawing.StringFormatFlags]::NoWrap
-    $sfEll.HotkeyPrefix = [Drawing.Text.HotkeyPrefix]::None
-    $sfEll.LineAlignment = [Drawing.StringAlignment]::Center
-
-    $sfNone = New-Object Drawing.StringFormat
-    $sfNone.Trimming = [Drawing.StringTrimming]::None
-    $sfNone.FormatFlags = [Drawing.StringFormatFlags]::NoWrap
-    $sfNone.HotkeyPrefix = [Drawing.Text.HotkeyPrefix]::None
-    $sfNone.LineAlignment = [Drawing.StringAlignment]::Center
-
-    $sfRight = $sfNone.Clone()
-    $sfRight.Alignment = [Drawing.StringAlignment]::Far
-    $sfCenter = $sfNone.Clone()
-    $sfCenter.Alignment = [Drawing.StringAlignment]::Center
-
-    $sfSeg = [Drawing.StringFormat]::GenericTypographic.Clone()
-    $sfSeg.FormatFlags = [Drawing.StringFormatFlags]::NoWrap -bor [Drawing.StringFormatFlags]::MeasureTrailingSpaces
-    $sfSeg.HotkeyPrefix = [Drawing.Text.HotkeyPrefix]::None
-    $sfSeg.LineAlignment = [Drawing.StringAlignment]::Center
+    # one StringFormat set per process, shared with the drawing helpers in lib/picker-draw.ps1
+    $sfSet = New-PickerStringFormats
+    $sfEll = $sfSet.Ellipsis
+    $sfNone = $sfSet.None
+    $sfRight = $sfSet.Right
+    $sfCenter = $sfSet.Center
+    $sfSeg = $sfSet.Seg
 
     # draw one label in pieces so the matched tokens can be tinted; the tail is trimmed
-    # with an ellipsis once the available width is exhausted
-    function Draw-Highlight($g, [string]$text, $rect, [string[]]$tokens, $normal, $hit) {
-      $marks = Get-HitMarks $text $tokens
-      $x = [single]$rect.X
-      $limit = [single]$rect.Right
-      $i = 0
-      $n = $text.Length
-      $big = New-Object Drawing.SizeF -ArgumentList @(100000, 100)
-      while ($i -lt $n) {
-        $isHit = $marks[$i]
-        $j = $i
-        while ($j -lt $n -and $marks[$j] -eq $isHit) { $j++ }
-        $seg = $text.Substring($i, $j - $i)
-        $size = $g.MeasureString($seg, $fBody, $big, $sfSeg)
-        $w = [single]$size.Width
-        $brush = if ($isHit) { $hit } else { $normal }
-        if (($x + $w) -gt $limit) {
-          $rem = $limit - $x
-          if ($rem -gt (Px 6)) {
-            $r2 = New-Object Drawing.RectangleF -ArgumentList @($x, [single]$rect.Y, [single]$rem, [single]$rect.Height)
-            $g.DrawString($seg, $fBody, $brush, $r2, $sfEll)
-          }
-          return
-        }
-        $r2 = New-Object Drawing.RectangleF -ArgumentList @($x, [single]$rect.Y, [single]($w + (Px 2)), [single]$rect.Height)
-        $g.DrawString($seg, $fBody, $brush, $r2, $sfSeg)
-        $x = $x + $w
-        $i = $j
-      }
-    }
+    # with an ellipsis once the available width is exhausted (lib/picker-draw.ps1)
 
     $lst.Add_DrawItem({
         param($s, $e)

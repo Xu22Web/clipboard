@@ -139,13 +139,19 @@ try {
   if (Test-Path -LiteralPath $libPath) { $libFiles = @(Get-ChildItem -LiteralPath $libPath -Filter '*.ps1' -File | Sort-Object -Property Name) }
 
   # the entry file names these; a package must carry all of them
-  $requiredLib = @('base', 'ini', 'util', 'theme-stub', 'clip', 'store', 'hotkey', 'entry',
-    'picker-geom', 'picker', 'serve', 'diag', 'shortcut', 'config', 'usage', 'dispatch')
+  $requiredLib = @('base', 'ini', 'values', 'util', 'theme-stub', 'clip', 'store', 'hotkey', 'entry',
+    'picker-geom', 'picker-draw', 'picker', 'serve', 'diag', 'shortcut', 'config', 'usage', 'dispatch')
   $missingLib = @()
   foreach ($m in $requiredLib) {
     if (-not (Test-Path -LiteralPath (Join-Path $libPath ($m + '.ps1')))) { $missingLib += $m }
   }
   Check 'struct' 'every required module exists' ($missingLib.Count -eq 0) ($missingLib -join ', ')
+
+  # the plugin layer is three files; a package carries all of them or none (plugins.ps1 is
+  # the optional one, and the other two mean nothing without it)
+  $pluginLayer = @('plugins', 'plugin-settings', 'plugin-marks')
+  $pluginPresent = @($pluginLayer | Where-Object { Test-Path -LiteralPath (Join-Path $libPath ($_ + '.ps1')) })
+  Check 'struct' 'plugin layer ships complete' (($pluginPresent.Count -eq 0) -or ($pluginPresent.Count -eq $pluginLayer.Count)) ($pluginPresent -join ', ')
 
   $badParse = @()
   $badParam = @()
@@ -874,6 +880,32 @@ try {
     Save-Records @()
   }
 
+    # the drawing helpers live in lib/picker-draw.ps1 and take a Graphics plus plain values,
+    # so they can be exercised without a window - that is what "no form state" buys.
+    # Source only: a packaged copy has renamed internals, so the names do not exist there.
+    if (-not $isPackaged) {
+      Use-Drawing
+      $script:FBody = New-Object Drawing.Font('Tahoma', [single]10)
+      $script:FSmall = New-Object Drawing.Font('Tahoma', [single]9)
+      $drawOk = $true
+      $drawErr = ''
+      $bmp = New-Object Drawing.Bitmap 240, 48
+      $gfx = [Drawing.Graphics]::FromImage($bmp)
+      try {
+        Draw-KeyChips $gfx 4 18 @(@('Enter', 'Paste'), @('Esc', 'Close')) ([Drawing.Color]::Gray) ([Drawing.Color]::DimGray) 240
+        Draw-Highlight $gfx 'hello world' (New-Object Drawing.RectangleF 0, 0, 120, 20) @('wor') ([Drawing.Brushes]::White) ([Drawing.Brushes]::Yellow)
+      }
+      catch {
+        $drawOk = $false
+        $drawErr = $_.Exception.Message
+      }
+      finally {
+        $gfx.Dispose()
+        $bmp.Dispose()
+      }
+      Check 'unit' 'drawing helpers run on a plain bitmap' $drawOk $drawErr
+    }
+
   # --------------------------------------------------------- integration tests
   if ($Integration) {
     $o = Clip $intDir @('help')
@@ -1262,6 +1294,11 @@ try {
       }
     }
   }
+}
+catch {
+  # an unexpected exception used to skip every remaining group and still exit 0, which
+  # reads as a green run; report it as a failure instead
+  Check 'harness' 'run finished without an exception' $false $_.Exception.Message
 }
 finally {
   # Restore the clipboard while capture is still paused: whatever is left on the clipboard
