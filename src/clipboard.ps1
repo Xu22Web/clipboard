@@ -1580,6 +1580,23 @@ function Show-Picker {
       Restore-Foot
     }
 
+    # The picker already put the text on the clipboard: hide it and paste into the window
+    # that was in front. Shared by Enter and by a plugin action that asks for
+    # After = 'paste' (transform copies the rewritten text, then wants it pasted).
+    function Paste-Clip {
+      $form.Hide()
+      if ($script:NoPaste) { $form.Close(); return }
+      $sw = [Diagnostics.Stopwatch]::StartNew()
+      while ($sw.ElapsedMilliseconds -lt $script:ModReleaseTimeout) {
+        if (Test-Modifiers-Up) { break }
+        Start-Sleep -Milliseconds 30
+      }
+      [void][Cb.Win]::SetForegroundWindow($prev)
+      Start-Sleep -Milliseconds $script:PasteSettle
+      try { [Windows.Forms.SendKeys]::SendWait($PasteKeys) } catch { Write-Log ('sendkeys fail: ' + $_.Exception.Message) }
+      $form.Close()
+    }
+
     function Use-Index([int]$idx, [switch]$NoInject) {
       if ($idx -lt 0 -or $idx -ge $script:Filtered.Count) { return }
       $payload = $script:Filtered[$idx].Payload
@@ -1593,18 +1610,9 @@ function Show-Picker {
           }
         } catch { Write-Log ('transform skipped: ' + $_.Exception.Message) }
       }
-      $form.Hide()
-      if ($script:NoPaste -or $NoInject.IsPresent) { [void](Set-ClipItem $payload); $form.Close(); return }
+      if ($script:NoPaste -or $NoInject.IsPresent) { $form.Hide(); [void](Set-ClipItem $payload); $form.Close(); return }
       if (-not (Set-ClipItem $payload)) { Write-Log 'set clipboard failed'; $form.Close(); return }
-      $sw = [Diagnostics.Stopwatch]::StartNew()
-      while ($sw.ElapsedMilliseconds -lt $script:ModReleaseTimeout) {
-        if (Test-Modifiers-Up) { break }
-        Start-Sleep -Milliseconds 30
-      }
-      [void][Cb.Win]::SetForegroundWindow($prev)
-      Start-Sleep -Milliseconds $script:PasteSettle
-      try { [Windows.Forms.SendKeys]::SendWait($PasteKeys) } catch { Write-Log ('sendkeys fail: ' + $_.Exception.Message) }
-      $form.Close()
+      Paste-Clip
     }
 
     function Del-Index([int]$idx) {
@@ -1729,7 +1737,10 @@ function Show-Picker {
                   if ($lst.SelectedIndex -ge $script:Filtered.Count) { return }
                   & $a['Invoke'] $script:Filtered[$lst.SelectedIndex]
                   $script:Entries = @(Get-Records)
-                  Update-List $txt.Text
+                  # After = 'paste': the action put its result on the clipboard and wants
+                  # it pasted into the window the picker came from (transform does this)
+                  if ($a.ContainsKey('After') -and [string]$a['After'] -eq 'paste') { Paste-Clip }
+                  else { Update-List $txt.Text }
                 } catch { Write-Log ('plugin action failed: ' + $_.Exception.Message) }
               })
             $pluginItems.Add(@{ Item = $item; Owner = $owner; Index = ($cm.Items.Count - 1) })

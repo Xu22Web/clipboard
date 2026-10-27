@@ -77,10 +77,10 @@ function Get-RenameableFunctions($ast, $protected) {
 function Get-ParameterNames($ast) {
   $keep = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
   foreach ($p in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.ParameterAst] }, $true)) {
-    $n = [string]$p.Name.VariablePath.QualifiedName
+    $n = Get-VariableName $p.Name.VariablePath
     if ($n) { [void]$keep.Add($n) }
   }
-  return $keep
+  return , $keep
 }
 
 # Build one function map for the whole project so lib/plugins.ps1, clipboard.ps1 and the
@@ -104,12 +104,71 @@ function New-FunctionMap([string[]]$paths) {
   foreach ($a in @(Get-Alias -ErrorAction SilentlyContinue)) { [void]$taken.Add([string]$a.Name) }
   foreach ($c in @(Get-Command -CommandType Function, Cmdlet, ExternalScript -ErrorAction SilentlyContinue)) { [void]$taken.Add([string]$c.Name) }
   $map = @{}
-  $i = 0
+  $slot = 0
   foreach ($n in $names) {
     if ($protected.Contains($n)) { continue }
-    $candidate = 'zz' + $i
-    while ($taken.Contains($candidate)) { $i++; $candidate = 'zz' + $i }
-    $i++
+    # one or two characters, like the local variables: a call site pays for the name once
+    # and the project has over a thousand of them
+    $candidate = New-ShortName $slot
+    while ($taken.Contains($candidate)) { $slot++; $candidate = New-ShortName $slot }
+    $slot++
+    [void]$taken.Add($candidate)
+    $map[$n] = $candidate
+  }
+  return $map
+}
+
+# the bare name of a variable: VariablePath.UnqualifiedPath comes back empty in this
+# runtime, while UserPath gives "x" for $x and "script:x" for $script:x
+function Get-VariableName($variablePath) {
+  $u = [string]$variablePath.UserPath
+  if (-not $u) { return '' }
+  if ($u -match '(?i)^script:(.+)$') { return $Matches[1] }
+  if ($u.Contains(':')) { return '' }
+  return $u
+}
+
+# the bare name of a $script: reference: VariablePath.UserPath keeps the "script:" prefix
+# and UnqualifiedPath comes back empty for a scoped variable
+function Get-ScriptVariableName($variablePath) {
+  $u = [string]$variablePath.UserPath
+  if ($u -match '(?i)^script:(.+)$') { return $Matches[1] }
+  return ''
+}
+
+# $script: names share one scope with the files that are dot-sourced into the main script,
+# so those files get one map. A plugin runs in a scope of its own and gets its own map.
+# Names keep the s prefix so they never read like a local variable, and a name that also
+# appears unqualified ($x next to $script:x) is left alone: renaming one of the two would
+# split what the runtime treats as a single variable.
+function New-ScriptVariableMap([string[]]$paths) {
+  $taken = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
+  $plain = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
+  $names = New-Object System.Collections.Generic.List[string]
+  $asts = @()
+  foreach ($path in $paths) {
+    $ast = (Get-ParsedScript ([IO.File]::ReadAllText($path))).Ast
+    $asts += $ast
+    foreach ($v in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true)) {
+      $vp = $v.VariablePath
+      if ($vp.IsScript) {
+        $n = Get-ScriptVariableName $vp
+        if (-not $n) { continue }
+        if (-not $names.Contains($n)) { $names.Add($n) }
+        [void]$taken.Add($n)
+      } else {
+        $pn = Get-VariableName $vp
+        if ($pn) { [void]$plain.Add($pn) }
+      }
+    }
+  }
+  $map = @{}
+  $slot = 0
+  foreach ($n in $names) {
+    if ($plain.Contains($n)) { continue }
+    $candidate = 's' + (New-ShortName $slot)
+    while ($taken.Contains($candidate)) { $slot++; $candidate = 's' + (New-ShortName $slot) }
+    $slot++
     [void]$taken.Add($candidate)
     $map[$n] = $candidate
   }
@@ -149,45 +208,116 @@ function Apply-Edits([string]$text, $edits) {
   return $sb.ToString()
 }
 
-# PowerShell's tokenizer does not emit whitespace at all, so the separator between two
-# tokens has to be decided here. A space goes in wherever gluing the two would change how
-# they are read: word next to word, a parameter name after a command, an operator that
-# starts with - or + after a value.
-# Lexical pass: comments, indentation, blank lines. Whether two tokens were separated in
-# the source is read from their offsets - the tokenizer drops whitespace, and guessing the
-# separator would change meaning ("$box.Height (Px 4)" is two arguments, "$f($x)" is a
-# call). Everything else is collapsed: many spaces become one, indentation and blank lines
-# disappear.
+# A line break between these two tokens cannot change how they read: the left one already
+# separates statements ({ , | ( [ = ; &) or the right one closes a block or a group.
+function Test-CanJoinLine([string]$a, [string]$b) {
+  if (@('{', ',', '|', '(', '[', '=', ';', '&') -contains $a) { return $true }
+  if (@('}', ')', ']') -contains $b) { return $true }
+  return $false
+}
+
+# Statements that the parser puts in one block can always be separated by a semicolon
+# instead of a line break, whatever token they happen to start and end with. This is the
+# statement pass of a bundler: the parser already knows where one statement ends, so the
+# replacement needs no guessing (the lexical pass alone can only collapse a few boundaries).
+function Merge-Statements([string]$text) {
+  $parsed = Get-ParsedScript $text
+  if ($parsed.Errors.Count -gt 0) { throw ('cannot parse statements: ' + $parsed.Errors[0].Message) }
+  $edits = New-Object System.Collections.Generic.List[object]
+  $blocks = $parsed.Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.StatementBlockAst] }, $true)
+  foreach ($block in $blocks) {
+    $stmts = @($block.Statements)
+    for ($i = 0; $i -lt ($stmts.Count - 1); $i++) {
+      $end = $stmts[$i].Extent.EndOffset
+      $next = $stmts[$i + 1].Extent.StartOffset
+      if ($next -le $end) { continue }
+      $gap = $text.Substring($end, $next - $end)
+      if ($gap -notmatch "[`r`n]") { continue }
+      # the gap holds only whitespace and comments: a semicolon keeps the two apart
+      $edits.Add(@{ Offset = $end; Length = ($next - $end); Text = ';' })
+    }
+  }
+  if ($edits.Count -eq 0) { return $text }
+  return (Apply-Edits $text $edits)
+}
+
+# Gluing two tokens is only safe when neither the reading nor the token split changes:
+# two word-ends would merge, a parameter name would be swallowed by the command, and a
+# bare - or + would turn into the sign of the next number.
+# token kinds that always need a separator after them unless a bracket or a brace follows:
+# "if($x){" is fine, "in[IO.File]" and "throw'x'" are not
+$script:KeywordKinds = @(
+  'Keyword', 'If', 'Else', 'ElseIf', 'Foreach', 'For', 'While', 'Do', 'Switch', 'Function',
+  'Filter', 'Param', 'Return', 'Throw', 'Try', 'Catch', 'Finally', 'Trap', 'Begin',
+  'Process', 'End', 'In', 'Break', 'Continue', 'Exit', 'Class', 'Enum', 'Using', 'Data',
+  'Workflow', 'Parallel', 'Sequence', 'Static', 'Hidden'
+)
+
+function Test-NeedsSpace($a, $b, $before) {
+  $at = [string]$a.Text
+  $bt = [string]$b.Text
+  if (-not $at -or -not $bt) { return $false }
+  $aKind = [string]$a.Kind
+  $bKind = [string]$b.Kind
+  if ($script:KeywordKinds -contains $aKind) { return -not ($bt -eq '(' -or $bt -eq '{') }
+  if ($aKind -eq 'Parameter' -or $bKind -eq 'Parameter') { return $true }
+  # Gluing is allowed only around punctuation whose reading cannot change; everything else
+  # keeps one space ("Join-Path $Root 'x'" must not become "Join-Path $Root'x'", and a bare
+  # word followed by an argument would turn both into one command name).
+  if (@('(', '[', '{', '@{', '@(', ',', ';', '=', '|', '&', '.', '::', '+', '*', '/', '%', '!', '>', '<') -contains $at) {
+    # an operator followed by a type literal keeps its gap: "-ne[char]1" reads as a parameter
+    if ($bt[0] -eq '[' -and $at -match '^[-+*/%!<>]') { return $true }
+    return $false
+  }
+  if (@(')', ']', '}', ',', ';', '|', '=', '.', '::') -contains $bt) { return $false }
+  # an index or a type annotation after a value stays glued: $x[0]
+  if ($bt[0] -eq '[') { return $false }
+  return $true
+}
+
+# Lexical pass: comments, indentation, blank lines, optional line breaks and every space
+# that is not needed. Whether two tokens were separated in the source is read from their
+# offsets - the tokenizer drops whitespace, and guessing the separator would change
+# meaning ("$box.Height (Px 4)" is two arguments, "$f($x)" is a call).
 function Compress-Whitespace([string]$text) {
   $parsed = Get-ParsedScript $text
   if ($parsed.Errors.Count -gt 0) { throw ('cannot tokenize: ' + $parsed.Errors[0].Message) }
+  $nl = "`n"
   $sb = New-Object System.Text.StringBuilder
-  $prevEnd = 0
-  $atLineStart = $true
+  $prev = $null
+  $prevPrev = $null
+  $pendingNewline = $false
   foreach ($t in $parsed.Tokens) {
     $kind = [string]$t.Kind
     if ($kind -eq 'Comment') {
       # #Requires is an instruction, not a comment
       if ($t.Text -match '(?i)^#requires') {
-        if (-not $atLineStart) { [void]$sb.Append([Environment]::NewLine) }
+        if ($null -ne $prev) { [void]$sb.Append($nl) }
         [void]$sb.Append($t.Text.TrimEnd())
-        $prevEnd = $t.Extent.EndOffset
-        $atLineStart = $false
+        $prev = $t
+        $pendingNewline = $true
       }
       continue
     }
-    if ($kind -eq 'NewLine') {
-      # one line break per statement, no blank lines
-      if (-not $atLineStart) { [void]$sb.Append([Environment]::NewLine) }
-      $prevEnd = $t.Extent.EndOffset
-      $atLineStart = $true
-      continue
-    }
+    if ($kind -eq 'NewLine') { $pendingNewline = $true; continue }
     if ($kind -eq 'EndOfInput') { break }
-    if (-not $atLineStart -and $t.Extent.StartOffset -gt $prevEnd) { [void]$sb.Append(' ') }
+    if ($null -ne $prev) {
+      if ($pendingNewline) {
+        if (-not (Test-CanJoinLine ([string]$prev.Text) ([string]$t.Text))) {
+          [void]$sb.Append($nl)
+        } elseif (Test-NeedsSpace $prev $t $prevPrev) {
+          [void]$sb.Append(' ')
+        }
+      } elseif ($t.Extent.StartOffset -gt $prev.Extent.EndOffset) {
+        # the source had a space here: keep one when gluing would change the reading
+        if (Test-NeedsSpace $prev $t $prevPrev) { [void]$sb.Append(' ') }
+      }
+      # tokens that were already adjacent stay adjacent: that spelling parsed before
+    }
     [void]$sb.Append([string]$t.Text)
-    $prevEnd = $t.Extent.EndOffset
-    $atLineStart = $false
+    $prevPrev = $prev
+    $prev = $t
+    $pendingNewline = $false
   }
   return $sb.ToString()
 }
@@ -198,6 +328,7 @@ function Invoke-MinifyFile {
     [string]$Path,
     [string]$OutPath,
     [hashtable]$FunctionMap = @{},
+    [hashtable]$ScriptVarMap = @{},
     [switch]$NoRename
   )
   $text = [IO.File]::ReadAllText($Path)
@@ -232,6 +363,17 @@ function Invoke-MinifyFile {
       }
     }
 
+    # $script: names: one map per scope group (see New-ScriptVariableMap)
+    if ($ScriptVarMap.Count -gt 0) {
+      foreach ($v in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true)) {
+        $vp = $v.VariablePath
+        if (-not $vp.IsScript) { continue }
+        $n = Get-ScriptVariableName $vp
+        if (-not $n -or -not $ScriptVarMap.ContainsKey($n)) { continue }
+        $edits.Add(@{ Offset = $v.Extent.StartOffset; Length = $v.Extent.EndOffset - $v.Extent.StartOffset; Text = '$script:' + [string]$ScriptVarMap[$n] })
+      }
+    }
+
     # local variables: one stable new name per original name, never colliding with a
     # name the file already uses
     $keep = Get-ParameterNames $ast
@@ -242,8 +384,8 @@ function Invoke-MinifyFile {
     foreach ($r in $script:ReservedVariables) { [void]$taken.Add($r) }
     foreach ($v in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true)) {
       $vp = $v.VariablePath
-      $plain = [string]$vp.UnqualifiedPath
-      [void]$taken.Add($plain)
+      $plain = Get-VariableName $vp
+      if ($plain) { [void]$taken.Add($plain) }
       if ($vp.IsDriveQualified -or $vp.IsGlobal -or $vp.IsScript -or $vp.IsPrivate -or $vp.IsLocal) { [void]$qualified.Add($plain) }
     }
     $varMap = @{}
@@ -251,8 +393,9 @@ function Invoke-MinifyFile {
     foreach ($v in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true)) {
       $varPath = $v.VariablePath
       if ($varPath.IsDriveQualified -or $varPath.IsGlobal -or $varPath.IsScript -or $varPath.IsPrivate -or $varPath.IsLocal) { continue }
-      $name = [string]$varPath.UnqualifiedPath
-      if (-not $name -or $keep.Contains($name)) { continue }
+      $name = Get-VariableName $varPath
+      if (-not $name) { continue }
+      if ($keep.Contains($name)) { continue }
       if ($qualified.Contains($name)) { continue }
       if ($script:ReservedVariables -contains $name) { continue }
       if (-not $varMap.ContainsKey($name)) {
@@ -272,7 +415,9 @@ function Invoke-MinifyFile {
     if ($check.Errors.Count -gt 0) { throw ($Path + ': rename broke the syntax (' + $check.Errors[0].Message + ')') }
   }
 
-  $minified = Compress-Whitespace $renamed
+  # statement pass, then the lexical pass on what is left
+  $merged = Merge-Statements $renamed
+  $minified = Compress-Whitespace $merged
   $final = Get-ParsedScript $minified
   if ($final.Errors.Count -gt 0) {
     $err = $final.Errors[0]

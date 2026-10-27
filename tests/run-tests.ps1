@@ -1088,10 +1088,18 @@ try {
       Check 'int' 'package leaves history and settings out' ((@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|dist)([\\/]|$)' }).Count -eq 0) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir 'build.ini'))) (@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|dist)' }) -join ', ')
 
       # the point of the build: same scripts, smaller, still parsing
-      $srcText = [IO.File]::ReadAllText((Join-Path $srcRoot 'clipboard.ps1'))
+      # (compare against the repository sources, not $srcRoot: with -Source the latter is
+      # the package under test and both sides would be the same minified file)
+      $srcText = [IO.File]::ReadAllText((Join-Path $defaultSource 'clipboard.ps1'))
       $outText = [IO.File]::ReadAllText((Join-Path $pkgDir 'clipboard.ps1'))
-      Check 'int' 'minified script is smaller' ($outText.Length -lt $srcText.Length) ($srcText.Length -as [string] + ' -> ' + $outText.Length)
-      Check 'int' 'minified script drops comments' (-not ($outText -match 'lightweight clipboard history for Windows')) ''
+      Check 'int' 'minified script is smaller' ($outText.Length -lt $srcText.Length) (([string]$srcText.Length) + ' -> ' + ([string]$outText.Length))
+      # ask the tokenizer instead of searching for a sentence: the same words also live in
+      # the --help strings, which are data and have to survive
+      $pkgTokens = $null
+      $pkgParseErrors = $null
+      [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $pkgDir 'clipboard.ps1'), [ref]$pkgTokens, [ref]$pkgParseErrors)
+      $leftComments = @($pkgTokens | Where-Object { [string]$_.Kind -eq 'Comment' -and $_.Text -notmatch '(?i)^\s*#requires' })
+      Check 'int' 'minified script drops comments' ($leftComments.Count -eq 0) (($leftComments | Select-Object -First 1 | ForEach-Object { $_.Text }) -as [string])
       Check 'int' 'minified script renames internals' ((-not ($outText -match 'function Get-Record\b')) -and (-not ($outText -match 'function Show-Usage\b'))) ''
       $pe = $null
       [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $pkgDir 'clipboard.ps1'), [ref]$null, [ref]$pe)

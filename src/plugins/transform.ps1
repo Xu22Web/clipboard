@@ -141,7 +141,8 @@
     }
   }
   # one entry per mode the settings ask for; the row under the cursor is rewritten with
-  # that mode, so a single setting decides how many menu items exist
+  # that mode and pasted right away (After = 'paste' tells the base to close the picker
+  # and send the paste keys, the same path Enter takes)
   ContextMenu = {
     $out = @()
     foreach ($m in @(& (Get-PluginData 'transform' 'MenuModes'))) {
@@ -162,6 +163,7 @@
           if ($null -eq $rec) { return }
           [void](& (Get-PluginData 'transform' 'CopyAs') ([string]$rec.Payload) $mode)
         }.GetNewClosure()
+        After  = 'paste'
       }
     }
     return $out

@@ -246,7 +246,7 @@ Plugins=item-marks,entry-actions
 | `Description` | 否 | 一句话说明，`clipboard config` 会展示 |
 | `Commands` | 否 | `@{ 'open' = { param($value) ... } }` → 变成 `clipboard open <值>` |
 | `CommandHelp` / `CommandOrder` | 否 | 每个命令的一行说明（`clipboard help` 用）/ 打印顺序 |
-| `ContextMenu` | 否 | `@( @{ Label = '...'; Test = { param($rec) ... }; Invoke = { param($rec) ... } } )`，右键菜单项；`Test` 返回 `$false` 时不显示。**按插件分组**：每组开头一行灰字插件名（不可点），组与组之间一条分隔线，组内不加线也不插标题（顺序 = `Plugins=` 加载顺序）；整组被隐藏时标题与分隔线一起消失。也可以写成**返回同样数组的脚本块**，让项数跟随自己的设置（`transform` 就是这样按 `transform.Modes` 生成多项） |
+| `ContextMenu` | 否 | `@( @{ Label = '...'; Test = { param($rec) ... }; Invoke = { param($rec) ... } } )`，右键菜单项；`Test` 返回 `$false` 时不显示。**按插件分组**：每组开头一行灰字插件名（不可点），组与组之间一条分隔线，组内不加线也不插标题（顺序 = `Plugins=` 加载顺序）；整组被隐藏时标题与分隔线一起消失。也可以写成**返回同样数组的脚本块**，让项数跟随自己的设置（`transform` 就是这样按 `transform.Modes` 生成多项）。项里可加 `After = 'paste'`：点完把结果**直接粘贴到原来的窗口**（`transform` 用），不加这个键就是老行为（只写进历史，点条目时才粘贴） |
 | `PanelKeys` | 否 | `@( @{ Key = 'O'; Ctrl = $true; Label = '...'; Test = ...; Invoke = ... } )`，面板按键；不会覆盖基础按键 |
 | `TypeGlyph` | 否 | `{ param($payload) ... }`，条目 → 行图标（返回空 = 该行不画图标）；第一个给出非空值的插件胜出 |
 | `Settings` | 否 | 自己的配置项（`clipboard.ini`），`[ordered]@{ Key = @{ Kind = 'bool'; Default = 0; Desc = '...' } }` |
@@ -377,7 +377,7 @@ src/                    程序本体（打包只读这个目录）
   plugins/*.md            每个插件的说明页
   themes/*.ini            主题（win11-dark 默认 / win11-light）
   themes/*.md             每个主题的说明页
-build/minify.ps1        压缩器（按语法树删注释/缩进、重命名内部函数与局部变量）
+build/minify.ps1        压缩器（按语法树把语句接成 `;`、删注释/缩进、重命名内部函数与局部变量）
 build.ps1               打包脚本（读 src\，输出 dist\clipboard-<版本>\）
 build.ini               打包设置（版本 / 输出目录 / 压缩 / 重命名 / 验证 / 打哪些插件与主题）
 dist/                   打包产物（不入库）
@@ -476,10 +476,18 @@ Themes=win11-dark
 
 | 阶段 | 做什么 |
 |---|---|
-| 词法 | 删注释（`#Requires` 保留）、删行首缩进、合并空行；token 之间的分隔符按原偏移判断，不做危险的空白猜测 |
-| 语法 | 内部函数名 → `zz0`、`zz1`…（**全项目一套映射**，避免 `fl` 这类被别名截胡的名字）；局部变量 → `a`、`b`…（每文件一套） |
-| 不改名 | `param()` 里的名字（按名传参：`-Library`、`-Count`、`-NoInject`）、带作用域/驱动器前缀的变量（`$script:`、`$env:`）、PowerShell 自动变量、`Get-Command <名字>` 查过的函数、成员名与哈希键 |
-| 校验 | 改名后与压缩后各解析一次；语法有任何错误就中止，不会产出坏包 |
+| 语句 | 同一个语句块里两条语句之间的换行 → `;`。分界由解析器给出（`StatementBlockAst.Statements`），不靠猜：`if`/`else`、`try`/`catch`、`param()` 这些**跨行才合法**的位置属于不同节点，不会被碰 |
+| 词法 | 删注释（`#Requires` 保留）、删行首缩进；token 之间只在**标点旁**丢掉空格（`(`、`[`、`@(`、`,`、`;`、`=`、`|`、`&`、`. `、`::` 等），其余一律保留一个空格或原本的换行 —— 猜错空格会静默改变含义（`- (x)` vs `-(x)`、`$h [$k]` vs `$h[$k]`） |
+| 语法 | 内部函数名 → `a`、`b`…`z`、`a1`…（**全项目一套映射**，避开所有别名与 cmdlet 名，否则 `fl` 这类名字会被 `Format-List` 截胡）；局部变量 → 同一套短名的另一个编号空间（每文件一套） |
+| 不改名 | `param()` 里的名字（按名传参：`-Library`、`-Count`、`-NoInject`，`$PSBoundParameters` 也按它查键 —— 改了名 `config set` 会认不出 `Arg`）、带作用域/驱动器前缀的变量（`$script:`、`$env:`）、PowerShell 自动变量、`Get-Command <名字>` 查过的函数、成员名与哈希键 |
+| 校验 | 改名后、语句合并后、词法压缩后各解析一次；语法有任何错误就中止，不会产出坏包。`Verify=1` 再拿产物跑一遍真实 CLI 测试：101 项集成断言全过才算打包成功 |
+
+两个踩过的 AST 坑（写在这里省得下次再撞）：
+
+- 变量名必须从 `VariablePath.UserPath` 取。`VariablePath.UnqualifiedPath` 在本机运行时对 `$x` 和 `$script:x` **一律返回空串**，拿它做映射会“看起来改名了、实际一半没改”，结果 `$MaxItems` 与 `$script:MaxItems` 指向两个变量，历史写不进去。
+- 函数返回 `HashSet` 之类的空集合时会被 PowerShell 展开成 `$null`，调用方 `.Contains()` 立刻炸 —— 用 `return , $set` 包一层，或者在调用处 `@()`。
+
+实测（本仓库）：`224571 → 140865` 字节，`37.3%` 更小（只压缩不改名是 30.6%）；`clipboard.ps1` −34%、`lib/plugins.ps1` −49%、`themes.ps1` −48%。
 
 > `Verify=1` 的意义：包里的函数名与变量名都变了，**只有跑一遍真实 CLI 测试才能证明功能没变**；`-Source` 指向产物时单元组会跳过（它按名字调内部函数），集成与端到端照常跑。
 

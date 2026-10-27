@@ -146,11 +146,22 @@ try {
   $scriptFiles += @($pluginFiles | Where-Object { $_ -like '*.ps1' })
 
   $map = @{}
+  $scopeMaps = @{}
   if ($minify) {
     . (Join-Path $root 'build\minify.ps1')
     if ($rename) {
       $map = New-FunctionMap $scriptFiles
       Write-Step ('internal functions renamed: ' + $map.Count)
+      # one scope for the main script and everything it dot-sources, one per plugin
+      $sharedFiles = @($scriptFiles | Where-Object { $_ -notlike (Join-Path $srcRoot 'plugins*') })
+      $shared = New-ScriptVariableMap $sharedFiles
+      foreach ($file in @($scriptFiles | Where-Object { $_ -like (Join-Path $srcRoot 'plugins*') })) {
+        $scopeMaps[$file] = New-ScriptVariableMap @($file)
+      }
+      $scopeCount = $shared.Count
+      foreach ($k in $scopeMaps.Keys) { $scopeCount += $scopeMaps[$k].Count }
+      Write-Step ('script variables renamed: ' + $scopeCount)
+      $scopeMaps['*'] = $shared
     }
   }
 
@@ -163,8 +174,11 @@ try {
     $parent = Split-Path -Parent $target
     if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
     if ($minify) {
-      if ($rename) { $r = Invoke-MinifyFile -Path $file -OutPath $target -FunctionMap $map }
-      else { $r = Invoke-MinifyFile -Path $file -OutPath $target -NoRename }
+      if ($rename) {
+        $vars = $scopeMaps['*']
+        if ($scopeMaps.ContainsKey($file)) { $vars = $scopeMaps[$file] }
+        $r = Invoke-MinifyFile -Path $file -OutPath $target -FunctionMap $map -ScriptVarMap $vars
+      } else { $r = Invoke-MinifyFile -Path $file -OutPath $target -NoRename }
       $before += $r.Before
       $after += $r.After
       $rows.Add($r)

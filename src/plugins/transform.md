@@ -45,7 +45,7 @@ $ clipboard transform "1 snake"
 
 ## 右键菜单
 
-右键菜单里每个**配置的模式**各占一项：`Transform as snake_case`、`Transform as UPPER`……点哪项就用哪个模式改写这一条并写入剪贴板（同时记入历史）。项目多少由 `transform.Modes` 决定：
+右键菜单里每个**配置的模式**各占一项：`Transform as snake_case`、`Transform as UPPER`……点哪项就用哪个模式改写这一条，**写进剪贴板后直接把结果粘贴回原来的窗口**（不用再点一次条目），同时记入历史。项目多少由 `transform.Modes` 决定：
 
 ```ini
 # clipboard.ini：右键给这三个模式各开一项（顺序即菜单顺序）
