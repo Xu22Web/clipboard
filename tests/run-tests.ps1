@@ -139,7 +139,7 @@ try {
   if (Test-Path -LiteralPath $libPath) { $libFiles = @(Get-ChildItem -LiteralPath $libPath -Filter '*.ps1' -File | Sort-Object -Property Name) }
 
   # the entry file names these; a package must carry all of them
-  $requiredLib = @('base', 'ini', 'values', 'util', 'theme-stub', 'clip', 'store', 'hotkey', 'entry',
+  $requiredLib = @('base', 'ini', 'values', 'util', 'keyhook', 'theme-stub', 'clip', 'store', 'hotkey', 'entry',
     'picker-geom', 'picker-draw', 'picker', 'serve', 'diag', 'shortcut', 'config', 'usage', 'dispatch')
   $missingLib = @()
   foreach ($m in $requiredLib) {
@@ -205,9 +205,9 @@ try {
     $rootHits = ([regex]::Matches([IO.File]::ReadAllText($entryPath), '(?m)^\$Root = Split-Path -Parent \$PSCommandPath\s*$')).Count
     Check 'struct' 'tool root is computed once, in the entry' ($rootHits -eq 1) ([string]$rootHits + ' occurrence(s)')
 
-    # the panel takes the keyboard on purpose (Win+V style) and hands the foreground back
-    # when it closes: ShowDialog would block the message loop, and opting out of activation
-    # (ShowWithoutActivation) would leave the search box unreachable by keyboard
+    # The panel must never take the foreground: a low-level keyboard hook feeds its controls
+    # instead (lib/keyhook.ps1), so the user's window keeps the focus and the caret. The
+    # takeover fallback (no hook, or an IME) still hands the foreground back on close.
     $pickerText = [IO.File]::ReadAllText((Join-Path $libPath 'picker.ps1'))
     Check 'struct' 'panel is shown without ShowDialog' (-not ($pickerText -match '\$form\.ShowDialog\(')) 'form.ShowDialog found'
     $topHits = ([regex]::Matches($pickerText, '(?m)^\s*\$form\.TopMost\s*=')).Count
@@ -215,11 +215,13 @@ try {
     $showHits = ([regex]::Matches($pickerText, '(?m)^\s*\$form\.Show\(\)\s*$')).Count
     Check 'struct' 'panel is shown once, non-modally' ($showHits -eq 1) ([string]$showHits + ' call(s)')
     $winText = [IO.File]::ReadAllText((Join-Path $libPath 'util.ps1'))
-    Check 'struct' 'the panel form does not opt out of activation' (-not ($winText -match 'ShowWithoutActivation')) 'override present'
+    Check 'struct' 'the panel form never activates' (($winText -match 'ShowWithoutActivation') -and ($winText -match '0x08000000')) 'no-activate override missing'
     Check 'struct' 'panel hands the foreground back when it closes' ($pickerText -match 'SetForegroundWindow\(\$prev\)') 'restore call missing'
+    Check 'struct' 'panel installs and removes the key hook' (($pickerText -match 'Enable-KeyHook') -and ($pickerText -match 'Disable-KeyHook')) 'hook calls missing'
+    Check 'struct' 'paste releases the key hook before injecting' (($pickerText -match '(?s)function Paste-Clip\s*\{.{0,400}Disable-KeyHook')) 'Disable-KeyHook missing before SendKeys'
 
-    # the Shown handler puts the caret in the search box (typing filters right away) and
-    # paints it active so the state is visible even before the first keystroke
+    # the Shown handler must go through Focus-Search: taking the real focus there would
+    # activate the panel and defeat the hook model
     $tk = $null
     $pe = $null
     $pickerAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $libPath 'picker.ps1'), [ref]$tk, [ref]$pe)
@@ -230,12 +232,15 @@ try {
         }, $true))
     $shownFocus = 0
     $shownPaint = 0
+    $shownHelper = 0
     foreach ($b in $shownBlocks) {
       $text = $b.Arguments[0].Extent.Text
       if ($text -match '\.Focus\(') { $shownFocus++ }
       if ($text -match 'SearchFocus\s*=\s*\$true') { $shownPaint++ }
+      if ($text -match 'Focus-Search') { $shownHelper++ }
     }
-    Check 'struct' 'the Shown handler puts the caret in the search box' ($shownBlocks.Count -eq 1 -and $shownFocus -ge 1) ([string]$shownBlocks.Count + ' handler(s), ' + [string]$shownFocus + ' Focus call(s)')
+    Check 'struct' 'the Shown handler never takes the real focus' ($shownBlocks.Count -eq 1 -and $shownFocus -eq 0) ([string]$shownBlocks.Count + ' handler(s), ' + [string]$shownFocus + ' Focus call(s)')
+    Check 'struct' 'the Shown handler asks Focus-Search' ($shownHelper -eq 1) ([string]$shownHelper + ' call(s)')
     Check 'struct' 'the Shown handler paints the search box active' ($shownPaint -eq 1) ([string]$shownPaint + ' mark(s)')
   }
 

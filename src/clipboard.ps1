@@ -42,7 +42,7 @@ $libDir = Join-Path $Root 'lib'
 # too deep. Only base.ps1 and ini.ps1 assign anything while loading (the defaults and the
 # settings schema); the order below matters for those two and is otherwise for readers.
 $requiredModules = @(
-  'base', 'ini', 'values', 'util', 'theme-stub', 'clip', 'store', 'hotkey', 'entry',
+  'base', 'ini', 'values', 'util', 'keyhook', 'theme-stub', 'clip', 'store', 'hotkey', 'entry',
   'picker-geom', 'picker-draw', 'picker', 'serve', 'diag', 'shortcut', 'config', 'usage', 'dispatch'
 )
 foreach ($module in $requiredModules) {

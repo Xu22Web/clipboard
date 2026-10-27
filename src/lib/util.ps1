@@ -50,12 +50,18 @@ namespace Cb {
   }
   public class FluentForm : System.Windows.Forms.Form {
     public FluentForm() { DoubleBuffered = true; }
-    // The panel takes the keyboard on purpose, the way the shell's Win+V / Win+. panels do:
-    // Show() activates it and lib/picker.ps1 puts the caret in the search box. Whatever was
-    // in front gets the foreground back with SetForegroundWindow when the panel closes, and
-    // Windows then restores that window's own last focus control by itself.
+    // The panel never activates on its own: a low-level keyboard hook (lib/keyhook.ps1) feeds
+    // the controls instead, so the window the user was typing in keeps the foreground, the
+    // focus and the caret. When the hook is unavailable, or an IME needs a real focus, the
+    // picker escalates to a normal activating panel.
+    protected override bool ShowWithoutActivation { get { return true; } }
     protected override System.Windows.Forms.CreateParams CreateParams {
-      get { var cp = base.CreateParams; cp.ClassStyle |= 0x00020000; return cp; }
+      get {
+        var cp = base.CreateParams;
+        cp.ExStyle |= 0x08000000;   // WS_EX_NOACTIVATE
+        cp.ClassStyle |= 0x00020000;
+        return cp;
+      }
     }
   }
   public class FluentList : System.Windows.Forms.ListBox {

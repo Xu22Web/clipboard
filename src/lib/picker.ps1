@@ -65,6 +65,10 @@ function Show-Picker {
     $script:Confirm = $false
     $script:CtrlHeld = $false
     $script:SearchFocus = $false
+    # true while the low-level hook is feeding the panel (the panel itself never activates)
+    $script:PickerHook = $false
+    $script:PickerEscalated = $false
+    $script:PrevMouseDown = $false
     $script:FootMode = 'hints'
     $script:FootMsg = ''
     $script:CapturePaused = (Test-Path -LiteralPath $Paused)
@@ -168,7 +172,7 @@ function Show-Picker {
         } catch { }
       })
     $listHost.Controls.Add($empty)
-    $empty.Add_Click({ $txt.Focus() })
+    $empty.Add_Click({ Focus-Search })
 
     # A thin rounded thumb is painted instead, brightening on hover.
     $sbar = New-Object Windows.Forms.Panel
@@ -207,12 +211,12 @@ function Show-Picker {
     $head.BackColor = $ui.Surface
     # an empty piece of the header is still "the search area": clicking it puts the caret
     # in the box (the panel opens without the keyboard, so the first click brings it over)
-    $head.Add_Click({ $txt.Focus() })
+    $head.Add_Click({ Focus-Search })
 
     $box = New-Object Windows.Forms.Panel
     $box.SetBounds((Px 14), (Px 14), ($form.ClientSize.Width - (Px 30)), (Px 40))
     $box.BackColor = $ui.Field
-    $box.Add_Click({ $txt.Focus() })
+    $box.Add_Click({ Focus-Search })
     $box.Add_Paint({
         param($s, $e)
         try {
@@ -242,7 +246,7 @@ function Show-Picker {
     $icon.BackColor = $ui.Field
     $icon.TextAlign = 'MiddleCenter'
     $icon.Cursor = 'IBeam'
-    $icon.Add_Click({ $txt.Focus() })
+    $icon.Add_Click({ Focus-Search })
 
     $txt = New-Object Windows.Forms.TextBox
     $txt.BorderStyle = 'None'
@@ -624,6 +628,8 @@ function Show-Picker {
     # After = 'paste' (transform copies the rewritten text, then wants it pasted).
     function Paste-Clip {
       $target = $prev
+      # the hook would eat the injected Ctrl+V, so it goes first in every path
+      Disable-KeyHook
       if ($script:NoPaste) { $form.Hide(); $form.Close(); return }
       # the hotkey is usually still held when the panel opens: pasting now would send
       # Ctrl+V with Alt/Ctrl down and land as something else entirely
@@ -846,15 +852,24 @@ function Show-Picker {
             $h.Item.Visible = $any
             $keep[$h.Index] = $any
           }
-          # a separator only makes sense between two items that stay on screen
+          # a separator only makes sense between two items that stay on screen, and two
+          # separators never sit back to back: when every action of a plugin is hidden, the
+          # separator before its header and the one after its group would otherwise both
+          # survive and leave an empty band between the neighbouring groups
+          $prevSep = $false
           for ($k = 0; $k -lt $cm.Items.Count; $k++) {
             $it = $cm.Items[$k]
-            if ($it -isnot [Windows.Forms.ToolStripSeparator]) { continue }
+            if ($it -isnot [Windows.Forms.ToolStripSeparator]) {
+              if ($keep[$k]) { $prevSep = $false }
+              continue
+            }
             $before = $false
             for ($j = 0; $j -lt $k; $j++) { if ($keep[$j]) { $before = $true; break } }
             $after = $false
             for ($j = $k + 1; $j -lt $keep.Length; $j++) { if ($keep[$j]) { $after = $true; break } }
-            $it.Visible = ($before -and $after)
+            $show = ($before -and $after -and -not $prevSep)
+            $it.Visible = $show
+            if ($show) { $prevSep = $true }
           }
         } catch { }
       })
@@ -1083,7 +1098,7 @@ function Show-Picker {
         $script:Hover = -1
       })
     $lst.Add_DoubleClick({ if ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex } })
-    $lst.Add_MouseUp({ param($s, $e) if ($e.Button -eq 'Left') { Sync-Sb; $txt.Focus() } })
+    $lst.Add_MouseUp({ param($s, $e) if ($e.Button -eq 'Left') { Sync-Sb; Focus-Search } })
     # the list can also scroll itself when it owns the focus: keep the painted thumb and
     # the selection in sync when that happens
     $lst.Add_MouseWheel({ Keep-SelectionVisible; Sync-Sb; $lst.Invalidate() })
@@ -1103,7 +1118,7 @@ function Show-Picker {
     $txt.Add_TextChanged({ Sync-Placeholder; $deb.Stop(); $deb.Start() })
     $txt.Add_GotFocus({ $script:SearchFocus = $true; $box.Invalidate() })
     $txt.Add_LostFocus({ $script:SearchFocus = $false; $box.Invalidate() })
-    $clr.Add_Click({ $txt.Text = ''; $txt.Focus() })
+    $clr.Add_Click({ $txt.Text = ''; Focus-Search })
     $form.Add_KeyDown({
         param($s, $e)
         $code = [int]$e.KeyCode
@@ -1191,7 +1206,57 @@ function Show-Picker {
           $footL.Invalidate()
         }
       })
-    $ph.Add_Click({ $txt.Focus() })
+    # ---- input plumbing for the hook model ------------------------------------
+    # While the hook is running the panel never activates, so the search box must not take the
+    # real focus either - that would defeat the whole point. Keys and characters are posted
+    # straight to the controls instead, which keeps every existing handler (the TextChanged
+    # filter, the KeyDown shortcuts) working unchanged.
+    function Focus-Search {
+      if (-not $script:PickerHook) { $txt.Focus() }
+    }
+
+    function Invoke-HookedKey {
+      $keys = @(Get-HookedKeys)
+      if ($keys.Count -eq 0) { return }
+      foreach ($vk in $keys) {
+        $ch = Get-HookedChar $vk
+        $mod = [Windows.Forms.Control]::ModifierKeys
+        $plain = ($mod -band ([Windows.Forms.Keys]::Control -bor [Windows.Forms.Keys]::Alt)) -eq 0
+        # Esc/Enter/Tab/Back translate to control characters - those are shortcuts, not text
+        if ($ch -ne [char]0 -and -not [char]::IsControl($ch) -and $plain) {
+          [void][Cb.Win]::SendMessage($txt.Handle, 0x0102, [IntPtr][int]$ch, [IntPtr]1)   # WM_CHAR
+        } else {
+          [void][Cb.Win]::SendMessage($form.Handle, 0x0100, [IntPtr]$vk, [IntPtr]1)       # WM_KEYDOWN
+          [void][Cb.Win]::SendMessage($form.Handle, 0x0101, [IntPtr]$vk, [IntPtr]1)       # WM_KEYUP
+        }
+      }
+    }
+
+    function Switch-PickerToTakeover {
+      # an IME is composing and needs a real focus (and its candidate window): give up the
+      # hook, activate the panel, and let the normal key handling take over
+      $script:PickerHook = $false
+      $script:PickerEscalated = $true
+      Disable-KeyHook
+      [void][Cb.Win]::SetForegroundWindow($form.Handle)
+      try { $form.Activate() } catch { }
+      $txt.Focus()
+      Write-Log 'picker: keyboard handed to the panel (IME)'
+    }
+
+    function Test-ClickOutside {
+      # the panel never activates under the hook, so Add_Deactivate never fires: a click
+      # outside has to be seen on the button state instead
+      $down = ([Cb.Win]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
+      $clicked = $down -and -not $script:PrevMouseDown
+      $script:PrevMouseDown = $down
+      if (-not $clicked) { return $false }
+      if ($form.Bounds.Contains([Windows.Forms.Cursor]::Position)) { return $false }
+      Write-Log 'picker: dismissed by a click outside'
+      return $true
+    }
+
+    $ph.Add_Click({ Focus-Search })
 
     $form.Add_Paint({
         param($s, $e)
@@ -1208,14 +1273,12 @@ function Show-Picker {
         Size-List
         Sync-Sb
         Update-List ''
-        # The panel owns the keyboard on purpose, the way the shell's Win+V / Win+. panels
-        # do: the caret lands in the search box, so typing filters immediately. Nobody is
-        # left without a caret - the foreground goes back to the previous window when the
-        # panel closes (see the SetForegroundWindow right after the message loop).
-        $txt.Focus()
+        # The search box looks focused from the first frame (accent underline) but only takes
+        # the real focus when the hook is not available - see Focus-Search.
+        Focus-Search
         $script:SearchFocus = $true
         $box.Invalidate()
-        Write-Log ('picker: shown ' + $script:Theme + '/' + $script:UiFamily + ' items=' + $script:Entries.Count + ' scale=' + $script:UiScale + ' size=' + $form.Width + 'x' + $form.Height + ' at ' + $form.Left + ',' + $form.Top)
+        Write-Log ('picker: shown ' + $script:Theme + '/' + $script:UiFamily + ' items=' + $script:Entries.Count + ' scale=' + $script:UiScale + ' size=' + $form.Width + 'x' + $form.Height + ' at ' + $form.Left + ',' + $form.Top + ' hook=' + $script:PickerHook)
       })
 
     $script:ShownAt = Get-Date
@@ -1229,40 +1292,62 @@ function Show-Picker {
         $script:PickerGeo = @{ W = $form.Width; H = $form.Height; L = $form.Left; T = $form.Top }
       })
     $form.Add_Activated({
-        # Show() activates the form, but the control that takes the caret is decided when
-        # the window really becomes active - this is what makes typing filter immediately
-        if (-not $txt.Focused) { $txt.Focus() }
+        # only reached in takeover mode; in hook mode the panel never activates
+        if (-not $txt.Focused) { Focus-Search }
       })
     $form.Add_Deactivate({
         $script:CtrlHeld = $false
         if (((Get-Date) - $script:ShownAt).TotalMilliseconds -gt 450) { $form.Close() }
       })
 
-    # Non-modal on purpose: ShowDialog would block this message pump. The form activates
-    # (that is what puts the caret in the search box) and the loop runs until it closes.
-    $form.ActiveControl = $txt
+    # Two input models, decided at runtime:
+    #   hook     - the form never activates; a low-level hook feeds the controls, so the
+    #              window the user was typing in keeps the foreground, the focus and the
+    #              caret. Closing only unhooks; nothing has to be restored.
+    #   takeover - no hook (or an IME asked for a real focus): the panel activates, and the
+    #              foreground is handed back on close.
+    $script:PickerHook = $false
+    $script:PickerEscalated = $false
+    # seed from the real button state: starting at $false would read a button the user was
+    # already holding as a fresh click and close the panel on its first frame
+    $script:PrevMouseDown = ([Cb.Win]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
+
+    # Non-modal on purpose: ShowDialog would block this message pump
     $form.Show()
-    # a hotkey carries the right to take the foreground with it; Activate() makes sure the
-    # window is also the active one in its own thread before the caret is placed
-    $form.Activate()
+    # the hook swallows the keys the panel wants; this thread replays them, which is also the
+    # only thread allowed to touch these windows. Without it the panel falls back to the
+    # activating model.
+    $script:PickerHook = Enable-KeyHook
+    if (-not $script:PickerHook) {
+      $form.ActiveControl = $txt
+      $form.Activate()
+    }
+    Write-Log ('picker: input=' + $(if ($script:PickerHook) { 'hook' } else { 'takeover' }))
     # HWND_TOPMOST with SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE: on top of the other windows
-    # without touching the activation state Show() just established.
+    # without touching the activation state, which is what keeps the caret where it was
     [void][Cb.Win]::SetWindowPos($form.Handle, [IntPtr](-1), 0, 0, 0, 0, 0x13)
+
     while (-not $form.IsDisposed) {
       [Windows.Forms.Application]::DoEvents()
       if ($script:PickerClose) { $form.Close(); break }
-      # safety net: if activation never happened (Show() refused), a click elsewhere is the
-      # dismiss gesture; once the panel did activate, Add_Deactivate handles it instead.
-      if (-not $form.ContainsFocus -and ((Get-Date) - $script:ShownAt).TotalMilliseconds -gt 350) {
+      if ($script:PickerHook) {
+        # the hook queues the keys; replay them into the panel's own controls
+        Invoke-HookedKey
+        if (Test-KeyHookEscalate) { Switch-PickerToTakeover }
+        if (Test-ClickOutside) { $form.Close(); break }
+      } elseif (-not $form.ContainsFocus -and ((Get-Date) - $script:ShownAt).TotalMilliseconds -gt 350) {
+        # safety net for the takeover model: a click elsewhere dismisses the panel
         $fg = [Cb.Win]::GetForegroundWindow()
         if ($fg -ne $form.Handle -and $fg -ne $prev) { $form.Close(); break }
       }
       Start-Sleep -Milliseconds 12
     }
 
-    # hand the foreground back to whoever had it: Windows restores that window's own last
-    # focus control on SetForegroundWindow, so the user carries on typing where they were
-    if ($prev -ne [IntPtr]::Zero) { [void][Cb.Win]::SetForegroundWindow($prev) }
+    Disable-KeyHook
+    # only takeover mode moved the foreground, so only it has to hand it back
+    if ($script:PickerEscalated -or (-not $script:PickerHook)) {
+      if ($prev -ne [IntPtr]::Zero) { [void][Cb.Win]::SetForegroundWindow($prev) }
+    }
 
     if ($script:SaveWinSize -or $script:SaveWinPos) {
       try {
