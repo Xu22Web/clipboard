@@ -500,11 +500,21 @@ function Get-PluginClearKeeps {
 # flattened context menu actions contributed by every plugin, in load order
 # Each entry carries the owning plugin name, so the menu can keep one plugin's items
 # together and draw a separator between groups instead of one flat list.
+# ContextMenu may be an array or a scriptblock that returns one: a plugin whose item count
+# depends on its own setting (transform offers one entry per configured mode) builds the
+# list instead of declaring it statically.
 function Get-PluginActions {
   $out = New-Object System.Collections.Generic.List[object]
   foreach ($p in @($script:Plugins)) {
     if (-not $p.ContainsKey('ContextMenu')) { continue }
-    foreach ($a in @($p['ContextMenu'])) {
+    $decl = $p['ContextMenu']
+    if ($decl -is [scriptblock]) {
+      try { $decl = @(& $decl) } catch {
+        Write-Log ('plugin menu failed (' + [string]$p['Name'] + '): ' + $_.Exception.Message)
+        continue
+      }
+    }
+    foreach ($a in @($decl)) {
       if ($a -isnot [hashtable] -or -not $a.ContainsKey('Label') -or -not $a.ContainsKey('Invoke')) { continue }
       $copy = @{}
       foreach ($k in @($a.Keys)) { $copy[$k] = $a[$k] }

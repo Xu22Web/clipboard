@@ -541,6 +541,17 @@ try {
     $timed = @(Get-PluginTicks)
     Check 'unit' 'Tick seconds may be a scriptblock' (($timed.Count -eq 1) -and ($timed[0].Seconds -eq 120)) ($timed[0].Seconds -as [string])
 
+    # a plugin may build its menu items at load time, so one setting can produce several
+    $script:Plugins = @(@{
+        Name        = 'dyn'
+        ContextMenu = { @(@{ Label = 'A'; Invoke = { param($r) } }, @{ Label = 'B'; Invoke = { param($r) } }) }
+      })
+    $dyn = @(Get-PluginActions)
+    Check 'unit' 'ContextMenu may be a scriptblock' (($dyn.Count -eq 2) -and ($dyn[0]['Label'] -eq 'A') -and ($dyn[1]['Plugin'] -eq 'dyn')) ($dyn.Count -as [string])
+    $script:Plugins = @(@{ Name = 'boom'; ContextMenu = { throw 'boom' } })
+    Check 'unit' 'a broken menu scriptblock is skipped' (@(Get-PluginActions).Count -eq 0) ''
+    $script:Plugins = @()
+
     $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('item-marks'))
     $menuActs = @(Get-PluginActions)
     $allMarks = [pscustomobject]@{ Payload = 'x'; Time = 0; Marks = 'psh' }
@@ -565,23 +576,58 @@ try {
     $tActs = @(Get-PluginActions)
     Check 'unit' 'transform registers one menu entry' (($tActs.Count -eq 1) -and ($tActs[0]['Plugin'] -eq 'transform')) ($tActs.Count -as [string])
     $tMenu = $tActs[0]
-    Check 'unit' 'transform menu caption names the mode' ((Get-ActionText $tMenu ([pscustomobject]@{ Payload = 'Hello World'; Marks = '' })) -eq 'Transform as snake') (Get-ActionText $tMenu ([pscustomobject]@{ Payload = 'Hello World'; Marks = '' }))
+    Check 'unit' 'transform menu caption names the mode' ((Get-ActionText $tMenu ([pscustomobject]@{ Payload = 'Hello World'; Marks = '' })) -eq 'Transform as snake_case') (Get-ActionText $tMenu ([pscustomobject]@{ Payload = 'Hello World'; Marks = '' }))
     Check 'unit' 'transform menu shows for text rows' ((Test-PluginAction $tMenu ([pscustomobject]@{ Payload = 'Hello World'; Marks = '' })) -eq $true) ''
     Check 'unit' 'transform menu hides for file lists' ((Test-PluginAction $tMenu ([pscustomobject]@{ Payload = (([string][char]1) + 'C:\a.txt'); Marks = '' })) -eq $false) ''
+    Check 'unit' 'transform menu hides an empty row' ((Test-PluginAction $tMenu ([pscustomobject]@{ Payload = ''; Marks = '' })) -eq $false) ''
+    Check 'unit' 'transform menu skips a null row' ((Test-PluginAction $tMenu $null) -eq $false) ''
+
+    # transform.Modes decides how many entries the menu gets, in the written order
+    $tRow = [pscustomobject]@{ Payload = 'Hello World demo'; Marks = '' }
+    [IO.File]::WriteAllLines($cfg, @('transform.Mode=keep', 'transform.Modes=upper, kebab ,snake'), $Utf8)
+    $script:IniCache = $null
+    Apply-PluginSettings
+    $tActs = @(Get-PluginActions)
+    Check 'unit' 'Modes lists one entry per mode' ($tActs.Count -eq 3) ($tActs.Count -as [string])
+    Check 'unit' 'Modes keeps the written order' ((@($tActs | ForEach-Object { Get-ActionText $_ $tRow }) -join '|') -eq 'Transform as UPPER|Transform as kebab-case|Transform as snake_case') (@($tActs | ForEach-Object { Get-ActionText $_ $tRow }) -join '|')
+    Check 'unit' 'Modes works while the paste mode stays keep' ((Test-PluginAction $tActs[0] $tRow) -eq $true) ''
+    [void](& $tActs[1]['Invoke'] $tRow)
+    Check 'unit' 'each Modes entry rewrites with its own mode' ([string](@(Get-Records)[0].Payload) -eq 'hello-world-demo') ([string](@(Get-Records)[0].Payload))
+
+    [IO.File]::WriteAllLines($cfg, @('transform.Mode=snake', 'transform.Modes=foo,snake,snake,keep,title'), $Utf8)
+    $script:IniCache = $null
+    Apply-PluginSettings
+    Check 'unit' 'Modes skips unknown, repeated and keep values' (@(Get-PluginActions).Count -eq 2) (@(Get-PluginActions).Count -as [string])
+
+    [IO.File]::WriteAllLines($cfg, @('transform.Mode=title'), $Utf8)
+    $script:IniCache = $null
+    Apply-PluginSettings
+    Check 'unit' 'empty Modes falls back to the configured mode' ((@(Get-PluginActions | ForEach-Object { Get-ActionText $_ $tRow }) -join '|') -eq 'Transform as Title Case') (@(Get-PluginActions | ForEach-Object { Get-ActionText $_ $tRow }) -join '|')
+
     [IO.File]::WriteAllLines($cfg, @('transform.Mode=keep'), $Utf8)
     $script:IniCache = $null
     Apply-PluginSettings
-    Check 'unit' 'transform menu hides while the mode is keep' ((Test-PluginAction $tMenu ([pscustomobject]@{ Payload = 'Hello World'; Marks = '' })) -eq $false) ''
+    Check 'unit' 'keep mode with no Modes offers nothing' (@(Get-PluginActions).Count -eq 0) (@(Get-PluginActions).Count -as [string])
     [IO.File]::WriteAllLines($cfg, @('transform.Mode=snake'), $Utf8)
     $script:IniCache = $null
     Apply-PluginSettings
 
-    # two plugins keep their own block, in load order
+    # several items from one plugin stay one block: a setting changes the count, the
+    # grouping follows the plugin, and the plugins follow the load order
     $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('item-marks', 'transform'))
+    Register-PluginSettings
+    [IO.File]::WriteAllLines($cfg, @('transform.Modes=upper,snake,kebab'), $Utf8)
+    $script:IniCache = $null
+    Apply-PluginSettings
     $owners = @(Get-PluginActions | ForEach-Object { [string]$_['Plugin'] })
-    Check 'unit' 'menu keeps one block per plugin' (($owners -join ',') -eq 'item-marks,item-marks,item-marks,transform') ($owners -join ',')
+    Check 'unit' 'menu keeps one block per plugin' (($owners -join ',') -eq 'item-marks,item-marks,item-marks,transform,transform,transform') ($owners -join ',')
+    Check 'unit' 'a plugin block stays contiguous' ((@($owners | Select-Object -Unique) -join ',') -eq 'item-marks,transform') (@($owners | Select-Object -Unique) -join ',')
 
     $script:Plugins = @(Load-Plugins (Join-Path $repoRoot 'plugins') @('transform', 'item-marks'))
+    Register-PluginSettings
+    [IO.File]::WriteAllLines($cfg, @('transform.Mode=snake'), $Utf8)
+    $script:IniCache = $null
+    Apply-PluginSettings
     $owners = @(Get-PluginActions | ForEach-Object { [string]$_['Plugin'] })
     Check 'unit' 'load order follows the Plugins list' (($owners -join ',') -eq 'transform,item-marks,item-marks,item-marks') ($owners -join ',')
     $names = @($script:Plugins | ForEach-Object { [string]$_['Name'] })
@@ -698,21 +744,21 @@ try {
     Check 'unit' 'highlight decor paints the text' ($hdec.TextColor -eq '#005FB8') $hdec.TextColor
     Check 'unit' 'highlight decor paints the background' ($hdec.BackColor -eq '#24005FB8') $hdec.BackColor
 
-    # the highlight colours are plugin settings; empty means "follow the theme"
-    Check 'unit' 'highlight ink is an ini key' ($script:IniSchema.Contains('item-marks.HighlightColor')) ''
-    Check 'unit' 'highlight fill is an ini key' ($script:IniSchema.Contains('item-marks.HighlightBg')) ''
-    Check 'unit' 'highlight settings default to empty' ((Get-PluginSetting 'item-marks' 'HighlightColor') -eq '') (Get-PluginSetting 'item-marks' 'HighlightColor')
+    # the highlight colours are theme items: no ini key may override them
+    Check 'unit' 'highlight ink is not an ini key' (-not $script:IniSchema.Contains('item-marks.HighlightColor')) ''
+    Check 'unit' 'highlight fill is not an ini key' (-not $script:IniSchema.Contains('item-marks.HighlightBg')) ''
+    Check 'unit' 'highlight colours are theme settings' (($script:PluginThemeValues.ContainsKey('item-marks.EmphasisInk')) -and ($script:PluginThemeValues.ContainsKey('item-marks.EmphasisFill'))) ''
+    Check 'unit' 'highlight ink comes from the theme' ($hdec.TextColor -eq (Get-PluginTheme 'item-marks' 'EmphasisInk')) $hdec.TextColor
+    Check 'unit' 'highlight fill comes from the theme' ($hdec.BackColor -eq (Get-PluginTheme 'item-marks' 'EmphasisFill')) $hdec.BackColor
+    # an ini line with the old key is ignored, the theme keeps painting the row
     [IO.File]::WriteAllLines($cfg, @('item-marks.HighlightColor=#123456', 'item-marks.HighlightBg=#99123456'), $Utf8)
     $script:IniCache = $null
     Apply-PluginSettings
     $idec = Get-PluginRowDecor $hrec
-    Check 'unit' 'ini highlight ink wins over the theme' ($idec.TextColor -eq '#123456') $idec.TextColor
-    Check 'unit' 'ini highlight fill wins over the theme' ($idec.BackColor -eq '#99123456') $idec.BackColor
-    Check 'unit' 'theme value stays independent of the ini key' ((Get-PluginTheme 'item-marks' 'EmphasisInk') -eq '#005FB8') (Get-PluginTheme 'item-marks' 'EmphasisInk')
+    Check 'unit' 'a stale ini highlight key is ignored' (($idec.TextColor -eq $hdec.TextColor) -and ($idec.BackColor -eq $hdec.BackColor)) ($idec.TextColor + ' / ' + $idec.BackColor)
     [IO.File]::WriteAllLines($cfg, @(), $Utf8)
     $script:IniCache = $null
     Apply-PluginSettings
-    Check 'unit' 'empty ini key follows the theme again' ((Get-PluginRowDecor $hrec).TextColor -eq '#005FB8') (Get-PluginRowDecor $hrec).TextColor
     $prec = [pscustomobject]@{ Payload = 'hi'; Time = 0; Marks = 'ps' }
     $pdec = Get-PluginRowDecor $prec
     Check 'unit' 'pin and star both become glyph marks' ($pdec.Marks.Count -eq 2) ($pdec.Marks.Count -as [string])

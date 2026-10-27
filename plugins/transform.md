@@ -45,27 +45,36 @@ $ clipboard transform "1 snake"
 
 ## 右键菜单
 
-面板右键多一项 **`Transform as <模式>`**，标题里的模式就是当前的 `transform.Mode`，点了按该模式改写这一条并写入剪贴板（同时记入历史）。
+右键菜单里每个**配置的模式**各占一项：`Transform as snake_case`、`Transform as UPPER`……点哪项就用哪个模式改写这一条并写入剪贴板（同时记入历史）。项目多少由 `transform.Modes` 决定：
 
-- 模式是 `keep` 时不显示（没有可执行的改写）。
-- 文件清单条目不显示（同粘贴路径，不改写路径）。
-- 右键项由插件自己声明，基础层只负责“同一插件的项连续排列、不同插件之间有分隔线”。
+```ini
+# clipboard.ini：右键给这三个模式各开一项（顺序即菜单顺序）
+transform.Modes=snake,kebab,upper
+```
+
+- `transform.Modes` 留空（默认）= 只给当前的 `transform.Mode` 开一项；`Mode=keep` 时一项也没有。
+- 名字不区分大小写、空格与逗号都可以当分隔符；写错的名字、重复的名字与被忽略的 `keep` 都会被丢掉。
+- 文件清单条目不显示（同粘贴路径，不改写路径）；空条目也不显示。
+- `Mode` 只管**粘贴**用哪个模式；`Modes` 只管**菜单列**哪些模式，两者互不影响（可以 `Mode=keep` + `Modes=snake,upper`，即粘贴不改写、只在需要时手动转）。
+- 右键项由插件自己声明（`ContextMenu` 写成脚本块，自己算出要多少项）；基础层按插件分组显示：每组开头一行插件名，组间一条分隔线。
 
 ## 设置项（`clipboard.ini`）
 
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `transform.Mode` | `keep` | 粘贴时使用的改写模式（`keep` / `text` / `upper` / `lower` / `camel` / `snake` / `kebab` / `title`） |
+| `transform.Modes` | 空 | 右键菜单列出的模式，逗号分隔；空 = 只列 `Mode`（`Mode=keep` 则不列） |
 | `transform.Trim` | `1` | `1` = 去掉结果首尾空白 |
 
 ```powershell
 clipboard config set transform.Mode snake
+clipboard config set transform.Modes 'snake,kebab,upper'
 clipboard config set transform.Trim 0
 ```
 
 ## 说明
 
-- **改写规则只有一份**：粘贴钩子与 `transform` 命令都调用插件里的 `Apply` 块（`param($text, $mode)`），不存在两套容易走偏的实现；命令行只是多了一步「取第 N 条 → 写剪贴板 → 记入历史」。
+- **改写规则只有一份**：粘贴钩子、`transform` 命令与右键项都调用插件里的 `Apply` / `CopyAs` 块，不存在两套容易走偏的实现；命令行只是多了一步「取第 N 条 → 写剪贴板 → 记入历史」。
 - **文件清单条目不会被改写**：粘贴的是一批文件路径，改写会破坏路径。
 - 改写只发生在**粘贴路径**上；`clipboard get` / `clipboard put` 与历史里存的内容保持原样。
 - 常驻进程在跑时，`config set transform.Mode ...` 会自动重启常驻进程使新值生效。

@@ -221,7 +221,7 @@ BadgeBg BadgeText KeyCapBg KeyCapBorder Mark Warn
 |---|---|---|
 | [`item-marks`](plugins/item-marks.md) | 置顶 / 收藏 / 高亮：`pin` `unpin` `star` `unstar` `highlight` `unhighlight` `marks`，面板 `Ctrl+P` `Ctrl+S` `Ctrl+H`，右键三个菜单项；高亮改文字与背景色，不改左侧选择条 | `Plugins=item-marks` |
 | [`entry-actions`](plugins/entry-actions.md) | 看清条目再动手：`kind` / `kinds` 分析类型与格式，`open` 按类型打开，面板 `Ctrl+O`，右键“Open link or path”；行图标也由它提供 | `Plugins=entry-actions` |
-| [`transform`](plugins/transform.md) | 粘贴前改写文本：纯文本 / 全大写 / 小写 / 驼峰 / 蛇形 / 烤肉串 / 标题式；右键“Transform as <模式>” | `Plugins=transform` |
+| [`transform`](plugins/transform.md) | 粘贴前改写文本：纯文本 / 全大写 / 小写 / 驼峰 / 蛇形 / 烤肉串 / 标题式；右键按 `transform.Modes` 逐个列出 `Transform as <模式>` | `Plugins=transform` |
 | [`retention`](plugins/retention.md) | 过期清理：按天数自动删除旧条目，受保护标记的行永不清理 | `Plugins=retention` |
 
 点插件名进各自的说明页（命令、设置项、主题项、注意事项）。
@@ -246,7 +246,7 @@ Plugins=item-marks,entry-actions
 | `Description` | 否 | 一句话说明，`clipboard config` 会展示 |
 | `Commands` | 否 | `@{ 'open' = { param($value) ... } }` → 变成 `clipboard open <值>` |
 | `CommandHelp` / `CommandOrder` | 否 | 每个命令的一行说明（`clipboard help` 用）/ 打印顺序 |
-| `ContextMenu` | 否 | `@( @{ Label = '...'; Test = { param($rec) ... }; Invoke = { param($rec) ... } } )`，右键菜单项；`Test` 返回 `$false` 时不显示。**按插件分组**：同一插件的项连续排列，不同插件之间自动加一条分隔线（顺序 = `Plugins=` 加载顺序），整组都被隐藏时分隔线跟着消失 |
+| `ContextMenu` | 否 | `@( @{ Label = '...'; Test = { param($rec) ... }; Invoke = { param($rec) ... } } )`，右键菜单项；`Test` 返回 `$false` 时不显示。**按插件分组**：每组开头一行灰字插件名（不可点），组与组之间一条分隔线，组内不加线也不插标题（顺序 = `Plugins=` 加载顺序）；整组被隐藏时标题与分隔线一起消失。也可以写成**返回同样数组的脚本块**，让项数跟随自己的设置（`transform` 就是这样按 `transform.Modes` 生成多项） |
 | `PanelKeys` | 否 | `@( @{ Key = 'O'; Ctrl = $true; Label = '...'; Test = ...; Invoke = ... } )`，面板按键；不会覆盖基础按键 |
 | `TypeGlyph` | 否 | `{ param($payload) ... }`，条目 → 行图标（返回空 = 该行不画图标）；第一个给出非空值的插件胜出 |
 | `Settings` | 否 | 自己的配置项（`clipboard.ini`），`[ordered]@{ Key = @{ Kind = 'bool'; Default = 0; Desc = '...' } }` |
@@ -298,7 +298,7 @@ Plugins=item-marks,entry-actions
 | 适合 | 行为开关（模式、是否启用） | 颜色、字形、强调样式 |
 | 读取 | `Get-PluginSetting 'x' 'Key'` | `Get-PluginTheme 'x' 'Key'` |
 
-两者也可以叠在一起用：插件把一个外观项同时声明成 `Settings` 键（默认空）和 `ThemeSettings` 项，并在自己代码里写成「ini 有值就用 ini，否则用主题」。`item-marks` 的高亮色就是这样：`item-marks.HighlightColor` 覆盖主题 `[item-marks]` 的 `EmphasisInk`（主题侧只描述"被强调的行"，不叫高亮），ini 留空则跟随主题。
+分界线很简单：**行为**进 `Settings`（`clipboard.ini`，用户可改），**外观**进 `ThemeSettings`（`themes/*.ini`，随主题走）。`item-marks` 的高亮色就是这样落的：高亮行的文字色与底色只有主题键 `[item-marks]` 的 `EmphasisInk` / `EmphasisFill`，`clipboard.ini` 里没有对应项，也没有“ini 覆盖主题”的影子键。
 
 `ThemeSettings` 不会被写进 `clipboard.ini`，`config` 里也看不到（它不是用户可以改的东西）；优先级是插件 `Default` < 主题 ini 段（只对该主题生效），值同样按 `Kind` 校验。
 

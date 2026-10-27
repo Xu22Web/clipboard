@@ -4,10 +4,11 @@
 #   text   line breaks and runs of spaces collapse into single spaces
 #   camel / snake / kebab / title   split on space, _ - and lower->upper, then join
 #
-# Settings: transform.Mode / transform.Trim
+# Settings: transform.Mode / transform.Modes / transform.Trim
 # One-off:  clipboard transform 3            entry 3 with the configured mode
 #           clipboard transform "3 snake"    entry 3 as snake_case (quotes required)
-# Right-click  "Transform as <mode>" applies the configured mode to that row and copies it
+# Right-click  one "Transform as <mode>" entry per mode listed in transform.Modes; with
+#              Modes empty the menu offers the configured transform.Mode only
 #
 # The rewrite itself lives in one shared block (Apply). The paste hook, the command and
 # the context menu all reach it through Get-PluginData - a scriptblock cannot see this
@@ -19,8 +20,9 @@
     'transform' = 'transform entry N and put it on the clipboard (quote "3 snake" for a one-off mode)'
   }
   Settings    = [ordered]@{
-    Mode = @{ Kind = 'enum'; Options = @('keep', 'text', 'upper', 'lower', 'camel', 'snake', 'kebab', 'title'); Default = 'keep'; Desc = 'how a pasted entry is rewritten' }
-    Trim = @{ Kind = 'bool'; Default = 1; Desc = '1 = trim leading and trailing spaces of the result' }
+    Mode  = @{ Kind = 'enum'; Options = @('keep', 'text', 'upper', 'lower', 'camel', 'snake', 'kebab', 'title'); Default = 'keep'; Desc = 'how a pasted entry is rewritten' }
+    Modes = @{ Kind = 'string'; Default = ''; Desc = 'modes offered in the context menu, comma separated; empty = only Mode' }
+    Trim  = @{ Kind = 'bool'; Default = 1; Desc = '1 = trim leading and trailing spaces of the result' }
   }
   # param($text, $mode) -> rewritten text; the input comes back unchanged when the mode
   # is 'keep', the payload is a file list, or the text holds nothing to split
@@ -71,6 +73,38 @@
     if (-not $m) { $m = 'keep' }
     return $m
   }
+  # how a mode is spelled in the menu and in messages
+  ModeLabel   = {
+    param($mode)
+    switch ([string]$mode) {
+      'text' { return 'plain text' }
+      'upper' { return 'UPPER' }
+      'lower' { return 'lower' }
+      'camel' { return 'camelCase' }
+      'snake' { return 'snake_case' }
+      'kebab' { return 'kebab-case' }
+      'title' { return 'Title Case' }
+      default { return [string]$mode }
+    }
+  }
+  # the modes the context menu offers: what transform.Modes lists, or just the configured
+  # Mode when it is empty. Unknown and repeated names are dropped, 'keep' never shows up.
+  MenuModes   = {
+    $known = @('text', 'upper', 'lower', 'camel', 'snake', 'kebab', 'title')
+    $list = @()
+    $raw = [string](Get-PluginSetting 'transform' 'Modes')
+    foreach ($part in @($raw -split '[,;\s]+')) {
+      $n = ([string]$part).Trim().ToLowerInvariant()
+      if (-not $n -or $n -eq 'keep') { continue }
+      if (($known -notcontains $n) -or ($list -contains $n)) { continue }
+      $list += $n
+    }
+    if ($list.Count -eq 0) {
+      $m = [string](& (Get-PluginData 'transform' 'CurrentMode'))
+      if ($m -and $m -ne 'keep') { $list += $m }
+    }
+    return $list
+  }
   # rewrite + put on the clipboard + record it: what both the command and the menu do
   CopyAs      = {
     param($payload, $mode)
@@ -106,26 +140,30 @@
       Write-Host ('[' + $mode + '] ' + (Format-Item $out 100))
     }
   }
-  # acts on the row under the cursor: only when a real mode is configured and the row is
-  # text (a file list has no words to re-join)
-  ContextMenu = @(
-    @{
-      Label  = { param($rec) 'Transform as ' + [string](& (Get-PluginData 'transform' 'CurrentMode')) }
-      Test   = {
-        param($rec)
-        if ($null -eq $rec) { return $false }
-        $m = [string](& (Get-PluginData 'transform' 'CurrentMode'))
-        if (-not $m -or $m -eq 'keep') { return $false }
-        $p = [string]$rec.Payload
-        if ($p.Length -eq 0) { return $false }
-        return ($p[0] -ne [char]1)
-      }
-      Invoke = {
-        param($rec)
-        if ($null -eq $rec) { return }
-        $m = [string](& (Get-PluginData 'transform' 'CurrentMode'))
-        [void](& (Get-PluginData 'transform' 'CopyAs') ([string]$rec.Payload) $m)
+  # one entry per mode the settings ask for; the row under the cursor is rewritten with
+  # that mode, so a single setting decides how many menu items exist
+  ContextMenu = {
+    $out = @()
+    foreach ($m in @(& (Get-PluginData 'transform' 'MenuModes'))) {
+      # GetNewClosure binds this mode into the block, the loop variable changes each pass
+      $mode = [string]$m
+      $out += @{
+        Label  = { param($rec) 'Transform as ' + [string](& (Get-PluginData 'transform' 'ModeLabel') $mode) }.GetNewClosure()
+        Test   = {
+          param($rec)
+          if ($null -eq $rec) { return $false }
+          $p = [string]$rec.Payload
+          if ($p.Length -eq 0) { return $false }
+          # a file list has no words to re-join
+          return ($p[0] -ne [char]1)
+        }
+        Invoke = {
+          param($rec)
+          if ($null -eq $rec) { return }
+          [void](& (Get-PluginData 'transform' 'CopyAs') ([string]$rec.Payload) $mode)
+        }.GetNewClosure()
       }
     }
-  )
+    return $out
+  }
 }

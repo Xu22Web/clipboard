@@ -1684,6 +1684,9 @@ function Show-Picker {
     # would make the plugin groups read as one flat list; the professional renderer draws
     # real divider lines.
     try { $cm.Renderer = New-Object Windows.Forms.ToolStripProfessionalRenderer } catch { }
+    # a group header is a grey, non-clickable line naming the plugin that owns the items
+    $groupFont = $null
+    try { $groupFont = New-Object Drawing.Font($fBody.FontFamily, [Math]::Max(7, $fBody.Size - 1)) } catch { $groupFont = $null }
     $m1 = $cm.Items.Add('Paste'); $m1.ShortcutKeyDisplayString = 'Enter'
     $m1.Add_Click({ Use-Index $lst.SelectedIndex })
     $m2 = $cm.Items.Add('Copy only'); $m2.ShortcutKeyDisplayString = 'Ctrl+Enter'
@@ -1695,9 +1698,10 @@ function Show-Picker {
     $m6.Add_Click({ Request-Clear })
 
     # plugin actions: appended after the built-in ones, hidden unless their Test passes.
-    # Items stay grouped per plugin - one separator between groups, none inside a group -
-    # so a menu never mixes actions from different plugins without a visible break.
+    # Items stay grouped per plugin - a header names the plugin, a separator closes the
+    # previous group - so a menu never mixes actions from different plugins.
     $pluginItems = New-Object System.Collections.Generic.List[object]
+    $groupHeads = New-Object System.Collections.Generic.List[object]
     try {
       if (Get-Command Get-PluginActions -ErrorAction SilentlyContinue) {
         $actions = @(Get-PluginActions)
@@ -1706,10 +1710,14 @@ function Show-Picker {
           $lastOwner = ''
           foreach ($act in $actions) {
             $owner = [string]$act['Plugin']
-            if ($lastOwner -and $owner -ne $lastOwner) {
-              [void]$cm.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
+            if ($owner -ne $lastOwner) {
+              if ($lastOwner) { [void]$cm.Items.Add((New-Object Windows.Forms.ToolStripSeparator)) }
+              $head = $cm.Items.Add($owner)
+              $head.Enabled = $false
+              if ($null -ne $groupFont) { $head.Font = $groupFont }
+              $groupHeads.Add(@{ Item = $head; Owner = $owner; Index = ($cm.Items.Count - 1) })
+              $lastOwner = $owner
             }
-            $lastOwner = $owner
             $item = $cm.Items.Add((Get-ActionText $act $null))
             if ($act.ContainsKey('Key')) { $item.ShortcutKeyDisplayString = [string]$act['Key'] }
             $item.Tag = $act
@@ -1724,7 +1732,7 @@ function Show-Picker {
                   Update-List $txt.Text
                 } catch { Write-Log ('plugin action failed: ' + $_.Exception.Message) }
               })
-            $pluginItems.Add($item)
+            $pluginItems.Add(@{ Item = $item; Owner = $owner; Index = ($cm.Items.Count - 1) })
           }
         }
       }
@@ -1743,31 +1751,43 @@ function Show-Picker {
           $m6.Enabled = ($script:Entries.Count -gt 0)
           $cur = $null
           if ($has) { $cur = $script:Filtered[$lst.SelectedIndex] }
-          foreach ($it in $pluginItems) {
+          # A drop-down that is still opening reports Visible=false for every item, so the
+          # layout is tracked here and applied afterwards instead of read back.
+          $keep = [bool[]]::new($cm.Items.Count)
+          for ($k = 0; $k -lt $keep.Length; $k++) {
+            $keep[$k] = ($cm.Items[$k] -isnot [Windows.Forms.ToolStripSeparator])
+          }
+          $ownerShown = @{}
+          foreach ($slot in $pluginItems) {
+            $it = $slot.Item
             $show = $false
             if ($null -ne $cur -and (Get-Command Test-PluginAction -ErrorAction SilentlyContinue)) {
               $show = Test-PluginAction $it.Tag $cur
             }
             $it.Visible = $show
             $it.Enabled = $show
+            $keep[$slot.Index] = $show
             if ($show) {
               # a plugin may compute its label per row: 'Pin to top' / 'Remove pin'
               $it.Text = Get-ActionText $it.Tag $cur
+              $ownerShown[[string]$slot.Owner] = $true
             }
           }
-          # a separator only makes sense between two visible items, so a group whose items
-          # are all hidden does not leave a stray line behind
-          $shown = @()
-          for ($k = 0; $k -lt $cm.Items.Count; $k++) {
-            $it = $cm.Items[$k]
-            if ($it -is [Windows.Forms.ToolStripSeparator]) { continue }
-            if ($it.Visible) { $shown += $k }
+          # a header follows its group: when every item of a plugin is hidden the name goes
+          # away with them, and the separators around it collapse
+          foreach ($h in $groupHeads) {
+            $any = $ownerShown.ContainsKey([string]$h.Owner)
+            $h.Item.Visible = $any
+            $keep[$h.Index] = $any
           }
+          # a separator only makes sense between two items that stay on screen
           for ($k = 0; $k -lt $cm.Items.Count; $k++) {
             $it = $cm.Items[$k]
             if ($it -isnot [Windows.Forms.ToolStripSeparator]) { continue }
-            $before = @($shown | Where-Object { $_ -lt $k }).Count -gt 0
-            $after = @($shown | Where-Object { $_ -gt $k }).Count -gt 0
+            $before = $false
+            for ($j = 0; $j -lt $k; $j++) { if ($keep[$j]) { $before = $true; break } }
+            $after = $false
+            for ($j = $k + 1; $j -lt $keep.Length; $j++) { if ($keep[$j]) { $after = $true; break } }
             $it.Visible = ($before -and $after)
           }
         } catch { }

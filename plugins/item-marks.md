@@ -72,37 +72,25 @@ $ clipboard del 1
 |---|---|---|
 | `item-marks.MaxPins` | `50` | 置顶条数上限，超出时自动取消最旧的置顶（`0` = 不限） |
 | `item-marks.ClearKeepsPinned` | `1` | `1` = `clear` 与面板“清空”、托盘菜单保留置顶条目；`0` = 一并清掉（收藏条目仍然保留） |
-| `item-marks.HighlightColor` | 空 | 高亮行的文字颜色；**空 = 跟随主题** `[item-marks]` 段的 `EmphasisInk` |
-| `item-marks.HighlightBg` | 空 | 高亮行的背景色（带 alpha 才不盖住选中效果）；**空 = 跟随主题**的 `EmphasisFill`（主题里也为空则不加底色） |
 
 ```powershell
 clipboard config set item-marks.MaxPins 10
-clipboard config set item-marks.HighlightColor '#7FD3FF'   # 只改自己的高亮色，不动主题
+clipboard config set item-marks.ClearKeepsPinned 0
 ```
 
-## 高亮颜色的来源
-
-高亮是插件的设置；主题里的 `EmphasisInk` / `EmphasisFill` 是**外部默认**（主题不叫“高亮”，它描述的是“被强调的行”）。两边键名各自独立，优先级从高到低：
-
-| 层次 | 写在哪 | 键名 | 谁改 |
-|---|---|---|---|
-| 用户设置 | `clipboard.ini` | `item-marks.HighlightColor` / `HighlightBg` | 你（`config set`） |
-| 主题默认 | `themes/<name>.ini` | `[item-marks]` 段的 `EmphasisInk` / `EmphasisFill` | 主题作者 |
-| 插件默认 | 插件代码 | `#9FDDFF` / `#3360CDFF` | 不需要改 |
-
-所以：ini 里留空就跟着主题走（换主题时颜色一起换）；填了值就只改自己的，主题继续按自己的值渲染别的用户。`clipboard marks` 会打印当前生效值与它来自 `ini` 还是 `theme`。
+高亮行的文字色与底色**不在这里**：它们是外观，归主题管（见下节），`clipboard.ini` 里没有对应键，写进去也会被忽略。
 
 ## 主题项（`themes/<name>.ini` 的 `[item-marks]` 段）
 
-这些是主题侧的默认值（不是 `clipboard.ini` 的键），命名上只描述“被强调的行”，不提具体功能；`EmphasisInk` / `EmphasisFill` 可被 `clipboard.ini` 的 `item-marks.HighlightColor` / `HighlightBg` 覆盖，其余只能由主题改：
+这些是主题侧的默认值（不是 `clipboard.ini` 的键），命名上只描述“被强调的行”，不提具体功能；换主题时颜色跟着换，想单改就复制一份主题。
 
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `StarGlyph` | `U+E735` | 收藏行的星标字形 |
 | `StarColor` | `#FFC86E` | 星标颜色 |
 | `PinColor` | 空 | 图钉颜色，空 = 用主题的 `Mark` 色 |
-| `EmphasisInk` | `#9FDDFF` | 强调行的文字色（主题强调色的浅色；可被 `item-marks.HighlightColor` 覆盖） |
-| `EmphasisFill` | `#3360CDFF` | 强调行的底色（带 alpha 才不盖住选中效果；可被 `item-marks.HighlightBg` 覆盖） |
+| `EmphasisInk` | `#9FDDFF` | 高亮行的文字色（主题强调色的浅色） |
+| `EmphasisFill` | `#3360CDFF` | 高亮行的底色（带 alpha 才不盖住选中效果；留空 = 不加底色） |
 
 ```ini
 # themes/win11-light.ini
@@ -112,7 +100,7 @@ EmphasisInk=#005FB8
 EmphasisFill=#24005FB8
 ```
 
-> 强调行用**主题强调色系**（深色主题是浅蓝字 + 20% 蓝底，浅色主题是蓝色字 + 14% 蓝底），与星标/图钉的琥珀色分开；不满意蓝色时改这两个键，或用 `item-marks.HighlightColor` 只改自己。
+> 高亮行用**主题强调色系**（深色主题是浅蓝字 + 20% 蓝底，浅色主题是蓝色字 + 14% 蓝底），与星标/图钉的琥珀色分开；不满意蓝色时改这两个主题键。`clipboard marks` 会打印当前生效值与它们来自哪个主题键。
 
 ## 它向基础层声明了什么
 
