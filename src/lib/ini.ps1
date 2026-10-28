@@ -62,6 +62,7 @@ $script:IniSchema = [ordered]@{
   Undo              = @{ Kind = 'bool'; Default = 1;              Desc = '1 = Ctrl+Z undoes the last delete' }
   DpiAware          = @{ Kind = 'bool'; Default = 1;              Desc = '1 = per-monitor DPI aware rendering' }
   ScrollLines       = @{ Kind = 'int'; Min = -1; Max = 50; Default = 0; Desc = 'wheel step in rows (0 = follow the system)' }
+  Animations        = @{ Kind = 'bool'; Default = 1;              Desc = '1 = hover / selection / scrollbar transitions, 0 = instant' }
   Autostart         = @{ Kind = 'bool'; Default = 1;              Desc = '1 = install creates the logon shortcut (serve)' }
   DesktopShortcut   = @{ Kind = 'bool'; Default = 1;              Desc = '1 = install creates the desktop shortcut (ui)' }
   Plugins           = @{ Kind = 'list'; Default = '';             Desc = 'comma separated plugin names to load (empty = base tool only)' }

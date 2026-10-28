@@ -96,6 +96,8 @@ function Show-Usage {
   Write-Host 'Settings (clipboard.ini only - there are no setting switches):'
   Write-Host '    clipboard config            every key, grouped by base / plugin'
   Write-Host '    clipboard config set K V    validate, write one line, reload the resident'
+  Write-Host '    clipboard config init       add the keys the file is missing, keep the rest'
+  Write-Host '    clipboard config reset      rewrite the file from the defaults (loses values)'
 
   Write-Host ''
   Write-Host 'Examples:'

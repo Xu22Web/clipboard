@@ -169,7 +169,17 @@ switch ($Command.ToLower()) {
   'config' {
     $act = ''
     if ($Value) { $act = $Value.ToLower() }
-    if ($act -eq 'init') { Write-Host ('[ok] template written: ' + (Write-IniTemplate -Force)) }
+    if ($act -eq 'init') {
+      $n = Merge-IniDefaults
+      if ($n -gt 0) { Write-Host ('[ok] added ' + $n + ' missing key(s): ' + $IniPath) }
+      else { Write-Host ('[ok] nothing missing: ' + $IniPath) }
+      Write-Host '     existing values were kept, plugin settings included (config reset rewrites the file)'
+    }
+    elseif ($act -eq 'reset') {
+      Write-Host ('[ok] template rewritten: ' + (Write-IniTemplate -Force))
+      Write-Host '     every value is back to its default'
+      Restart-ResidentIfRunning
+    }
     elseif ($act -eq 'edit') {
       $p = Write-IniTemplate
       Write-Host ('editing: ' + $p)

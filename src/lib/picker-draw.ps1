@@ -10,8 +10,7 @@
 
 # One StringFormat set for the whole process. Idempotent: Show-Picker calls it every time
 # the panel opens and gets the same objects back.
-function New-PickerStringFormats {
-  if ($script:PickerSf) { return $script:PickerSf }
+function New-PickerStringFormats {  if ($script:PickerSf) { return $script:PickerSf }
   $none = New-Object Drawing.StringFormat
   $none.Trimming = [Drawing.StringTrimming]::None
   $none.FormatFlags = [Drawing.StringFormatFlags]::NoWrap
@@ -126,4 +125,26 @@ function Draw-Highlight($g, [string]$text, $rect, [string[]]$tokens, $normal, $h
     $x = $x + $w
     $i = $j
   }
+}
+
+# The backdrop of one row: the plugin's own tint first, then the hover / selection overlay
+# as an eased alpha ramp. Keeping it here means the panel never has to know how a
+# transition is painted, and the ramp stays a pure function of the two alphas.
+function Draw-RowBackdrop($g, [int]$x, [int]$y, [int]$w, [int]$h, [int]$radius, $tint, $selBg, $hoverBg, [double]$selK, [double]$hoverK) {
+  if ($null -ne $tint) {
+    $brush = New-Object Drawing.SolidBrush $tint
+    $path = New-RoundPath $x $y $w $h $radius
+    $g.FillPath($brush, $path)
+    $path.Dispose()
+    $brush.Dispose()
+  }
+  $k = [Math]::Max($selK, $hoverK)
+  if ($k -le 0.01) { return }
+  $colour = $hoverBg
+  if ($selK -ge $hoverK) { $colour = $selBg }
+  $brush = New-Object Drawing.SolidBrush (Scale-Alpha $colour $k)
+  $path = New-RoundPath $x $y $w $h $radius
+  $g.FillPath($brush, $path)
+  $path.Dispose()
+  $brush.Dispose()
 }

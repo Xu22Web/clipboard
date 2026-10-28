@@ -24,6 +24,7 @@ function Apply-Config {
   $script:UndoOn = $true
   $script:DpiAware = $true
   $script:ScrollLines = 0
+  $script:Animations = $true
   $script:Autostart = $true
   $script:DesktopShortcut = $true
   $script:PluginList = @()
@@ -68,6 +69,7 @@ function Apply-Config {
   $v = Get-CfgValue 'DesktopShortcut';   if ($v -eq '0') { $script:DesktopShortcut = $false }
   $v = Get-CfgValue 'DpiAware';          if ($v -eq '0') { $script:DpiAware = $false }
   $v = Get-CfgValue 'ScrollLines';       if ($null -ne $v) { $script:ScrollLines = [int]$v }
+  $v = Get-CfgValue 'Animations';        if ($v -eq '0') { $script:Animations = $false }
   $v = Get-CfgValue 'Plugins'
   if ($null -ne $v) {
     $script:PluginList = @($v -split '[,;]' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
@@ -114,6 +116,7 @@ function Get-ConfigReport {
     Undo              = [string][int][bool]$script:UndoOn
     DpiAware          = [string][int][bool]$script:DpiAware
     ScrollLines       = [string]$script:ScrollLines
+    Animations        = [string][int][bool]$script:Animations
     Autostart         = [string][int][bool]$script:Autostart
     DesktopShortcut   = [string][int][bool]$script:DesktopShortcut
     Plugins           = (@($script:PluginList) -join ',')
@@ -315,9 +318,9 @@ function Restart-ResidentIfRunning {
 }
 
 
-function Write-IniTemplate([switch]$Force) {
-  if ((Test-Path -LiteralPath $IniPath) -and (-not $Force)) { return $IniPath }
-  Ensure-Dir
+# every line of a fresh clipboard.ini, comments included. Shared by `config init` (which
+# only fills gaps) and `config reset` (which replaces the file), so the two can never drift.
+function Get-IniTemplateLines {
   $t = @(
     '# clipboard.ini - flat key=value list. Restart the daemon after editing (clipboard stop, clipboard serve).',
     '# CLI switches win over this file. Every key below can also be written with:',
@@ -378,6 +381,8 @@ function Write-IniTemplate([switch]$Force) {
     'ShowNewlineMarker=1',
     '# wheel step in rows, 0 = follow the system setting',
     'ScrollLines=0',
+    '# 1 = fade / grow transitions on hover, selection, scrollbar and search field, 0 = instant',
+    'Animations=1',
     '# 1 = per-monitor DPI aware rendering, 0 = legacy rendering',
     'DpiAware=1',
     '',
@@ -421,6 +426,54 @@ function Write-IniTemplate([switch]$Force) {
   $all = New-Object System.Collections.Generic.List[string]
   foreach ($l in $t) { $all.Add($l) }
   foreach ($l in $extra) { $all.Add($l) }
+  # one line per item: the caller wraps this in @() and gets a flat string array
+  return $all.ToArray()
+}
+
+
+# `config init`: add the keys the file is missing and leave everything else alone. A value
+# the user set - a plugin setting in particular - is never replaced by its default, because
+# that would silently undo their work. Returns how many keys were added.
+function Merge-IniDefaults {
+  Ensure-Dir
+  $lines = New-Object System.Collections.Generic.List[string]
+  $have = @{}
+  if (Test-Path -LiteralPath $IniPath) {
+    foreach ($l in [IO.File]::ReadAllLines($IniPath, [Text.Encoding]::UTF8)) {
+      $lines.Add($l)
+      if ($l -match '^\s*([A-Za-z0-9_.-]+)\s*=') { $have[$Matches[1].ToLowerInvariant()] = $true }
+    }
+  }
+  # comments are buffered so an added key keeps the explanation that introduces it
+  $pending = New-Object System.Collections.Generic.List[string]
+  $added = 0
+  foreach ($raw in @(Get-IniTemplateLines)) {
+    $s = [string]$raw
+    $tl = $s.Trim()
+    if ($tl -eq '' -or $tl.StartsWith('#')) { $pending.Add($s); continue }
+    if ($tl -notmatch '^\s*([A-Za-z0-9_.-]+)\s*=') { $pending.Clear(); continue }
+    $k = $Matches[1].ToLowerInvariant()
+    if ($have.ContainsKey($k)) { $pending.Clear(); continue }
+    if ($lines.Count -gt 0 -and $pending.Count -gt 0) { $lines.Add('') }
+    foreach ($p in $pending) { $lines.Add($p) }
+    $lines.Add($s)
+    $pending.Clear()
+    $have[$k] = $true
+    $added++
+  }
+  if ($added -gt 0 -or -not (Test-Path -LiteralPath $IniPath)) {
+    [IO.File]::WriteAllText($IniPath, (($lines -join [Environment]::NewLine) + [Environment]::NewLine), $Utf8)
+  }
+  return $added
+}
+
+
+# `config reset`: replace the file with a fresh template. This is the only path that throws
+# values away, and it is never reached by accident.
+function Write-IniTemplate([switch]$Force) {
+  if ((Test-Path -LiteralPath $IniPath) -and (-not $Force)) { return $IniPath }
+  Ensure-Dir
+  $all = @(Get-IniTemplateLines)
   [IO.File]::WriteAllText($IniPath, (($all -join [Environment]::NewLine) + [Environment]::NewLine), $Utf8)
   return $IniPath
 }

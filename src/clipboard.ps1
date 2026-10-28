@@ -13,7 +13,7 @@
   This file is the entry point only: parameter binding, the tool root, the module list and
   the runtime paths. The program itself lives under lib\, layer by layer:
 
-    base -> ini -> util / theme-stub -> clip -> store -> entry -> picker-geom -> picker
+    base -> ini -> util / theme-stub -> clip -> store -> entry -> picker-geom -> anim -> picker
          -> serve / diag / shortcut / config / usage -> dispatch
 
   Copy the whole folder, not just this file: every module is required except themes.ps1 and
@@ -43,7 +43,7 @@ $libDir = Join-Path $Root 'lib'
 # settings schema); the order below matters for those two and is otherwise for readers.
 $requiredModules = @(
   'base', 'ini', 'values', 'util', 'keyhook', 'theme-stub', 'clip', 'store', 'hotkey', 'entry',
-  'picker-geom', 'picker-draw', 'picker', 'serve', 'diag', 'shortcut', 'config', 'usage', 'dispatch'
+  'picker-geom', 'anim', 'picker-draw', 'picker', 'serve', 'diag', 'shortcut', 'config', 'usage', 'dispatch'
 )
 foreach ($module in $requiredModules) {
   $modulePath = Join-Path $libDir ($module + '.ps1')

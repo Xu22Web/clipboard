@@ -74,7 +74,8 @@ Git Bash / MSYS2 下直接 `./src/clipboard`，CMD 下 `src\clipboard.cmd`。
 | **config** | `config` | 全部配置项与生效值（基础项 + 按插件分组，标注 ini / 默认值） |
 | | `config get KEY` | 单个键的生效值与 ini 原始值 |
 | | `config set KEY VAL` | 校验并写入单个键，常驻进程在跑时自动重启生效 |
-| | `config edit` / `config init` | 用记事本编辑 / 写入带默认值的模板 |
+| | `config edit` / `config init` | 用记事本编辑 / **补齐缺失的键**（不碰已有的值） |
+| | `config reset` | 用默认值**重写整个 ini**（唯一会丢配置的路径） |
 | | `themes` | 列出可用主题（`*` = 当前生效） |
 | **setup** | `diag` | 检查运行环境 |
 | | `restore` | 尝试恢复系统原生剪贴板历史的相关设置 |
@@ -111,7 +112,7 @@ Git Bash / MSYS2 下直接 `./src/clipboard`，CMD 下 `src\clipboard.cmd`。
 
 配置**只读**：脚本启动时只读取脚本旁的 `clipboard.ini`，**不创建、不改写、不删除**它（`status`、`config`、`serve`、`ui` 都不会产生文件）。文件不存在或某个键缺失时，直接用内置默认值运行。
 
-需要一份带全部键与注释的模板时执行 `clipboard config init`（已存在则报错，不覆盖）；只想改单个键用 `clipboard config set <key> <value>`。整个 ini 结构是扁平 `key=value`，`#` 或 `;` 开头是注释，`[section]` 行会被忽略。
+需要一份带全部键与注释的模板时执行 `clipboard config init`：它**只补缺失的键**，已写的值（包括插件设置）一律保留，重复执行没有任何副作用。想回到默认值用 `clipboard config reset`（整份重写，会丢掉改过的值）。只想改单个键用 `clipboard config set <key> <value>`。整个 ini 结构是扁平 `key=value`，`#` 或 `;` 开头是注释，`[section]` 行会被忽略。
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
@@ -142,6 +143,7 @@ Git Bash / MSYS2 下直接 `./src/clipboard`，CMD 下 `src\clipboard.cmd`。
 | `Undo` | `1` | `1` = 面板内 `Ctrl+Z` 撤销上一次删除 |
 | `DpiAware` | `1` | `1` = 按系统 DPI 渲染，`0` = 旧渲染方式 |
 | `ScrollLines` | `0` | 滚轮步长（行），`0` = 跟随系统设置 |
+| `Animations` | `1` | `1` = 悬停 / 选中切换 / 滚动条 / 搜索框下划线带过渡，`0` = 全部瞬时（不做整窗淡入，那会改变面板的不激活行为） |
 | `Autostart` | `1` | `1` = `install` 创建登录自启快捷方式（`serve`） |
 | `DesktopShortcut` | `1` | `1` = `install` 创建桌面快捷方式（`ui`） |
 | `Plugins` | 空 | 逗号分隔的插件**文件名**（不含 `.ps1`）。空 = 只加载基础功能（默认）；例如 `Plugins=item-marks` |
@@ -339,6 +341,8 @@ clipboard config set entry-actions.Reveal 0
 
 - `Kind` 与基础 schema 一致：`bool` / `int`（配 `Min`/`Max`）/ `enum`（配 `Options`）/ `regex` / `hotkey` / `list` / `string`；
   非法值会被拒绝（`config set`）或在加载时回退默认并写日志。
+
+> `clipboard config init` 只补缺失的键：插件未启用时它的设置段不会被写出，已写的插件值也不会被默认值顶掉。
 - 插件代码里用 `Get-PluginSetting 'entry-actions' 'Reveal'` 读当前生效值（已合并 ini 与默认值）；外观项用 `Get-PluginTheme`。
 - 插件未在 `Plugins=` 中启用时，它的这些键**不存在**：`config get` 会提示先启用插件，`config init` 也不会写出它的设置段。
 

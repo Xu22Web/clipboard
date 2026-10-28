@@ -62,6 +62,7 @@ function Show-Picker {
     $fBody = $script:FBody; $fSmall = $script:FSmall; $fTiny = $script:FTiny
     $fTitle = $script:FTitle; $fIcon = $script:FIcon; $fIconSmall = $script:FIconSmall; $fIconBig = $script:FIconBig
     $script:Hover = -1
+    $script:Anim = New-AnimState
     $script:Confirm = $false
     $script:CtrlHeld = $false
     $script:SearchFocus = $false
@@ -238,8 +239,8 @@ function Show-Picker {
           $g.DrawPath($pen, $path)
           $path.Dispose()
           $pen.Dispose()
-          if ($script:SearchFocus) {
-            $accentPen = New-Object Drawing.Pen $ui.Accent, (Px 2)
+          if ($script:Anim.Field -gt 0.02) {
+            $accentPen = New-Object Drawing.Pen (Scale-Alpha $ui.Accent ([double]$script:Anim.Field)), (Px 2)
             $g.DrawLine($accentPen, (Px 4), ($h - (Px 2)), ($w - (Px 4)), ($h - (Px 2)))
             $accentPen.Dispose()
           }
@@ -515,18 +516,18 @@ function Show-Picker {
       })
     $grip.Add_Paint({
         param($s, $e)
-        if (-not $script:GripHot) { return }
+        if ($script:Anim.Grip -le 0.02) { return }
         try {
           $e.Graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
-          $pen = New-Object Drawing.Pen ([Drawing.Color]::FromArgb(120, $ui.Dim)), 1
+          $pen = New-Object Drawing.Pen (Scale-Alpha ([Drawing.Color]::FromArgb(120, $ui.Dim)) ([double]$script:Anim.Grip)), 1
           $cw = $grip.ClientSize.Width
           $e.Graphics.DrawLine($pen, ($cw - (Px 4)), ($cw - (Px 9)), ($cw - (Px 9)), ($cw - (Px 4)))
           $e.Graphics.DrawLine($pen, ($cw - (Px 4)), ($cw - (Px 13)), ($cw - (Px 13)), ($cw - (Px 4)))
           $pen.Dispose()
         } catch { }
       })
-    $grip.Add_MouseEnter({ $script:GripHot = $true; $grip.Invalidate() })
-    $grip.Add_MouseLeave({ $script:GripHot = $false; $grip.Invalidate() })
+    $grip.Add_MouseEnter({ Set-AnimTarget $script:Anim 'Grip' 1.0 })
+    $grip.Add_MouseLeave({ Set-AnimTarget $script:Anim 'Grip' 0.0 })
     $grip.Add_MouseDown({
         [void][Cb.Win]::ReleaseCapture()
         [void][Cb.Win]::SendMessage($form.Handle, 0xA1, [IntPtr]0x11, [IntPtr]::Zero)
@@ -537,9 +538,10 @@ function Show-Picker {
         if ($script:SbLen -le 0) { return }
         $e.Graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $hot = ($script:SbHot -or $script:SbDrag -ge 0)
-        $w = Px 3
-        $alpha = 110
-        if ($hot) { $w = Px 6; $alpha = 190 }
+        $k = [double]$script:Anim.Sb
+        if ($hot) { $k = 1.0 }
+        $w = [int][Math]::Round((Px 3) + ($k * ((Px 6) - (Px 3))))
+        $alpha = [int][Math]::Round(110 + ($k * 80))
         $x = [int](($sbar.ClientSize.Width - $w) / 2)
         $br = New-Object Drawing.SolidBrush ([Drawing.Color]::FromArgb($alpha, $ui.Dim))
         $gp = New-RoundPath $x $script:SbTop $w $script:SbLen ([Math]::Max(1, [int]($w / 2)))
@@ -547,8 +549,8 @@ function Show-Picker {
         $gp.Dispose()
         $br.Dispose()
       })
-    $sbar.Add_MouseEnter({ $script:SbHot = $true; $sbar.Invalidate() })
-    $sbar.Add_MouseLeave({ $script:SbHot = $false; $sbar.Invalidate() })
+    $sbar.Add_MouseEnter({ Set-AnimTarget $script:Anim 'Sb' 1.0; $script:SbHot = $true })
+    $sbar.Add_MouseLeave({ Set-AnimTarget $script:Anim 'Sb' 0.0; $script:SbHot = $false })
     $sbar.Add_MouseDown({
         param($s, $e)
         if ($script:SbLen -le 0) { return }
@@ -929,26 +931,16 @@ function Show-Picker {
           }
           $decor = $row.Decor
         }
-        # highlight is a row fill of its own, drawn under the hover / selection overlay
-        if ($decor -and $decor.BackColor -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) {
-          $bgc = Convert-ThemeColor $decor.BackColor
-          if ($null -ne $bgc) {
-            $bgBrush = New-Object Drawing.SolidBrush $bgc
-            $bgPath = New-RoundPath $r.X $r.Y $r.Width $r.Height (Px 4)
-            $g.FillPath($bgBrush, $bgPath)
-            $bgPath.Dispose()
-            $bgBrush.Dispose()
-          }
-        }
-        # Fluent rows stay flat at rest; hover / selection are translucent overlays
-        if ($sel -or $e.Index -eq $script:Hover) {
-          if ($sel) { $fill = $ui.SelBg } else { $fill = $ui.HoverBg }
-          $br = New-Object Drawing.SolidBrush $fill
-          $gp = New-RoundPath $r.X $r.Y $r.Width $r.Height (Px 4)
-          $g.FillPath($br, $gp)
-          $gp.Dispose()
-          $br.Dispose()
-        }
+        # backdrop: plugin tint first, then the eased hover / selection overlay (lib/anim.ps1)
+        if ($null -eq $script:Anim) { $script:Anim = New-AnimState }
+        $tint = $null
+        if ($decor -and $decor.BackColor -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) { $tint = Convert-ThemeColor $decor.BackColor }
+        $selK = 0.0
+        if ($e.Index -eq $script:Anim.SelIndex) { $selK = [double]$script:Anim.Sel }
+        if ($e.Index -eq $script:Anim.PrevSelIndex) { $selK = [Math]::Max($selK, [double]$script:Anim.PrevSel) }
+        $hovK = 0.0
+        if ($e.Index -eq $script:Anim.HoverIndex) { $hovK = [double]$script:Anim.Hover }
+        try { Draw-RowBackdrop $g $r.X $r.Y $r.Width $r.Height (Px 4) $tint $ui.SelBg $ui.HoverBg $selK $hovK } catch { Write-Log ('row backdrop failed: ' + $_.Exception.Message) }
         $label = [string]$lst.Items[$e.Index]
         if (-not $isData) {
           $db = New-Object Drawing.SolidBrush $ui.Faint
@@ -1071,7 +1063,7 @@ function Show-Picker {
     $tip.InitialDelay = 700
     $tip.ReshowDelay = 100
     $tip.AutoPopDelay = 30000
-    $lst.Add_SelectedIndexChanged({ if (-not $lst.IsDisposed) { $lst.Invalidate() } })
+    $lst.Add_SelectedIndexChanged({ if (-not $lst.IsDisposed) { Set-AnimSelection $script:Anim $lst.SelectedIndex } })
     $lst.Add_MouseMove({
         param($s, $e)
         if ($lst.IsDisposed) { return }
@@ -1079,6 +1071,7 @@ function Show-Picker {
         if ($i -ne $script:Hover) {
           $old = $script:Hover
           $script:Hover = $i
+          Set-AnimHover $script:Anim $i
           foreach ($k in @($old, $i)) {
             if ($k -ge 0 -and $k -lt $lst.Items.Count) { $lst.Invalidate($lst.GetItemRectangle($k)) }
           }
@@ -1103,7 +1096,7 @@ function Show-Picker {
     $lst.Add_MouseLeave({
         try { $tip.SetToolTip($lst, '') } catch { }
         if ($lst.IsDisposed) { $script:Hover = -1; return }
-        if ($script:Hover -ge 0 -and $script:Hover -lt $lst.Items.Count) { $lst.Invalidate($lst.GetItemRectangle($script:Hover)) }
+        Set-AnimHover $script:Anim -1
         $script:Hover = -1
       })
     $lst.Add_DoubleClick({ if ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex } })
@@ -1125,8 +1118,8 @@ function Show-Picker {
     $deb.Add_Tick({ $deb.Stop(); Update-List $txt.Text })
     function Flush-List { if ($deb.Enabled) { $deb.Stop(); Update-List $txt.Text } }
     $txt.Add_TextChanged({ Sync-Placeholder; $deb.Stop(); $deb.Start() })
-    $txt.Add_GotFocus({ $script:SearchFocus = $true; $box.Invalidate() })
-    $txt.Add_LostFocus({ $script:SearchFocus = $false; $box.Invalidate() })
+    $txt.Add_GotFocus({ $script:SearchFocus = $true; Set-AnimTarget $script:Anim 'Field' 1.0 })
+    $txt.Add_LostFocus({ $script:SearchFocus = $false; Set-AnimTarget $script:Anim 'Field' 0.0 })
     $clr.Add_Click({ $txt.Text = ''; Focus-Search })
     $form.Add_KeyDown({
         param($s, $e)
@@ -1276,6 +1269,7 @@ function Show-Picker {
         # the box looks focused (accent underline) but only takes the real focus without a hook
         Focus-Search
         $script:SearchFocus = $true
+        Set-AnimTarget $script:Anim 'Field' 1.0
         $box.Invalidate()
         Write-Log ('picker: shown ' + $script:Theme + '/' + $script:UiFamily + ' items=' + $script:Entries.Count + ' scale=' + $script:UiScale + ' size=' + $form.Width + 'x' + $form.Height + ' at ' + $form.Left + ',' + $form.Top + ' hook=' + $script:PickerHook)
       })
@@ -1311,7 +1305,10 @@ function Show-Picker {
     # seed from the real button state: starting at $false would read a button the user is
     # already holding as a fresh click and close the panel on its first frame
     $script:PrevMouseDown = ([Cb.Win]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
-    # Non-modal on purpose: ShowDialog would block this message pump
+    # Non-modal on purpose: ShowDialog would block this message pump. The rounded region is
+    # set before the first paint: doing it in Shown let one square frame through first,
+    # which is the "incomplete" flash the panel used to have.
+    try { $form.Region = New-RoundRegion $form.ClientSize.Width $form.ClientSize.Height (Px 8) } catch { }
     $form.Show()
     # The hook keeps the foreground window untouched. An input method can only be driven
     # through a real focus, so the panel hands itself the keyboard as soon as one is active
@@ -1324,6 +1321,10 @@ function Show-Picker {
 
     while (-not $form.IsDisposed) {
       [Windows.Forms.Application]::DoEvents()
+      # one transition step per tick; the step is 1.0 when animations are off, so the
+      # values land on their targets in a single frame and nothing keeps repainting
+      $am = Invoke-AnimFrame $script:Anim $(if ($script:Animations) { 0.22 } else { 1.0 })
+      if ($am -band 1) { $lst.Invalidate() }; if ($am -band 2) { $sbar.Invalidate() }; if ($am -band 4) { $grip.Invalidate() }; if ($am -band 8) { $box.Invalidate() }
       if ($script:PickerClose) { $form.Close(); break }
       if ($script:PickerHook) {
         # cache the IME state instead of asking per keystroke (a cross-process call); the

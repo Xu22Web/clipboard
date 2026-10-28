@@ -140,7 +140,7 @@ try {
 
   # the entry file names these; a package must carry all of them
   $requiredLib = @('base', 'ini', 'values', 'util', 'keyhook', 'theme-stub', 'clip', 'store', 'hotkey', 'entry',
-    'picker-geom', 'picker-draw', 'picker', 'serve', 'diag', 'shortcut', 'config', 'usage', 'dispatch')
+    'picker-geom', 'anim', 'picker-draw', 'picker', 'serve', 'diag', 'shortcut', 'config', 'usage', 'dispatch')
   $missingLib = @()
   foreach ($m in $requiredLib) {
     if (-not (Test-Path -LiteralPath (Join-Path $libPath ($m + '.ps1')))) { $missingLib += $m }
@@ -445,6 +445,42 @@ try {
     Check 'unit' 'Get-VisibleRowCount 10 rows' ((Get-VisibleRowCount 340 34) -eq 10) ((Get-VisibleRowCount 340 34) -as [string])
     Check 'unit' 'Get-VisibleRowCount floors' ((Get-VisibleRowCount 100 34) -eq 2) ''
     Check 'unit' 'Get-VisibleRowCount never 0' ((Get-VisibleRowCount 10 40) -eq 1) ''
+
+    # ---------------------------------------------------------------- transitions
+    $st = New-AnimState
+    Check 'unit' 'anim starts at rest' (($st.Hover -eq 0) -and ($st.HoverTarget -eq 0) -and ($st.HoverIndex -eq -1)) ''
+    Set-AnimHover $st 3
+    Check 'unit' 'anim hover targets one row' (($st.HoverIndex -eq 3) -and ($st.HoverTarget -eq 1)) ''
+    $mask = Invoke-AnimFrame $st 0.5
+    Check 'unit' 'anim frame eases and reports the list' ((($mask -band 1) -ne 0) -and ($st.Hover -eq 0.5)) ($mask -as [string])
+    $null = Invoke-AnimFrame $st 0.5
+    Check 'unit' 'anim frame settles and then idles' (($st.Hover -eq 1) -and ((Invoke-AnimFrame $st 0.5) -eq 0)) ''
+    Set-AnimSelection $st 2
+    Check 'unit' 'anim selection starts empty' (($st.SelIndex -eq 2) -and ($st.PrevSelIndex -eq -1) -and ($st.Sel -eq 0)) ''
+    Set-AnimSelection $st 5
+    Check 'unit' 'anim selection remembers the previous row' (($st.PrevSelIndex -eq 2) -and ($st.SelIndex -eq 5) -and ($st.Sel -eq 0)) ''
+    Set-AnimSelection $st 5
+    Check 'unit' 'anim selection ignores a repeat' ($st.PrevSelIndex -eq 2) ''
+    $ac = Scale-Alpha ([Drawing.Color]::FromArgb(200, 10, 20, 30)) 0.5
+    Check 'unit' 'Scale-Alpha halves the alpha' (($ac.A -eq 100) -and ($ac.R -eq 10) -and ($ac.B -eq 30)) ($ac.A -as [string])
+    Check 'unit' 'Scale-Alpha keeps full strength' ((Scale-Alpha ([Drawing.Color]::FromArgb(200, 10, 20, 30)) 1.0).A -eq 200) ''
+    Check 'unit' 'Scale-Alpha fades to nothing' ((Scale-Alpha ([Drawing.Color]::FromArgb(200, 10, 20, 30)) 0).A -eq 0) ''
+    $abmp = New-Object Drawing.Bitmap 120, 40
+    $agr = [Drawing.Graphics]::FromImage($abmp)
+    try {
+      $asel = [Drawing.Color]::FromArgb(60, 96, 205, 255)
+      $ahov = [Drawing.Color]::FromArgb(30, 255, 255, 255)
+      Draw-RowBackdrop $agr 0 0 120 40 4 $null $asel $ahov 0.0 0.0
+      Check 'unit' 'row backdrop draws nothing at rest' ($abmp.GetPixel(60, 20).A -eq 0) $abmp.GetPixel(60, 20).ToString()
+      Draw-RowBackdrop $agr 0 0 120 40 4 $null $asel $ahov 1.0 0.0
+      Check 'unit' 'row backdrop draws the selection' (($abmp.GetPixel(60, 20).A -gt 0) -and ($abmp.GetPixel(60, 20).B -eq 255)) $abmp.GetPixel(60, 20).ToString()
+      $tbmp = New-Object Drawing.Bitmap 60, 40
+      $tgr = [Drawing.Graphics]::FromImage($tbmp)
+      try {
+        Draw-RowBackdrop $tgr 0 0 60 40 4 ([Drawing.Color]::FromArgb(255, 0, 255, 0)) $asel $ahov 0.0 0.0
+        Check 'unit' 'row backdrop draws a tint' (($tbmp.GetPixel(30, 20).G -eq 255) -and ($tbmp.GetPixel(30, 20).R -eq 0)) $tbmp.GetPixel(30, 20).ToString()
+      } finally { $tgr.Dispose(); $tbmp.Dispose() }
+    } finally { $agr.Dispose(); $abmp.Dispose() }
     # the height is always chrome + whole rows, so raising the row count can never cut a row
     Check 'unit' 'Get-PanelHeight adds the chrome' ((Get-PanelHeight 10 40 110) -eq 510) ((Get-PanelHeight 10 40 110) -as [string])
     Check 'unit' 'Get-PanelHeight never trims below one row' ((Get-PanelHeight 0 40 110) -eq 150) ''
@@ -538,6 +574,7 @@ try {
     Check 'unit' 'Convert-IniValue hotkey bad' (-not (Convert-IniValue 'Hotkey' 'Ctrl+Nope').Ok) ''
     Check 'unit' 'Convert-IniValue list ok' ((Convert-IniValue 'Plugins' 'item-marks, extra').Value -eq 'item-marks,extra') ''
     Check 'unit' 'Convert-IniValue list rejects bad chars' (-not (Convert-IniValue 'Plugins' 'a b').Ok) ''
+    Check 'unit' 'animations default on' ([string]$script:IniSchema['Animations'].Default -eq '1') ([string]$script:IniSchema['Animations'].Default)
     Check 'unit' 'Convert-IniValue unknown key' (-not (Convert-IniValue 'Nope' '1').Ok) ''
 
     # -------------------------------------------------------------------- themes
@@ -1145,11 +1182,22 @@ try {
       if ($inBase -and $ln -match '^\s+([A-Za-z0-9_]+)\s+=') { $schemaKeys.Add($matches[1]) }
     }
     $o = Clip $roDir @('config', 'init')
-    Check 'int' 'config init creates template' ((Test-Path -LiteralPath $roIni) -and $o -match 'template') $o.Trim()
+    Check 'int' 'config init creates template' ((Test-Path -LiteralPath $roIni) -and ($o -match 'added|nothing missing')) $o.Trim()
     $iniTpl = [IO.File]::ReadAllText($roIni)
     $missing = @($schemaKeys | Where-Object { $iniTpl -notmatch ('(?m)^' + $_ + '=') })
     Check 'int' 'template has every schema key' ($schemaKeys.Count -gt 20 -and $missing.Count -eq 0) (($missing -join ','))
     Check 'int' 'template ships an empty plugin list' (($iniTpl -match '(?m)^Plugins=\r?$') -and (-not ($iniTpl -match 'PluginDisabled'))) ''
+
+    # init must never overwrite a value the user set - only reset may throw settings away
+    [IO.File]::WriteAllText($roIni, ("Theme=win11-light`r`nRows=7`r`nMaxItems=42`r`n"), $Utf8)
+    $o = Clip $roDir @('config', 'init')
+    $iniTpl = [IO.File]::ReadAllText($roIni)
+    Check 'int' 'config init keeps existing values' (($iniTpl -match '(?m)^Theme=win11-light\r?$') -and ($iniTpl -match '(?m)^Rows=7\r?$') -and ($iniTpl -match '(?m)^MaxItems=42\r?$')) $o.Trim()
+    Check 'int' 'config init still fills the gaps' ($iniTpl -match '(?m)^Hotkey=') ''
+    Check 'int' 'config init reports what it did' ($o -match 'added \d+ missing key') $o.Trim()
+    $o = Clip $roDir @('config', 'reset')
+    $iniTpl = [IO.File]::ReadAllText($roIni)
+    Check 'int' 'config reset restores the defaults' (($iniTpl -match '(?m)^Theme=win11-dark\r?$') -and ($iniTpl -match '(?m)^Rows=10\r?$') -and ($iniTpl -match '(?m)^Animations=1\r?$')) $o.Trim()
 
     # --------------------------------------- base commands / opt-in plugin commands
     [void](Clip $intDir @('clear', '-All'))
@@ -1188,7 +1236,8 @@ try {
     Check 'int' 'plugin setting rejects bad value' ($o -match '0 or 1') $o.Trim()
     $o = Clip $intDir @('config', 'init')
     $tplText = [IO.File]::ReadAllText($cfg2)
-    Check 'int' 'template includes plugin settings' (($tplText -match '(?m)^entry-actions\.Browser=\r?$') -and ($tplText -match '(?m)^entry-actions\.Reveal=1\r?$')) ''
+    # the missing plugin key is added, the one the user set to 0 keeps its value
+    Check 'int' 'config init fills plugin settings only' (($tplText -match '(?m)^entry-actions\.Browser=\r?$') -and ($tplText -match '(?m)^entry-actions\.Reveal=0\r?$')) ''
     [IO.File]::WriteAllLines($cfg2, @('Plugins=entry-actions'), $Utf8)
 
     [IO.File]::WriteAllLines($cfg2, @('Plugins=nosuch'), $Utf8)

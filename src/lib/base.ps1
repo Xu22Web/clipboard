@@ -65,6 +65,7 @@ $script:ShowNewlineMarker = $true
 $script:UndoOn = $true
 $script:DpiAware = $true
 $script:ScrollLines = 0
+$script:Animations = $true
 # `install` creates both shortcuts unless one of these is 0
 $script:Autostart = $true
 $script:DesktopShortcut = $true
