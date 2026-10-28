@@ -43,15 +43,23 @@ function Convert-IniValue([string]$key, [string]$raw) {
   }
   if ($spec.Kind -eq 'list') {
     $tokens = @($v -split '[,;]' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique)
+    # a list may declare the values it accepts; an entry outside that set is a typo, not a
+    # new feature, so it is rejected instead of silently ignored by the consumer
+    $allowed = @()
+    if ($spec.Contains('Options')) { $allowed = @($spec.Options | ForEach-Object { ([string]$_).ToLowerInvariant() }) }
     foreach ($t in $tokens) {
-      if ($t -notmatch '^[A-Za-z0-9_.-]+$') { return @{ Ok = $false; Value = ''; Error = 'plugin names may only use letters, digits, _ . -' } }
+      if ($t -notmatch '^[A-Za-z0-9_.-]+$') { return @{ Ok = $false; Value = ''; Error = 'names may only use letters, digits, _ . -' } }
+      if ($allowed.Count -gt 0 -and ($allowed -notcontains $t.ToLowerInvariant())) {
+        return @{ Ok = $false; Value = ''; Error = 'unknown value: ' + $t + ' (allowed: ' + ($allowed -join ', ') + ')' }
+      }
     }
     return @{ Ok = $true; Value = ($tokens -join ','); Error = '' }
   }
   if ($spec.Kind -eq 'theme') {
     if ($v -eq '') { return @{ Ok = $true; Value = [string]$spec.Default; Error = '' } }
-    $want = if ($v -ieq 'dark') { 'win11-dark' } elseif ($v -ieq 'light') { 'win11-light' } else { $v }
-    foreach ($n in @(Get-ThemeNames)) { if ($n -ieq $want) { return @{ Ok = $true; Value = $n; Error = '' } } }
+    # only a real theme name counts: the name is the file in themes\, so there is nothing
+    # to guess from (an old dark/light alias is rejected like any typo)
+    foreach ($n in @(Get-ThemeNames)) { if ($n -ieq $v) { return @{ Ok = $true; Value = $n; Error = '' } } }
     $have = @(Get-ThemeNames)
     if ($have.Count -eq 0) { return @{ Ok = $true; Value = 'win11-dark'; Error = '' } }
     return @{ Ok = $false; Value = ''; Error = 'unknown theme, available: ' + ($have -join ', ') }

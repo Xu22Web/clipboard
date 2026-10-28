@@ -151,7 +151,7 @@
   Settings     = [ordered]@{
     Detail       = @{ Kind = 'enum'; Options = @('short', 'full'); Default = 'full'; Desc = 'kind: short = one summary line, full = the whole block' }
     PreviewChars = @{ Kind = 'int'; Min = 20; Max = 400; Default = 100; Desc = 'kind: characters of the entry shown in the preview' }
-    Detect       = @{ Kind = 'list'; Default = 'json,xml,yaml,base64,color,ip,uuid,number,version,date,hash'; Desc = 'kind: formats to sniff, comma separated' }
+    Detect       = @{ Kind = 'list'; Default = 'json,xml,yaml,base64,color,ip,uuid,number,version,date,hash'; Options = @('json', 'xml', 'yaml', 'base64', 'color', 'ip', 'uuid', 'number', 'version', 'date', 'hash'); Desc = 'kind: formats to sniff, comma separated' }
     ShowTargets  = @{ Kind = 'bool'; Default = 1; Desc = 'kind: 1 = break links, mail, paths and file lists into their parts' }
     Browser      = @{ Kind = 'string'; Default = ''; Desc = 'open: browser exe for http(s) links, empty = system default' }
     Reveal       = @{ Kind = 'bool'; Default = 1; Desc = 'open: 1 = reveal a picked file in Explorer instead of running it' }

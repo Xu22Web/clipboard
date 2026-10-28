@@ -97,7 +97,32 @@ function Get-PluginStickyRows {
 }
 
 
-# the mark whose rows stay visible while searching ("sticky pins"); '' = nothing sticks
+# The most rows pinned entries may take while sticky pins are on. A frozen block taller
+# than this would leave nothing scrollable, so `pin` refuses instead of quietly pushing
+# the rows below out of reach. The cap is the smaller of the declared sticky rows and
+# what Rows leaves (always one row short of the whole list).
+# 0 means the feature is off, so nothing is capped and the caller allows the mark.
+# $rows is the visible row count; 0 asks for the configured one (the panel passes its own).
+function Get-PluginStickyCap([int]$rows = 0) {
+  $declared = 0
+  $d = @(Get-PluginStickyRows)
+  if ($d.Count -gt 0 -and $null -ne $d[0]) { $declared = [int]$d[0] }
+  if ($declared -eq 0) { return 0 }
+  if ($rows -le 0) {
+    if (Get-Command Get-CfgValue -ErrorAction SilentlyContinue) {
+      try {
+        $raw = @(Get-CfgValue 'Rows')
+        if ($raw.Count -gt 0 -and $null -ne $raw[0]) { $rows = [int]$raw[0] }
+      } catch { $rows = 0 }
+    }
+    if ($rows -le 0) { $rows = [int]$script:Rows }
+  }
+  if ($rows -lt 2) { return 0 }
+  return (Get-StickyRowLimit $rows $declared)
+}
+
+
+# The mark whose rows stay visible while searching ("sticky pins"); '' = nothing sticks
 function Get-PluginStickyMark {
   if ((Get-PluginStickyRows) -eq 0) { return '' }
   foreach ($p in @($script:Plugins)) {

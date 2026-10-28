@@ -41,10 +41,18 @@ $libDir = Join-Path $Root 'lib'
 # points at lib\, so a path built there would resolve themes\, plugins\ and data\ one level
 # too deep. Only base.ps1 and ini.ps1 assign anything while loading (the defaults and the
 # settings schema); the order below matters for those two and is otherwise for readers.
-$requiredModules = @(
-  'base', 'ini', 'values', 'util', 'keyhook', 'theme-stub', 'clip', 'store', 'hotkey', 'entry',
-  'picker-geom', 'anim', 'picker-draw', 'picker', 'serve', 'diag', 'shortcut', 'config', 'usage', 'dispatch'
+$coreModules = @(
+  'base', 'ini', 'values', 'util', 'theme-stub', 'clip', 'store', 'hotkey', 'entry',
+  'picker-geom', 'diag', 'shortcut', 'config', 'usage', 'dispatch'
 )
+# The panel stack is only needed when something is about to draw: `ui`, `serve`, and the
+# bare command that opens the panel. Every other command - put, get, list, del, clear,
+# status, config, help, diag - skips parsing it entirely. -Library loads everything,
+# because the tests call those functions by name.
+$panelModules = @('anim', 'picker-draw', 'pinlist', 'keyhook', 'picker', 'serve')
+$needPanel = ($Library -or $Command -eq '' -or $Command -eq 'ui' -or $Command -eq 'serve')
+$requiredModules = $coreModules
+if ($needPanel) { $requiredModules = $coreModules + $panelModules }
 foreach ($module in $requiredModules) {
   $modulePath = Join-Path $libDir ($module + '.ps1')
   if (-not (Test-Path -LiteralPath $modulePath)) {

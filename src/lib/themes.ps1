@@ -24,7 +24,7 @@
 #   - only themes\*.ini are considered, by file name, case-insensitively
 #   - nothing is executed while resolving a name: Get-ThemeNames / Resolve-ThemeName only
 #     look at file names, so a broken theme cannot break `clipboard config`
-#   - an unknown name falls back to win11-dark; 'dark' / 'light' are accepted as aliases
+#   - an unknown name falls back to win11-dark; a theme is always matched by its file name
 #   - unknown colour tokens, bad colour values and out-of-range numbers are logged and
 #     skipped instead of failing the whole theme
 #   - a missing themes folder or an unreadable theme keeps the built-in palette
@@ -51,12 +51,11 @@ function Get-ThemeNames {
   return $out.ToArray()
 }
 
-# 'dark' / 'light' are accepted as aliases; anything unknown falls back to the default
+# a theme is matched by name only (the file in themes\); anything else falls back to the
+# default, so a typo can never leave the panel without colours
 function Resolve-ThemeName([string]$name) {
   $want = ([string]$name).Trim()
   if ($want -eq '') { return 'win11-dark' }
-  if ($want -ieq 'dark') { $want = 'win11-dark' }
-  elseif ($want -ieq 'light') { $want = 'win11-light' }
   foreach ($n in @(Get-ThemeNames)) { if ($n -ieq $want) { return $n } }
   return 'win11-dark'
 }
@@ -176,25 +175,33 @@ function Read-Theme([string]$name) {
 
 # Resolve palette / fonts / metric overrides and per-plugin theme values.
 # Safe to call repeatedly; every call rebuilds from the theme file.
+#
+# -SkipColors exists for the command line: turning a colour string into a Drawing.Color
+# means loading System.Drawing (~250 ms the first time), and no CLI command ever draws.
+# Fonts, metrics and the plugin sections are still resolved, so `config` reports them.
 function Apply-Theme {
-  Use-Drawing
+  param([switch]$SkipColors)
+  if (-not $SkipColors) { Use-Drawing }
   $script:ThemePalette = $null
   $script:ThemeFonts = @{}
   $script:ThemeFace = @{ Font = ''; Icon = '' }
   $script:ThemeOverrides = @{}
   $name = Resolve-ThemeName $script:Theme
   $script:Theme = $name
-  $pal = Get-BasePalette
+  $pal = $null
   $t = Read-Theme $name
   if ($t -is [hashtable]) {
     if ($t.FontFamily) { $script:ThemeFace.Font = [string]$t.FontFamily }
     if ($t.IconFamily) { $script:ThemeFace.Icon = [string]$t.IconFamily }
-    foreach ($k in @($t.Palette.Keys)) {
-      $key = [string]$k
-      if (-not $pal.ContainsKey($key)) { Write-Log ('theme colour ignored (unknown token): ' + $name + '.' + $key); continue }
-      $c = Convert-ThemeColor ([string]$t.Palette[$k])
-      if ($null -eq $c) { Write-Log ('theme colour ignored (bad value): ' + $name + '.' + $key); continue }
-      $pal[$key] = $c
+    if (-not $SkipColors) {
+      $pal = Get-BasePalette
+      foreach ($k in @($t.Palette.Keys)) {
+        $key = [string]$k
+        if (-not $pal.ContainsKey($key)) { Write-Log ('theme colour ignored (unknown token): ' + $name + '.' + $key); continue }
+        $c = Convert-ThemeColor ([string]$t.Palette[$k])
+        if ($null -eq $c) { Write-Log ('theme colour ignored (bad value): ' + $name + '.' + $key); continue }
+        $pal[$key] = $c
+      }
     }
     foreach ($k in @($t.Fonts.Keys)) {
       $v = 0.0

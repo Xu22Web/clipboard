@@ -6,6 +6,7 @@
 # consistent with each other.
 
 function Apply-Config {
+  param([switch]$NoColors)
   $script:IniCache = $null
   $script:ExcludePattern = ''
   $script:ShowBalloon = $true
@@ -87,7 +88,7 @@ function Apply-Config {
     Apply-PluginTheme
   }
   # resolves the palette / fonts / metric overrides for the selected theme
-  Apply-Theme
+  Apply-Theme -SkipColors:$NoColors
 }
 
 # effective values of every key, in schema order
@@ -140,10 +141,42 @@ function Get-ConfigReport {
   return $r
 }
 
+# Every value that came out of clipboard.ini, checked against the schema. The loaders fall
+# back to a default when a value is unusable, which keeps the panel and the CLI working but
+# makes a typo invisible - this is the one place that says so. It runs after the settings and
+# the plugins have registered their keys (see lib/dispatch.ps1), so a plugin key is not
+# mistaken for an unknown one, and it covers the three fixed value sets: the base keys, the
+# theme name and the values a list setting allows.
+function Get-ConfigProblems {
+  $out = New-Object System.Collections.Generic.List[string]
+  $cache = $script:IniCache
+  if ($null -eq $cache) { $cache = Read-Ini; $script:IniCache = $cache }
+  $themes = @()
+  if (Get-Command Get-ThemeNames -ErrorAction SilentlyContinue) { try { $themes = @(Get-ThemeNames) } catch { } }
+  foreach ($k in @($cache.Keys)) {
+    $key = [string]$k
+    $raw = [string]$cache[$k]
+    if (-not $script:IniSchema.Contains($key)) { $out.Add('unknown key: ' + $key); continue }
+    if ($raw -eq '') { continue }
+    $r = Convert-IniValue $key $raw
+    if (-not $r.Ok) { $out.Add($key + '=' + $raw + '  (' + $r.Error + ')'); continue }
+    if ($key -eq 'Theme' -and $themes.Count -gt 0 -and ($themes -notcontains [string]$r.Value)) {
+      $out.Add('Theme=' + $raw + '  (no such theme file; have: ' + ($themes -join ', ') + ')')
+    }
+  }
+  return $out.ToArray()
+}
+
 function Show-Config {
   # read only: this never creates or rewrites clipboard.ini
   $exists = Test-Path -LiteralPath $IniPath
   Write-Host ('config file : ' + $IniPath + $(if ($exists) { '' } else { '   (missing, built-in defaults apply)' }))
+  if (@($script:ConfigProblems).Count -gt 0) {
+    Write-Host ''
+    Write-Host ('[!] ' + @($script:ConfigProblems).Count + ' value(s) in this file need attention:')
+    foreach ($p in @($script:ConfigProblems)) { Write-Host ('    ' + $p) }
+    Write-Host ''
+  }
   Write-Host ('data dir    : ' + $StoreDir + $(if ($dataRoot) { '   (from clipboard.ini)' } else { '   (default)' }))
   Write-Host ''
   $ini = $script:IniCache
@@ -356,7 +389,8 @@ function Get-IniTemplateLines {
     'NoPaste=0',
     '# 1 = tray balloon on startup',
     'Balloon=1',
-    '# dark | light; a theme lives in themes\<name>.ps1 (win11-dark is the default)',
+    '# the theme is a file name in themes\ (win11-dark.ini, win11-light.ini, ...)',
+    '# win11-dark is the default; an unknown name falls back to it',
     'Theme=win11-dark',
     '# regex: matching clipboard text is never saved',
     'ExcludePattern=',

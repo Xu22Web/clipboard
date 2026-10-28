@@ -26,10 +26,10 @@
     h = @{ Set = 'highlight'; Unset = 'unhighlight'; Word = 'highlighted'; Hint = 'Ctrl+H'; Protected = $false }
   }
   SortMark      = 'p'
-  # Sticky pins: while a search runs the pinned rows stay on top instead of being filtered
-  # out. StickyRows caps how many rows they may take, so a long pin list cannot push the
-  # results out of the visible area (the base always keeps one row for the results and
-  # reports how many pins it had to hide).
+  # Sticky pins: every pinned row is frozen at the top of the list, so it no longer scrolls
+  # away with the rows around it. StickyRows caps how many rows may be frozen, and one row
+  # always stays free for the rest - pinning past that cap would leave nothing scrollable,
+  # so `pin` is refused with a note instead of filling the panel with pins.
   StickyMark    = 'p'
   StickyRows    = {
     if ((Get-PluginSetting 'item-marks' 'StickyPins') -ne '1') { return 0 }
@@ -65,6 +65,19 @@
     EmphasisInk    = @{ Kind = 'color'; Default = '#9FDDFF'; Desc = 'ink of a highlighted row' }
     EmphasisFill   = @{ Kind = 'color'; Default = '#3360CDFF'; Desc = 'fill of a highlighted row' }
   }
+  # '' when another pin fits, otherwise the reason it does not: with sticky pins on, the
+  # frozen block may never fill the list, or the rows below would be out of reach.
+  # The count reads the mark string directly - 300 Test-Mark calls cost ~17 ms, this
+  # costs ~0.4 ms and runs on every pin.
+  PinRoom       = {
+    $cap = 0
+    if (Get-Command Get-PluginStickyCap -ErrorAction SilentlyContinue) { $cap = [int](Get-PluginStickyCap) }
+    if ($cap -le 0) { return '' }
+    $pins = 0
+    foreach ($r in @(Get-Records)) { if (([string]$r.Marks).IndexOf('p') -ge 0) { $pins++ } }
+    if ($pins -lt $cap) { return '' }
+    return ('sticky pins already take ' + $pins + ' of ' + $cap + ' rows - unpin one first')
+  }
   # the pin cap spans several rows, so it runs as one pass over the whole record list
   TrimPins      = {
     $cap = [int](Get-PluginSetting 'item-marks' 'MaxPins')
@@ -73,11 +86,11 @@
     $body = {
       param($list)
       $count = 0
-      foreach ($r in $list) { if (Test-Mark $r 'p') { $count++ } }
+      foreach ($r in $list) { if (([string]$r.Marks).IndexOf('p') -ge 0) { $count++ } }
       if ($count -le $cap) { return }
       # the newest pin sits on top, so dropping from the end drops the oldest first
       for ($i = $list.Count - 1; $i -ge 0 -and $count -gt $cap; $i--) {
-        if (Test-Mark $list[$i] 'p') { [void](Set-RecordMark $list[$i] 'p' $false); $count-- }
+        if (([string]$list[$i].Marks).IndexOf('p') -ge 0) { [void](Set-RecordMark $list[$i] 'p' $false); $count-- }
       }
       Write-Log ('pin cap applied, kept ' + $cap)
     }.GetNewClosure()
@@ -90,6 +103,13 @@
       if (-not [int]::TryParse([string]$value, [ref]$i)) { Write-Host 'usage: clipboard pin 3'; return }
       $recs = @(Get-Records)
       if ($i -lt 1 -or $i -gt $recs.Count) { Write-Host 'index out of range'; return }
+      if (Test-Mark $recs[$i - 1] 'p') { Write-Host 'already pinned'; return }
+      $note = [string](& (Get-PluginData 'item-marks' 'PinRoom'))
+      if ($note) {
+        Write-Host ('[!] ' + $note)
+        Write-Host '    raise Rows or item-marks.StickyRows for more room, or turn StickyPins off'
+        return
+      }
       if (Set-Mark $recs[$i - 1].Payload 'p' $true) {
         & (Get-PluginData 'item-marks' 'TrimPins')
         Write-Host ('pinned: ' + (Format-Item $recs[$i - 1].Payload 60))
@@ -167,7 +187,12 @@
       Invoke = {
         param($rec)
         if ($null -eq $rec) { return }
-        [void](Set-Mark ([string]$rec.Payload) 'p' (-not (Test-Mark $rec 'p')))
+        $on = -not (Test-Mark $rec 'p')
+        if ($on) {
+          $note = [string](& (Get-PluginData 'item-marks' 'PinRoom'))
+          if ($note) { return $note }
+        }
+        [void](Set-Mark ([string]$rec.Payload) 'p' $on)
         & (Get-PluginData 'item-marks' 'TrimPins')
       }
     }
@@ -202,7 +227,12 @@
       Invoke = {
         param($rec)
         if ($null -eq $rec) { return }
-        [void](Set-Mark ([string]$rec.Payload) 'p' (-not (Test-Mark $rec 'p')))
+        $on = -not (Test-Mark $rec 'p')
+        if ($on) {
+          $note = [string](& (Get-PluginData 'item-marks' 'PinRoom'))
+          if ($note) { return $note }
+        }
+        [void](Set-Mark ([string]$rec.Payload) 'p' $on)
         & (Get-PluginData 'item-marks' 'TrimPins')
       }
     }

@@ -148,7 +148,7 @@ try {
 
   # the entry file names these; a package must carry all of them
   $requiredLib = @('base', 'ini', 'values', 'util', 'keyhook', 'theme-stub', 'clip', 'store', 'hotkey', 'entry',
-    'picker-geom', 'anim', 'picker-draw', 'picker', 'serve', 'diag', 'shortcut', 'config', 'usage', 'dispatch')
+    'picker-geom', 'anim', 'picker-draw', 'pinlist', 'picker', 'serve', 'diag', 'shortcut', 'config', 'usage', 'dispatch')
   $missingLib = @()
   foreach ($m in $requiredLib) {
     if (-not (Test-Path -LiteralPath (Join-Path $libPath ($m + '.ps1')))) { $missingLib += $m }
@@ -562,22 +562,35 @@ try {
       (New-Record 'alpha' 97 ''),
       (New-Record 'beta' 96 '')
     )
-    $sel = Select-QueryRows $stickyRows @('alpha') '' 0
-    Check 'unit' 'sticky off: the search hides pins too' (((@($sel.Rows) | ForEach-Object { $_.Payload }) -join '|') -eq 'alpha') ((@($sel.Rows) | ForEach-Object { $_.Payload }) -join '|')
-    Check 'unit' 'sticky off: nothing reported hidden' ($sel.Hidden -eq 0) ($sel.Hidden -as [string])
-    $sel = Select-QueryRows $stickyRows @('alpha') 'p' 5
-    Check 'unit' 'sticky on: unmatched pins stay on top' (((@($sel.Rows) | ForEach-Object { $_.Payload }) -join '|') -eq 'pinned one|pinned two|pinned three|alpha') ((@($sel.Rows) | ForEach-Object { $_.Payload }) -join '|')
-    Check 'unit' 'sticky on: within the cap nothing hides' ($sel.Hidden -eq 0) ($sel.Hidden -as [string])
-    $sel = Select-QueryRows $stickyRows @('alpha') 'p' 2
-    Check 'unit' 'sticky cap keeps only the first pin rows' (((@($sel.Rows) | ForEach-Object { $_.Payload }) -join '|') -eq 'pinned one|pinned two|alpha') ((@($sel.Rows) | ForEach-Object { $_.Payload }) -join '|')
-    Check 'unit' 'sticky cap reports what it hid' ($sel.Hidden -eq 1) ($sel.Hidden -as [string])
-    $sel = Select-QueryRows $stickyRows @('pinned') 'p' 1
-    Check 'unit' 'sticky: a matching pin is never capped' (((@($sel.Rows) | ForEach-Object { $_.Payload }) -join '|') -eq 'pinned one|pinned two|pinned three') ((@($sel.Rows) | ForEach-Object { $_.Payload }) -join '|')
-    Check 'unit' 'sticky: matching pins count as results' ($sel.Hidden -eq 0) ($sel.Hidden -as [string])
-    $sel = Select-QueryRows $stickyRows @() 'p' 2
-    Check 'unit' 'no query shows every row' (@($sel.Rows).Count -eq 5) (@($sel.Rows).Count -as [string])
+    # the search is a plain match: a pin that does not match is hidden like any other row
+    $rows = @(Select-QueryRows $stickyRows @('alpha'))
+    Check 'unit' 'the search hides an unmatched pin' (((@($rows) | ForEach-Object { $_.Payload }) -join '|') -eq 'alpha') ((@($rows) | ForEach-Object { $_.Payload }) -join '|')
+    $rows = @(Select-QueryRows $stickyRows @())
+    Check 'unit' 'no query shows every row' (@($rows).Count -eq 5) (@($rows).Count -as [string])
+    # freezing is a scrolling behaviour: the leading run of pins is what stays put
+    Check 'unit' 'sticky top counts the leading pins' ((Get-StickyTopRows $stickyRows 'p' 5) -eq 3) ((Get-StickyTopRows $stickyRows 'p' 5) -as [string])
+    Check 'unit' 'sticky top obeys the declared cap' ((Get-StickyTopRows $stickyRows 'p' 2) -eq 2) ((Get-StickyTopRows $stickyRows 'p' 2) -as [string])
+    Check 'unit' 'sticky top stops at the first plain row' ((Get-StickyTopRows @($stickyRows[0], $stickyRows[3], $stickyRows[1]) 'p' 5) -eq 1) ((Get-StickyTopRows @($stickyRows[0], $stickyRows[3], $stickyRows[1]) 'p' 5) -as [string])
+    Check 'unit' 'sticky top is off without a mark' ((Get-StickyTopRows $stickyRows '' 5) -eq 0) ''
+    Check 'unit' 'sticky top is off with a zero cap' ((Get-StickyTopRows $stickyRows 'p' 0) -eq 0) ''
+    # the pin guard reads the same cap: the smaller of the sticky rows and what Rows leaves
+    $stickyProbe = @{
+      Name       = 'sticky-probe'
+      Marks      = [ordered]@{ p = @{ Set = 'pin'; Unset = 'unpin'; Word = 'pinned'; Protected = $false } }
+      SortMark   = 'p'
+      StickyMark = 'p'
+      StickyRows = 3
+    }
+    $script:Plugins = @($stickyProbe)
+    Check 'unit' 'sticky cap is the declared sticky rows' ((Get-PluginStickyCap 10) -eq 3) ([string](Get-PluginStickyCap 10))
+    Check 'unit' 'sticky cap shrinks with the visible rows' ((Get-PluginStickyCap 2) -eq 1) ([string](Get-PluginStickyCap 2))
+    $stickyProbe['StickyRows'] = -1
+    Check 'unit' 'a negative cap means every row but one' ((Get-PluginStickyCap 10) -eq 9) ([string](Get-PluginStickyCap 10))
+    $stickyProbe['StickyRows'] = 0
+    Check 'unit' 'sticky cap is off when the feature is off' ((Get-PluginStickyCap 10) -eq 0) ([string](Get-PluginStickyCap 10))
+    $script:Plugins = @($markPlugin)
     $plan = Get-StickyPlan 10
-    Check 'unit' 'sticky plan is off by default' (($plan.Mark -eq '') -and ($plan.Max -eq 0)) (($plan.Mark -as [string]) + '/' + ($plan.Max -as [string]))
+    Check 'unit' 'sticky plan is off without plugins' (($plan.Mark -eq '') -and ($plan.Max -eq 0)) (($plan.Mark -as [string]) + '/' + ($plan.Max -as [string]))
 
     Check 'unit' 'Get-ItemLabel collapses newlines' ((Get-ItemLabel "a`r`nb" $false) -eq 'a b') (Get-ItemLabel "a`r`nb" $false)
     Check 'unit' 'Get-ItemLabel keeps marker' ((Get-ItemLabel "a`nb" $true) -eq 'a <NL> b') (Get-ItemLabel "a`nb" $true)
@@ -592,7 +605,7 @@ try {
     Check 'unit' 'Convert-IniValue int too big' (-not (Convert-IniValue 'MaxItems' '999999999').Ok) ''
     Check 'unit' 'Convert-IniValue install flag' ((Convert-IniValue 'Autostart' 'off').Value -eq '0') ''
     Check 'unit' 'Convert-IniValue int not a number' (-not (Convert-IniValue 'MaxItems' 'many').Ok) ''
-    Check 'unit' 'Convert-IniValue theme normalises case' ((Convert-IniValue 'Theme' 'LIGHT').Value -eq 'win11-light') ''
+    Check 'unit' 'Convert-IniValue theme normalises case' ((Convert-IniValue 'Theme' 'WIN11-LIGHT').Value -eq 'win11-light') ''
     Check 'unit' 'Convert-IniValue enum bad' (-not (Convert-IniValue 'Theme' 'blue').Ok) ''
     Check 'unit' 'Convert-IniValue regex bad' (-not (Convert-IniValue 'ExcludePattern' '(').Ok) ''
     Check 'unit' 'Convert-IniValue hotkey bad' (-not (Convert-IniValue 'Hotkey' 'Ctrl+Nope').Ok) ''
@@ -604,15 +617,16 @@ try {
     # -------------------------------------------------------------------- themes
     $tn = @(Get-ThemeNames)
     Check 'unit' 'theme files discovered' (($tn -contains 'win11-dark') -and ($tn -contains 'win11-light')) ($tn -join ',')
-    Check 'unit' 'theme alias dark' ((Resolve-ThemeName 'dark') -eq 'win11-dark') ''
-    Check 'unit' 'theme alias LIGHT' ((Resolve-ThemeName 'LIGHT') -eq 'win11-light') ''
+    Check 'unit' 'theme matches by file name' ((Resolve-ThemeName 'win11-light') -eq 'win11-light') ''
+    Check 'unit' 'theme name is case-insensitive' ((Resolve-ThemeName 'WIN11-DARK') -eq 'win11-dark') ''
+    Check 'unit' 'theme alias is rejected' (-not (Convert-IniValue 'Theme' 'dark').Ok) ((Convert-IniValue 'Theme' 'dark').Error)
     Check 'unit' 'theme unknown falls back' ((Resolve-ThemeName 'nope') -eq 'win11-dark') ''
     Check 'unit' 'theme colour opaque' ((Convert-ThemeColor '#202020').R -eq 32) ''
     Check 'unit' 'theme colour alpha' ((Convert-ThemeColor '#1CFFFFFF').A -eq 28) ''
     Check 'unit' 'theme colour rejects junk' ($null -eq (Convert-ThemeColor 'red')) ''
     Check 'unit' 'missing theme file is null' ($null -eq (Read-Theme 'nosuch')) ''
     Check 'unit' 'Convert-IniValue theme ok' ((Convert-IniValue 'Theme' 'win11-light').Value -eq 'win11-light') ''
-    Check 'unit' 'Convert-IniValue theme alias' ((Convert-IniValue 'Theme' 'light').Value -eq 'win11-light') ''
+    Check 'unit' 'Convert-IniValue theme alias is rejected' (-not (Convert-IniValue 'Theme' 'light').Ok) ((Convert-IniValue 'Theme' 'light').Error)
     Check 'unit' 'Convert-IniValue theme bad' (-not (Convert-IniValue 'Theme' 'nosuch').Ok) ''
     $script:Theme = 'win11-dark'; Apply-Theme
     $pal = Get-UiPalette
@@ -630,14 +644,14 @@ try {
 
     $cfg = Join-Path $unitDir 'clipboard.ini'
     [IO.File]::WriteAllLines($cfg, @('# keep me', 'Theme=dark', 'MaxItems=7'), $Utf8)
-    [void](Set-IniKey 'Theme' 'light')
+    [void](Set-IniKey 'Theme' 'win11-light')
     [void](Set-IniKey 'ShowTime' '0')
     $iniText = [IO.File]::ReadAllText($cfg)
-    Check 'unit' 'Set-IniKey replaces' ($iniText -match '(?m)^Theme=light\r?$') ''
+    Check 'unit' 'Set-IniKey replaces' ($iniText -match '(?m)^Theme=win11-light\r?$') ''
     Check 'unit' 'Set-IniKey appends' ($iniText -match '(?m)^ShowTime=0\r?$') ''
     Check 'unit' 'Set-IniKey keeps comments' ($iniText -match '# keep me') ''
     Check 'unit' 'Set-IniKey keeps other keys' ($iniText -match '(?m)^MaxItems=7\r?$') ''
-    Check 'unit' 'Get-IniKey reads back' ((Get-IniKey 'Theme') -eq 'light') (Get-IniKey 'Theme')
+    Check 'unit' 'Get-IniKey reads back' ((Get-IniKey 'Theme') -eq 'win11-light') (Get-IniKey 'Theme')
 
     Apply-Config
     Check 'unit' 'Apply-Config Theme' ($script:Theme -eq 'win11-light') $script:Theme
@@ -815,9 +829,9 @@ try {
     Check 'unit' 'transform leaves file lists alone' ((& $apply (([string][char]1) + 'C:\a.txt') 'upper') -eq (([string][char]1) + 'C:\a.txt')) ''
     Check 'unit' 'transform reports the configured mode' ((& (Get-PluginData 'transform' 'CurrentMode')) -eq 'snake') (& (Get-PluginData 'transform' 'CurrentMode'))
     $tActs = @(Get-PluginActions)
-    Check 'unit' 'transform registers one menu entry' (($tActs.Count -eq 1) -and ($tActs[0]['Plugin'] -eq 'transform')) ($tActs.Count -as [string])
+    Check 'unit' 'transform lists every mode by default' (($tActs.Count -eq 7) -and ($tActs[0]['Plugin'] -eq 'transform')) ($tActs.Count -as [string])
     $tMenu = $tActs[0]
-    Check 'unit' 'transform menu caption names the mode' ((Get-ActionText $tMenu ([pscustomobject]@{ Payload = 'Hello World'; Marks = '' })) -eq 'Transform as snake_case') (Get-ActionText $tMenu ([pscustomobject]@{ Payload = 'Hello World'; Marks = '' }))
+    Check 'unit' 'transform menu caption names the mode' ((Get-ActionText $tMenu ([pscustomobject]@{ Payload = 'Hello World'; Marks = '' })) -eq 'Transform as plain text') (Get-ActionText $tMenu ([pscustomobject]@{ Payload = 'Hello World'; Marks = '' }))
     Check 'unit' 'transform menu shows for text rows' ((Test-PluginAction $tMenu ([pscustomobject]@{ Payload = 'Hello World'; Marks = '' })) -eq $true) ''
     Check 'unit' 'transform menu hides for file lists' ((Test-PluginAction $tMenu ([pscustomobject]@{ Payload = (([string][char]1) + 'C:\a.txt'); Marks = '' })) -eq $false) ''
     Check 'unit' 'transform menu hides an empty row' ((Test-PluginAction $tMenu ([pscustomobject]@{ Payload = ''; Marks = '' })) -eq $false) ''
@@ -835,21 +849,17 @@ try {
     [void](& $tActs[1]['Invoke'] $tRow)
     Check 'unit' 'each Modes entry rewrites with its own mode' ([string](@(Get-Records)[0].Payload) -eq 'hello-world-demo') ([string](@(Get-Records)[0].Payload))
 
-    [IO.File]::WriteAllLines($cfg, @('transform.Mode=snake', 'transform.Modes=foo,snake,snake,keep,title'), $Utf8)
+    [IO.File]::WriteAllLines($cfg, @('transform.Mode=snake', 'transform.Modes=foo,snake'), $Utf8)
     $script:IniCache = $null
     Apply-PluginSettings
-    Check 'unit' 'Modes skips unknown, repeated and keep values' (@(Get-PluginActions).Count -eq 2) (@(Get-PluginActions).Count -as [string])
+    Check 'unit' 'unknown Modes value falls back and is reported' ((@(Get-PluginActions).Count -eq 7) -and (@(Get-ConfigProblems).Count -ge 1)) (@(Get-PluginActions).Count -as [string])
 
-    [IO.File]::WriteAllLines($cfg, @('transform.Mode=title'), $Utf8)
+    [IO.File]::WriteAllLines($cfg, @('transform.Mode=keep', 'transform.Modes=keep'), $Utf8)
     $script:IniCache = $null
     Apply-PluginSettings
-    Check 'unit' 'empty Modes falls back to the configured mode' ((@(Get-PluginActions | ForEach-Object { Get-ActionText $_ $tRow }) -join '|') -eq 'Transform as Title Case') (@(Get-PluginActions | ForEach-Object { Get-ActionText $_ $tRow }) -join '|')
-
-    [IO.File]::WriteAllLines($cfg, @('transform.Mode=keep'), $Utf8)
-    $script:IniCache = $null
-    Apply-PluginSettings
-    Check 'unit' 'keep mode with no Modes offers nothing' (@(Get-PluginActions).Count -eq 0) (@(Get-PluginActions).Count -as [string])
-    [IO.File]::WriteAllLines($cfg, @('transform.Mode=snake'), $Utf8)
+    Check 'unit' 'invalid Modes is reported once' (@(Get-ConfigProblems | Where-Object { $_ -match '^transform\.Modes=' }).Count -eq 1) (@(Get-ConfigProblems) -join ';')
+    Check 'unit' 'invalid Modes keeps the default list' (@(Get-PluginActions).Count -eq 7) (@(Get-PluginActions).Count -as [string])
+    [IO.File]::WriteAllLines($cfg, @('transform.Mode=snake', 'transform.Modes=snake'), $Utf8)
     $script:IniCache = $null
     Apply-PluginSettings
 
@@ -870,7 +880,9 @@ try {
     $script:IniCache = $null
     Apply-PluginSettings
     $owners = @(Get-PluginActions | ForEach-Object { [string]$_['Plugin'] })
-    Check 'unit' 'load order follows the Plugins list' (($owners -join ',') -eq 'transform,item-marks,item-marks,item-marks') ($owners -join ',')
+    $blocks = @()
+    foreach ($o in $owners) { if ($blocks.Count -eq 0 -or $blocks[-1] -ne $o) { $blocks += $o } }
+    Check 'unit' 'load order follows the Plugins list' (($blocks -join ',') -eq 'transform,item-marks') ($blocks -join ',')
     $names = @($script:Plugins | ForEach-Object { [string]$_['Name'] })
     Check 'unit' 'plugin list keeps the written order' (($names -join ',') -eq 'transform,item-marks') ($names -join ',')
     $script:Plugins = @()
@@ -1069,6 +1081,29 @@ try {
         $bmp2.Dispose()
       }
       Check 'unit' 'a flattened single hint pair still draws a chip' $flatOk $flatErr
+
+      # The self-painted list freezes its first rows. 10 visible rows of 10px, 3 frozen, so
+      # the scrollable window is 7 rows tall and TopIndex can never drop below 3.
+      Add-PinList
+      $pl = New-Object Cb.PinList
+      $pl.ItemHeight = 10
+      $pl.SetBounds(0, 0, 200, 100)
+      $pl.ItemCount = 30
+      $pl.PinnedCount = 3
+      $pl.TopIndex = 3
+      Check 'unit' 'the scrollable part starts under the frozen block' ($pl.TopIndex -eq 3) ([string]$pl.TopIndex)
+      $pl.ScrollBy(-5)
+      Check 'unit' 'scrolling up never drags a pin away' ($pl.TopIndex -eq 3) ([string]$pl.TopIndex)
+      Check 'unit' 'a frozen row keeps its place' ($pl.GetItemRectangle(0).Y -eq 0) ([string]$pl.GetItemRectangle(0).Y)
+      $before = $pl.GetItemRectangle(3).Y
+      $pl.ScrollBy(2)
+      Check 'unit' 'a scrollable row moves with the list' ($pl.GetItemRectangle(3).Y -eq ($before - 20)) ([string]$pl.GetItemRectangle(3).Y)
+      Check 'unit' 'the frozen block stays put while scrolling' ($pl.GetItemRectangle(0).Y -eq 0) ([string]$pl.GetItemRectangle(0).Y)
+      $pl.ScrollTo(999)
+      Check 'unit' 'the last row can reach the bottom edge' (($pl.MaxTop -eq 23) -and ($pl.TopIndex -eq 23)) ([string]$pl.TopIndex + '/' + [string]$pl.MaxTop)
+      # the control keeps a row count only: the labels stay with the caller
+      Check 'unit' 'the list stores a row count, not the labels' (-not ($pl.PSObject.Properties.Name -contains 'Items')) ''
+      $pl.Dispose()
     }
 
   # --------------------------------------------------------- integration tests
@@ -1173,6 +1208,28 @@ try {
     Check 'int' 'clear -All drops the pin mark' (($o -match 'history cleared')) $o.Trim()
     $o = Clip $intDir @('list')
     Check 'int' 'list empty after clear -All' ($o -match 'history is empty') $o.Trim()
+
+    # with sticky pins on, the frozen block may never fill the list: the third pin is
+    # refused instead of pushing the rows below out of reach
+    [IO.File]::WriteAllLines($cfg2, @('MaxItems=300', 'Plugins=item-marks', 'item-marks.StickyPins=1', 'item-marks.StickyRows=2'), $Utf8)
+    [void](Clip $intDir @('clear', '-All'))
+    [void](Clip $intDir @('put', 'cap-one'))
+    [void](Clip $intDir @('put', 'cap-two'))
+    [void](Clip $intDir @('put', 'cap-three'))
+    $o = Clip $intDir @('pin', '1')
+    Check 'int' 'pin fits under the sticky cap' ($o -match 'pinned') $o.Trim()
+    [void](Clip $intDir @('pin', '2'))
+    $o = Clip $intDir @('pin', '3')
+    Check 'int' 'pin refused when the sticky cap is full' (($o -match '\[!\]') -and ($o -match 'unpin one first') -and ($o -match 'raise Rows')) $o.Trim()
+    $o = Clip $intDir @('list')
+    $capLine = @($o -split "`n" | Where-Object { $_ -match 'cap-one' })
+    Check 'int' 'refused pin leaves the row unmarked' ($capLine.Count -gt 0 -and $capLine[0] -notmatch '\*') ($capLine -join '/')
+    # turning the feature off drops the cap, so the same pin goes through
+    [IO.File]::WriteAllLines($cfg2, @('MaxItems=300', 'Plugins=item-marks', 'item-marks.StickyPins=0', 'item-marks.StickyRows=2'), $Utf8)
+    $o = Clip $intDir @('pin', '3')
+    Check 'int' 'no cap while sticky pins are off' ($o -match 'pinned') $o.Trim()
+    [void](Clip $intDir @('clear', '-All'))
+    [IO.File]::WriteAllLines($cfg2, @('MaxItems=300', 'Plugins=item-marks'), $Utf8)
 
     $o = Clip $intDir @('config', 'get', 'Rows')
     Check 'int' 'config get' ($o -match 'Rows = 10') $o.Trim()
@@ -1302,7 +1359,7 @@ try {
     $o = Clip $intDir @('config', 'set', 'Theme', 'nosuch')
     Check 'int' 'theme rejects unknown' ($o -match 'unknown theme') $o.Trim()
     $o = Clip $intDir @('config', 'set', 'Theme', 'dark')
-    Check 'int' 'theme alias accepted' (($o -match 'win11-dark') -and ([IO.File]::ReadAllText($cfg2) -match '(?m)^Theme=win11-dark\r?$')) $o.Trim()
+    Check 'int' 'theme alias is rejected' (($o -match 'unknown theme') -and ([IO.File]::ReadAllText($cfg2) -match '(?m)^Theme=win11-light\r?$')) $o.Trim()
 
     # ------------------------------------------------- starred entries + new plugins
     [IO.File]::WriteAllLines($cfg2, @('MaxItems=300', 'Plugins=item-marks'), $Utf8)

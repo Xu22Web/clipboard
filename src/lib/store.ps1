@@ -231,14 +231,26 @@ function Get-StickyPlan([int]$rows) {
   return @{ Mark = $mark; Max = $max }
 }
 
-# The rows the panel shows for one query. A row carrying the sticky mark that the query
-# does not match is still kept - that is what makes a pin sticky while searching - but only
-# while it fits in the reserved rows; the rest are reported as hidden so the caller can say
-# so instead of silently showing fewer pins than the user made.
-function Select-QueryRows($entries, [string[]]$tokens, [string]$stickyMark, [int]$stickyMax) {
+# How many leading rows stay frozen while the list scrolls. Pins sort first (SortMark), so
+# this is the unbroken run of sticky rows at the top of the result set, capped by the same
+# rule the exclusive-through-search version used: a long pin list can never fill the whole
+# view, one row always stays for the rows below it.
+function Get-StickyTopRows($rows, [string]$stickyMark, [int]$stickyMax) {
+  if (-not $stickyMark -or $stickyMax -le 0) { return 0 }
+  $n = 0
+  foreach ($rec in @($rows)) {
+    if ($n -ge $stickyMax) { break }
+    if (-not (Test-Mark $rec $stickyMark)) { break }
+    $n++
+  }
+  return $n
+}
+
+# The rows the panel shows for one query: every token has to appear in the payload. A row
+# carrying a sticky mark is no exception - freezing is a scrolling behaviour now, so a
+# search that does not match it hides it like any other row.
+function Select-QueryRows($entries, [string[]]$tokens) {
   $rows = New-Object System.Collections.Generic.List[object]
-  $hidden = 0
-  $stuck = 0
   foreach ($rec in @($entries)) {
     $matched = $true
     if (@($tokens).Count -gt 0) {
@@ -246,12 +258,9 @@ function Select-QueryRows($entries, [string[]]$tokens, [string]$stickyMark, [int
         if ($t -and ([string]$rec.Payload).IndexOf($t, [StringComparison]::OrdinalIgnoreCase) -lt 0) { $matched = $false; break }
       }
     }
-    if (-not $matched -and $stickyMark -and (Test-Mark $rec $stickyMark)) {
-      if ($stuck -lt $stickyMax) { $stuck++; $matched = $true } else { $hidden++ }
-    }
     if ($matched) { $rows.Add($rec) }
   }
-  return @{ Rows = $rows.ToArray(); Hidden = $hidden }
+  return $rows.ToArray()
 }
 
 # enforce MaxItems / MaxTotal in place; rows carrying a protected mark are never dropped

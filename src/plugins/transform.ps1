@@ -7,8 +7,8 @@
 # Settings: transform.Mode / transform.Modes / transform.Trim
 # One-off:  clipboard transform 3            entry 3 with the configured mode
 #           clipboard transform "3 snake"    entry 3 as snake_case (quotes required)
-# Right-click  one "Transform as <mode>" entry per mode listed in transform.Modes; with
-#              Modes empty the menu offers the configured transform.Mode only
+# Right-click  one "Transform as <mode>" entry per mode listed in transform.Modes; the
+#              list defaults to every mode
 #
 # The rewrite itself lives in one shared block (Apply). The paste hook, the command and
 # the context menu all reach it through Get-PluginData - a scriptblock cannot see this
@@ -21,7 +21,7 @@
   }
   Settings    = [ordered]@{
     Mode  = @{ Kind = 'enum'; Options = @('keep', 'text', 'upper', 'lower', 'camel', 'snake', 'kebab', 'title'); Default = 'keep'; Desc = 'how a pasted entry is rewritten' }
-    Modes = @{ Kind = 'string'; Default = ''; Desc = 'modes offered in the context menu, comma separated; empty = only Mode' }
+    Modes = @{ Kind = 'list'; Default = 'text,upper,lower,camel,snake,kebab,title'; Options = @('text', 'upper', 'lower', 'camel', 'snake', 'kebab', 'title'); Desc = 'modes offered in the context menu, comma separated (default: every mode)' }
     Trim  = @{ Kind = 'bool'; Default = 1; Desc = '1 = trim leading and trailing spaces of the result' }
   }
   # param($text, $mode) -> rewritten text; the input comes back unchanged when the mode

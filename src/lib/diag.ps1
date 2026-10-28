@@ -11,6 +11,10 @@ function Invoke-Diag {
   Row 'OS' ($cv.ProductName + ' ' + $cv.DisplayVersion + ' build ' + $cv.CurrentBuild) ''
   Row 'PowerShell' $PSVersionTable.PSVersion.ToString() ''
   Row 'Apartment' ([Threading.Thread]::CurrentThread.GetApartmentState()) 'STA required; start via clipboard.cmd'
+  # the three fixed value sets: base keys, the theme name, the values a list setting allows
+  $cp = @($script:ConfigProblems)
+  Row 'clipboard.ini' ($(if ($cp.Count -eq 0) { 'OK' } else { $cp.Count.ToString() + ' value(s) need attention' })) 'shown by clipboard config'
+  foreach ($p in $cp) { Row '  ini' $p '' }
   try { Load-Forms; Add-Native; Row 'WinForms/Add-Type' 'OK' '' } catch { Row 'WinForms/Add-Type' ('FAIL: ' + $_.Exception.Message) 'picker off, CLI only' }
   Row 'clip.exe' (Test-Path "$env:SystemRoot\System32\clip.exe") 'not needed: clipboard put / Set-Clipboard'
   Row 'Set-Clipboard' ([bool](Get-Command Set-Clipboard -ErrorAction SilentlyContinue)) ''

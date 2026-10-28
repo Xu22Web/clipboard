@@ -36,7 +36,7 @@ function Read-Ini {
 $script:IniSchema = [ordered]@{
   DataDir           = @{ Kind = 'string'; Default = '';            Desc = 'write location, empty = <script dir>\data' }
   Hotkey            = @{ Kind = 'hotkey'; Default = 'Ctrl+Alt+V';  Desc = 'global hotkey' }
-  HotkeyFallbacks   = @{ Kind = 'string'; Default = '';            Desc = 'comma separated fallback chain' }
+  HotkeyFallbacks   = @{ Kind = 'string'; Default = '';            Desc = 'comma separated fallback chain, empty = the built-in chain' }
   PasteKeys         = @{ Kind = 'string'; Default = '^v';          Desc = 'SendKeys sent after picking' }
   ModReleaseTimeout = @{ Kind = 'int'; Min = 0; Max = 60000; Default = 1200; Desc = 'ms to wait for the modifiers to be released' }
   PasteSettle       = @{ Kind = 'int'; Min = 0; Max = 10000; Default = 80;   Desc = 'ms to wait before sending PasteKeys' }
@@ -46,7 +46,7 @@ $script:IniSchema = [ordered]@{
   Interval          = @{ Kind = 'int'; Min = 50; Max = 60000; Default = 300; Desc = 'clipboard poll interval in ms' }
   NoPaste           = @{ Kind = 'bool'; Default = 0;              Desc = '1 = clipboard only, never inject a paste' }
   Balloon           = @{ Kind = 'bool'; Default = 1;              Desc = '1 = tray balloon on startup' }
-  Theme             = @{ Kind = 'theme'; Default = 'win11-dark'; Desc = 'theme name from themes\ (win11-dark / win11-light ...)' }
+  Theme             = @{ Kind = 'theme'; Default = 'win11-dark'; Desc = 'theme name = the file in themes\ (win11-dark.ini / win11-light.ini)' }
   ExcludePattern    = @{ Kind = 'regex'; Default = '';            Desc = 'matching text is never saved' }
   WindowWidth       = @{ Kind = 'int'; Min = 460; Max = 4000; Default = 700; Desc = 'panel width (96 dpi baseline)' }
   Rows              = @{ Kind = 'int'; Min = 3; Max = 50; Default = 10; Desc = 'visible rows; the height follows from it (rows x 40 + 110)' }

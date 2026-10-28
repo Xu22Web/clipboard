@@ -73,10 +73,11 @@ namespace Cb {
       get {
         var cp = base.CreateParams;
         cp.ExStyle |= 0x08000000;   // WS_EX_NOACTIVATE
-        // The rows are owner-drawn by a native list box, which paints straight into the
-        // window DC: at per-frame rates the background erase is visible between invalidate
-        // and repaint, and DoubleBuffered cannot reach those pixels. Compositing lets the
-        // DWM assemble the window off-screen, so that gap never reaches the screen.
+        // A panel that never activates is also never asked to redraw by the shell, so its
+        // controls can sit half-painted until something else forces a frame. Compositing
+        // makes the DWM assemble each frame off-screen. It is not what fixes the row
+        // flicker (Cb.PinList buffers its own paint, lib/pinlist.ps1), but the panel needs
+        // it for its child controls.
         cp.ExStyle |= 0x02000000;   // WS_EX_COMPOSITED
         cp.ClassStyle |= 0x00020000;
         return cp;
@@ -86,9 +87,154 @@ namespace Cb {
   public class FluentList : System.Windows.Forms.ListBox {
     public FluentList() { DoubleBuffered = true; }
   }
+
+  // ---- the row surface (see lib/pinlist.ps1 for why it exists) -------------------
+  public class PinDrawEventArgs : EventArgs {
+    public int Index;
+    public System.Drawing.Rectangle Bounds;
+    public System.Drawing.Graphics Graphics;
+    public System.Windows.Forms.DrawItemState State;
+  }
+
+  public class PinList : System.Windows.Forms.Control {
+    // The label text lives with the caller and is pulled by index while painting: the
+    // control only needs to know how many rows exist, so a refresh never copies strings.
+    public int ItemCount = 0;
+    public int ItemHeight = 40;
+    // rows at the very top that never scroll: the pinned block
+    public int PinnedCount = 0;
+    public System.Drawing.Color SeparatorColor = System.Drawing.Color.Empty;
+
+    private int topIndex = 0;
+    private int selected = -1;
+    private int updates = 0;
+
+    public event EventHandler DrawItem;
+    public event EventHandler SelectedIndexChanged;
+
+    public PinList() {
+      SetStyle(System.Windows.Forms.ControlStyles.UserPaint |
+               System.Windows.Forms.ControlStyles.AllPaintingInWmPaint |
+               System.Windows.Forms.ControlStyles.OptimizedDoubleBuffer |
+               System.Windows.Forms.ControlStyles.ResizeRedraw, true);
+      TabStop = false;
+    }
+
+    // first scrollable row on screen; never points into the frozen block
+    public int TopIndex { get { return topIndex; } set { SetTop(value); } }
+
+    public int VisibleRows {
+      get { if (ItemHeight <= 0) return 0; int n = ClientSize.Height / ItemHeight; return n < 0 ? 0 : n; }
+    }
+
+    // the largest legal TopIndex, so the last row can still reach the bottom edge
+    public int MaxTop {
+      get {
+        int vis = VisibleRows - PinnedCount;
+        if (vis < 1) vis = 1;
+        int max = ItemCount - vis;
+        if (max < PinnedCount) max = PinnedCount;
+        return max;
+      }
+    }
+
+    public int SelectedIndex {
+      get { return selected; }
+      set {
+        int v = value;
+        if (v < -1) v = -1;
+        if (v >= ItemCount) v = ItemCount - 1;
+        if (v == selected) return;
+        selected = v;
+        EnsureVisible(selected);
+        Invalidate();
+        EventHandler h = SelectedIndexChanged;
+        if (h != null) h(this, EventArgs.Empty);
+      }
+    }
+
+    public void ScrollBy(int rows) { SetTop(topIndex + rows); }
+    public void ScrollTo(int index) { SetTop(index); }
+
+    // scroll just enough to show one row; a frozen row is always visible already
+    public void EnsureVisible(int index) {
+      if (index < 0 || index < PinnedCount) return;
+      int vis = VisibleRows - PinnedCount;
+      if (vis < 1) return;
+      if (index < topIndex) SetTop(index);
+      else if (index >= topIndex + vis) SetTop(index - vis + 1);
+    }
+
+    private void SetTop(int value) {
+      int max = MaxTop;
+      if (value < PinnedCount) value = PinnedCount;
+      if (value > max) value = max;
+      if (value == topIndex) return;
+      topIndex = value;
+      Invalidate();
+    }
+
+    public void BeginUpdate() { updates++; }
+    public void EndUpdate() {
+      if (updates > 0) updates--;
+      if (updates > 0) return;
+      if (selected >= ItemCount) selected = ItemCount - 1;
+      SetTop(topIndex);
+      Invalidate();
+    }
+
+    public System.Drawing.Rectangle GetItemRectangle(int index) {
+      if (index < 0) return System.Drawing.Rectangle.Empty;
+      int y;
+      if (index < PinnedCount) y = index * ItemHeight;
+      else y = (PinnedCount + index - topIndex) * ItemHeight;
+      return new System.Drawing.Rectangle(0, y, ClientSize.Width, ItemHeight);
+    }
+
+    public int IndexFromPoint(System.Drawing.Point pt) {
+      if (ItemHeight <= 0 || ItemCount == 0) return -1;
+      int slot = pt.Y / ItemHeight;
+      if (slot < 0) return -1;
+      int i;
+      if (slot < PinnedCount) i = slot;
+      else i = topIndex + slot - PinnedCount;
+      return (i >= 0 && i < ItemCount) ? i : -1;
+    }
+
+    protected override void OnPaint(System.Windows.Forms.PaintEventArgs e) {
+      System.Drawing.Graphics g = e.Graphics;
+      using (System.Drawing.SolidBrush back = new System.Drawing.SolidBrush(BackColor)) { g.FillRectangle(back, ClientRectangle); }
+      if (updates > 0 || ItemHeight <= 0) return;
+      int pinned = Math.Min(PinnedCount, ItemCount);
+      for (int i = 0; i < pinned; i++) { PaintRow(g, i, i * ItemHeight); }
+      if (pinned > 0 && SeparatorColor != System.Drawing.Color.Empty) {
+        using (System.Drawing.Pen pen = new System.Drawing.Pen(SeparatorColor)) {
+          g.DrawLine(pen, 0, pinned * ItemHeight - 1, ClientSize.Width, pinned * ItemHeight - 1);
+        }
+      }
+      int y = pinned * ItemHeight;
+      int k = topIndex;
+      while (k < ItemCount && y < ClientSize.Height) {
+        PaintRow(g, k, y);
+        y += ItemHeight;
+        k++;
+      }
+    }
+
+    private void PaintRow(System.Drawing.Graphics g, int index, int y) {
+      EventHandler h = DrawItem;
+      if (h == null) return;
+      PinDrawEventArgs a = new PinDrawEventArgs();
+      a.Index = index;
+      a.Bounds = new System.Drawing.Rectangle(0, y, ClientSize.Width, ItemHeight);
+      a.Graphics = g;
+      a.State = (index == selected) ? System.Windows.Forms.DrawItemState.Selected : System.Windows.Forms.DrawItemState.None;
+      h(this, a);
+    }
+  }
 }
 '@
-  Add-Type -TypeDefinition $cs -ReferencedAssemblies System.Windows.Forms -ErrorAction Stop
+  Add-Type -TypeDefinition $cs -ReferencedAssemblies System.Windows.Forms, System.Drawing -ErrorAction Stop
   $script:NativeReady = $true
 }
 
@@ -100,10 +246,16 @@ function Load-Forms {
 }
 
 function Test-Font([string]$name) {
-  try {
-    foreach ($f in (New-Object Drawing.Text.InstalledFontCollection).Families) { if ($f.Name -eq $name) { return $true } }
-  } catch { }
-  return $false
+  # Enumerating the installed families costs ~50 ms and the picker asks three to six times
+  # on every show, so the list is read once per process and kept as a set.
+  if ($null -eq $script:FontNames) {
+    $set = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    try {
+      foreach ($f in (New-Object Drawing.Text.InstalledFontCollection).Families) { [void]$set.Add($f.Name) }
+    } catch { }
+    $script:FontNames = $set
+  }
+  return $script:FontNames.Contains($name)
 }
 
 function Use-Drawing {

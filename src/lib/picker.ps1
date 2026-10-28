@@ -1,9 +1,6 @@
-# lib/picker.ps1 - the history panel.
-#
-# One function owns the whole window lifecycle (create, filter, draw, keys, paste) because
-# its parts share the control tree and the per-open state. The pieces that stand alone live
-# elsewhere: geometry and quick keys in lib/picker-geom.ps1, entry classification in
-# lib/entry.ps1, plugin hooks through lib/plugins.ps1.
+# lib/picker.ps1 - the history panel. One function owns the whole window lifecycle
+# (create, filter, draw, keys, paste) because its parts share the control tree and the
+# per-open state; the standalone pieces live in picker-geom / entry / plugins.
 
 function Show-Picker {
   if ($script:PickerOpen) { $script:PickerClose = $true; return }   # a second hotkey press closes it
@@ -78,13 +75,17 @@ function Show-Picker {
     $script:Filtered = @()
     $script:Labels = @()
     $script:Tokens = @()
-    # sticky pins the search had to hide, reported in the footer
-    $script:StickyHidden = 0
+    # rows frozen at the top of the list: the pinned block that never scrolls
+    $script:StickyTop = 0
     # Plugin keys and per-row decoration are resolved once per entry, not per key press / paint.
     $panelKeys = @()
     if (Get-Command Get-PluginPanelKeys -ErrorAction SilentlyContinue) { $panelKeys = @(Get-PluginPanelKeys) }
     $ctrlHints = @($panelKeys | Where-Object { $_.Ctrl -and -not $_.Alt -and -not $_.Shift -and ([string]$_.Key).Length -eq 1 })
-    $rowCache = @{}
+    # Both caches survive a refresh: a keystroke changes which rows match, not how a row
+    # looks. Keys include the flags, so a mark change invalidates its own entry; the
+    # comparer is ordinal, or two payloads differing only in case would share one entry.
+    $rowCache = [hashtable]::new([StringComparer]::Ordinal)
+    $labelCache = [hashtable]::new([StringComparer]::Ordinal)
     function Find-PanelKey([string]$keyName, [bool]$ctrl, [bool]$alt, [bool]$shift) {
       $name = ([string]$keyName).ToUpperInvariant()
       foreach ($k in $panelKeys) {
@@ -119,17 +120,13 @@ function Show-Picker {
     $form.BackColor = $ui.Surface
     $form.Padding = New-Object Windows.Forms.Padding(1)
 
-    $lst = New-Object Cb.FluentList
+    Add-PinList
+    $lst = New-Object Cb.PinList
     $lst.Dock = 'None'
-    $lst.BorderStyle = 'None'
-    $lst.IntegralHeight = $false
-    $lst.DrawMode = 'OwnerDrawFixed'
     $lst.ItemHeight = Px (Get-PanelRowHeight)
     $lst.BackColor = $ui.Surface
     $lst.ForeColor = $ui.Text
     $lst.Font = $fBody
-    $lst.HorizontalScrollbar = $false
-    $lst.ScrollAlwaysVisible = $false
     $lst.AccessibleName = 'Clipboard entries'
 
     # The native Win32 scrollbar cannot be themed and ListBox has no property to hide it.
@@ -399,7 +396,7 @@ function Show-Picker {
         $script:FootMsg = ''
         $footL.Invalidate()
         $count = ([string]$script:Filtered.Count) + ' of ' + ([string]$script:Entries.Count)
-        if ($script:StickyHidden -gt 0) { $count = $count + '   ' + ([string]$script:StickyHidden) + ' pinned hidden' }
+        if ($script:StickyTop -gt 0) { $count = $count + '   ' + ([string]$script:StickyTop) + ' pinned' }
         if ($script:CapturePaused) { $count = 'Paused: ' + $count }
         $footR.Text = $count
       } catch { }
@@ -440,60 +437,48 @@ function Show-Picker {
       if ($w -gt 0 -and $h -gt 0) { $lst.SetBounds(0, 0, $w + (Px 40), $h) }
     }
 
-    # recompute thumb geometry from the current TopIndex
+    # recompute thumb geometry from the current TopIndex. The frozen block is outside the
+    # scrollable range, so the thumb maps onto the rows below it only.
     function Sync-Sb {
-      $n = $lst.Items.Count
+      $n = $lst.ItemCount
       $vis = Get-Rows
+      $pin = $lst.PinnedCount
       $h = $sbar.ClientSize.Height
       if ($n -le $vis -or $h -le (Px 12)) { $script:SbLen = 0; $sbar.Invalidate(); return }
       $track = $h - (Px 6)
-      $script:SbLen = [Math]::Max((Px 28), [int]($track * $vis / $n))
+      $scrollRows = [Math]::Max(1, $n - $pin)
+      $scrollVis = [Math]::Max(1, $vis - $pin)
+      $script:SbLen = [Math]::Max((Px 28), [int]($track * $scrollVis / $scrollRows))
       $span = $track - $script:SbLen
-      $maxTop = $n - $vis
+      $room = $lst.MaxTop - $pin
       $t = 0
-      if ($maxTop -gt 0 -and $span -gt 0) { $t = [int]($span * $lst.TopIndex / $maxTop) }
+      if ($room -gt 0 -and $span -gt 0) { $t = [int]($span * ($lst.TopIndex - $pin) / $room) }
       $script:SbTop = (Px 3) + $t
       $sbar.Invalidate()
     }
 
-    # keep the selection inside the visible window so Enter never pastes a row that is
-    # scrolled out of sight
+    # The control scrolls itself to keep the selection on screen; a frozen row never needs
+    # that, so this is only about an empty list.
     function Keep-SelectionVisible {
-      if ($lst.Items.Count -eq 0) { return }
-      $vis = Get-Rows
-      $top = $lst.TopIndex
-      $sel = $lst.SelectedIndex
-      if ($sel -lt $top -or $sel -ge ($top + $vis)) {
-        $lst.SelectedIndex = [Math]::Min($top, $lst.Items.Count - 1)
-      }
+      if ($lst.ItemCount -gt 0) { $lst.EnsureVisible($lst.SelectedIndex) }
     }
 
     # move the list so the thumb lands at $thumbTop
     function Sb-ScrollTo([int]$thumbTop) {
       if ($script:SbLen -le 0) { return }
-      $vis = Get-Rows
-      $maxTop = $lst.Items.Count - $vis
       $span = ($sbar.ClientSize.Height - (Px 6)) - $script:SbLen
-      if ($maxTop -le 0 -or $span -le 0) { return }
-      $i = [int][Math]::Round(($thumbTop - (Px 3)) * $maxTop / $span)
-      if ($i -lt 0) { $i = 0 }
-      if ($i -gt $maxTop) { $i = $maxTop }
-      if ($i -ne $lst.TopIndex) { $lst.TopIndex = $i }
-      Keep-SelectionVisible
+      $pin = $lst.PinnedCount
+      $room = $lst.MaxTop - $pin
+      if ($room -le 0 -or $span -le 0) { return }
+      $i = $pin + [int][Math]::Round(($thumbTop - (Px 3)) * $room / $span)
+      $lst.ScrollTo($i)
       Sync-Sb
       $lst.Invalidate()
     }
 
     function Scroll-By([int]$rows) {
-      $maxTop = $lst.Items.Count - (Get-Rows)
-      if ($maxTop -le 0) { return }
-      $i = $lst.TopIndex + $rows
-      if ($i -lt 0) { $i = 0 }
-      if ($i -gt $maxTop) { $i = $maxTop }
-      if ($i -ne $lst.TopIndex) { $lst.TopIndex = $i }
-      Keep-SelectionVisible
+      $lst.ScrollBy($rows)
       Sync-Sb
-      $lst.Invalidate()
     }
 
     # focus stays in the search box, so wheel events bubble up here instead of the list
@@ -585,29 +570,43 @@ function Show-Picker {
 
     function Update-List([string]$q) {
       $lst.BeginUpdate()
-      $lst.Items.Clear()
-      # entries and their flags may have changed, so the per-row cache starts over
-      $rowCache.Clear()
-      $tokens = @($q -split '\s+' | Where-Object { $_ })
-      $script:Tokens = $tokens
-      # sticky pins: the plugin names the mark and the cap, the base decides how many rows
-      # actually fit - see Get-StickyPlan / Select-QueryRows in lib/store.ps1
-      $plan = @{ Mark = ''; Max = 0 }
-      if ($tokens.Count -gt 0) { $plan = Get-StickyPlan (Get-Rows) }
-      $sel = Select-QueryRows $script:Entries $tokens $plan.Mark $plan.Max
-      $script:StickyHidden = [int]$sel.Hidden
-      $res = New-Object System.Collections.Generic.List[object]
-      $labs = New-Object System.Collections.Generic.List[string]
-      foreach ($rec in $sel.Rows) {
-        $res.Add($rec)
-        $labs.Add((Get-ItemLabel $rec.Payload $script:ShowNewlineMarker))
+      try {
+        $tokens = @($q -split '\s+' | Where-Object { $_ })
+        $script:Tokens = $tokens
+        # sticky pins: the plugin names the mark and the cap, the base decides how many rows
+        # actually fit - see Get-StickyPlan / Get-StickyTopRows in lib/store.ps1
+        $plan = Get-StickyPlan (Get-Rows)
+        $rows = @(Select-QueryRows $script:Entries $tokens)
+        # the pins sort first, so the run of sticky rows at the top is what gets frozen
+        $script:StickyTop = Get-StickyTopRows $rows $plan.Mark $plan.Max
+        $res = New-Object System.Collections.Generic.List[object]
+        $labs = New-Object System.Collections.Generic.List[string]
+        $mk = $(if ($script:ShowNewlineMarker) { '1' } else { '0' })
+        foreach ($rec in $rows) {
+          $res.Add($rec)
+          $lkey = $rec.Payload + [char]0 + $mk
+          $lab = $labelCache[$lkey]
+          if ($null -eq $lab) {
+            $lab = Get-ItemLabel $rec.Payload $script:ShowNewlineMarker
+            if ($labelCache.Count -gt 1200) { $labelCache.Clear() }
+            $labelCache[$lkey] = $lab
+          }
+          $labs.Add($lab)
+        }
+        $script:Filtered = $res.ToArray()
+        $script:Labels = $labs.ToArray()
+        # the control only learns how many rows there are; the labels stay in $script:Labels
+        $lst.ItemCount = $script:Labels.Count
+        # freeze the pinned run, then start the scrollable part right under it
+        $lst.PinnedCount = $script:StickyTop
+        if ($script:Labels.Count -gt 0) { $lst.SelectedIndex = 0 } else { $lst.SelectedIndex = -1 }
+        $lst.TopIndex = $script:StickyTop
+      } catch {
+        Write-Log ('update list failed: ' + $_.Exception.Message)
+      } finally {
+        # the lock has to come off even when a row above threw, or the list never paints
+        $lst.EndUpdate()
       }
-      $script:Filtered = $res.ToArray()
-      $script:Labels = $labs.ToArray()
-      for ($i = 0; $i -lt $script:Labels.Count; $i++) { [void]$lst.Items.Add($script:Labels[$i]) }
-      if ($script:Labels.Count -gt 0) { $lst.SelectedIndex = 0 } else { $lst.SelectedIndex = -1 }
-      $lst.TopIndex = 0
-      $lst.EndUpdate()
       if ($script:Labels.Count -eq 0) {
         if ($script:Entries.Count -eq 0) {
           $script:EmptyGlyph = $script:Glyphs.History
@@ -777,8 +776,8 @@ function Show-Picker {
     $m6.Add_Click({ Request-Clear })
 
     # plugin actions: appended after the built-in ones, hidden unless their Test passes.
-    # Items stay grouped per plugin - a header names the plugin, a separator closes the
-    # previous group - so a menu never mixes actions from different plugins.
+    # Items stay grouped per plugin, so a menu never mixes two of them: a header names the
+    # plugin and a separator closes the previous group.
     $pluginItems = New-Object System.Collections.Generic.List[object]
     $groupHeads = New-Object System.Collections.Generic.List[object]
     try {
@@ -806,7 +805,8 @@ function Show-Picker {
                   $a = $sn.Tag
                   if ($null -eq $a -or $lst.SelectedIndex -lt 0) { return }
                   if ($lst.SelectedIndex -ge $script:Filtered.Count) { return }
-                  & $a['Invoke'] $script:Filtered[$lst.SelectedIndex]
+                  # a returned string is a note for the footer (a refused pin, for one)
+                  $note = (& $a['Invoke'] $script:Filtered[$lst.SelectedIndex]); if ($note) { Set-Foot ([string]$note) 3200 }
                   $script:Entries = @(Get-Records)
                   # After = 'paste': the action put its result on the clipboard and wants
                   # it pasted into the window the picker came from (transform does this)
@@ -888,6 +888,15 @@ function Show-Picker {
     # one StringFormat set per process, shared with the drawing helpers in lib/picker-draw.ps1
     $sfSet = New-PickerStringFormats
     $bgBrush = New-Object Drawing.SolidBrush $ui.Surface
+    # One brush per colour, reused while the panel lives: the row painter runs on every
+    # scroll tick, so allocating a SolidBrush per glyph would churn GDI+ handles for nothing.
+    $brushCache = @{}
+    function Get-Brush($color) {
+      $k = $color.ToArgb()
+      $b = $brushCache[$k]
+      if ($null -eq $b) { $b = New-Object Drawing.SolidBrush $color; $brushCache[$k] = $b }
+      return $b
+    }
     $sfEll = $sfSet.Ellipsis
     $sfNone = $sfSet.None
     $sfRight = $sfSet.Right
@@ -918,7 +927,9 @@ function Show-Picker {
         $decor = $null
         if ($isData) {
           $rec = $script:Filtered[$e.Index]
-          $row = $rowCache[$rec.Payload]
+          # the flags are part of the key: a mark change repaints that row and nothing else
+          $rkey = $rec.Payload + [char]0 + [string]$rec.Marks
+          $row = $rowCache[$rkey]
           if ($null -eq $row) {
             $dec = $null
             if (Get-Command Get-PluginRowDecor -ErrorAction SilentlyContinue) {
@@ -929,7 +940,8 @@ function Show-Picker {
             $bytes = 0
             try { $bytes = $Utf8.GetByteCount($rec.Payload) } catch { }
             $row = @{ Decor = $dec; Glyph = $glyph; Bytes = $bytes }
-            $rowCache[$rec.Payload] = $row
+            if ($rowCache.Count -gt 1200) { $rowCache.Clear() }
+            $rowCache[$rkey] = $row
           }
           $decor = $row.Decor
         }
@@ -940,12 +952,10 @@ function Show-Picker {
         $hovK = 0.0
         if ($e.Index -eq $script:Anim.HoverIndex) { $hovK = [double]$script:Anim.Hover }
         try { Draw-RowBackdrop $g $r.X $r.Y $r.Width $r.Height (Px 4) $tint $ui.SelBg $ui.HoverBg $selK $hovK } catch { Write-Log ('row backdrop failed: ' + $_.Exception.Message) }
-        $label = [string]$lst.Items[$e.Index]
+        $label = [string]$script:Labels[$e.Index]
         if (-not $isData) {
-          $db = New-Object Drawing.SolidBrush $ui.Faint
           $rr = New-Object Drawing.RectangleF -ArgumentList @([single]($r.X + (Px 10)), [single]$r.Y, [single]($r.Width - (Px 20)), [single]$r.Height)
-          $g.DrawString($label, $fBody, $db, $rr, $sfEll)
-          $db.Dispose()
+          $g.DrawString($label, $fBody, (Get-Brush $ui.Faint), $rr, $sfEll)
           return
         }
 
@@ -965,10 +975,8 @@ function Show-Picker {
         $showCap = ($offset -ge 0 -and $offset -le 9 -and $offset -lt (Get-Rows) -and -not $script:Confirm)
 
         if ($script:ShowTime) {
-          $timeBrush = New-Object Drawing.SolidBrush $ui.Faint
           $timeRect = New-Object Drawing.RectangleF -ArgumentList @([single]$timeX, [single]$r.Y, [single]$timeW, [single]$r.Height)
-          $g.DrawString((Get-RelTime $rec.Time), $fSmall, $timeBrush, $timeRect, $sfRight)
-          $timeBrush.Dispose()
+          $g.DrawString((Get-RelTime $rec.Time), $fSmall, (Get-Brush $ui.Faint), $timeRect, $sfRight)
         }
         # marks are pure decoration handed over by a plugin: fixed slots, right to left,
         # so a row with two marks never shifts the time column
@@ -984,10 +992,9 @@ function Show-Picker {
               $mcc = Convert-ThemeColor ([string]$mk.Color)
               if ($null -ne $mcc) { $mkColor = $mcc }
             }
-            $mkBrush = New-Object Drawing.SolidBrush $mkColor
+            $mkBrush = Get-Brush $mkColor
             $mkRect = New-Object Drawing.RectangleF -ArgumentList @([single]$slots[$mi], [single]$r.Y, [single](Px 14), [single]$r.Height)
             $g.DrawString([string]$mk.Glyph, $fIconSmall, $mkBrush, $mkRect, $sfCenter)
-            $mkBrush.Dispose()
           }
         }
 
@@ -1001,10 +1008,9 @@ function Show-Picker {
             $gcc = Convert-ThemeColor $decor.GlyphColor
             if ($null -ne $gcc) { $glyphColor = $gcc }
           }
-          $glyphBrush = New-Object Drawing.SolidBrush $glyphColor
+          $glyphBrush = Get-Brush $glyphColor
           $glyphRect = New-Object Drawing.RectangleF -ArgumentList @([single]($r.X + (Px 10)), [single]$r.Y, [single](Px 20), [single]$r.Height)
           $g.DrawString($rowGlyph, $fIcon, $glyphBrush, $glyphRect, $sfCenter)
-          $glyphBrush.Dispose()
           $textX = $r.X + (Px 38)
         }
 
@@ -1015,28 +1021,26 @@ function Show-Picker {
         if ($sel) {
           # selection indicator only: a short accent pill on the leading edge. It marks the
           # row the keys act on and never doubles as an entry highlight.
-          $barBrush = New-Object Drawing.SolidBrush $ui.Accent
+          $barBrush = Get-Brush $ui.Accent
           $barPath = New-RoundPath ($r.X + (Px 3)) ($r.Y + (Px 11)) (Px 3) ($r.Height - (Px 22)) (Px 1)
           $g.FillPath($barBrush, $barPath)
           $barPath.Dispose()
-          $barBrush.Dispose()
         }
 
-        $tb = New-Object Drawing.SolidBrush $ui.Text
         # highlight ink: a plugin sets the text colour, the row keeps its own background
+        $ink = $ui.Text
         if ($decor -and $decor.TextColor -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) {
           $tcc = Convert-ThemeColor $decor.TextColor
-          if ($null -ne $tcc) { $tb.Color = $tcc }
+          if ($null -ne $tcc) { $ink = $tcc }
         }
-        $hb = New-Object Drawing.SolidBrush $ui.Accent
+        $tb = Get-Brush $ink
+        $hb = Get-Brush $ui.Accent
         $hi = $script:HighlightOn -and $script:Tokens.Count -gt 0 -and ($label.Length -le 400)
         if ($hi -and $script:HighlightMax -gt 0) {
           if ([int]$row.Bytes -gt $script:HighlightMax) { $hi = $false }
         }
         if ($hi) { Draw-Highlight $g $label $tr $script:Tokens $tb $hb }
         else { $g.DrawString($label, $fBody, $tb, $tr, $sfEll) }
-        $tb.Dispose()
-        $hb.Dispose()
 
         if ($showCap) {
           # a key cap, not a data badge: neutral by default, accent while Ctrl is held
@@ -1045,17 +1049,13 @@ function Show-Picker {
           $capInk = $ui.BadgeText
           if ($script:CtrlHeld) { $capFill = $ui.AccentSoft; $capStroke = $ui.Accent; $capInk = $ui.Accent }
           $capPath = New-RoundPath $capX $capY $capW $capH (Px 4)
-          $capBrush = New-Object Drawing.SolidBrush $capFill
-          $g.FillPath($capBrush, $capPath)
-          $capBrush.Dispose()
+          $g.FillPath((Get-Brush $capFill), $capPath)
           $capPen = New-Object Drawing.Pen $capStroke, 1
           $g.DrawPath($capPen, $capPath)
           $capPen.Dispose()
           $capPath.Dispose()
           $capRect = New-Object Drawing.RectangleF -ArgumentList @([single]$capX, [single]$capY, [single]$capW, [single]$capH)
-          $inkBrush = New-Object Drawing.SolidBrush $capInk
-          $g.DrawString(('Ctrl+' + (Get-QuickKeyLabel $offset)), $fSmall, $inkBrush, $capRect, $sfCenter)
-          $inkBrush.Dispose()
+          $g.DrawString(('Ctrl+' + (Get-QuickKeyLabel $offset)), $fSmall, (Get-Brush $capInk), $capRect, $sfCenter)
         }
       })
     $tip = New-Object Windows.Forms.ToolTip
@@ -1156,17 +1156,19 @@ function Show-Picker {
             $go = $true
             if ($pluginKey.Test) { try { $go = [bool](& $pluginKey.Test $rec) } catch { $go = $false } }
             if ($go) {
-              try { & $pluginKey.Invoke $rec } catch { Write-Log ('plugin key failed: ' + $pluginKey.Plugin + ' - ' + $_.Exception.Message) }
+              $note = $null
+              try { $note = & $pluginKey.Invoke $rec } catch { Write-Log ('plugin key failed: ' + $pluginKey.Plugin + ' - ' + $_.Exception.Message) }
+              if ($note) { Set-Foot ([string]$note) 3200 }
               $script:Entries = @(Get-Records)
               Update-List $txt.Text
             }
           }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.KeyCode -eq 'Home') {
-          if ($lst.Items.Count -gt 0) { $lst.SelectedIndex = 0 }
+          if ($lst.ItemCount -gt 0) { $lst.SelectedIndex = 0 }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.KeyCode -eq 'End') {
-          if ($lst.Items.Count -gt 0) { $lst.SelectedIndex = $lst.Items.Count - 1 }
+          if ($lst.ItemCount -gt 0) { $lst.SelectedIndex = $lst.ItemCount - 1 }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.KeyCode -eq 'PageDown') {
           Scroll-By (Get-Rows)
@@ -1178,7 +1180,7 @@ function Show-Picker {
           if ($lst.SelectedIndex -gt 0) { $lst.SelectedIndex-- }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.KeyCode -eq 'Down') {
-          if ($lst.SelectedIndex -lt $lst.Items.Count - 1) { $lst.SelectedIndex++ }
+          if ($lst.SelectedIndex -lt $lst.ItemCount - 1) { $lst.SelectedIndex++ }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.KeyCode -eq 'Enter') {
           Flush-List
@@ -1322,7 +1324,7 @@ function Show-Picker {
       [Windows.Forms.Application]::DoEvents()
       $am = Invoke-AnimFrame $script:Anim $(if ($script:Animations) { 0.4 } else { 1.0 })
       # repaint only the rows whose alpha moved, not the whole list on every tick
-      if ($am -ne 0 -and -not $form.IsDisposed) { try { if ($am -band 1) { foreach ($i in @($script:Anim.HoverIndex, $script:Anim.SelIndex, $script:Anim.PrevSelIndex)) { if ($i -ge 0 -and $i -lt $lst.Items.Count) { $lst.Invalidate($lst.GetItemRectangle($i)) } } }; if ($am -band 2) { $sbar.Invalidate() }; if ($am -band 4) { $grip.Invalidate() }; if ($am -band 8) { $box.Invalidate() } } catch { } }
+      if ($am -ne 0 -and -not $form.IsDisposed) { try { if ($am -band 1) { foreach ($i in @($script:Anim.HoverIndex, $script:Anim.SelIndex, $script:Anim.PrevSelIndex)) { if ($i -ge 0 -and $i -lt $lst.ItemCount) { $lst.Invalidate($lst.GetItemRectangle($i)) } } }; if ($am -band 2) { $sbar.Invalidate() }; if ($am -band 4) { $grip.Invalidate() }; if ($am -band 8) { $box.Invalidate() } } catch { } }
       if ($script:PickerClose) { $form.Close(); break }
       if ($script:PickerHook) {
         # cache the IME state instead of asking per keystroke (a cross-process call); the

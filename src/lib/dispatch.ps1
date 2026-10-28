@@ -15,7 +15,11 @@ function Invoke-Main {
     [switch]$Purge,
     [switch]$All
   )
-Apply-Config
+# Only the two that put a panel on screen need the palette. Everything else - put, get,
+# list, del, status, config, help - would pay ~250 ms to load System.Drawing for colours it
+# never draws, so it resolves fonts and metrics only.
+$needColors = ($Command -eq '' -or $Command -eq 'ui' -or $Command -eq 'serve')
+Apply-Config -NoColors:(-not $needColors)
 # Plugins are loaded by default: clipboard.ini lists them by name, in load order. A file
 # that is not listed is never executed, so the list is the whole surface.
 if (@($script:PluginList).Count -gt 0 -and (Get-Command Load-Plugins -ErrorAction SilentlyContinue)) {
@@ -38,6 +42,19 @@ if (@($script:PluginList).Count -gt 0 -and (Get-Command Load-Plugins -ErrorActio
   $missing = @()
   if (Get-Command Get-PluginMissingNames -ErrorAction SilentlyContinue) { $missing = @(Get-PluginMissingNames) }
   if ($missing.Count -gt 0) { Write-Log ('plugin not found: ' + ($missing -join ', ')) }
+}
+# One pass over clipboard.ini now that every key is registered: an unknown key, a value the
+# schema rejects and a theme name that has no file are collected instead of only logged by
+# whichever loader happened to trip over them. `status` shows the count, `config` and `diag`
+# show the detail.
+$script:ConfigProblems = @()
+if (Get-Command Get-ConfigProblems -ErrorAction SilentlyContinue) {
+  try { $script:ConfigProblems = @(Get-ConfigProblems) } catch { $script:ConfigProblems = @() }
+  $stamp = ($script:ConfigProblems -join '|')
+  if ($stamp -ne $script:ConfigProblemStamp) {
+    $script:ConfigProblemStamp = $stamp
+    foreach ($p in $script:ConfigProblems) { Write-Log ('config: ' + $p) }
+  }
 }
 if ($Command -eq '' -or @('help', '-h', '--help') -contains $Command.ToLower()) { Show-Usage; return }
 
@@ -160,6 +177,9 @@ switch ($Command.ToLower()) {
     if (Test-Path -LiteralPath $hkFile) { $eff = ([IO.File]::ReadAllText($hkFile, [Text.Encoding]::UTF8)).Trim() }
     Write-Host ('active key  : ' + $eff + '   (requested: ' + $Hotkey + ')')
     Write-Host ('config file : ' + $IniPath + $(if (Test-Path -LiteralPath $IniPath) { '' } else { '   (missing, defaults in effect)' }))
+    if (@($script:ConfigProblems).Count -gt 0) {
+      Write-Host ('config      : [!] ' + @($script:ConfigProblems).Count + ' value(s) need attention   (clipboard config shows them)')
+    }
     $pnames = @()
     if (Get-Command Get-PluginNames -ErrorAction SilentlyContinue) { $pnames = @(Get-PluginNames) }
     if ($pnames.Count -gt 0) { Write-Host ('plugins     : ' + ($pnames -join ', ')) }

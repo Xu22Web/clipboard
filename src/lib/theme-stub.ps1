@@ -17,11 +17,10 @@ function Get-ThemeDir { return (Join-Path $Root 'themes') }
 # stubs replaced by lib\themes.ps1
 function Get-ThemeNames { return @() }
 function Resolve-ThemeName([string]$name) {
-  if ($name -ieq 'light') { return 'win11-light' }
   return 'win11-dark'
 }
 function Read-Theme([string]$name) { return $null }
-function Apply-Theme { }
+function Apply-Theme { param([switch]$SkipColors) }
 
 # built-in palette = the last known-good Win11 dark look, used when no theme file exists
 function Get-BasePalette {
