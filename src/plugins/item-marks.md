@@ -72,28 +72,34 @@ $ clipboard del 1
 |---|---|---|
 | `item-marks.MaxPins` | `50` | 置顶条数上限，超出时自动取消最旧的置顶（`0` = 不限） |
 | `item-marks.ClearKeepsPinned` | `1` | `1` = `clear` 与面板“清空”、托盘菜单保留置顶条目；`0` = 一并清掉（收藏条目仍然保留） |
-| `item-marks.StickyPins` | `0` | `1` = 搜索时置顶条目**粘在顶部**不参与过滤；`0` = 搜索也把它们过滤掉（默认） |
-| `item-marks.StickyRows` | `3` | 搜索时置顶最多占几行；`0` = 能占多少占多少 |
+| `item-marks.StickyPins` | `1` | `1` = 置顶条目在列表顶部**冻结**，滚动时不动；`0` = 跟普通行一样一起滚走 |
+| `item-marks.StickyRows` | `3` | 冻结的置顶最多占几行；`0` = 能占多少占多少（即可见行数 − 1） |
 
 ```powershell
 clipboard config set item-marks.MaxPins 10
 clipboard config set item-marks.ClearKeepsPinned 0
-clipboard config set item-marks.StickyPins 1
+clipboard config set item-marks.StickyPins 0
 clipboard config set item-marks.StickyRows 3
 ```
 
-### 粘性置顶怎么避免“盖住结果”
+### 冻结的置顶与置顶上限
 
-置顶条目在最前面，粘住之后如果数量一多，可见区域就会被它们占满，搜索出来的东西反而看不见。所以行数上限是**两层**的：
+粘性开启后，**每一条置顶都冻在列表顶部**，不随滚动移走。能冻多少行取两者较小的那个：
 
-1. `StickyRows` 是你声明的上限；
-2. 面板再把它压到 `可见行数 - 1`，**永远留一行给搜索结果自己**。
+1. `item-marks.StickyRows`（你声明的行数）；
+2. 可见行数 − 1：面板再压一次，**永远给下面的行留一行**。
 
-被挤掉的那几条不会默默消失：底部计数会变成 `10 of 15   3 pinned hidden`，告诉你有 3 条置顶因为放不下而没显示（剩下的仍可滚动看到，取消粘性或滚到底部即可）。
+所以置顶数量不能超过这个上限，否则整块列表都被固定、下面的内容无法显示。到上限后再置顶会被直接拒绝，并给出原因：
 
-另外，**匹配关键词的置顶条目不受这个上限限制**：它本来就是搜索结果，必须显示。上限只约束“不匹配但被粘住”的那些行。
+```
+$ clipboard pin 8
+[!] sticky pins already take 9 of 9 rows - unpin one first
+    raise Rows or item-marks.StickyRows for more room, or turn StickyPins off
+```
 
-> 粘性只在**有搜索词时**生效。没有搜索时列表本来就能滚动，所有置顶行照常显示在最前面，不会被隐藏。
+面板里的 `Ctrl+P` 与右键“Pin to top”同样会拒绝，原因显示在底部提示行。想让更多的条目能置顶，按提示三选一：调大 `Rows`、调大 `item-marks.StickyRows`（最多到 `Rows - 1`）、或把 `item-marks.StickyPins` 设为 `0`（关闭粘性，此时不再限制置顶数量）。
+
+冻结的行数会显示在底部计数里：`10 of 15   3 pinned`。把 `Rows` 改小后多出来的置顶不会被删掉，只是跟着列表一起滚动。
 
 高亮行的文字色与底色**不在这里**：它们是外观，归主题管（见下节），`clipboard.ini` 里没有对应键，写进去也会被忽略。
 
@@ -127,8 +133,8 @@ EmphasisFill=#24005FB8
 |---|---|---|
 | `Marks` | `p` 不保护、`s` 保护、`h` 不保护 | 存标记、算 `status` 计数、生成 `clear` / `del` 文案 |
 | `SortMark` | `p` | 带 `p` 的行排到列表最前 |
-| `StickyMark` | `p` | 搜索时带 `p` 的行留在顶部（`StickyPins=0` 时不生效） |
-| `StickyRows` | `StickyPins=1` 时读设置，`0` 变成 `-1` | 声明置顶最多占几行（`-1` = 由面板按可见行数决定） |
+| `StickyMark` | `p` | 带 `p` 的行在列表顶部冻结（`StickyPins=0` 时不生效） |
+| `StickyRows` | `StickyPins=1` 时读设置，`0` 变成 `-1` | 声明置顶最多占几行（`-1` = 由面板按可见行数决定）；插件的置顶动作应先用 `Get-PluginStickyCap` 检查剩余配额 |
 | `ClearKeeps` | `ClearKeepsPinned=1` 时 `@('p')` | `clear` 默认保留置顶行（`-All` 忽略它，`s` 仍然保留） |
 
 也就是说：删掉这个插件，基础层连“置顶”这个概念都不存在；换成别的插件声明别的字符同样成立。

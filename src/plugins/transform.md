@@ -52,8 +52,8 @@ $ clipboard transform "1 snake"
 transform.Modes=snake,kebab,upper
 ```
 
-- `transform.Modes` 留空（默认）= 只给当前的 `transform.Mode` 开一项；`Mode=keep` 时一项也没有。
-- 名字不区分大小写、空格与逗号都可以当分隔符；写错的名字、重复的名字与被忽略的 `keep` 都会被丢掉。
+- `transform.Modes` 默认就是**全部七个模式**；留空等同于默认值。
+- 名字不区分大小写、空格与逗号都可以当分隔符；重复的名字会被丢掉，写错的名字会让整个值回到默认值，并在 `clipboard config` / `status` 里报一行提示。
 - 文件清单条目不显示（同粘贴路径，不改写路径）；空条目也不显示。
 - `Mode` 只管**粘贴**用哪个模式；`Modes` 只管**菜单列**哪些模式，两者互不影响（可以 `Mode=keep` + `Modes=snake,upper`，即粘贴不改写、只在需要时手动转）。
 - 右键项由插件自己声明（`ContextMenu` 写成脚本块，自己算出要多少项）；基础层按插件分组显示：每组开头一行插件名，组间一条分隔线。
@@ -63,7 +63,7 @@ transform.Modes=snake,kebab,upper
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `transform.Mode` | `keep` | 粘贴时使用的改写模式（`keep` / `text` / `upper` / `lower` / `camel` / `snake` / `kebab` / `title`） |
-| `transform.Modes` | 空 | 右键菜单列出的模式，逗号分隔；空 = 只列 `Mode`（`Mode=keep` 则不列） |
+| `transform.Modes` | `text,upper,lower,camel,snake,kebab,title` | 右键菜单列出的模式，逗号分隔；只接受上表七个模式，其余值会被拒绝 |
 | `transform.Trim` | `1` | `1` = 去掉结果首尾空白 |
 
 ```powershell

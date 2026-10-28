@@ -2,7 +2,7 @@
 
 Windows 10 / 11 上的轻量剪贴板历史工具，纯 PowerShell（零依赖，只用系统自带的 5.1），提供可搜索的历史面板与全局热键。
 
-程序是 `src\clipboard.ps1`（入口）+ `src\lib\`（18 个必需模块 + 4 个可选加载层）：分发时要把整个文件夹一起拷，链接/快捷方式仍指向 `clipboard.ps1` 就行。
+程序是 `src\clipboard.ps1`（入口）+ `src\lib\`（21 个必需模块 + 4 个可选加载层）：分发时要把整个文件夹一起拷，链接/快捷方式仍指向 `clipboard.ps1` 就行。
 
 数据保存在脚本目录内，不依赖 Windows 剪贴板历史服务（`cbdhsvc`），不联网，也不需要管理员权限。
 
@@ -25,10 +25,10 @@ Windows 10 / 11 上的轻量剪贴板历史工具，纯 PowerShell（零依赖�
 - 长文本按行宽省略（`…`），悬停时用提示显示全文；搜索命中的关键词高亮
 - 每条带类型图标与相对时间（`now` / `5m` / `3h` / `2d` / `10-24`）
 - 右键菜单作用于**鼠标下的那一行**，带快捷键提示，插件可向菜单、面板按键与行样式注册自己的条目
-- 列表可滚动（滚轮步长跟随系统设置 / `PageUp` `PageDn`），面板可拖动、可缩放、支持高 DPI，尺寸与位置可选记住
+- 列表是自绘虚拟列表：只画可见的那几行（几百条记录也只画一屏），置顶行在顶部冻结、不随滚动移动；滚轮步长跟随系统设置，`PgUp` / `PgDn` 翻页，面板可拖动、可缩放、支持高 DPI，尺寸与位置可选记住
 - 空状态与无结果状态分别给出图标 + 标题 + 说明；托盘图标提供显示 / 暂停 / 恢复 / 清空 / 退出
 - 深浅两套主题，`ExcludePattern` 正则可以把密码类内容挡在历史之外
-- 可选的置顶 / 收藏 / 高亮 / 类型分析 / 按类型打开 / 粘贴改写 / 过期清理以插件形式提供，见 [插件](#插件)
+- 置顶 / 收藏 / 高亮 / 类型分析 / 按类型打开 / 粘贴改写 / 过期清理以插件形式提供，默认全部开启，见 [插件](#插件)
 
 ## 环境要求
 
@@ -106,11 +106,13 @@ Git Bash / MSYS2 下直接 `./src/clipboard`，CMD 下 `src\clipboard.cmd`。
 
 插件可以自己往面板里加按键（`PanelKeys`）：`item-marks` 加 `Ctrl+P` / `Ctrl+S` / `Ctrl+H`，`entry-actions` 加 `Ctrl+O`，按键会出现在 `clipboard help` 的 Panel keys 里并标明来源插件。
 
-底部提示做成带描边的按键胶囊，并且会随状态切换：默认是 `Enter` Paste · `Ctrl+Enter` Copy only · `Del` Delete · `Esc` Close，按住 `Ctrl` 变成 `1-9,0` Pick · `Enter` Copy only · `Z` Undo（启用 `item-marks` 时额外有 `P` Pin / `S` Star / `H` Mark）；列表为空时只保留 `Esc` Close。删除 / 置顶 / 清空后短暂显示操作结果。
+底部提示做成带描边的按键胶囊，并且会随状态切换：默认是 `Enter` Paste · `Ctrl+Enter` Copy only · `Del` Delete · `Esc` Close，按住 `Ctrl` 变成 `1-9,0` Pick · `Enter` Copy only · `Z` Undo（启用 `item-marks` 时额外有 `P` Pin / `S` Star / `H` Mark）；列表为空时只保留 `Esc` Close。删除 / 置顶 / 清空后短暂显示操作结果，被拒绝的操作（例如置顶已达上限）也会在这里说明原因。
 
 ## 配置
 
 配置**只读**：脚本启动时只读取脚本旁的 `clipboard.ini`，**不创建、不改写、不删除**它（`status`、`config`、`serve`、`ui` 都不会产生文件）。文件不存在或某个键缺失时，直接用内置默认值运行。
+
+读取时会做一次全量校验：未知键、类型或范围不对的值、不存在的主题名、枚举项里不认识的取值，都会在 `clipboard config` 顶部列一行，`status` 与 `diag` 里只给计数（`[!] N value(s) need attention`）；出问题的键按默认值继续运行，不会因此启动失败。
 
 需要一份带全部键与注释的模板时执行 `clipboard config init`：它**只补缺失的键**，已写的值（包括插件设置）一律保留；**所有插件的设置键都会被写出来**（不管插件是否在 `Plugins=` 里启用），并把本版本已不认识的键改成 `# [unknown] 原样内容`（去掉 `#` 即可恢复）。重复执行没有副作用。想回到默认值用 `clipboard config reset`（整份重写，会丢掉改过的值）。只想改单个键用 `clipboard config set <key> <value>`。整个 ini 结构是扁平 `key=value`，`#` 或 `;` 开头是注释，`[section]` 行会被忽略。
 
@@ -128,7 +130,7 @@ Git Bash / MSYS2 下直接 `./src/clipboard`，CMD 下 `src\clipboard.cmd`。
 | `Interval` | `300` | 剪贴板轮询间隔（毫秒） |
 | `NoPaste` | `0` | `1` = 只写剪贴板，不自动粘贴 |
 | `Balloon` | `1` | `1` = 启动时弹托盘气泡 |
-| `Theme` | `win11-dark` | 主题名 = `themes/` 里的 `.ini` 文件名；`dark` / `light` 可作别名 |
+| `Theme` | `win11-dark` | 主题名 = `themes/` 里的 `.ini` 文件名（如 `win11-dark` / `win11-light`），不接受别名 |
 | `ExcludePattern` | 空 | 正则，匹配到的文本永远不会入库 |
 | `WindowWidth` | `700` | 面板宽度（96 dpi 基准，高 DPI 按比例缩放），可自由拖右下角或用 `config set` 改 |
 | `Rows` | `10` | **可见行数，面板高度的唯一来源**：高度 = 行数 × 行高（40）+ 头部（68）+ 底栏（40）+ 边框（2），永远只显示整行；会被屏幕工作区再收一次 |
@@ -154,7 +156,7 @@ Git Bash / MSYS2 下直接 `./src/clipboard`，CMD 下 `src\clipboard.cmd`。
 
 > 唯一会写 ini 的设置是 `SaveWindowWidth=1` / `SaveWindowPos=1`：关闭面板时只回写 `WindowWidth` / `WindowLeft` / `WindowTop` 三个键，其余行原样保留。
 
-> 行数是一个跨键约束的源头：粘性置顶最多只能占 `Rows - 1` 行（总留一行给搜索结果），所以 `item-marks.StickyRows` 超过这个上限会被 `config set` 拒绝，而把 `Rows` 调小时已设的 `StickyRows` 会自动跟着下调。
+> 行数是一个跨键约束的源头：粘性置顶最多只能占 `Rows - 1` 行（总留一行给下面的行），所以 `item-marks.StickyRows` 超过这个上限会被 `config set` 拒绝，而把 `Rows` 调小时已设的 `StickyRows` 会自动跟着下调。置顶数量同样受这个上限约束：满额后再置顶会被拒绝并提示原因（`clipboard pin` 打印 `[!]`，面板里显示在底部）。
 
 ## 主题
 
@@ -222,7 +224,7 @@ BadgeBg BadgeText KeyCapBg KeyCapBorder Mark Warn
 
 加载规则：
 
-- 只有 `themes/*.ini` 参与，名字 = 文件名（忽略大小写）；`dark` / `light` 是别名。
+- 只有 `themes/*.ini` 参与，名字 = 文件名（忽略大小写）；不写主题名（或名字不存在）会回退到 `win11-dark` 并记一行日志。
 - 解析名字只读文件名，不解析内容，所以坏主题不会影响 `config` / `status`；名字不存在或文件读不了 → 回退 `win11-dark` / 内置配色并写日志。
 - 主题切换后需重启常驻进程生效（`config set Theme` 会自动重启；手工改 ini 则 `clipboard stop` + `clipboard serve`）。
 
@@ -232,7 +234,7 @@ BadgeBg BadgeText KeyCapBg KeyCapBorder Mark Warn
 
 | 插件 | 简单介绍 | 启用 |
 |---|---|---|
-| [`item-marks`](src/plugins/item-marks.md) | 置顶 / 收藏 / 高亮：`pin` `unpin` `star` `unstar` `highlight` `unhighlight` `marks`，面板 `Ctrl+P` `Ctrl+S` `Ctrl+H`，右键三个菜单项；高亮改文字与背景色，不改左侧选择条；可开启“粘性置顶”（搜索时置顶留在顶部，行数受控） | `Plugins=item-marks` |
+| [`item-marks`](src/plugins/item-marks.md) | 置顶 / 收藏 / 高亮：`pin` `unpin` `star` `unstar` `highlight` `unhighlight` `marks`，面板 `Ctrl+P` `Ctrl+S` `Ctrl+H`，右键三个菜单项；高亮改文字与背景色，不改左侧选择条；粘性置顶默认开启（每条置顶都冻在列表顶部，行数上限内），置顶数到上限会被拒绝并提示 | `Plugins=item-marks` |
 | [`entry-actions`](src/plugins/entry-actions.md) | 看清条目再动手：`kind` / `kinds` 分析类型与格式，`open` 按类型打开，面板 `Ctrl+O`，右键“Open link or path”；行图标也由它提供 | `Plugins=entry-actions` |
 | [`transform`](src/plugins/transform.md) | 粘贴前改写文本：纯文本 / 全大写 / 小写 / 驼峰 / 蛇形 / 烤肉串 / 标题式；右键按 `transform.Modes` 逐个列出 `Transform as <模式>` | `Plugins=transform` |
 | [`retention`](src/plugins/retention.md) | 过期清理：按天数自动删除旧条目，受保护标记的行永不清理 | `Plugins=retention` |
@@ -251,7 +253,7 @@ Plugins=item-marks,entry-actions
 |---|---|---|
 | 入口 | `clipboard.ps1` | 参数绑定、`$Root`、必需模块清单、运行时路径（ini / store / log 位置）、`Invoke-Main` |
 | 装配 | `lib/dispatch.ps1` | `Invoke-Main`：先 `Apply-Config`，再按 `Plugins=` 装配插件，最后执行一个命令 |
-| 场景 | `lib/picker.ps1`、`lib/picker-draw.ps1`、`lib/serve.ps1`、`lib/config.ps1`、`lib/diag.ps1`、`lib/shortcut.ps1`、`lib/usage.ps1` | 面板窗与交互、可复用的绘制件、常驻进程、设置命令面、诊断恢复、快捷方式、帮助 |
+| 场景 | `lib/picker.ps1`、`lib/pinlist.ps1`、`lib/picker-draw.ps1`、`lib/anim.ps1`、`lib/keyhook.ps1`、`lib/serve.ps1`、`lib/config.ps1`、`lib/diag.ps1`、`lib/shortcut.ps1`、`lib/usage.ps1` | 面板窗与交互、自绘列表、可复用的绘制件、过渡动画、键盘钩子、常驻进程、设置命令面、诊断恢复、快捷方式、帮助 |
 | 领域 | `lib/clip.ps1`、`lib/store.ps1`、`lib/entry.ps1`、`lib/hotkey.ps1`、`lib/picker-geom.ps1` | 剪贴板读写、历史记录与标记存储、条目分类与文案、热键解析、面板纯计算 |
 | 基础 | `lib/ini.ps1`、`lib/values.ps1`、`lib/util.ps1` | schema 与原始读取、单个键的校验/解析/写入、日志 / 程序集 / DPI / 像素与时间 |
 | 底 | `lib/base.ps1`、`lib/theme-stub.ps1` | 常量与全部默认值；内置配色与主题空实现（`lib/themes.ps1` 覆盖它们） |
@@ -267,8 +269,8 @@ Plugins=item-marks,entry-actions
 | `Description` | 否 | 一句话说明，`clipboard config` 会展示 |
 | `Commands` | 否 | `@{ 'open' = { param($value) ... } }` → 变成 `clipboard open <值>` |
 | `CommandHelp` / `CommandOrder` | 否 | 每个命令的一行说明（`clipboard help` 用）/ 打印顺序 |
-| `ContextMenu` | 否 | `@( @{ Label = '...'; Test = { param($rec) ... }; Invoke = { param($rec) ... } } )`，右键菜单项；`Test` 返回 `$false` 时不显示。**按插件分组**：每组开头一行灰字插件名（不可点），组与组之间一条分隔线，组内不加线也不插标题（顺序 = `Plugins=` 加载顺序）；整组被隐藏时标题与分隔线一起消失。也可以写成**返回同样数组的脚本块**，让项数跟随自己的设置（`transform` 就是这样按 `transform.Modes` 生成多项）。项里可加 `After = 'paste'`：点完把结果**直接粘贴到原来的窗口**（`transform` 用），不加这个键就是老行为（只写进历史，点条目时才粘贴） |
-| `PanelKeys` | 否 | `@( @{ Key = 'O'; Ctrl = $true; Label = '...'; Test = ...; Invoke = ... } )`，面板按键；不会覆盖基础按键 |
+| `ContextMenu` | 否 | `@( @{ Label = '...'; Test = { param($rec) ... }; Invoke = { param($rec) ... } } )`，右键菜单项；`Test` 返回 `$false` 时不显示。**按插件分组**：每组开头一行灰字插件名（不可点），组与组之间一条分隔线，组内不加线也不插标题（顺序 = `Plugins=` 加载顺序）；整组被隐藏时标题与分隔线一起消失。也可以写成**返回同样数组的脚本块**，让项数跟随自己的设置（`transform` 就是这样按 `transform.Modes` 生成多项）。项里可加 `After = 'paste'`：点完把结果**直接粘贴到原来的窗口**（`transform` 用），不加这个键就是老行为（只写进历史，点条目时才粘贴）；`Invoke` 返回字符串同样会变成底部提示 |
+| `PanelKeys` | 否 | `@( @{ Key = 'O'; Ctrl = $true; Label = '...'; Test = ...; Invoke = ... } )`，面板按键；不会覆盖基础按键。`Invoke` 返回一个字符串时，那句话会显示在底部提示行（`item-marks` 拒绝置顶时就这样说原因） |
 | `TypeGlyph` | 否 | `{ param($payload) ... }`，条目 → 行图标（返回空 = 该行不画图标）；第一个给出非空值的插件胜出 |
 | `Settings` | 否 | 自己的配置项（`clipboard.ini`），`[ordered]@{ Key = @{ Kind = 'bool'; Default = 0; Desc = '...' } }` |
 | `ThemeSettings` | 否 | 外观项，**不是 ini 键**：主题用同名段（如 `[item-marks]`）重写 |
@@ -276,8 +278,8 @@ Plugins=item-marks,entry-actions
 | `RowDecor` | 否 | `{ param($rec) @{ Marks = @( @{ Glyph = '..'; Color = '#..' } ); TextColor = '#..'; BackColor = '#..' } }`，行尾标记字形与整行文字/背景色 |
 | `Marks` | 否 | `[ordered]@{ x = @{ Set = 'on'; Unset = 'off'; Word = 'marked'; Hint = 'Ctrl+X'; Protected = $false } }`，声明本插件用的标记字符 |
 | `SortMark` | 否 | 带该标记的行浮到列表最前（只能有一个） |
-| `StickyMark` | 否 | 带该标记的行在**搜索时**仍留在顶部（“粘性置顶”；只能有一个） |
-| `StickyRows` | 否 | 数字或脚本块，粘性行最多占几行：`0` = 关闭该特性，负数 = 由面板按可见行数决定 |
+| `StickyMark` | 否 | 带该标记的行在列表顶部**冻结**，不随滚动移动（“粘性置顶”；只能有一个） |
+| `StickyRows` | 否 | 数字或脚本块，冻结的粘性行最多占几行：`0` = 关闭该特性，负数 = 由面板按可见行数决定；插件写置顶动作时要先用 `Get-PluginStickyCap` 看剩余配额 |
 | `ClearKeeps` | 否 | 数组或脚本块，`clear` 默认保留的标记 |
 | `Init` | 否 | 每个进程只跑一次的初始化（设置全部解析完之后） |
 
@@ -290,7 +292,7 @@ Plugins=item-marks,entry-actions
 | `Marks` | 命令行收尾提示、`status`、`clear` 文案都用声明里的词；`Protected` 决定该标记是否保护行 |
 | `Protected = $true` | `del` 拒绝、裁剪与 `clear` 跳过，直到插件用自己的 `Unset` 命令取消标记 |
 | `SortMark` | 带该标记的行排到列表最前（置顶就是这么实现的） |
-| `StickyMark` + `StickyRows` | 有搜索词时，带 `StickyMark` 的行即使不匹配也留在顶部，但最多占 `StickyRows` 行，**且永远给匹配结果留一行**；放不下的行数会在底部计数里报出来（`10 of 15   3 pinned hidden`）。匹配关键词的行不受此限 |
+| `StickyMark` + `StickyRows` | 带 `StickyMark` 的行固定在列表顶部、不随滚动移动，冻结行数取 `StickyRows` 与 `可见行数 - 1` 的较小值，**永远给下面的行留一行**；这个上限同时约束“置顶”动作，满额后再置顶会被拒绝而不是把列表冻满。冻结行数在底部计数里显示（`10 of 15   3 pinned`） |
 | `ClearKeeps` | `clear` 默认保留这些标记；`-All` 忽略它，但保护标记永远保留 |
 
 因此新增一个标记不需要改基础层（`lib\store.ps1`）：写插件、声明标记、在 `RowDecor` 里画出来即可。多个标记可以同时存在同一行。
@@ -408,7 +410,10 @@ src/                    程序本体（打包只读这个目录）
   lib/hotkey.ps1          热键解析与修饰键状态
   lib/entry.ps1           条目分类（text / files / empty）、图标兜底与条目文案
   lib/picker-geom.ps1     面板纯计算：行数、数字快选、窗口位置、命中高亮
+  lib/anim.ps1            过渡动画的数值层（缓动 / 插值，不碰窗口）
   lib/picker-draw.ps1     可复用绘制：按键胶囊、搜索命中着色（只要 Graphics + 参数）
+  lib/pinlist.ps1         自绘列表控件 Cb.PinList：只画可见行，置顶行不随滚动
+  lib/keyhook.ps1         低级键盘钩子：面板拿按键但不抢前台窗口
   lib/picker.ps1          历史面板：窗体、过滤、列表、按键、右键菜单、粘贴
   lib/serve.ps1           常驻进程：捕获循环、热键、托盘、崩溃重启
   lib/diag.ps1            diag 报告与 restore
@@ -478,8 +483,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run-tests.ps1
 
 | 组 | 开关 | 覆盖内容 |
 |---|---|---|
-| 结构 | 无（总是执行） | 分层契约：16 个必需模块齐全、每个模块可解析、模块里不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
-| 单元 | `-Unit` | 纯函数与存储层：`Parse-Hotkey`、`Format-Item`/`Get-ItemLabel`、`Read-Ini`/`Write-IniTemplate`/`Set-IniKey`、`Convert-IniValue`（类型与范围校验）、`Apply-Config`、记录往返与未知格式忽略、标记与保护规则、`Get-QuickKeyIndex` / 数字键位置、`Get-VisibleRowCount`、`Get-PickerBounds`、`Get-HitMarks`、`Get-EntryKind`（文本 / 文件列表）、行图标（无插件时为空、插件 `TypeGlyph` 生效）、主题（发现 / 别名 / 颜色解析 / 两套调色板 / 未知主题回退）、插件白名单与各个共享块。通过 `-Library` dot-source 主脚本（入口会先把 `lib\` 全部点源进来，所以函数都在），不触发命令分发 |
+| 结构 | 无（总是执行） | 分层契约：21 个必需模块齐全、每个模块可解析、模块里不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
+| 单元 | `-Unit` | 纯函数与存储层：`Parse-Hotkey`、`Format-Item`/`Get-ItemLabel`、`Read-Ini`/`Write-IniTemplate`/`Set-IniKey`、`Convert-IniValue`（类型与范围校验）、`Apply-Config`、`Get-ConfigProblems`、记录往返与未知格式忽略、标记与保护规则、`Get-QuickKeyIndex` / 数字键位置、`Get-VisibleRowCount`、`Get-PickerBounds`、`Get-HitMarks`、`Get-StickyTopRows`（冻结行数）、`Get-PluginStickyCap`（置顶上限）、`Cb.PinList`（行号映射与滚动范围）、`Get-EntryKind`（文本 / 文件列表）、行图标（无插件时为空、插件 `TypeGlyph` 生效）、主题（发现 / 名字匹配 / 颜色解析 / 两套调色板 / 未知主题回退）、插件白名单与各个共享块。通过 `-Library` dot-source 主脚本（入口会先把 `lib\` 全部点源进来，所以函数都在），不触发命令分发 |
 | 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put`/`get`/`list`/`pick`/`del`/`clear`/`clear -All`/`pause`/`resume`/`status`/`themes`/`config get`/`config set`/`config init`/`diag`、主题切换与非法主题名拒绝、插件默认全部加载与 `Plugins=` 改小列表、插件命令（`pin`/`star`/`kind`/`kinds`/`open`/`transform`/`sweep`/`marks`）、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝；以及 `build.ps1` 用配置文件打包（进包内容、`Plugins=`/`Themes=` 裁剪、`Overwrite=0` 拒绝覆盖、未知插件名报错） |
 | 端到端 | `-E2E` | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启循环 |
 
@@ -535,14 +540,14 @@ Themes=win11-dark
 | 词法 | 删注释（`#Requires` 保留）、删行首缩进；token 之间只在**标点旁**丢掉空格（`(`、`[`、`@(`、`,`、`;`、`=`、`|`、`&`、`. `、`::` 等），其余一律保留一个空格或原本的换行 —— 猜错空格会静默改变含义（`- (x)` vs `-(x)`、`$h [$k]` vs `$h[$k]`） |
 | 语法 | 内部函数名 → `a`、`b`…`z`、`a1`…（**全项目一套映射**，避开所有别名与 cmdlet 名，否则 `fl` 这类名字会被 `Format-List` 截胡）；局部变量 → 同一套短名的另一个编号空间（每文件一套） |
 | 不改名 | `param()` 里的名字（按名传参：`-Library`、`-Count`、`-NoInject`，`$PSBoundParameters` 也按它查键 —— 改了名 `config set` 会认不出 `Arg`）、带作用域/驱动器前缀的变量（`$script:`、`$env:`）、PowerShell 自动变量、`Get-Command <名字>` 查过的函数、成员名与哈希键 |
-| 校验 | 改名后、语句合并后、词法压缩后各解析一次；语法有任何错误就中止，不会产出坏包。`Verify=1` 再拿产物跑一遍真实 CLI 测试：101 项集成断言全过才算打包成功 |
+| 校验 | 改名后、语句合并后、词法压缩后各解析一次；语法有任何错误就中止，不会产出坏包。`Verify=1` 再拿产物跑一遍真实 CLI 测试：集成与端到端断言全过才算打包成功 |
 
 两个踩过的 AST 坑（写在这里省得下次再撞）：
 
 - 变量名必须从 `VariablePath.UserPath` 取。`VariablePath.UnqualifiedPath` 在本机运行时对 `$x` 和 `$script:x` **一律返回空串**，拿它做映射会“看起来改名了、实际一半没改”，结果 `$MaxItems` 与 `$script:MaxItems` 指向两个变量，历史写不进去。
 - 函数返回 `HashSet` 之类的空集合时会被 PowerShell 展开成 `$null`，调用方 `.Contains()` 立刻炸 —— 用 `return , $set` 包一层，或者在调用处 `@()`。
 
-实测（本仓库，拆分后）：`234171 → 140221` 字节，`40.1%` 更小（只压缩不改名是 30.6%）；`picker.ps1` −40%、`lib/store.ps1` −46%、`lib/plugins.ps1` −49%、`lib/theme-stub.ps1` −60%。
+实测（本仓库）：脚本总量约 `286 KB → 170 KB`，约 `40%` 更小；`picker.ps1` −40%、`lib/store.ps1` −46%、`lib/plugins.ps1` −49%、`lib/theme-stub.ps1` −60%。
 
 > `Verify=1` 的意义：包里的函数名与变量名都变了，**只有跑一遍真实 CLI 测试才能证明功能没变**；`-Source` 指向产物时单元组会跳过（它按名字调内部函数），集成与端到端照常跑。
 
@@ -551,7 +556,7 @@ Themes=win11-dark
 | 进包（来自 `src\`） | 不进包 |
 |---|---|
 | `clipboard.ps1`、`clipboard.cmd`、`clipboard`（Git Bash 壳） | `src\data\`（历史与日志） |
-| `lib\`（22 个模块：18 必需 + `themes.ps1` 与插件三件套）、所选 `plugins\`（含 `.md`）、所选 `themes\`（ini 与 `.md`） | `src\clipboard.ini`（用户设置） |
+| `lib\`（25 个模块：21 必需 + `themes.ps1` 与插件三件套）、所选 `plugins\`（含 `.md`）、所选 `themes\`（ini 与 `.md`） | `src\clipboard.ini`（用户设置） |
 | `README.md`、`LICENSE`、`docs\`（截图，`IncludeDocs=1` 时） | `tests\`、`build\`、`build.ini`、`dist\`、`.git` |
 
 > `Plugins=` / `Themes=` 里写了不存在的名字会直接失败并指出是哪个；被选中的插件/主题会连同自己的 `.md` 一起进包（`lib\` 是基础层，永远随包走）。

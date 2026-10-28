@@ -12,7 +12,7 @@ Theme=win11-light
 ```
 
 ```powershell
-clipboard config set Theme light    # dark / light 是别名，会写成完整主题名
+clipboard config set Theme win11-light    # 主题名 = 文件名，不接受别名
 ```
 
 ## 这套主题的取值
