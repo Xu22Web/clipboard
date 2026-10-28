@@ -887,6 +887,7 @@ function Show-Picker {
 
     # one StringFormat set per process, shared with the drawing helpers in lib/picker-draw.ps1
     $sfSet = New-PickerStringFormats
+    $bgBrush = New-Object Drawing.SolidBrush $ui.Surface
     $sfEll = $sfSet.Ellipsis
     $sfNone = $sfSet.None
     $sfRight = $sfSet.Right
@@ -900,10 +901,9 @@ function Show-Picker {
         param($s, $e)
         if ($lst.IsDisposed) { return }
         if ($e.Index -lt 0) { return }
-        # a clean background per paint: the hover / selection overlay is translucent and a
-        # double-buffered list keeps old pixels, so stacking darkened it frame by frame
-        $e.DrawBackground()
+        # fill by hand: DrawBackground would paint the selected row a solid system highlight
         $g = $e.Graphics
+        $g.FillRectangle($bgBrush, $e.Bounds)
         $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $b = $e.Bounds
         $rowW = [Math]::Min($b.Width, $listHost.ClientSize.Width) - (Px 12)
@@ -936,9 +936,7 @@ function Show-Picker {
         if ($null -eq $script:Anim) { $script:Anim = New-AnimState }
         $tint = $null
         if ($decor -and $decor.BackColor -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) { $tint = Convert-ThemeColor $decor.BackColor }
-        $selK = 0.0
-        if ($e.Index -eq $script:Anim.SelIndex) { $selK = [double]$script:Anim.Sel }
-        if ($e.Index -eq $script:Anim.PrevSelIndex) { $selK = [Math]::Max($selK, [double]$script:Anim.PrevSel) }
+        $selK = $(if ($sel) { 1.0 } else { 0.0 })
         $hovK = 0.0
         if ($e.Index -eq $script:Anim.HoverIndex) { $hovK = [double]$script:Anim.Hover }
         try { Draw-RowBackdrop $g $r.X $r.Y $r.Width $r.Height (Px 4) $tint $ui.SelBg $ui.HoverBg $selK $hovK } catch { Write-Log ('row backdrop failed: ' + $_.Exception.Message) }
@@ -1322,7 +1320,7 @@ function Show-Picker {
 
     while (-not $form.IsDisposed) {
       [Windows.Forms.Application]::DoEvents()
-      $am = Invoke-AnimFrame $script:Anim $(if ($script:Animations) { 0.3 } else { 1.0 })
+      $am = Invoke-AnimFrame $script:Anim $(if ($script:Animations) { 0.4 } else { 1.0 })
       # repaint only the rows whose alpha moved, not the whole list on every tick
       if ($am -ne 0 -and -not $form.IsDisposed) { try { if ($am -band 1) { foreach ($i in @($script:Anim.HoverIndex, $script:Anim.SelIndex, $script:Anim.PrevSelIndex)) { if ($i -ge 0 -and $i -lt $lst.Items.Count) { $lst.Invalidate($lst.GetItemRectangle($i)) } } }; if ($am -band 2) { $sbar.Invalidate() }; if ($am -band 4) { $grip.Invalidate() }; if ($am -band 8) { $box.Invalidate() } } catch { } }
       if ($script:PickerClose) { $form.Close(); break }

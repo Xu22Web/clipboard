@@ -49,17 +49,19 @@ function Set-AnimSelection($state, [int]$index) {
   Set-AnimTarget $state 'Sel' 1.0
 }
 
-# one frame: ease every value toward its target and report what has to be repainted.
-# A completed value stops reporting, so an idle panel repaints nothing.
+# One frame: ease every value toward its target and report what has to be repainted. The
+# step is the fraction of the remaining distance, not a fixed amount: a linear ramp moves at
+# one speed and stops dead, while this covers most of the gap immediately and lands softly.
+# Step 1 snaps to the target in a single frame, which is how the switch disables the effect.
 function Invoke-AnimFrame($state, [double]$step) {
   $mask = 0
   foreach ($k in @($script:AnimKeys)) {
     $now = [double]$state[$k]
     $want = [double]$state[$k + 'Target']
-    if ($now -lt $want) { $now = [Math]::Min($want, $now + $step) }
-    elseif ($now -gt $want) { $now = [Math]::Max($want, $now - $step) }
-    else { continue }
-    $state[$k] = $now
+    $next = $now + (($want - $now) * $step)
+    if ([Math]::Abs($want - $next) -lt 0.015) { $next = $want }
+    if ($next -eq $now) { continue }
+    $state[$k] = $next
     $mask = $mask -bor [int]$script:AnimPaint[$k]
   }
   return $mask

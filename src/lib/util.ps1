@@ -73,6 +73,11 @@ namespace Cb {
       get {
         var cp = base.CreateParams;
         cp.ExStyle |= 0x08000000;   // WS_EX_NOACTIVATE
+        // The rows are owner-drawn by a native list box, which paints straight into the
+        // window DC: at per-frame rates the background erase is visible between invalidate
+        // and repaint, and DoubleBuffered cannot reach those pixels. Compositing lets the
+        // DWM assemble the window off-screen, so that gap never reaches the screen.
+        cp.ExStyle |= 0x02000000;   // WS_EX_COMPOSITED
         cp.ClassStyle |= 0x00020000;
         return cp;
       }
