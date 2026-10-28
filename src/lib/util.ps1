@@ -27,6 +27,18 @@ namespace Cb {
     [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr h, int id);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr pid);
+    [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint attach, uint attachTo, bool on);
+    [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
+    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int index);
+    [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr h, int index, int value);
+    // an input method needs an ordinary, focusable window: while it composes the panel hands
+    // its WS_EX_NOACTIVATE back, and takes it again if the hand-over is refused
+    public static void SetNoActivate(IntPtr h, bool on) {
+      int ex = GetWindowLong(h, -20);
+      SetWindowLong(h, -20, on ? (ex | 0x08000000) : (ex & ~0x08000000));
+    }
     [DllImport("user32.dll")] public static extern uint GetClipboardSequenceNumber();
     [DllImport("user32.dll")] public static extern IntPtr GetKeyboardLayout(uint idThread);
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);

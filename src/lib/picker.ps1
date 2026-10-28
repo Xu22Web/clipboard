@@ -1217,19 +1217,23 @@ function Show-Picker {
     function Invoke-HookedKey {
       $keys = @(Get-HookedKeys)
       if ($keys.Count -eq 0) { return }
+      # true when the input method claimed a key (VK_PROCESSKEY): it must compose in the panel
+      $claimed = Test-KeyHookEscalate
       for ($i = 0; $i -lt $keys.Count; $i++) {
         $vk = $keys[$i]
         $ch = Get-HookedChar $vk
         $mod = [Windows.Forms.Control]::ModifierKeys
         $plain = ($mod -band ([Windows.Forms.Keys]::Control -bor [Windows.Forms.Keys]::Alt)) -eq 0
-        # an input method needs a real focus: the first letter typed in native mode hands
-        # the keyboard over and the remaining keys are replayed for the IME (keep together)
-        if ($plain -and $vk -ge 0x30 -and $vk -le 0x5A -and $script:ImeNative) {
-          Write-Log 'picker: handing the keyboard over for the input method'
-          Switch-PickerToTakeover
-          foreach ($k in $keys[$i..($keys.Count - 1)]) {
-            [Cb.Win]::keybd_event([byte]$k, 0, 0, [IntPtr]::Zero)
-            [Cb.Win]::keybd_event([byte]$k, 0, 2, [IntPtr]::Zero)
+        # an input method needs a real focus: hand the keyboard over and replay the key, so
+        # the composition starts in the panel instead of the window behind it
+        if ($plain -and ($claimed -or ($script:ImeNative -and $vk -ge 0x30 -and $vk -le 0x5A))) {
+          if (Switch-ToTakeover $form.Handle $txt) {
+            $script:PickerHook = $false
+            $script:PickerEscalated = $true
+            Write-Log 'picker: handing the keyboard over for the input method'
+            Send-HookedKeys $keys $i
+          } else {
+            Restore-KeyHook $form.Handle
           }
           return
         }
@@ -1243,17 +1247,6 @@ function Show-Picker {
           [void][Cb.Win]::SendMessage($form.Handle, 0x0101, [IntPtr]$vk, [IntPtr]1)       # WM_KEYUP
         }
       }
-    }
-
-    function Switch-PickerToTakeover {
-      # an IME needs a real focus and its candidate window: drop the hook and activate
-      $script:PickerHook = $false
-      $script:PickerEscalated = $true
-      Disable-KeyHook
-      [void][Cb.Win]::SetForegroundWindow($form.Handle)
-      try { $form.Activate() } catch { }
-      $txt.Focus()
-      Write-Log 'picker: keyboard handed to the panel (IME)'
     }
 
     $ph.Add_Click({ Focus-Search })
@@ -1318,7 +1311,7 @@ function Show-Picker {
     # through a real focus, so the panel hands itself the keyboard as soon as one is active
     # (see the loop) - without that, Chinese/Japanese/Korean could never be typed in.
     $script:PickerHook = Enable-KeyHook
-    if (-not $script:PickerHook) { $form.ActiveControl = $txt; $form.Activate() }
+    if (-not $script:PickerHook) { [void](Switch-ToTakeover $form.Handle $txt) }
     Write-Log ('picker: input=' + $(if ($script:PickerHook) { 'hook' } else { 'takeover' }))
     # HWND_TOPMOST with SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE keeps the caret where it was
     [void][Cb.Win]::SetWindowPos($form.Handle, [IntPtr](-1), 0, 0, 0, 0, 0x13)
@@ -1327,10 +1320,13 @@ function Show-Picker {
       [Windows.Forms.Application]::DoEvents()
       if ($script:PickerClose) { $form.Close(); break }
       if ($script:PickerHook) {
-        # cache the IME state instead of asking per keystroke (a cross-process call)
+        # cache the IME state instead of asking per keystroke (a cross-process call); the
+        # box the user is working in may have changed, so ask about the foreground window
         if (((Get-Date) - $script:ImeCheckAt).TotalMilliseconds -gt 400) {
           $script:ImeCheckAt = Get-Date
-          $script:ImeNative = Test-ImeOpen $prev
+          $fgNow = [Cb.Win]::GetForegroundWindow()
+          if ($fgNow -eq [IntPtr]::Zero -or $fgNow -eq $form.Handle) { $fgNow = $prev }
+          $script:ImeNative = Test-ImeOpen $fgNow
         }
         # the hook queues the keys; replay them into the panel's own controls
         Invoke-HookedKey

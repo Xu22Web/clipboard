@@ -29,6 +29,7 @@ namespace Cb {
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vk);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int ToUnicodeEx(uint vk, uint scan, byte[] state, StringBuilder buf, int cch, uint flags, IntPtr layout);
     [DllImport("user32.dll")] private static extern IntPtr GetKeyboardLayout(uint tid);
+    [DllImport("user32.dll")] private static extern uint MapVirtualKey(uint code, uint mapType);
     [DllImport("imm32.dll")] private static extern IntPtr ImmGetDefaultIMEWnd(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
@@ -95,10 +96,19 @@ namespace Cb {
         int msg = (int)wParam;
         KBDLLHOOKSTRUCT k = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
         bool alt = (k.flags & 0x20) != 0;
-        if (k.vkCode == 0xE5) {
-          // VK_PROCESSKEY: an IME is composing and needs a real focus
+        if (msg == WM_KEYDOWN && k.vkCode == 0xE5) {
+          // VK_PROCESSKEY: the input method wants this key. Swallowing it is the only way to
+          // keep it out of the window behind the panel - passing it on is exactly how typed
+          // Chinese ended up in the other application's box. The scan code still names the
+          // real key, so the panel can replay it once it owns the focus and the IME composes
+          // there instead.
           Escalate = true;
-        } else if (msg == WM_KEYDOWN && !alt && Eat(k.vkCode)) {
+          uint real = MapVirtualKey(k.scanCode, 1);   // MAPVK_VSC_TO_VK
+          Swallowed++;
+          Keys.Enqueue(real != 0 ? (int)real : (int)k.vkCode);
+          return (IntPtr)1;
+        }
+        if (msg == WM_KEYDOWN && !alt && Eat(k.vkCode)) {
           Swallowed++;
           Keys.Enqueue((int)k.vkCode);
           return (IntPtr)1;   // swallow: the panel replays it into its own controls
@@ -159,6 +169,48 @@ function Disable-KeyHook {
 }
 
 function Test-KeyHook { return ('Cb.KeyHook' -as [type]) -and [Cb.KeyHook]::Active }
+
+# Hand the keyboard over for real: an input method needs an ordinary window that owns the
+# foreground and the focus. SetForegroundWindow is refused while another process owns the
+# foreground (the foreground lock), so the call attaches to that thread first - the
+# documented workaround - and WS_EX_NOACTIVATE comes off for as long as the IME needs it.
+function Switch-ToTakeover([IntPtr]$hwnd, $TextBox) {
+  Disable-KeyHook
+  [Cb.Win]::SetNoActivate($hwnd, $false)
+  $otid = [Cb.Win]::GetCurrentThreadId()
+  $fg = [Cb.Win]::GetForegroundWindow()
+  $ftid = [uint32]0
+  if ($fg -ne [IntPtr]::Zero) { $ftid = [Cb.Win]::GetWindowThreadProcessId($fg, [IntPtr]::Zero) }
+  $attached = $false
+  try {
+    if ($ftid -ne 0 -and $ftid -ne $otid) { $attached = [Cb.Win]::AttachThreadInput($otid, $ftid, $true) }
+    [void][Cb.Win]::BringWindowToTop($hwnd)
+    [void][Cb.Win]::SetForegroundWindow($hwnd)
+    if ($null -ne $TextBox) { try { $TextBox.Focus() } catch { } }
+  } finally {
+    if ($attached) { [void][Cb.Win]::AttachThreadInput($otid, $ftid, $false) }
+  }
+  $ok = ([Cb.Win]::GetForegroundWindow() -eq $hwnd)
+  Write-Log ('takeover: foreground=' + $ok + ' fgTid=' + $ftid + ' ourTid=' + $otid)
+  return $ok
+}
+
+# the hand-over did not take: make the panel unreachable again and re-arm the hook, so the
+# keys stay out of the window the user is working in
+function Restore-KeyHook([IntPtr]$hwnd) {
+  [Cb.Win]::SetNoActivate($hwnd, $true)
+  $ok = Enable-KeyHook
+  Write-Log ('takeover: refused, hook re-armed=' + $ok)
+  return $ok
+}
+
+# replay keys through the real input queue, so the input method and the control see them
+function Send-HookedKeys([int[]]$keys, [int]$from) {
+  for ($i = $from; $i -lt $keys.Count; $i++) {
+    [Cb.Win]::keybd_event([byte]$keys[$i], 0, 0, [IntPtr]::Zero)
+    [Cb.Win]::keybd_event([byte]$keys[$i], 0, 2, [IntPtr]::Zero)
+  }
+}
 
 # true when the input method is composing in its native mode for that window: that needs a
 # real focus, so the panel hands itself the keyboard
