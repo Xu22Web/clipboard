@@ -124,7 +124,6 @@ function Show-Picker {
     $lst.BorderStyle = 'None'
     $lst.IntegralHeight = $false
     $lst.DrawMode = 'OwnerDrawFixed'
-    # the row height is a theme metric: the panel height derives from the same number
     $lst.ItemHeight = Px (Get-PanelRowHeight)
     $lst.BackColor = $ui.Surface
     $lst.ForeColor = $ui.Text
@@ -901,6 +900,9 @@ function Show-Picker {
         param($s, $e)
         if ($lst.IsDisposed) { return }
         if ($e.Index -lt 0) { return }
+        # a clean background per paint: the hover / selection overlay is translucent and a
+        # double-buffered list keeps old pixels, so stacking darkened it frame by frame
+        $e.DrawBackground()
         $g = $e.Graphics
         $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $b = $e.Bounds
@@ -931,7 +933,6 @@ function Show-Picker {
           }
           $decor = $row.Decor
         }
-        # backdrop: plugin tint first, then the eased hover / selection overlay (lib/anim.ps1)
         if ($null -eq $script:Anim) { $script:Anim = New-AnimState }
         $tint = $null
         if ($decor -and $decor.BackColor -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) { $tint = Convert-ThemeColor $decor.BackColor }
@@ -1224,8 +1225,7 @@ function Show-Picker {
         $ch = Get-HookedChar $vk
         $mod = [Windows.Forms.Control]::ModifierKeys
         $plain = ($mod -band ([Windows.Forms.Keys]::Control -bor [Windows.Forms.Keys]::Alt)) -eq 0
-        # an input method needs a real focus: hand the keyboard over and replay the key, so
-        # the composition starts in the panel instead of the window behind it
+        # an input method needs a real focus: hand over and replay the key so it composes there
         if ($plain -and ($claimed -or ($script:ImeNative -and $vk -ge 0x30 -and $vk -le 0x5A))) {
           if (Switch-ToTakeover $form.Handle $txt) {
             $script:PickerHook = $false
@@ -1239,8 +1239,7 @@ function Show-Picker {
         }
         # text (and Backspace, WM_CHAR 0x08) goes to the box; Esc/Enter/Tab are control chars
         $isText = $ch -ne [char]0 -and (-not [char]::IsControl($ch) -or $ch -eq [char]8)
-        # Esc closes the panel, so the handle is read once and the whole delivery is guarded:
-        # an exception escaping here used to leave the system-wide hook installed
+        # Esc closes the panel, so the handle is read once and the delivery is guarded
         try {
           if ($isText -and $plain) { [void][Cb.Win]::SendMessage($txt.Handle, 0x0102, [IntPtr][int]$ch, [IntPtr]1) }
           else {
@@ -1323,8 +1322,9 @@ function Show-Picker {
 
     while (-not $form.IsDisposed) {
       [Windows.Forms.Application]::DoEvents()
-      $am = Invoke-AnimFrame $script:Anim $(if ($script:Animations) { 0.22 } else { 1.0 })
-      if ($am -ne 0 -and -not $form.IsDisposed) { try { if ($am -band 1) { $lst.Invalidate() }; if ($am -band 2) { $sbar.Invalidate() }; if ($am -band 4) { $grip.Invalidate() }; if ($am -band 8) { $box.Invalidate() } } catch { } }
+      $am = Invoke-AnimFrame $script:Anim $(if ($script:Animations) { 0.3 } else { 1.0 })
+      # repaint only the rows whose alpha moved, not the whole list on every tick
+      if ($am -ne 0 -and -not $form.IsDisposed) { try { if ($am -band 1) { foreach ($i in @($script:Anim.HoverIndex, $script:Anim.SelIndex, $script:Anim.PrevSelIndex)) { if ($i -ge 0 -and $i -lt $lst.Items.Count) { $lst.Invalidate($lst.GetItemRectangle($i)) } } }; if ($am -band 2) { $sbar.Invalidate() }; if ($am -band 4) { $grip.Invalidate() }; if ($am -band 8) { $box.Invalidate() } } catch { } }
       if ($script:PickerClose) { $form.Close(); break }
       if ($script:PickerHook) {
         # cache the IME state instead of asking per keystroke (a cross-process call); the
