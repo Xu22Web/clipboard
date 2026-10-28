@@ -2,14 +2,14 @@
 #
 # Read-only by design: this module never creates or rewrites the settings file. Writing
 # happens only through `config init` / `config set` (lib/config.ps1) and through
-# SaveWindowSize / SaveWindowPos when the user turns them on.
+# SaveWindowWidth / SaveWindowPos when the user turns them on.
 #
 # The schema table is a load-time assignment, so this module is dot-sourced after base.ps1
 # and before anything that calls Get-CfgValue / Apply-Config.
 
 # Flat key=value; '#' or ';' comments and [section] lines are ignored. This region only
 # reads. Writing happens exclusively through `config init` / `config set`, and through
-# SaveWindowSize / SaveWindowPos when the user explicitly turns them on.
+# SaveWindowWidth / SaveWindowPos when the user explicitly turns them on.
 function Read-Ini {
   $h = @{}
   if (-not (Test-Path -LiteralPath $IniPath)) { return $h }
@@ -49,10 +49,10 @@ $script:IniSchema = [ordered]@{
   Theme             = @{ Kind = 'theme'; Default = 'win11-dark'; Desc = 'theme name from themes\ (win11-dark / win11-light ...)' }
   ExcludePattern    = @{ Kind = 'regex'; Default = '';            Desc = 'matching text is never saved' }
   WindowWidth       = @{ Kind = 'int'; Min = 460; Max = 4000; Default = 700; Desc = 'panel width (96 dpi baseline)' }
-  WindowHeight      = @{ Kind = 'int'; Min = 240; Max = 2000; Default = 510; Desc = 'panel height (96 dpi baseline)' }
+  Rows              = @{ Kind = 'int'; Min = 3; Max = 50; Default = 10; Desc = 'visible rows; the height follows from it (rows x 40 + 110)' }
   WindowLeft        = @{ Kind = 'int'; Min = -32768; Max = 32767; Default = ''; Desc = 'panel left, empty = centred' }
   WindowTop         = @{ Kind = 'int'; Min = -32768; Max = 32767; Default = ''; Desc = 'panel top, empty = centred' }
-  SaveWindowSize    = @{ Kind = 'bool'; Default = 0;              Desc = '1 = write the resized panel back to this file' }
+  SaveWindowWidth   = @{ Kind = 'bool'; Default = 0;              Desc = '1 = write the width you dragged back to this file' }
   SaveWindowPos     = @{ Kind = 'bool'; Default = 0;              Desc = '1 = write the moved panel back to this file' }
   ShowTime          = @{ Kind = 'bool'; Default = 1;              Desc = '1 = relative time column' }
   ShowTypeIcon      = @{ Kind = 'bool'; Default = 1;              Desc = '1 = show the row icon a plugin provides (none without one)' }

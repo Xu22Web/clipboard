@@ -11,10 +11,10 @@ function Apply-Config {
   $script:ShowBalloon = $true
   $script:Theme = 'win11-dark'
   $script:WinWidth = 700
-  $script:WinHeight = 510
+  $script:Rows = 10
   $script:WinLeft = ''
   $script:WinTop = ''
-  $script:SaveWinSize = $false
+  $script:SaveWinWidth = $false
   $script:SaveWinPos = $false
   $script:ShowTime = $true
   $script:ShowTypeIcon = $true
@@ -53,10 +53,10 @@ function Apply-Config {
   $v = Get-CfgValue 'Theme';             if ($null -ne $v) { $script:Theme = $v }
   $v = Get-CfgValue 'ExcludePattern';    if ($null -ne $v) { $script:ExcludePattern = $v }
   $v = Get-CfgValue 'WindowWidth';       if ($null -ne $v) { $script:WinWidth = [int]$v }
-  $v = Get-CfgValue 'WindowHeight';      if ($null -ne $v) { $script:WinHeight = [int]$v }
+  $v = Get-CfgValue 'Rows';              if ($null -ne $v) { $script:Rows = [int]$v }
   $v = Get-CfgValue 'WindowLeft';        if ($null -ne $v) { $script:WinLeft = $v }
   $v = Get-CfgValue 'WindowTop';         if ($null -ne $v) { $script:WinTop = $v }
-  $v = Get-CfgValue 'SaveWindowSize';    if ($v -eq '1') { $script:SaveWinSize = $true }
+  $v = Get-CfgValue 'SaveWindowWidth';   if ($v -eq '1') { $script:SaveWinWidth = $true }
   $v = Get-CfgValue 'SaveWindowPos';     if ($v -eq '1') { $script:SaveWinPos = $true }
   $v = Get-CfgValue 'ShowTime';          if ($v -eq '0') { $script:ShowTime = $false }
   $v = Get-CfgValue 'ShowTypeIcon';      if ($v -eq '0') { $script:ShowTypeIcon = $false }
@@ -101,10 +101,10 @@ function Get-ConfigReport {
     Theme             = [string]$script:Theme
     ExcludePattern    = [string]$script:ExcludePattern
     WindowWidth       = [string]$script:WinWidth
-    WindowHeight      = [string]$script:WinHeight
+    Rows              = [string]$script:Rows
     WindowLeft        = [string]$script:WinLeft
     WindowTop         = [string]$script:WinTop
-    SaveWindowSize    = [string][int][bool]$script:SaveWinSize
+    SaveWindowWidth   = [string][int][bool]$script:SaveWinWidth
     SaveWindowPos     = [string][int][bool]$script:SaveWinPos
     ShowTime          = [string][int][bool]$script:ShowTime
     ShowTypeIcon      = [string][int][bool]$script:ShowTypeIcon
@@ -247,6 +247,33 @@ function Set-ConfigKey([string]$key, [string]$value) {
     Write-Host ('[x] ' + $key + '=' + $value + ': ' + $r.Error)
     return $false
   }
+  # One cross-key rule, checked here because this is the only writer: the sticky pins may
+  # never take the whole visible area, or a search would show pins and nothing else. Asking
+  # for more than Rows leaves is refused, and shrinking Rows pulls an existing cap down
+  # instead of leaving a value behind that could never take effect.
+  $stickyKey = 'item-marks.StickyRows'
+  if ($script:IniSchema.Contains($stickyKey)) {
+    if ($key -eq $stickyKey -and [int]$r.Value -gt 0) {
+      $cap = Get-StickyRowCap ([int](Get-ConfigReport)['Rows'])
+      if ([int]$r.Value -gt $cap) {
+        Write-Host ('[x] ' + $key + '=' + $value + ': at most ' + $cap + ', because Rows leaves one row for the results')
+        Write-Host '    raise Rows first, or use 0 for "as many as fit"'
+        return $false
+      }
+    }
+    if ($key -eq 'Rows') {
+      $cap = Get-StickyRowCap ([int]$r.Value)
+      $sticky = 0
+      if (Get-Command Get-PluginSetting -ErrorAction SilentlyContinue) {
+        $sticky = [int](Get-PluginSetting 'item-marks' 'StickyRows')
+      }
+      if ($sticky -gt 0 -and $sticky -gt $cap) {
+        if (Set-IniKey $stickyKey ([string]$cap)) {
+          Write-Host ('[i] ' + $stickyKey + ' lowered to ' + $cap + ' so a row stays for the results')
+        }
+      }
+    }
+  }
   $vals = Get-ConfigReport
   $old = [string]$vals[$key]
   if (-not (Set-IniKey $key ([string]$r.Value))) {
@@ -327,13 +354,15 @@ function Write-IniTemplate([switch]$Force) {
     'ExcludePattern=',
     '',
     '# ---- panel geometry (96 dpi baseline, scaled by the system DPI) ----',
+    '# width only: the height is derived from Rows and is never set directly',
     'WindowWidth=700',
-    'WindowHeight=510',
+    '# visible rows; the panel is Rows x 40 + 110 tall and always shows whole rows',
+    'Rows=10',
     '# empty = centre the panel on the monitor of the window you came from',
     'WindowLeft=',
     'WindowTop=',
-    '# 1 = remember the size / position after the panel is closed',
-    'SaveWindowSize=0',
+    '# 1 = remember the width you dragged / the position you moved it to',
+    'SaveWindowWidth=0',
     'SaveWindowPos=0',
     '',
     '# ---- panel behaviour ----',

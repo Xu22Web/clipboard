@@ -129,9 +129,10 @@ Git Bash / MSYS2 下直接 `./src/clipboard`，CMD 下 `src\clipboard.cmd`。
 | `Balloon` | `1` | `1` = 启动时弹托盘气泡 |
 | `Theme` | `win11-dark` | 主题名 = `themes/` 里的 `.ini` 文件名；`dark` / `light` 可作别名 |
 | `ExcludePattern` | 空 | 正则，匹配到的文本永远不会入库 |
-| `WindowWidth` / `WindowHeight` | `700` / `510` | 面板基准尺寸（96 dpi，高 DPI 会按比例缩放；510 = 10 行 × 40 px + 搜索栏 + 底栏） |
+| `WindowWidth` | `700` | 面板宽度（96 dpi 基准，高 DPI 按比例缩放），可自由拖右下角或用 `config set` 改 |
+| `Rows` | `10` | **可见行数，面板高度的唯一来源**：高度 = 行数 × 行高（40）+ 头部（68）+ 底栏（40）+ 边框（2），永远只显示整行；会被屏幕工作区再收一次 |
 | `WindowLeft` / `WindowTop` | 空 | 面板位置；空 = 在呼出窗口所在显示器的中上部 |
-| `SaveWindowSize` | `0` | `1` = 关闭面板时把缩放后的尺寸写回 ini |
+| `SaveWindowWidth` | `0` | `1` = 关闭面板时把拖出来的宽度写回 ini（高度不参与，它由 `Rows` 决定） |
 | `SaveWindowPos` | `0` | `1` = 关闭面板时把当前位置写回 ini |
 | `ShowTime` | `1` | `1` = 显示相对时间列 |
 | `ShowTypeIcon` | `1` | `1` = 显示插件给的行图标；没有插件时本来就没有图标 |
@@ -149,7 +150,9 @@ Git Bash / MSYS2 下直接 `./src/clipboard`，CMD 下 `src\clipboard.cmd`。
 
 > 命令行只处理位置参数与 `list -Count N`（列表长度），数据位置同样由 `clipboard.ini` 的 `DataDir=` 决定。
 
-> 唯一会写 ini 的设置是 `SaveWindowSize=1` / `SaveWindowPos=1`：关闭面板时只回写 `WindowWidth` / `WindowHeight` / `WindowLeft` / `WindowTop` 四个键，其余行原样保留。
+> 唯一会写 ini 的设置是 `SaveWindowWidth=1` / `SaveWindowPos=1`：关闭面板时只回写 `WindowWidth` / `WindowLeft` / `WindowTop` 三个键，其余行原样保留。
+
+> 行数是一个跨键约束的源头：粘性置顶最多只能占 `Rows - 1` 行（总留一行给搜索结果），所以 `item-marks.StickyRows` 超过这个上限会被 `config set` 拒绝，而把 `Rows` 调小时已设的 `StickyRows` 会自动跟着下调。
 
 ## 主题
 
@@ -227,7 +230,7 @@ BadgeBg BadgeText KeyCapBg KeyCapBorder Mark Warn
 
 | 插件 | 简单介绍 | 启用 |
 |---|---|---|
-| [`item-marks`](src/plugins/item-marks.md) | 置顶 / 收藏 / 高亮：`pin` `unpin` `star` `unstar` `highlight` `unhighlight` `marks`，面板 `Ctrl+P` `Ctrl+S` `Ctrl+H`，右键三个菜单项；高亮改文字与背景色，不改左侧选择条 | `Plugins=item-marks` |
+| [`item-marks`](src/plugins/item-marks.md) | 置顶 / 收藏 / 高亮：`pin` `unpin` `star` `unstar` `highlight` `unhighlight` `marks`，面板 `Ctrl+P` `Ctrl+S` `Ctrl+H`，右键三个菜单项；高亮改文字与背景色，不改左侧选择条；可开启“粘性置顶”（搜索时置顶留在顶部，行数受控） | `Plugins=item-marks` |
 | [`entry-actions`](src/plugins/entry-actions.md) | 看清条目再动手：`kind` / `kinds` 分析类型与格式，`open` 按类型打开，面板 `Ctrl+O`，右键“Open link or path”；行图标也由它提供 | `Plugins=entry-actions` |
 | [`transform`](src/plugins/transform.md) | 粘贴前改写文本：纯文本 / 全大写 / 小写 / 驼峰 / 蛇形 / 烤肉串 / 标题式；右键按 `transform.Modes` 逐个列出 `Transform as <模式>` | `Plugins=transform` |
 | [`retention`](src/plugins/retention.md) | 过期清理：按天数自动删除旧条目，受保护标记的行永不清理 | `Plugins=retention` |
@@ -268,6 +271,8 @@ Plugins=item-marks,entry-actions
 | `RowDecor` | 否 | `{ param($rec) @{ Marks = @( @{ Glyph = '..'; Color = '#..' } ); TextColor = '#..'; BackColor = '#..' } }`，行尾标记字形与整行文字/背景色 |
 | `Marks` | 否 | `[ordered]@{ x = @{ Set = 'on'; Unset = 'off'; Word = 'marked'; Hint = 'Ctrl+X'; Protected = $false } }`，声明本插件用的标记字符 |
 | `SortMark` | 否 | 带该标记的行浮到列表最前（只能有一个） |
+| `StickyMark` | 否 | 带该标记的行在**搜索时**仍留在顶部（“粘性置顶”；只能有一个） |
+| `StickyRows` | 否 | 数字或脚本块，粘性行最多占几行：`0` = 关闭该特性，负数 = 由面板按可见行数决定 |
 | `ClearKeeps` | 否 | 数组或脚本块，`clear` 默认保留的标记 |
 | `Init` | 否 | 每个进程只跑一次的初始化（设置全部解析完之后） |
 
@@ -280,6 +285,7 @@ Plugins=item-marks,entry-actions
 | `Marks` | 命令行收尾提示、`status`、`clear` 文案都用声明里的词；`Protected` 决定该标记是否保护行 |
 | `Protected = $true` | `del` 拒绝、裁剪与 `clear` 跳过，直到插件用自己的 `Unset` 命令取消标记 |
 | `SortMark` | 带该标记的行排到列表最前（置顶就是这么实现的） |
+| `StickyMark` + `StickyRows` | 有搜索词时，带 `StickyMark` 的行即使不匹配也留在顶部，但最多占 `StickyRows` 行，**且永远给匹配结果留一行**；放不下的行数会在底部计数里报出来（`10 of 15   3 pinned hidden`）。匹配关键词的行不受此限 |
 | `ClearKeeps` | `clear` 默认保留这些标记；`-All` 忽略它，但保护标记永远保留 |
 
 因此新增一个标记不需要改基础层（`lib\store.ps1`）：写插件、声明标记、在 `RowDecor` 里画出来即可。多个标记可以同时存在同一行。
@@ -295,7 +301,7 @@ Plugins=item-marks,entry-actions
 | 面板加载 / 按键 | `PanelKeys`、`ContextMenu`、`RowDecor`、`TypeGlyph` |
 | 粘贴前 | `Transform` |
 | 常驻循环 | `Tick` |
-| 配置 / 标记规则 | `Settings`（ini）、`ThemeSettings`（主题）、`Marks` / `SortMark` / `ClearKeeps`（标记） |
+| 配置 / 标记规则 | `Settings`（ini）、`ThemeSettings`（主题）、`Marks` / `SortMark` / `StickyMark` / `StickyRows` / `ClearKeeps`（标记） |
 
 基础按键（`Enter` / `Ctrl+Enter` / `Ctrl+1..9` / `Ctrl+0` / `Del` / `Ctrl+Z` / `Esc` / 翻页）永远优先，插件按键只在都不匹配时才会被询问。
 

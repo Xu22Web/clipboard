@@ -22,7 +22,6 @@ $StoreLock = 'Local\clipboard.store'
 # --- UI metrics: 96 dpi design values, every one of them goes through Px() --------
 $script:Metric = @{
   RowHeight = 40; HeadHeight = 68; FootHeight = 40
-  MinWidth = 520; MinHeight = 320
   Margin = 14; FieldHeight = 40
   RowInset = 6; RowRadius = 4; PanelRadius = 8
   IconSlot = 20; TextGap = 38
@@ -50,10 +49,13 @@ $script:UiScale = 1.0
 # A missing or partial clipboard.ini is fine: these values apply until the file
 # overrides them. Nothing in this region creates or rewrites the settings file.
 $script:WinWidth = 700
-$script:WinHeight = 510
+# The panel height is derived, never stored: it is the chrome plus whole rows, so the only
+# knob is how many rows are visible. The row height and chrome live in $script:Metric above
+# (a theme may restyle them) and are read through Get-PanelRowHeight / Get-PanelChrome.
+$script:Rows = 10
 $script:WinLeft = ''
 $script:WinTop = ''
-$script:SaveWinSize = $false
+$script:SaveWinWidth = $false
 $script:SaveWinPos = $false
 $script:ShowTime = $true
 $script:ShowTypeIcon = $true

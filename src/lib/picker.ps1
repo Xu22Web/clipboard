@@ -77,6 +77,8 @@ function Show-Picker {
     $script:Filtered = @()
     $script:Labels = @()
     $script:Tokens = @()
+    # sticky pins the search had to hide, reported in the footer
+    $script:StickyHidden = 0
     # Plugin keys and per-row decoration are resolved once per entry, not per key press / paint.
     $panelKeys = @()
     if (Get-Command Get-PluginPanelKeys -ErrorAction SilentlyContinue) { $panelKeys = @(Get-PluginPanelKeys) }
@@ -105,8 +107,14 @@ function Show-Picker {
     $form.Text = 'Clipboard history'
     $form.AccessibleName = 'Clipboard history'
     $form.Width = Px $script:WinWidth
-    $form.Height = Px $script:WinHeight
-    $form.MinimumSize = New-Object Drawing.Size -ArgumentList @((Px 520), (Px 320))
+    # The height comes from the row count, never from a setting of its own, so no row is ever
+    # half cut off; the screen caps it and matching Min/Max heights leave the drag to width.
+    $screenH = 0; try { $screenH = [Windows.Forms.Screen]::FromPoint([Windows.Forms.Cursor]::Position).WorkingArea.Height } catch { }
+    $rows = Get-RowsForScreen $script:Rows ([int]([double]$screenH / [double]$script:UiScale)) (Get-PanelRowHeight) (Get-PanelChrome) ([int]$script:IniSchema['Rows'].Min)
+    if ($rows -ne $script:Rows) { Write-Log ('picker: rows ' + $script:Rows + ' -> ' + $rows + ' to fit this screen') }
+    $form.Height = Px (Get-PanelHeight $rows (Get-PanelRowHeight) (Get-PanelChrome))
+    $form.MinimumSize = New-Object Drawing.Size -ArgumentList @((Px ([int]$script:IniSchema['WindowWidth'].Min)), $form.Height)
+    $form.MaximumSize = New-Object Drawing.Size -ArgumentList @((Px ([int]$script:IniSchema['WindowWidth'].Max)), $form.Height)
     $form.BackColor = $ui.Surface
     $form.Padding = New-Object Windows.Forms.Padding(1)
 
@@ -115,8 +123,8 @@ function Show-Picker {
     $lst.BorderStyle = 'None'
     $lst.IntegralHeight = $false
     $lst.DrawMode = 'OwnerDrawFixed'
-    # Win11 list items are 40 px tall
-    $lst.ItemHeight = Px 40
+    # the row height is a theme metric: the panel height derives from the same number
+    $lst.ItemHeight = Px (Get-PanelRowHeight)
     $lst.BackColor = $ui.Surface
     $lst.ForeColor = $ui.Text
     $lst.Font = $fBody
@@ -186,7 +194,7 @@ function Show-Picker {
 
     $foot = New-Object Windows.Forms.Panel
     $foot.Dock = 'Bottom'
-    $foot.Height = Px 40
+    $foot.Height = Px $script:Metric['FootHeight']
     $foot.BackColor = $ui.Surface
 
     $footR = New-Object Windows.Forms.Label
@@ -207,7 +215,7 @@ function Show-Picker {
 
     $head = New-Object Windows.Forms.Panel
     $head.Dock = 'Top'
-    $head.Height = Px 68
+    $head.Height = Px $script:Metric['HeadHeight']
     $head.BackColor = $ui.Surface
     # an empty piece of the header is still "the search area": clicking it puts the caret
     # in the box (the panel opens without the keyboard, so the first click brings it over)
@@ -292,11 +300,11 @@ function Show-Picker {
     $head.Controls.Add($box)
     $head.Controls.Add($line)
 
-    # drag grip for resizing the borderless panel from the bottom-right corner
+    # drag grip: width only - the height follows from the row count (see MinimumSize above)
     $grip = New-Object Windows.Forms.Panel
     $grip.Size = New-Object Drawing.Size -ArgumentList @((Px 16), (Px 16))
     $grip.BackColor = $ui.Surface
-    $grip.Cursor = 'SizeNWSE'
+    $grip.Cursor = 'SizeWE'
 
     $form.Controls.Add($listHost)
     $form.Controls.Add($sbar)
@@ -391,6 +399,7 @@ function Show-Picker {
         $script:FootMsg = ''
         $footL.Invalidate()
         $count = ([string]$script:Filtered.Count) + ' of ' + ([string]$script:Entries.Count)
+        if ($script:StickyHidden -gt 0) { $count = $count + '   ' + ([string]$script:StickyHidden) + ' pinned hidden' }
         if ($script:CapturePaused) { $count = 'Paused: ' + $count }
         $footR.Text = $count
       } catch { }
@@ -580,16 +589,15 @@ function Show-Picker {
       $rowCache.Clear()
       $tokens = @($q -split '\s+' | Where-Object { $_ })
       $script:Tokens = $tokens
+      # sticky pins: the plugin names the mark and the cap, the base decides how many rows
+      # actually fit - see Get-StickyPlan / Select-QueryRows in lib/store.ps1
+      $plan = @{ Mark = ''; Max = 0 }
+      if ($tokens.Count -gt 0) { $plan = Get-StickyPlan (Get-Rows) }
+      $sel = Select-QueryRows $script:Entries $tokens $plan.Mark $plan.Max
+      $script:StickyHidden = [int]$sel.Hidden
       $res = New-Object System.Collections.Generic.List[object]
       $labs = New-Object System.Collections.Generic.List[string]
-      foreach ($rec in $script:Entries) {
-        $ok = $true
-        if ($tokens.Count -gt 0) {
-          foreach ($t in $tokens) {
-            if ($rec.Payload.IndexOf($t, [StringComparison]::OrdinalIgnoreCase) -lt 0) { $ok = $false; break }
-          }
-        }
-        if (-not $ok) { continue }
+      foreach ($rec in $sel.Rows) {
         $res.Add($rec)
         $labs.Add((Get-ItemLabel $rec.Payload $script:ShowNewlineMarker))
       }
@@ -1237,8 +1245,7 @@ function Show-Picker {
           }
           return
         }
-        # text (and Backspace, WM_CHAR 0x08) goes to the box; Esc/Enter/Tab are control
-        # characters instead and belong on the shortcut path
+        # text (and Backspace, WM_CHAR 0x08) goes to the box; Esc/Enter/Tab are control chars
         $isText = $ch -ne [char]0 -and (-not [char]::IsControl($ch) -or $ch -eq [char]8)
         if ($isText -and $plain) {
           [void][Cb.Win]::SendMessage($txt.Handle, 0x0102, [IntPtr][int]$ch, [IntPtr]1)   # WM_CHAR
@@ -1301,10 +1308,9 @@ function Show-Picker {
     $script:PickerHook = $false
     $script:PickerEscalated = $false
     $script:ImeCheckAt = Get-Date; $script:ImeNative = $false
-    # seed from the real button state: starting at $false would read a button the user was
+    # seed from the real button state: starting at $false would read a button the user is
     # already holding as a fresh click and close the panel on its first frame
     $script:PrevMouseDown = ([Cb.Win]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
-
     # Non-modal on purpose: ShowDialog would block this message pump
     $form.Show()
     # The hook keeps the foreground window untouched. An input method can only be driven
@@ -1352,7 +1358,7 @@ function Show-Picker {
       if ($prev -ne [IntPtr]::Zero) { [void][Cb.Win]::SetForegroundWindow($prev) }
     }
 
-    if ($script:SaveWinSize -or $script:SaveWinPos) {
+    if ($script:SaveWinWidth -or $script:SaveWinPos) {
       try {
         $geo = $script:PickerGeo
         if ($null -eq $geo) {
@@ -1360,9 +1366,8 @@ function Show-Picker {
           # safe to read, so leave the stored geometry alone
           Write-Log 'save window state skipped: geometry was not captured'
         } else {
-          if ($script:SaveWinSize) {
+          if ($script:SaveWinWidth) {
             [void](Set-IniKey 'WindowWidth' ([string][int]([double]$geo.W / [double]$script:UiScale)))
-            [void](Set-IniKey 'WindowHeight' ([string][int]([double]$geo.H / [double]$script:UiScale)))
           }
           if ($script:SaveWinPos) {
             [void](Set-IniKey 'WindowLeft' ([string]$geo.L))

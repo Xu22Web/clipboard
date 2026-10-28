@@ -26,6 +26,19 @@
     h = @{ Set = 'highlight'; Unset = 'unhighlight'; Word = 'highlighted'; Hint = 'Ctrl+H'; Protected = $false }
   }
   SortMark      = 'p'
+  # Sticky pins: while a search runs the pinned rows stay on top instead of being filtered
+  # out. StickyRows caps how many rows they may take, so a long pin list cannot push the
+  # results out of the visible area (the base always keeps one row for the results and
+  # reports how many pins it had to hide).
+  StickyMark    = 'p'
+  StickyRows    = {
+    if ((Get-PluginSetting 'item-marks' 'StickyPins') -ne '1') { return 0 }
+    $n = [int](Get-PluginSetting 'item-marks' 'StickyRows')
+    # 0 means "as many as fit": the panel turns that into visible rows - 1, so the search
+    # results always keep one row of their own
+    if ($n -le 0) { return -1 }
+    return $n
+  }
   ClearKeeps    = {
     if ((Get-PluginSetting 'item-marks' 'ClearKeepsPinned') -eq '1') { @('p') } else { @() }
   }
@@ -42,6 +55,8 @@
   Settings      = [ordered]@{
     MaxPins          = @{ Kind = 'int'; Min = 0; Max = 1000; Default = 50; Desc = 'pinned entry cap, 0 = unlimited' }
     ClearKeepsPinned = @{ Kind = 'bool'; Default = 1; Desc = '1 = clear keeps pinned rows, 0 = clear wipes them too' }
+    StickyPins       = @{ Kind = 'bool'; Default = 0; Desc = '1 = pinned rows stay on top while searching, 0 = the search hides them too' }
+    StickyRows       = @{ Kind = 'int'; Min = 0; Max = 50; Default = 3; Desc = 'rows the sticky pins may take while searching, 0 = as many as fit' }
   }
   ThemeSettings = [ordered]@{
     StarGlyph      = @{ Kind = 'string'; Default = [string][char]0xE735; Desc = 'glyph shown for a starred entry' }

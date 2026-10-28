@@ -198,6 +198,62 @@ function Sort-Records($list) {
   return ,$out
 }
 
+# The sticky-pin cap a visible area of that size allows: one row always stays for the
+# rows the query actually found, otherwise a long pin list would push the results out of
+# sight. Declared 0 = feature off, a negative value = as many as fit.
+function Get-StickyRowCap([int]$rows) {
+  $room = $rows - 1
+  if ($room -lt 1) { return 0 }
+  return $room
+}
+
+# How many leading rows a sticky mark may take inside the visible area.
+function Get-StickyRowLimit([int]$rows, [int]$declared) {
+  if ($declared -eq 0) { return 0 }
+  $room = Get-StickyRowCap $rows
+  if ($room -lt 1) { return 0 }
+  if ($declared -lt 0 -or $declared -gt $room) { return $room }
+  return $declared
+}
+
+# What the panel needs to know about the sticky mark: which mark sticks, and how many rows
+# it may take for a visible area of that size. An empty mark means nothing sticks - either
+# no plugin asks for it or the feature is switched off.
+function Get-StickyPlan([int]$rows) {
+  $mark = ''
+  $max = 0
+  if (Get-Command Get-PluginStickyMark -ErrorAction SilentlyContinue) {
+    try {
+      $mark = [string](Get-PluginStickyMark)
+      if ($mark) { $max = Get-StickyRowLimit $rows ([int](Get-PluginStickyRows)) }
+    } catch { $mark = '' }
+  }
+  return @{ Mark = $mark; Max = $max }
+}
+
+# The rows the panel shows for one query. A row carrying the sticky mark that the query
+# does not match is still kept - that is what makes a pin sticky while searching - but only
+# while it fits in the reserved rows; the rest are reported as hidden so the caller can say
+# so instead of silently showing fewer pins than the user made.
+function Select-QueryRows($entries, [string[]]$tokens, [string]$stickyMark, [int]$stickyMax) {
+  $rows = New-Object System.Collections.Generic.List[object]
+  $hidden = 0
+  $stuck = 0
+  foreach ($rec in @($entries)) {
+    $matched = $true
+    if (@($tokens).Count -gt 0) {
+      foreach ($t in @($tokens)) {
+        if ($t -and ([string]$rec.Payload).IndexOf($t, [StringComparison]::OrdinalIgnoreCase) -lt 0) { $matched = $false; break }
+      }
+    }
+    if (-not $matched -and $stickyMark -and (Test-Mark $rec $stickyMark)) {
+      if ($stuck -lt $stickyMax) { $stuck++; $matched = $true } else { $hidden++ }
+    }
+    if ($matched) { $rows.Add($rec) }
+  }
+  return @{ Rows = $rows.ToArray(); Hidden = $hidden }
+}
+
 # enforce MaxItems / MaxTotal in place; rows carrying a protected mark are never dropped
 function Trim-Records($list) {
   $protected = @(Get-ProtectedMarks)

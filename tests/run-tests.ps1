@@ -445,6 +445,16 @@ try {
     Check 'unit' 'Get-VisibleRowCount 10 rows' ((Get-VisibleRowCount 340 34) -eq 10) ((Get-VisibleRowCount 340 34) -as [string])
     Check 'unit' 'Get-VisibleRowCount floors' ((Get-VisibleRowCount 100 34) -eq 2) ''
     Check 'unit' 'Get-VisibleRowCount never 0' ((Get-VisibleRowCount 10 40) -eq 1) ''
+    # the height is always chrome + whole rows, so raising the row count can never cut a row
+    Check 'unit' 'Get-PanelHeight adds the chrome' ((Get-PanelHeight 10 40 110) -eq 510) ((Get-PanelHeight 10 40 110) -as [string])
+    Check 'unit' 'Get-PanelHeight never trims below one row' ((Get-PanelHeight 0 40 110) -eq 150) ''
+    Check 'unit' 'Get-RowFit floors the rows' ((Get-RowFit 510 40 110) -eq 10) ((Get-RowFit 510 40 110) -as [string])
+    Check 'unit' 'Get-RowFit keeps one row in a tiny area' ((Get-RowFit 100 40 110) -eq 1) ''
+    Check 'unit' 'Get-RowsForScreen caps by the screen' ((Get-RowsForScreen 50 510 40 110 3) -eq 10) ((Get-RowsForScreen 50 510 40 110 3) -as [string])
+    Check 'unit' 'Get-RowsForScreen keeps the request when it fits' ((Get-RowsForScreen 5 510 40 110 3) -eq 5) ''
+    Check 'unit' 'Get-RowsForScreen never goes below the floor' ((Get-RowsForScreen 50 200 40 110 3) -eq 3) ''
+    Check 'unit' 'Get-RowsForScreen unknown screen keeps the rows' ((Get-RowsForScreen 7 0 40 110 3) -eq 7) ''
+    Check 'unit' 'panel chrome is the header plus the footer' ((Get-PanelChrome) -eq ($script:Metric['HeadHeight'] + $script:Metric['FootHeight'] + 2)) ((Get-PanelChrome) -as [string])
     Check 'unit' 'QuickKey maps from TopIndex' ((Get-QuickKeyIndex 0 5 20 10) -eq 5) ''
     Check 'unit' 'QuickKey follows scroll' ((Get-QuickKeyIndex 3 7 20 10) -eq 10) ''
     Check 'unit' 'QuickKey past the end' ((Get-QuickKeyIndex 9 15 20 10) -eq -1) ''
@@ -475,6 +485,40 @@ try {
     $marks = Get-HitMarks 'Hello World' @('wor')
     Check 'unit' 'Get-HitMarks case-insensitive' ($marks[6] -and $marks[7] -and $marks[8] -and (-not $marks[0])) ''
 
+    # ------------------------------------------------------------ sticky pins
+    Check 'unit' 'StickyRowLimit honours the declared cap' ((Get-StickyRowLimit 10 3) -eq 3) ((Get-StickyRowLimit 10 3) -as [string])
+    Check 'unit' 'StickyRowLimit 0 turns the feature off' ((Get-StickyRowLimit 10 0) -eq 0) ''
+    Check 'unit' 'StickyRowLimit keeps one row for the results' ((Get-StickyRowLimit 10 -1) -eq 9) ((Get-StickyRowLimit 10 -1) -as [string])
+    Check 'unit' 'StickyRowLimit clamps a cap larger than the area' ((Get-StickyRowLimit 2 5) -eq 1) ((Get-StickyRowLimit 2 5) -as [string])
+    Check 'unit' 'StickyRowLimit needs room for a result row' ((Get-StickyRowLimit 1 3) -eq 0) ''
+    # the same cap drives `config set`: it is what Rows leaves after one row for the results
+    Check 'unit' 'StickyRowCap leaves one row for results' ((Get-StickyRowCap 10) -eq 9) ((Get-StickyRowCap 10) -as [string])
+    Check 'unit' 'StickyRowCap has no room in a single row' ((Get-StickyRowCap 1) -eq 0) ''
+
+    $stickyRows = @(
+      (New-Record 'pinned one' 100 'p'),
+      (New-Record 'pinned two' 99 'p'),
+      (New-Record 'pinned three' 98 'p'),
+      (New-Record 'alpha' 97 ''),
+      (New-Record 'beta' 96 '')
+    )
+    $sel = Select-QueryRows $stickyRows @('alpha') '' 0
+    Check 'unit' 'sticky off: the search hides pins too' (((@($sel.Rows) | ForEach-Object { $_.Payload }) -join '|') -eq 'alpha') ((@($sel.Rows) | ForEach-Object { $_.Payload }) -join '|')
+    Check 'unit' 'sticky off: nothing reported hidden' ($sel.Hidden -eq 0) ($sel.Hidden -as [string])
+    $sel = Select-QueryRows $stickyRows @('alpha') 'p' 5
+    Check 'unit' 'sticky on: unmatched pins stay on top' (((@($sel.Rows) | ForEach-Object { $_.Payload }) -join '|') -eq 'pinned one|pinned two|pinned three|alpha') ((@($sel.Rows) | ForEach-Object { $_.Payload }) -join '|')
+    Check 'unit' 'sticky on: within the cap nothing hides' ($sel.Hidden -eq 0) ($sel.Hidden -as [string])
+    $sel = Select-QueryRows $stickyRows @('alpha') 'p' 2
+    Check 'unit' 'sticky cap keeps only the first pin rows' (((@($sel.Rows) | ForEach-Object { $_.Payload }) -join '|') -eq 'pinned one|pinned two|alpha') ((@($sel.Rows) | ForEach-Object { $_.Payload }) -join '|')
+    Check 'unit' 'sticky cap reports what it hid' ($sel.Hidden -eq 1) ($sel.Hidden -as [string])
+    $sel = Select-QueryRows $stickyRows @('pinned') 'p' 1
+    Check 'unit' 'sticky: a matching pin is never capped' (((@($sel.Rows) | ForEach-Object { $_.Payload }) -join '|') -eq 'pinned one|pinned two|pinned three') ((@($sel.Rows) | ForEach-Object { $_.Payload }) -join '|')
+    Check 'unit' 'sticky: matching pins count as results' ($sel.Hidden -eq 0) ($sel.Hidden -as [string])
+    $sel = Select-QueryRows $stickyRows @() 'p' 2
+    Check 'unit' 'no query shows every row' (@($sel.Rows).Count -eq 5) (@($sel.Rows).Count -as [string])
+    $plan = Get-StickyPlan 10
+    Check 'unit' 'sticky plan is off by default' (($plan.Mark -eq '') -and ($plan.Max -eq 0)) (($plan.Mark -as [string]) + '/' + ($plan.Max -as [string]))
+
     Check 'unit' 'Get-ItemLabel collapses newlines' ((Get-ItemLabel "a`r`nb" $false) -eq 'a b') (Get-ItemLabel "a`r`nb" $false)
     Check 'unit' 'Get-ItemLabel keeps marker' ((Get-ItemLabel "a`nb" $true) -eq 'a <NL> b') (Get-ItemLabel "a`nb" $true)
     $files5 = ([string][char]1) + "C:\x\a.txt`nC:\x\b.txt`nC:\x\c.txt`nC:\x\d.txt`nC:\x\e.txt"
@@ -483,8 +527,8 @@ try {
     # ------------------------------------------------------------ config schema
     Check 'unit' 'Convert-IniValue bool on' ((Convert-IniValue 'ShowTime' 'on').Value -eq '1') ''
     Check 'unit' 'Convert-IniValue bool bad' (-not (Convert-IniValue 'ShowTime' 'maybe').Ok) ''
-    Check 'unit' 'Convert-IniValue int ok' ((Convert-IniValue 'WindowHeight' '480').Value -eq '480') ''
-    Check 'unit' 'Convert-IniValue int too small' (-not (Convert-IniValue 'WindowHeight' '100').Ok) ''
+    Check 'unit' 'Convert-IniValue int ok' ((Convert-IniValue 'Rows' '12').Value -eq '12') ''
+    Check 'unit' 'Convert-IniValue int too small' (-not (Convert-IniValue 'Rows' '1').Ok) ''
     Check 'unit' 'Convert-IniValue int too big' (-not (Convert-IniValue 'MaxItems' '999999999').Ok) ''
     Check 'unit' 'Convert-IniValue install flag' ((Convert-IniValue 'Autostart' 'off').Value -eq '0') ''
     Check 'unit' 'Convert-IniValue int not a number' (-not (Convert-IniValue 'MaxItems' 'many').Ok) ''
@@ -539,9 +583,9 @@ try {
     Check 'unit' 'Apply-Config ShowTime=0' (-not $script:ShowTime) ''
     Check 'unit' 'Apply-Config MaxItems' ($MaxItems -eq 7) ($MaxItems -as [string])
     Check 'unit' 'install shortcuts default on' ($script:Autostart -and $script:DesktopShortcut) ''
-    [IO.File]::WriteAllLines($cfg, @('WindowHeight=100', 'MaxItems=0', 'Highlight=abc'), $Utf8)
+    [IO.File]::WriteAllLines($cfg, @('Rows=1', 'MaxItems=0', 'Highlight=abc'), $Utf8)
     Apply-Config
-    Check 'unit' 'Apply-Config rejects out of range' (($script:WinHeight -eq 510) -and ($MaxItems -eq 300) -and $script:HighlightOn) ('h=' + $script:WinHeight + ' items=' + $MaxItems)
+    Check 'unit' 'Apply-Config rejects out of range' (($script:Rows -eq 10) -and ($MaxItems -eq 300) -and $script:HighlightOn) ('rows=' + $script:Rows + ' items=' + $MaxItems)
 
     # ------------------------------------------------------- entry kinds / glyphs
     # the base only separates a file list from text; finer typing is a plugin job
@@ -1068,13 +1112,13 @@ try {
     $o = Clip $intDir @('list')
     Check 'int' 'list empty after clear -All' ($o -match 'history is empty') $o.Trim()
 
-    $o = Clip $intDir @('config', 'get', 'WindowHeight')
-    Check 'int' 'config get' ($o -match 'WindowHeight = 510') $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'WindowHeight', '480')
+    $o = Clip $intDir @('config', 'get', 'Rows')
+    Check 'int' 'config get' ($o -match 'Rows = 10') $o.Trim()
+    $o = Clip $intDir @('config', 'set', 'Rows', '12')
     $iniAfter = [IO.File]::ReadAllText($cfg2)
-    Check 'int' 'config set writes' (($o -match '510 -> 480') -and ($iniAfter -match '(?m)^WindowHeight=480\r?$')) $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'WindowHeight', '10')
-    Check 'int' 'config set rejects range' ($o -match 'must be >= 240') $o.Trim()
+    Check 'int' 'config set writes' (($o -match '10 -> 12') -and ($iniAfter -match '(?m)^Rows=12\r?$')) $o.Trim()
+    $o = Clip $intDir @('config', 'set', 'Rows', '1')
+    Check 'int' 'config set rejects range' ($o -match 'must be >= 3') $o.Trim()
     $o = Clip $intDir @('config', 'set', 'NopeKey', '1')
     Check 'int' 'config set rejects unknown key' ($o -match 'unknown key') $o.Trim()
     $o = Clip $intDir @('config', 'set', 'DataDir', 'D:\x')

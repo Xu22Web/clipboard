@@ -154,7 +154,7 @@ switch ($Command.ToLower()) {
     Write-Host ('autostart   : ' + $(if (Test-Path -LiteralPath (Get-AutostartPath)) { 'installed' } else { 'not installed' }))
     Write-Host ('desktop     : ' + $(if (Test-Path -LiteralPath (Get-DesktopPath)) { 'installed' } else { 'not installed' }))
     Write-Host ('store file  : ' + $StoreFile + '   (v2)')
-    Write-Host ('panel       : ' + $script:WinWidth + 'x' + $script:WinHeight + '  theme=' + $script:Theme + '  dpi=' + $script:UiScale)
+    Write-Host ('panel       : ' + $script:WinWidth + 'x' + (Get-PanelHeight $script:Rows (Get-PanelRowHeight) (Get-PanelChrome)) + '  rows=' + $script:Rows + '  theme=' + $script:Theme + '  dpi=' + $script:UiScale)
     $hkFile = Join-Path $StoreDir 'hotkey.txt'
     $eff = '(daemon never started)'
     if (Test-Path -LiteralPath $hkFile) { $eff = ([IO.File]::ReadAllText($hkFile, [Text.Encoding]::UTF8)).Trim() }

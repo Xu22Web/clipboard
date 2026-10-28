@@ -80,6 +80,35 @@ function Get-PluginSortMark {
 }
 
 
+# how many rows the sticky mark may keep on screen while a search runs. 0 turns the feature
+# off, a negative value means "as many as fit" - the panel works out how many that is.
+function Get-PluginStickyRows {
+  foreach ($p in @($script:Plugins)) {
+    if (-not $p.ContainsKey('StickyRows')) { continue }
+    $v = $p['StickyRows']
+    try { if ($v -is [scriptblock]) { $v = & $v } } catch {
+      Write-Log ('plugin sticky policy failed (' + [string]$p['Name'] + '): ' + $_.Exception.Message)
+      continue
+    }
+    $n = 0
+    if ([int]::TryParse([string]$v, [ref]$n)) { return $n }
+  }
+  return 0
+}
+
+
+# the mark whose rows stay visible while searching ("sticky pins"); '' = nothing sticks
+function Get-PluginStickyMark {
+  if ((Get-PluginStickyRows) -eq 0) { return '' }
+  foreach ($p in @($script:Plugins)) {
+    if (-not $p.ContainsKey('StickyMark')) { continue }
+    $m = [string]$p['StickyMark']
+    if ($m -and (Get-PluginMarkInfo $m)) { return $m }
+  }
+  return ''
+}
+
+
 # marks `clear` keeps without -All
 function Get-PluginClearKeeps {
   $out = @()

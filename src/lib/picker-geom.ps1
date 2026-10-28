@@ -13,6 +13,41 @@ function Get-VisibleRowCount([int]$listHeight, [int]$rowHeight) {
   return $n
 }
 
+# The row height and the chrome come from the same metric table a theme may restyle, so a
+# theme with taller rows keeps the row count honest instead of cutting the last row off.
+function Get-PanelRowHeight { return [int]$script:Metric['RowHeight'] }
+
+# everything that is not a row: header, footer and the 1 px border on each side
+function Get-PanelChrome { return ([int]$script:Metric['HeadHeight'] + [int]$script:Metric['FootHeight'] + 2) }
+
+# The window height is never a setting of its own: it follows from the number of rows, so
+# a row is never half cut off and raising the row count cannot silently make the panel
+# taller than the screen. These two are the only conversion, shared by the panel and by
+# the config checks, and they take the metrics as arguments so they stay pure.
+function Get-PanelHeight([int]$rows, [int]$rowHeight, [int]$chrome) {
+  if ($rows -lt 1) { $rows = 1 }
+  if ($rowHeight -lt 1) { return $chrome }
+  return ($chrome + ($rows * $rowHeight))
+}
+
+# how many whole rows fit into a height budget (a screen work area, for example)
+function Get-RowFit([int]$height, [int]$rowHeight, [int]$chrome) {
+  if ($rowHeight -lt 1) { return 1 }
+  $n = [int][Math]::Floor(($height - $chrome) / $rowHeight)
+  if ($n -lt 1) { return 1 }
+  return $n
+}
+
+# rows the screen can actually show: the configured count, capped by what fits and never
+# below the minimum the panel needs to stay usable (an unknown screen keeps the request)
+function Get-RowsForScreen([int]$rows, [int]$screenHeight, [int]$rowHeight, [int]$chrome, [int]$minRows) {
+  if ($screenHeight -lt 1) { return $rows }
+  $fit = Get-RowFit $screenHeight $rowHeight $chrome
+  if ($fit -gt $rows) { $fit = $rows }
+  if ($fit -lt $minRows) { $fit = $minRows }
+  return $fit
+}
+
 # virtual index behind a Ctrl+<digit> press. Digits follow the visible window, not the
 # absolute position in the list (uTools style), so they stay stable while scrolling.
 function Get-QuickKeyIndex([int]$offset, [int]$topIndex, [int]$count, [int]$rows) {
