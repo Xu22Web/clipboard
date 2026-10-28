@@ -192,6 +192,19 @@ try {
   }
   Check 'struct' 'no duplicate function names' ($dups.Count -eq 0) ($dups -join ', ')
 
+  # A WH_KEYBOARD_LL hook outlives the panel's own teardown and swallows every key in the
+  # system, so it has to be released from a finally block: releasing it after the message
+  # loop means one exception on the way out leaves the keyboard dead.
+  $pickerText = [IO.File]::ReadAllText((Join-Path $srcRoot 'lib\picker.ps1'))
+  Check 'struct' 'no whole-window opacity transition' (-not ($pickerText -match '\$form\.Opacity\s*=')) ''
+  if (-not $isPackaged) {
+    # the packaged copy has its function names minified, so only the source can be checked
+    $pickerAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $srcRoot 'lib\picker.ps1'), [ref]$null, [ref]$null)
+    $finallyText = (@($pickerAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.TryStatementAst] }, $true) |
+        ForEach-Object { $_.Finally.Extent.Text }) -join "`n")
+    Check 'struct' 'the key hook is released in a finally' ($finallyText -match 'Disable-KeyHook') ''
+  }
+
   # sizes and the single $Root line only make sense in the readable source
   if (-not $isPackaged) {
     $entryLines = @([IO.File]::ReadAllLines($entryPath)).Count

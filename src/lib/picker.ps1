@@ -1218,8 +1218,7 @@ function Show-Picker {
     function Invoke-HookedKey {
       $keys = @(Get-HookedKeys)
       if ($keys.Count -eq 0) { return }
-      # true when the input method claimed a key (VK_PROCESSKEY): it must compose in the panel
-      $claimed = Test-KeyHookEscalate
+      $claimed = Test-KeyHookEscalate   # true when the input method claimed a key
       for ($i = 0; $i -lt $keys.Count; $i++) {
         $vk = $keys[$i]
         $ch = Get-HookedChar $vk
@@ -1240,12 +1239,15 @@ function Show-Picker {
         }
         # text (and Backspace, WM_CHAR 0x08) goes to the box; Esc/Enter/Tab are control chars
         $isText = $ch -ne [char]0 -and (-not [char]::IsControl($ch) -or $ch -eq [char]8)
-        if ($isText -and $plain) {
-          [void][Cb.Win]::SendMessage($txt.Handle, 0x0102, [IntPtr][int]$ch, [IntPtr]1)   # WM_CHAR
-        } else {
-          [void][Cb.Win]::SendMessage($form.Handle, 0x0100, [IntPtr]$vk, [IntPtr]1)       # WM_KEYDOWN
-          [void][Cb.Win]::SendMessage($form.Handle, 0x0101, [IntPtr]$vk, [IntPtr]1)       # WM_KEYUP
-        }
+        # Esc closes the panel, so the handle is read once and the whole delivery is guarded:
+        # an exception escaping here used to leave the system-wide hook installed
+        try {
+          if ($isText -and $plain) { [void][Cb.Win]::SendMessage($txt.Handle, 0x0102, [IntPtr][int]$ch, [IntPtr]1) }
+          else {
+            $wh = $form.Handle
+            [void][Cb.Win]::SendMessage($wh, 0x0100, [IntPtr]$vk, [IntPtr]1); [void][Cb.Win]::SendMessage($wh, 0x0101, [IntPtr]$vk, [IntPtr]1)
+          }
+        } catch { return }
       }
     }
 
@@ -1313,18 +1315,16 @@ function Show-Picker {
     # The hook keeps the foreground window untouched. An input method can only be driven
     # through a real focus, so the panel hands itself the keyboard as soon as one is active
     # (see the loop) - without that, Chinese/Japanese/Korean could never be typed in.
+    Disable-KeyHook   # never inherit a hook from a panel that closed badly
     $script:PickerHook = Enable-KeyHook
     if (-not $script:PickerHook) { [void](Switch-ToTakeover $form.Handle $txt) }
     Write-Log ('picker: input=' + $(if ($script:PickerHook) { 'hook' } else { 'takeover' }))
-    # HWND_TOPMOST with SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE keeps the caret where it was
     [void][Cb.Win]::SetWindowPos($form.Handle, [IntPtr](-1), 0, 0, 0, 0, 0x13)
 
     while (-not $form.IsDisposed) {
       [Windows.Forms.Application]::DoEvents()
-      # one transition step per tick; the step is 1.0 when animations are off, so the
-      # values land on their targets in a single frame and nothing keeps repainting
       $am = Invoke-AnimFrame $script:Anim $(if ($script:Animations) { 0.22 } else { 1.0 })
-      if ($am -band 1) { $lst.Invalidate() }; if ($am -band 2) { $sbar.Invalidate() }; if ($am -band 4) { $grip.Invalidate() }; if ($am -band 8) { $box.Invalidate() }
+      if ($am -ne 0 -and -not $form.IsDisposed) { try { if ($am -band 1) { $lst.Invalidate() }; if ($am -band 2) { $sbar.Invalidate() }; if ($am -band 4) { $grip.Invalidate() }; if ($am -band 8) { $box.Invalidate() } } catch { } }
       if ($script:PickerClose) { $form.Close(); break }
       if ($script:PickerHook) {
         # cache the IME state instead of asking per keystroke (a cross-process call); the
@@ -1335,8 +1335,7 @@ function Show-Picker {
           if ($fgNow -eq [IntPtr]::Zero -or $fgNow -eq $form.Handle) { $fgNow = $prev }
           $script:ImeNative = Test-ImeOpen $fgNow
         }
-        # the hook queues the keys; replay them into the panel's own controls
-        Invoke-HookedKey
+        if ($form.IsHandleCreated) { Invoke-HookedKey }
         if (-not $script:PickerHook) { continue }   # handed over above
         # a click outside dismisses it (Add_Deactivate never fires under the hook)
         $mouseDown = ([Cb.Win]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
@@ -1353,8 +1352,7 @@ function Show-Picker {
       Start-Sleep -Milliseconds 12
     }
 
-    Disable-KeyHook
-    # only takeover mode moved the foreground, so only it has to hand it back
+    # only takeover mode moved the foreground, which is also the only mode that restores it
     if ($script:PickerEscalated -or (-not $script:PickerHook)) {
       if ($prev -ne [IntPtr]::Zero) { [void][Cb.Win]::SetForegroundWindow($prev) }
     }
@@ -1395,6 +1393,8 @@ function Show-Picker {
       Write-Log ('picker at: ' + $pos)
     } catch { }
   } finally {
+    # process-wide: a hook that outlives the panel swallows every key, so release it here
+    Disable-KeyHook
     $script:PickerOpen = $false
   }
 }
