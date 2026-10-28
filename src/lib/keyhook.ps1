@@ -29,6 +29,8 @@ namespace Cb {
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vk);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int ToUnicodeEx(uint vk, uint scan, byte[] state, StringBuilder buf, int cch, uint flags, IntPtr layout);
     [DllImport("user32.dll")] private static extern IntPtr GetKeyboardLayout(uint tid);
+    [DllImport("imm32.dll")] private static extern IntPtr ImmGetDefaultIMEWnd(IntPtr hwnd);
+    [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
     private const int WM_KEYDOWN = 0x0100;
 
@@ -73,6 +75,9 @@ namespace Cb {
     // Modifiers and Win/Alt combinations pass through, so the shell keeps working and the
     // keyboard state stays consistent.
     private static bool Eat(uint vk) {
+      // Ctrl+Space switches the input method on and off - never swallow it, or the panel
+      // would be the only thing the user can no longer reach their IME with
+      if (vk == 0x20 && (GetAsyncKeyState(0x11) & 0x8000) != 0) { return false; }
       if (vk >= 0x41 && vk <= 0x5A) { return true; }   // A-Z
       if (vk >= 0x30 && vk <= 0x39) { return true; }   // 0-9
       if (vk >= 0x60 && vk <= 0x69) { return true; }   // numpad 0-9
@@ -114,6 +119,21 @@ namespace Cb {
       } catch { }
       return (char)0;
     }
+
+    // Is the input method in its native (composing) mode? Merely "switched on" is not
+    // enough - a Chinese IME stays open in alphanumeric mode and passes ASCII straight
+    // through, which the hook handles fine. Only composing needs a real focus.
+    public static bool ImeNeedsFocus(IntPtr hwnd) {
+      try {
+        IntPtr ime = ImmGetDefaultIMEWnd(hwnd);
+        if (ime == IntPtr.Zero) { return false; }
+        // WM_IME_CONTROL / IMC_GETCONVERSIONSTATUS: low word is the conversion mode
+        IntPtr r = SendMessage(ime, 0x0283, (IntPtr)1, IntPtr.Zero);
+        int mode = (int)(((long)r) & 0xFFFF);
+        return (mode & 0x0001) != 0;   // IME_CMODE_NATIVE
+      } catch { }
+      return false;
+    }
   }
 }
 '@
@@ -139,6 +159,14 @@ function Disable-KeyHook {
 }
 
 function Test-KeyHook { return ('Cb.KeyHook' -as [type]) -and [Cb.KeyHook]::Active }
+
+# true when the input method is composing in its native mode for that window: that needs a
+# real focus, so the panel hands itself the keyboard
+function Test-ImeOpen([IntPtr]$hwnd) {
+  if ($hwnd -eq [IntPtr]::Zero) { return $false }
+  if (-not ('Cb.KeyHook' -as [type])) { return $false }
+  return [Cb.KeyHook]::ImeNeedsFocus($hwnd)
+}
 
 # true once when the input needs a real focus (an IME started composing)
 function Test-KeyHookEscalate {

@@ -268,7 +268,8 @@ function Show-Picker {
     $clr = New-Object Windows.Forms.Label
     $clr.SetBounds(($box.Width - (Px 30)), (Px 10), (Px 20), (Px 22))
     $clr.Text = $(if ($script:IconFamily) { [string][char]0xE8BB } else { 'x' })
-    $clr.Font = $fSmall
+    # the glyph only exists in the icon font - with the text font it renders as a box
+    $clr.Font = $(if ($script:IconFamily) { $fIconSmall } else { $fSmall })
     $clr.ForeColor = $ui.Dim
     $clr.BackColor = $ui.Field
     $clr.TextAlign = 'MiddleCenter'
@@ -1222,8 +1223,10 @@ function Show-Picker {
         $ch = Get-HookedChar $vk
         $mod = [Windows.Forms.Control]::ModifierKeys
         $plain = ($mod -band ([Windows.Forms.Keys]::Control -bor [Windows.Forms.Keys]::Alt)) -eq 0
-        # Esc/Enter/Tab/Back translate to control characters - those are shortcuts, not text
-        if ($ch -ne [char]0 -and -not [char]::IsControl($ch) -and $plain) {
+        # text goes to the box; Backspace too (the box deletes with WM_CHAR 0x08). Esc,
+        # Enter and Tab arrive as other control characters and belong on the shortcut path.
+        $isText = $ch -ne [char]0 -and (-not [char]::IsControl($ch) -or $ch -eq [char]8)
+        if ($isText -and $plain) {
           [void][Cb.Win]::SendMessage($txt.Handle, 0x0102, [IntPtr][int]$ch, [IntPtr]1)   # WM_CHAR
         } else {
           [void][Cb.Win]::SendMessage($form.Handle, 0x0100, [IntPtr]$vk, [IntPtr]1)       # WM_KEYDOWN
@@ -1242,18 +1245,6 @@ function Show-Picker {
       try { $form.Activate() } catch { }
       $txt.Focus()
       Write-Log 'picker: keyboard handed to the panel (IME)'
-    }
-
-    function Test-ClickOutside {
-      # the panel never activates under the hook, so Add_Deactivate never fires: a click
-      # outside has to be seen on the button state instead
-      $down = ([Cb.Win]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
-      $clicked = $down -and -not $script:PrevMouseDown
-      $script:PrevMouseDown = $down
-      if (-not $clicked) { return $false }
-      if ($form.Bounds.Contains([Windows.Forms.Cursor]::Position)) { return $false }
-      Write-Log 'picker: dismissed by a click outside'
-      return $true
     }
 
     $ph.Add_Click({ Focus-Search })
@@ -1308,15 +1299,16 @@ function Show-Picker {
     #              foreground is handed back on close.
     $script:PickerHook = $false
     $script:PickerEscalated = $false
+    $script:ImeCheckAt = Get-Date
     # seed from the real button state: starting at $false would read a button the user was
     # already holding as a fresh click and close the panel on its first frame
     $script:PrevMouseDown = ([Cb.Win]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
 
     # Non-modal on purpose: ShowDialog would block this message pump
     $form.Show()
-    # the hook swallows the keys the panel wants; this thread replays them, which is also the
-    # only thread allowed to touch these windows. Without it the panel falls back to the
-    # activating model.
+    # The hook keeps the foreground window untouched. An input method can only be driven
+    # through a real focus, so the panel hands itself the keyboard as soon as one is active
+    # (see the loop) - without that, Chinese/Japanese/Korean could never be typed in.
     $script:PickerHook = Enable-KeyHook
     if (-not $script:PickerHook) {
       $form.ActiveControl = $txt
@@ -1333,8 +1325,22 @@ function Show-Picker {
       if ($script:PickerHook) {
         # the hook queues the keys; replay them into the panel's own controls
         Invoke-HookedKey
-        if (Test-KeyHookEscalate) { Switch-PickerToTakeover }
-        if (Test-ClickOutside) { $form.Close(); break }
+        if (Test-KeyHookEscalate) {
+          Switch-PickerToTakeover
+        } elseif (((Get-Date) - $script:ImeCheckAt).TotalMilliseconds -gt 400) {
+          # switching the input method on (Ctrl+Space, a language bar click) cannot work
+          # through the hook, so hand the keyboard over within half a second
+          $script:ImeCheckAt = Get-Date
+          if (Test-ImeOpen $prev) { Switch-PickerToTakeover }
+        }
+        # a click outside dismisses it: the panel never activates under the hook, so
+        # Add_Deactivate never fires and the button state has to be watched instead
+        $mouseDown = ([Cb.Win]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
+        if ($mouseDown -and -not $script:PrevMouseDown -and -not $form.Bounds.Contains([Windows.Forms.Cursor]::Position)) {
+          Write-Log 'picker: dismissed by a click outside'
+          $form.Close(); break
+        }
+        $script:PrevMouseDown = $mouseDown
       } elseif (-not $form.ContainsFocus -and ((Get-Date) - $script:ShownAt).TotalMilliseconds -gt 350) {
         # safety net for the takeover model: a click elsewhere dismisses the panel
         $fg = [Cb.Win]::GetForegroundWindow()
