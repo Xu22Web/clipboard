@@ -123,6 +123,33 @@ function Get-PluginMissingNames {
   return @($script:PluginMissing)
 }
 
+# Every settings key the plugin files on disk declare, in the same shape Register-PluginSettings
+# produces (<plugin> -> ordered { '<plugin>.<Key>' -> spec }), but WITHOUT loading them: so
+# `config init` can document every key that exists while help, the plugin commands and the
+# panel still only see the plugins listed in Plugins=.
+function Get-AllPluginSettings([string]$Dir) {
+  $out = [ordered]@{}
+  if (-not $Dir) { return $out }
+  try { if (-not (Test-Path -LiteralPath $Dir)) { return $out } } catch { return $out }
+  $files = @()
+  try { $files = @(Get-ChildItem -LiteralPath $Dir -Filter '*.ps1' -File -ErrorAction Stop | Sort-Object Name) } catch { return $out }
+  foreach ($f in $files) {
+    try {
+      $p = & $f.FullName
+      if ($p -isnot [hashtable] -or -not $p.ContainsKey('Name') -or -not $p.ContainsKey('Settings')) { continue }
+      $spec = $p['Settings']
+      if ($spec -isnot [System.Collections.IDictionary]) { continue }
+      $name = [string]$p['Name']
+      $own = [ordered]@{}
+      foreach ($k in @($spec.Keys)) { $own[$name + '.' + [string]$k] = $spec[$k] }
+      if ($own.Count -gt 0) { $out[$name] = $own }
+    } catch {
+      Write-Log ('plugin settings not read: ' + $f.Name + ' - ' + $_.Exception.Message)
+    }
+  }
+  return $out
+}
+
 function Get-PluginNames {
   $names = New-Object System.Collections.Generic.List[string]
   foreach ($p in @($script:Plugins)) {

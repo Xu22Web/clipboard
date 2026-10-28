@@ -405,9 +405,13 @@ function Get-IniTemplateLines {
     # `-join ','` turns the comma into an element separator and the line comes out empty
     ('Plugins=' + (@($script:PluginList) -join ','))
   )
-  # Settings declared by the loaded plugins, as <plugin>.<Key>. $t is a fixed array, so
-  # the extra lines are collected separately and joined at the end.
-  $pset = $script:PluginSettings
+  # Settings declared by every plugin file on disk, loaded or not: the template documents
+  # what exists, while help / the plugin commands / the panel still only see Plugins=.
+  $pset = $null
+  if (Get-Command Get-AllPluginSettings -ErrorAction SilentlyContinue) {
+    $pset = Get-AllPluginSettings (Join-Path $Root 'plugins')
+  }
+  if ($null -eq $pset -or $pset.Count -eq 0) { $pset = $script:PluginSettings }
   if ($null -eq $pset) { $pset = @{} }
   $extra = New-Object System.Collections.Generic.List[string]
   foreach ($pname in @($pset.Keys)) {
@@ -431,15 +435,30 @@ function Get-IniTemplateLines {
 }
 
 
-# `config init`: add the keys the file is missing and leave everything else alone. A value
-# the user set - a plugin setting in particular - is never replaced by its default, because
-# that would silently undo their work. Returns how many keys were added.
+# `config init`: bring the file in line with this version - add the keys that appeared,
+# comment out the ones that no longer exist, and leave every value alone. A value the user
+# set - a plugin setting in particular - is never replaced by its default. Returns the two
+# counts so the caller can say what happened.
 function Merge-IniDefaults {
   Ensure-Dir
+  $tpl = @(Get-IniTemplateLines)
+  # everything the program can write is "known"; anything else is left over from an older
+  # version or a plugin that is gone
+  $known = @{}
+  foreach ($t in $tpl) {
+    if ($t -match '^\s*([A-Za-z0-9_.-]+)\s*=') { $known[$Matches[1].ToLowerInvariant()] = $true }
+  }
   $lines = New-Object System.Collections.Generic.List[string]
   $have = @{}
+  $pruned = 0
   if (Test-Path -LiteralPath $IniPath) {
     foreach ($l in [IO.File]::ReadAllLines($IniPath, [Text.Encoding]::UTF8)) {
+      if ($l -match '^\s*([A-Za-z0-9_.-]+)\s*=' -and -not $known.ContainsKey($Matches[1].ToLowerInvariant())) {
+        # keep the value readable, but out of the way: a removed '#' brings it back
+        $lines.Add('# [unknown] ' + $l.Trim())
+        $pruned++
+        continue
+      }
       $lines.Add($l)
       if ($l -match '^\s*([A-Za-z0-9_.-]+)\s*=') { $have[$Matches[1].ToLowerInvariant()] = $true }
     }
@@ -447,7 +466,7 @@ function Merge-IniDefaults {
   # comments are buffered so an added key keeps the explanation that introduces it
   $pending = New-Object System.Collections.Generic.List[string]
   $added = 0
-  foreach ($raw in @(Get-IniTemplateLines)) {
+  foreach ($raw in $tpl) {
     $s = [string]$raw
     $tl = $s.Trim()
     if ($tl -eq '' -or $tl.StartsWith('#')) { $pending.Add($s); continue }
@@ -461,10 +480,10 @@ function Merge-IniDefaults {
     $have[$k] = $true
     $added++
   }
-  if ($added -gt 0 -or -not (Test-Path -LiteralPath $IniPath)) {
+  if ($added -gt 0 -or $pruned -gt 0 -or -not (Test-Path -LiteralPath $IniPath)) {
     [IO.File]::WriteAllText($IniPath, (($lines -join [Environment]::NewLine) + [Environment]::NewLine), $Utf8)
   }
-  return $added
+  return @{ Added = $added; Pruned = $pruned }
 }
 
 

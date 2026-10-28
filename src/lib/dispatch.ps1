@@ -170,9 +170,8 @@ switch ($Command.ToLower()) {
     $act = ''
     if ($Value) { $act = $Value.ToLower() }
     if ($act -eq 'init') {
-      $n = Merge-IniDefaults
-      if ($n -gt 0) { Write-Host ('[ok] added ' + $n + ' missing key(s): ' + $IniPath) }
-      else { Write-Host ('[ok] nothing missing: ' + $IniPath) }
+      $r = Merge-IniDefaults
+      Write-Host ('[ok] ' + $r.Added + ' key(s) added, ' + $r.Pruned + ' unknown key(s) commented out: ' + $IniPath)
       Write-Host '     existing values were kept, plugin settings included (config reset rewrites the file)'
     }
     elseif ($act -eq 'reset') {

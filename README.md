@@ -74,7 +74,7 @@ Git Bash / MSYS2 下直接 `./src/clipboard`，CMD 下 `src\clipboard.cmd`。
 | **config** | `config` | 全部配置项与生效值（基础项 + 按插件分组，标注 ini / 默认值） |
 | | `config get KEY` | 单个键的生效值与 ini 原始值 |
 | | `config set KEY VAL` | 校验并写入单个键，常驻进程在跑时自动重启生效 |
-| | `config edit` / `config init` | 用记事本编辑 / **补齐缺失的键**（不碰已有的值） |
+| | `config edit` / `config init` | 用记事本编辑 / **与当前版本对齐**：补上新增的键、把已不存在的键注释掉，不动任何已有值 |
 | | `config reset` | 用默认值**重写整个 ini**（唯一会丢配置的路径） |
 | | `themes` | 列出可用主题（`*` = 当前生效） |
 | **setup** | `diag` | 检查运行环境 |
@@ -112,7 +112,7 @@ Git Bash / MSYS2 下直接 `./src/clipboard`，CMD 下 `src\clipboard.cmd`。
 
 配置**只读**：脚本启动时只读取脚本旁的 `clipboard.ini`，**不创建、不改写、不删除**它（`status`、`config`、`serve`、`ui` 都不会产生文件）。文件不存在或某个键缺失时，直接用内置默认值运行。
 
-需要一份带全部键与注释的模板时执行 `clipboard config init`：它**只补缺失的键**，已写的值（包括插件设置）一律保留，重复执行没有任何副作用。想回到默认值用 `clipboard config reset`（整份重写，会丢掉改过的值）。只想改单个键用 `clipboard config set <key> <value>`。整个 ini 结构是扁平 `key=value`，`#` 或 `;` 开头是注释，`[section]` 行会被忽略。
+需要一份带全部键与注释的模板时执行 `clipboard config init`：它**只补缺失的键**，已写的值（包括插件设置）一律保留；**所有插件的设置键都会被写出来**（不管插件是否在 `Plugins=` 里启用），并把本版本已不认识的键改成 `# [unknown] 原样内容`（去掉 `#` 即可恢复）。重复执行没有副作用。想回到默认值用 `clipboard config reset`（整份重写，会丢掉改过的值）。只想改单个键用 `clipboard config set <key> <value>`。整个 ini 结构是扁平 `key=value`，`#` 或 `;` 开头是注释，`[section]` 行会被忽略。
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
@@ -344,7 +344,7 @@ clipboard config set entry-actions.Reveal 0
 
 > `clipboard config init` 只补缺失的键：插件未启用时它的设置段不会被写出，已写的插件值也不会被默认值顶掉。
 - 插件代码里用 `Get-PluginSetting 'entry-actions' 'Reveal'` 读当前生效值（已合并 ini 与默认值）；外观项用 `Get-PluginTheme`。
-- 插件未在 `Plugins=` 中启用时，它的这些键**不存在**：`config get` 会提示先启用插件，`config init` 也不会写出它的设置段。
+- 插件未在 `Plugins=` 中启用时，它的键**不存在**：`config get` 会提示先启用插件，插件命令与 `help` 也看不到；但 `config init` 仍会把它的设置键写进模板，方便你先看清有哪些旋钮。
 
 注意事项：
 

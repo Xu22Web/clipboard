@@ -1182,11 +1182,13 @@ try {
       if ($inBase -and $ln -match '^\s+([A-Za-z0-9_]+)\s+=') { $schemaKeys.Add($matches[1]) }
     }
     $o = Clip $roDir @('config', 'init')
-    Check 'int' 'config init creates template' ((Test-Path -LiteralPath $roIni) -and ($o -match 'added|nothing missing')) $o.Trim()
+    Check 'int' 'config init creates template' ((Test-Path -LiteralPath $roIni) -and ($o -match 'key\(s\) added')) $o.Trim()
     $iniTpl = [IO.File]::ReadAllText($roIni)
     $missing = @($schemaKeys | Where-Object { $iniTpl -notmatch ('(?m)^' + $_ + '=') })
     Check 'int' 'template has every schema key' ($schemaKeys.Count -gt 20 -and $missing.Count -eq 0) (($missing -join ','))
     Check 'int' 'template ships an empty plugin list' (($iniTpl -match '(?m)^Plugins=\r?$') -and (-not ($iniTpl -match 'PluginDisabled'))) ''
+    # every plugin key is documented even though Plugins= is empty and nothing was loaded
+    Check 'int' 'config init documents every plugin key' (($iniTpl -match '(?m)^item-marks\.MaxPins=50') -and ($iniTpl -match '(?m)^item-marks\.StickyPins=') -and ($iniTpl -match '(?m)^entry-actions\.Reveal=')) ''
 
     # init must never overwrite a value the user set - only reset may throw settings away
     [IO.File]::WriteAllText($roIni, ("Theme=win11-light`r`nRows=7`r`nMaxItems=42`r`n"), $Utf8)
@@ -1194,7 +1196,14 @@ try {
     $iniTpl = [IO.File]::ReadAllText($roIni)
     Check 'int' 'config init keeps existing values' (($iniTpl -match '(?m)^Theme=win11-light\r?$') -and ($iniTpl -match '(?m)^Rows=7\r?$') -and ($iniTpl -match '(?m)^MaxItems=42\r?$')) $o.Trim()
     Check 'int' 'config init still fills the gaps' ($iniTpl -match '(?m)^Hotkey=') ''
-    Check 'int' 'config init reports what it did' ($o -match 'added \d+ missing key') $o.Trim()
+    Check 'int' 'config init reports what it did' ($o -match 'key\(s\) added, \d+ unknown key') $o.Trim()
+    # a key this version does not know is commented out, not silently kept or dropped
+    [IO.File]::WriteAllText($roIni, ("Nonsense=1`r`nRows=7`r`n"), $Utf8)
+    $o = Clip $roDir @('config', 'init')
+    $iniTpl = [IO.File]::ReadAllText($roIni)
+    Check 'int' 'config init comments out unknown keys' (($iniTpl -match '(?m)^#\s*\[unknown\]\s*Nonsense=1\r?$') -and (-not ($iniTpl -match '(?m)^Nonsense='))) $o.Trim()
+    Check 'int' 'the pruned key keeps its value' ($iniTpl -match '\[unknown\]\s*Nonsense=1') ''
+    Check 'int' 'pruning does not touch a known value' ($iniTpl -match '(?m)^Rows=7\r?$') ''
     $o = Clip $roDir @('config', 'reset')
     $iniTpl = [IO.File]::ReadAllText($roIni)
     Check 'int' 'config reset restores the defaults' (($iniTpl -match '(?m)^Theme=win11-dark\r?$') -and ($iniTpl -match '(?m)^Rows=10\r?$') -and ($iniTpl -match '(?m)^Animations=1\r?$')) $o.Trim()
