@@ -146,7 +146,7 @@ Git Bash / MSYS2 下直接 `./src/clipboard`，CMD 下 `src\clipboard.cmd`。
 | `Animations` | `1` | `1` = 悬停 / 选中切换 / 滚动条 / 搜索框下划线带过渡，`0` = 全部瞬时（不做整窗淡入，那会改变面板的不激活行为） |
 | `Autostart` | `1` | `1` = `install` 创建登录自启快捷方式（`serve`） |
 | `DesktopShortcut` | `1` | `1` = `install` 创建桌面快捷方式（`ui`） |
-| `Plugins` | 空 | 逗号分隔的插件**文件名**（不含 `.ps1`）。空 = 只加载基础功能（默认）；例如 `Plugins=item-marks` |
+| `Plugins` | 全部插件 | 逗号分隔的插件**文件名**（不含 `.ps1`），**顺序即加载顺序**。默认逐个列出 `plugins/` 下的全部插件；改小列表就只加载列出的那几个 |
 
 命令行**不接受**设置开关：所有设置只能写在 `clipboard.ini` 里，或用 `clipboard config set <key> <value>` 改（`clipboard put hi -MaxItems 50` 会直接被参数绑定拒绝）。`config set` 先按上表的类型与范围校验，写回时只改那一行（注释与其他键原样保留），常驻进程在跑时自动重启生效。`config get <key>` 同时显示生效值与 ini 里的原始值，`config` 每行标注来源（`<- ini` / `<- default`）。
 
@@ -228,7 +228,7 @@ BadgeBg BadgeText KeyCapBg KeyCapBorder Mark Warn
 
 ## 插件
 
-插件是**显式开启**的：`Plugins=` 留空（默认）时只跑基础功能，`plugins/` 下的文件连执行都不会执行。启用方式是在 `clipboard.ini` 里列出插件名（逗号分隔，**顺序即加载顺序**，不是文件名顺序）：先加载的插件在右键菜单里更靠前，也优先赢得 `TypeGlyph` / `Transform` 这类“只有一个插件生效”的钩子。
+插件**默认全部开启**：`clipboard.ini` 的 `Plugins=` 逐名字列出 `plugins/` 下的每个插件，顺序即加载顺序，没列出的文件名连执行都不会执行。先加载的插件在右键菜单里更靠前，也优先赢得 `TypeGlyph` / `Transform` 这类“只有一个插件生效”的钩子。
 
 | 插件 | 简单介绍 | 启用 |
 |---|---|---|
@@ -240,7 +240,10 @@ BadgeBg BadgeText KeyCapBg KeyCapBorder Mark Warn
 点插件名进各自的说明页（命令、设置项、主题项、注意事项）。
 
 ```ini
-# 启用多个：逗号分隔，顺序即加载顺序
+# 默认值：全部插件逐个列出，顺序即加载顺序
+Plugins=entry-actions,item-marks,retention,transform
+
+# 只留部分功能：删掉不需要的名字即可
 Plugins=item-marks,entry-actions
 ```
 
@@ -328,6 +331,7 @@ Plugins=item-marks,entry-actions
 插件可以带零到多个设置，注册后与基础键共用一套校验/展示管线，键名为 `<插件名>.<Key>`：
 
 ```ini
+# 只想留一个插件时，Plugins= 里只写它（默认是全邵）
 Plugins=entry-actions
 entry-actions.Browser=C:\Tools\browser.exe
 entry-actions.Reveal=1
@@ -342,13 +346,13 @@ clipboard config set entry-actions.Reveal 0
 - `Kind` 与基础 schema 一致：`bool` / `int`（配 `Min`/`Max`）/ `enum`（配 `Options`）/ `regex` / `hotkey` / `list` / `string`；
   非法值会被拒绝（`config set`）或在加载时回退默认并写日志。
 
-> `clipboard config init` 只补缺失的键：插件未启用时它的设置段不会被写出，已写的插件值也不会被默认值顶掉。
+> `clipboard config init` 只补缺失的键：插件设置段默认已经写在文件里（插件默认全开），已写的插件值不会被默认值顶掉。
 - 插件代码里用 `Get-PluginSetting 'entry-actions' 'Reveal'` 读当前生效值（已合并 ini 与默认值）；外观项用 `Get-PluginTheme`。
-- 插件未在 `Plugins=` 中启用时，它的键**不存在**：`config get` 会提示先启用插件，插件命令与 `help` 也看不到；但 `config init` 仍会把它的设置键写进模板，方便你先看清有哪些旋钮。
+- 插件未在 `Plugins=` 中列名时，它的键**不生效**：`config get` 会提示先把插件加回 `Plugins=`，插件命令与 `help` 也看不到；但 `config init` 仍会把它的设置键写进模板，方便你先看清有哪些旋钮。
 
 注意事项：
 
-- **默认不加载**：`Plugins=` 为空时，插件文件不会被执行；写错名字会提示 `[!] plugin not found: xxx`，基础功能照常。
+- **默认全部加载**：`Plugins=` 在默认模板里逐个列出所有插件；从列表里删掉一个名字，它的文件就不会被执行。写错名字会提示 `[!] plugin not found: xxx`，基础功能照常。
 - **脚本块必须自包含**：可以调用基础函数（`Get-Records`、`Get-EntryKind`、`Write-Log`、`Format-Item`），但**不能引用插件文件作用域里的变量** —— 那个作用域在命令执行时已经销毁，捕获到的变量是 `$null`。多个脚本块要共享一段逻辑时，把它作为哈希表的一个键（如 `KindOf = { ... }`），脚本块里用 `& (Get-PluginData '<插件名>' 'KindOf') $arg` 取回并调用。
 - **一份逻辑只写一次**：钩子、命令、右键项、面板按键往往要同样的行为，把它们抽成插件的共享块再各自调用；内置的四个插件都是这个结构（`KindOf` / `CanOpen` / `OpenPayload` / `Sniff`、`Apply`、`Sweep`、`TrimPins`），所以规则不会两处走偏。
 - **用基础层给的东西，别自己读内部状态**：行装饰用 `RowDecor`、图标用 `Get-IconGlyph`、标记用 `Test-Mark` / `Get-ProtectedMarks` / `Get-SortMark`、改多行用 `Update-Records`，都不需要知道基础层的变量或记录格式。
@@ -416,7 +420,7 @@ src/                    程序本体（打包只读这个目录）
   lib/plugin-settings.ps1 插件设置面（Settings → ini 键，ThemeSettings → 主题段）
   lib/plugin-marks.ps1    标记含义（保护 / 置顶 / clear 保留 / 打印用词）
   lib/themes.ps1          主题加载层（发现 / 校验 / 颜色解析 / Apply-Theme）
-  plugins/*.ps1           可选插件（item-marks / entry-actions / transform / retention；默认不加载）
+  plugins/*.ps1           插件（item-marks / entry-actions / transform / retention；默认全部加载）
   plugins/*.md            每个插件的说明页
   themes/*.ini            主题（win11-dark 默认 / win11-light）
   themes/*.md             每个主题的说明页
@@ -476,7 +480,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run-tests.ps1
 |---|---|---|
 | 结构 | 无（总是执行） | 分层契约：16 个必需模块齐全、每个模块可解析、模块里不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
 | 单元 | `-Unit` | 纯函数与存储层：`Parse-Hotkey`、`Format-Item`/`Get-ItemLabel`、`Read-Ini`/`Write-IniTemplate`/`Set-IniKey`、`Convert-IniValue`（类型与范围校验）、`Apply-Config`、记录往返与未知格式忽略、标记与保护规则、`Get-QuickKeyIndex` / 数字键位置、`Get-VisibleRowCount`、`Get-PickerBounds`、`Get-HitMarks`、`Get-EntryKind`（文本 / 文件列表）、行图标（无插件时为空、插件 `TypeGlyph` 生效）、主题（发现 / 别名 / 颜色解析 / 两套调色板 / 未知主题回退）、插件白名单与各个共享块。通过 `-Library` dot-source 主脚本（入口会先把 `lib\` 全部点源进来，所以函数都在），不触发命令分发 |
-| 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put`/`get`/`list`/`pick`/`del`/`clear`/`clear -All`/`pause`/`resume`/`status`/`themes`/`config get`/`config set`/`config init`/`diag`、主题切换与非法主题名拒绝、插件默认关闭与 `Plugins=` 开启、插件命令（`pin`/`star`/`kind`/`kinds`/`open`/`transform`/`sweep`/`marks`）、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝；以及 `build.ps1` 用配置文件打包（进包内容、`Plugins=`/`Themes=` 裁剪、`Overwrite=0` 拒绝覆盖、未知插件名报错） |
+| 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put`/`get`/`list`/`pick`/`del`/`clear`/`clear -All`/`pause`/`resume`/`status`/`themes`/`config get`/`config set`/`config init`/`diag`、主题切换与非法主题名拒绝、插件默认全部加载与 `Plugins=` 改小列表、插件命令（`pin`/`star`/`kind`/`kinds`/`open`/`transform`/`sweep`/`marks`）、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝；以及 `build.ps1` 用配置文件打包（进包内容、`Plugins=`/`Themes=` 裁剪、`Overwrite=0` 拒绝覆盖、未知插件名报错） |
 | 端到端 | `-E2E` | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启循环 |
 
 全部在 `%TEMP%` 下的沙箱副本（脚本 + `lib` + `plugins` + `themes`）中运行，不修改 `data/` 与 `clipboard.ini`；真实剪贴板在开始前备份、结束后还原。任一项失败时退出码为 1。

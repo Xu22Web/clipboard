@@ -7,14 +7,15 @@
 ## 启用
 
 ```ini
-# clipboard.ini
-Plugins=retention
+# clipboard.ini — 默认已经包含本插件；删掉这一名字才会关闭
+Plugins=entry-actions,item-marks,retention,transform
+# 想真的开始清理，再把天数设成大于 0
 retention.MaxAgeDays=30
 ```
 
-不启用时不会发生任何自动删除；`sweep` 是未知命令。
+不加载时不发生任何自动删除；`sweep` 是未知命令。
 
-> 只启用插件但 `MaxAgeDays` 仍然是默认值 `0` 时，清理处于关闭状态：插件什么也不做。
+> 插件默认加载，但 `MaxAgeDays` 默认是 `0`（永不过期），所以开箱不会删任何东西；想启用过期清理把它设成天数即可。
 
 ## 命令
 

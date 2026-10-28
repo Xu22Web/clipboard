@@ -16,8 +16,8 @@ function Invoke-Main {
     [switch]$All
   )
 Apply-Config
-# Plugins are opt-in: only the names listed in Plugins= are loaded, in that order.
-# An empty list (the default) keeps the base tool running on its own.
+# Plugins are loaded by default: clipboard.ini lists them by name, in load order. A file
+# that is not listed is never executed, so the list is the whole surface.
 if (@($script:PluginList).Count -gt 0 -and (Get-Command Load-Plugins -ErrorAction SilentlyContinue)) {
   $script:Plugins = @(Load-Plugins (Join-Path $Root 'plugins') @($script:PluginList))
   # Plugin settings join the shared schema as <plugin>.<Key>, then get resolved so
@@ -164,7 +164,7 @@ switch ($Command.ToLower()) {
     if (Get-Command Get-PluginNames -ErrorAction SilentlyContinue) { $pnames = @(Get-PluginNames) }
     if ($pnames.Count -gt 0) { Write-Host ('plugins     : ' + ($pnames -join ', ')) }
     elseif (@($script:PluginList).Count -gt 0) { Write-Host ('plugins     : [!] not found: ' + (@($script:PluginList) -join ',')) }
-    else { Write-Host 'plugins     : none (base tool only)' }
+    else { Write-Host 'plugins     : none (no plugin file found)' }
   }
   'config' {
     $act = ''

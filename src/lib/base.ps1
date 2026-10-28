@@ -89,7 +89,8 @@ $script:MaxBytes = 204800
 $script:MaxTotal = 4194304
 $script:Interval = 300
 $script:NoPaste = $false
-# Plugins are opt-in: the list names what to load, and an empty list means "base tool only".
+# Plugins load by default: clipboard.ini spells out every plugin name, and the resolved
+# list keeps that order.
 $script:PluginList = @()
 $script:Plugins = @()
 $script:PluginSettings = @{}

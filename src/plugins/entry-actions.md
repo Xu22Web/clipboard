@@ -10,11 +10,11 @@
 ## 启用
 
 ```ini
-# clipboard.ini
-Plugins=entry-actions
+# clipboard.ini — 默认已经包含本插件；删掉这一名字才会关闭
+Plugins=entry-actions,item-marks,retention,transform
 ```
 
-不启用时：`kind` / `kinds` / `open` 都是未知命令，面板没有 `Ctrl+O`，右键没有 `Open link or path`。
+不加载时：`kind` / `kinds` / `open` 都是未知命令，面板没有 `Ctrl+O`，右键没有 `Open link or path`。
 
 ## 命令
 

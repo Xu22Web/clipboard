@@ -71,8 +71,13 @@ function Apply-Config {
   $v = Get-CfgValue 'ScrollLines';       if ($null -ne $v) { $script:ScrollLines = [int]$v }
   $v = Get-CfgValue 'Animations';        if ($v -eq '0') { $script:Animations = $false }
   $v = Get-CfgValue 'Plugins'
-  if ($null -ne $v) {
+  $script:PluginList = @()
+  if ($null -ne $v -and ([string]$v).Trim() -ne '') {
     $script:PluginList = @($v -split '[,;]' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  } elseif (Get-Command Get-AllPluginNames -ErrorAction SilentlyContinue) {
+    # No Plugins= in the file yet: start from every plugin on disk, spelled out by name.
+    # A store without a plugins folder simply loads nothing.
+    try { $script:PluginList = @(Get-AllPluginNames (Join-Path $Root 'plugins')) } catch { $script:PluginList = @() }
   }
   # plugin settings are read from the same file, so they follow every reload
   if ($script:PluginSettings -and $script:PluginSettings.Count -gt 0 -and (Get-Command Apply-PluginSettings -ErrorAction SilentlyContinue)) {
@@ -177,7 +182,7 @@ function Show-Config {
     if ($k -eq 'DataDir' -and $show -eq '') { $show = '(script dir)\data' }
     if ($k -eq 'HotkeyFallbacks' -and $show -eq '') { $show = '(built-in chain)' }
     if ($k -eq 'ExcludePattern' -and $show -eq '') { $show = '(none)' }
-    if ($k -eq 'Plugins' -and $show -eq '') { $show = '(none, base tool only)' }
+    if ($k -eq 'Plugins' -and $show -eq '') { $show = '(none)' }
     Write-Host ('    ' + $name + ' = ' + $show + (& $srcOf $k))
   }
 
@@ -209,7 +214,7 @@ function Show-Config {
   } elseif (@($script:PluginList).Count -gt 0) {
     Write-Host ('plugins     : [!] not found: ' + (@($script:PluginList) -join ',') + '   (see README.md)')
   } else {
-    Write-Host 'plugins     : none (base tool only, set Plugins= to opt in)'
+    Write-Host 'plugins     : none (no plugin file found in plugins\)'
   }
   Write-Host ''
   Write-Host 'clipboard config get <key>            one value (effective + raw ini value)'
@@ -398,15 +403,15 @@ function Get-IniTemplateLines {
     '# 1 = install creates the desktop shortcut that runs ui',
     'DesktopShortcut=1',
     '',
-    '# ---- plugins (optional, see README.md) ----',
-    '# comma separated plugin names to load, empty = base tool only (default)',
+    '# ---- plugins (see README.md) ----',
+    '# names to load, in load order; the default lists every plugin on disk',
     '# e.g. Plugins=item-marks,entry-actions',
     # the whole expression needs its own parentheses: inside an array literal a bare
     # `-join ','` turns the comma into an element separator and the line comes out empty
     ('Plugins=' + (@($script:PluginList) -join ','))
   )
   # Settings declared by every plugin file on disk, loaded or not: the template documents
-  # what exists, while help / the plugin commands / the panel still only see Plugins=.
+  # what exists, while help / the plugin commands / the panel follow the resolved Plugins=.
   $pset = $null
   if (Get-Command Get-AllPluginSettings -ErrorAction SilentlyContinue) {
     $pset = Get-AllPluginSettings (Join-Path $Root 'plugins')
@@ -416,7 +421,7 @@ function Get-IniTemplateLines {
   $extra = New-Object System.Collections.Generic.List[string]
   foreach ($pname in @($pset.Keys)) {
     $extra.Add('')
-    $extra.Add('# ---- plugin: ' + $pname + ' (only used when listed in Plugins=) ----')
+    $extra.Add('# ---- plugin: ' + $pname + ' (used when listed in Plugins=) ----')
     foreach ($full in @($pset[$pname].Keys)) {
       $spec = $pset[$pname][$full]
       $desc = ''

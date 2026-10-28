@@ -55,7 +55,7 @@
   Settings      = [ordered]@{
     MaxPins          = @{ Kind = 'int'; Min = 0; Max = 1000; Default = 50; Desc = 'pinned entry cap, 0 = unlimited' }
     ClearKeepsPinned = @{ Kind = 'bool'; Default = 1; Desc = '1 = clear keeps pinned rows, 0 = clear wipes them too' }
-    StickyPins       = @{ Kind = 'bool'; Default = 0; Desc = '1 = pinned rows stay on top while searching, 0 = the search hides them too' }
+    StickyPins       = @{ Kind = 'bool'; Default = 1; Desc = '1 = pinned rows stay on top while searching, 0 = the search hides them too' }
     StickyRows       = @{ Kind = 'int'; Min = 0; Max = 50; Default = 3; Desc = 'rows the sticky pins may take while searching, 0 = as many as fit' }
   }
   ThemeSettings = [ordered]@{

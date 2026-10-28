@@ -7,11 +7,11 @@
 ## 启用
 
 ```ini
-# clipboard.ini
-Plugins=transform
+# clipboard.ini — 默认已经包含本插件；删掉这一名字才会关闭
+Plugins=entry-actions,item-marks,retention,transform
 ```
 
-不启用时粘贴走原始文本，`transform` 是未知命令。
+不加载时粘贴走原始文本，`transform` 是未知命令。
 
 ## 命令
 

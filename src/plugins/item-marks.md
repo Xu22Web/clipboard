@@ -17,11 +17,11 @@
 ## 启用
 
 ```ini
-# clipboard.ini
-Plugins=item-marks
+# clipboard.ini — 默认已经包含本插件；删掉这一名字才会关闭
+Plugins=entry-actions,item-marks,retention,transform
 ```
 
-不启用时：上面七个命令都不存在，面板没有 `Ctrl+P` / `Ctrl+S` / `Ctrl+H`，右键菜单没有这三项，行上也没有图钉、星标与高亮。记录里已存的 `p` / `s` / `h` 仍在（`clipboard list` 的 `*`、`status` 的计数读不出来，因为没有声明），只是没有入口去改它们。
+不加载时：上面七个命令都不存在，面板没有 `Ctrl+P` / `Ctrl+S` / `Ctrl+H`，右键菜单没有这三项，行上也没有图钉、星标与高亮。记录里已存的 `p` / `s` / `h` 仍在（`clipboard list` 的 `*`、`status` 的计数读不出来，因为没有声明），只是没有入口去改它们。
 
 ## 命令
 

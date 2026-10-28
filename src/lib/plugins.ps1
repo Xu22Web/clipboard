@@ -45,13 +45,14 @@
 # Kind / Min / Max / Options / Default follow the base schema (bool, int, enum, regex,
 # hotkey, list, string). A duplicate key is ignored and logged.
 #
-# OPT-IN: nothing here runs unless clipboard.ini names the plugin, e.g.
+# ON BY DEFAULT: clipboard.ini lists every plugin by name, so Plugins= spells out exactly
+# what runs (and in which order), e.g.
 #
-#   Plugins=my-thing
+#   Plugins=entry-actions,item-marks,retention,transform
 #
 # Plugins= lists file names without the .ps1 extension, separated by , or ; and matched
-# case-insensitively. An empty list (the default) means "base tool only": no plugin file
-# is even executed. A name that matches no file is reported as missing.
+# case-insensitively. Leaving the key out falls back to every plugin on disk; naming a
+# subset loads only those.
 #
 # Scriptblocks must be SELF-CONTAINED. They may call base commands (Get-Records,
 # Get-EntryKind, Write-Log, Format-Item ...) but must not read variables created in the
@@ -70,6 +71,17 @@ $script:PluginThemeSpec = @{}    # plugin name -> ordered { Key -> spec }  (them
 $script:PluginThemeValues = @{}  # '<plugin>.<Key>' -> effective value
 $script:PluginTimers = @{}       # 'tick:<plugin>' -> last run (epoch seconds)
 $script:PluginInitDone = $false
+
+# every plugin file on disk, loaded or not: this is what Plugins=* resolves to, so a new
+# plugin file is picked up without editing clipboard.ini
+function Get-AllPluginNames([string]$Dir) {
+  if (-not $Dir) { return @() }
+  try {
+    if (-not (Test-Path -LiteralPath $Dir)) { return @() }
+    return @(Get-ChildItem -LiteralPath $Dir -Filter '*.ps1' -File -ErrorAction Stop |
+      Sort-Object Name | ForEach-Object { $_.BaseName })
+  } catch { return @() }
+}
 
 # Only = the allow-list from Plugins=. Nothing is executed for files that are not listed.
 function Load-Plugins([string]$Dir, [string[]]$Only) {
@@ -126,7 +138,7 @@ function Get-PluginMissingNames {
 # Every settings key the plugin files on disk declare, in the same shape Register-PluginSettings
 # produces (<plugin> -> ordered { '<plugin>.<Key>' -> spec }), but WITHOUT loading them: so
 # `config init` can document every key that exists while help, the plugin commands and the
-# panel still only see the plugins listed in Plugins=.
+# panel still follow the resolved Plugins=.
 function Get-AllPluginSettings([string]$Dir) {
   $out = [ordered]@{}
   if (-not $Dir) { return $out }

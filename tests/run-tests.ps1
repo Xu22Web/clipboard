@@ -62,6 +62,14 @@ function Skip([string]$group, [string]$name, [string]$why) {
   $script:results.Add([pscustomobject]@{ Group = $group; Test = $name; Result = 'SKIP'; Detail = $why })
 }
 
+# The drawing helpers take a Graphics plus plain values, so the unit group paints them onto
+# a bitmap instead of needing a window. That needs the drawing assemblies loaded.
+function Use-Drawing {
+  foreach ($a in @('System.Drawing', 'System.Windows.Forms')) {
+    try { Add-Type -AssemblyName $a -ErrorAction Stop } catch { }
+  }
+}
+
 # A sandbox is a throw-away copy of the tool (script + lib + plugins + themes): the
 # settings file sits next to the script, so DataDir= and the store stay inside the sandbox.
 function New-Sandbox([string]$name) {
@@ -465,9 +473,12 @@ try {
     Set-AnimHover $st 3
     Check 'unit' 'anim hover targets one row' (($st.HoverIndex -eq 3) -and ($st.HoverTarget -eq 1)) ''
     $mask = Invoke-AnimFrame $st 0.5
-    Check 'unit' 'anim frame eases and reports the list' ((($mask -band 1) -ne 0) -and ($st.Hover -eq 0.5)) ($mask -as [string])
-    $null = Invoke-AnimFrame $st 0.5
+    Check 'unit' 'anim frame eases by a fraction' ((($mask -band 1) -ne 0) -and ($st.Hover -eq 0.5)) ($mask -as [string])
+    $null = Invoke-AnimFrame $st 1.0
     Check 'unit' 'anim frame settles and then idles' (($st.Hover -eq 1) -and ((Invoke-AnimFrame $st 0.5) -eq 0)) ''
+    Set-AnimTarget $st 'Hover' 0.0
+    $null = Invoke-AnimFrame $st 0.995
+    Check 'unit' 'anim frame snaps to the target when close' (($st.Hover -eq 0) -and ((Invoke-AnimFrame $st 0.5) -eq 0)) ($st.Hover -as [string])
     Set-AnimSelection $st 2
     Check 'unit' 'anim selection starts empty' (($st.SelIndex -eq 2) -and ($st.PrevSelIndex -eq -1) -and ($st.Sel -eq 0)) ''
     Set-AnimSelection $st 5
@@ -1014,8 +1025,9 @@ try {
 
     # the drawing helpers live in lib/picker-draw.ps1 and take a Graphics plus plain values,
     # so they can be exercised without a window - that is what "no form state" buys.
-    # Source only: a packaged copy has renamed internals, so the names do not exist there.
-    if (-not $isPackaged) {
+    # Unit only (the helpers come from the -Library load) and source only: a packaged copy
+    # has renamed internals, so the names do not exist there.
+    if ($Unit -and -not $isPackaged) {
       Use-Drawing
       $script:FBody = New-Object Drawing.Font('Tahoma', [single]10)
       $script:FSmall = New-Object Drawing.Font('Tahoma', [single]9)
@@ -1199,9 +1211,9 @@ try {
     $iniTpl = [IO.File]::ReadAllText($roIni)
     $missing = @($schemaKeys | Where-Object { $iniTpl -notmatch ('(?m)^' + $_ + '=') })
     Check 'int' 'template has every schema key' ($schemaKeys.Count -gt 20 -and $missing.Count -eq 0) (($missing -join ','))
-    Check 'int' 'template ships an empty plugin list' (($iniTpl -match '(?m)^Plugins=\r?$') -and (-not ($iniTpl -match 'PluginDisabled'))) ''
-    # every plugin key is documented even though Plugins= is empty and nothing was loaded
-    Check 'int' 'config init documents every plugin key' (($iniTpl -match '(?m)^item-marks\.MaxPins=50') -and ($iniTpl -match '(?m)^item-marks\.StickyPins=') -and ($iniTpl -match '(?m)^entry-actions\.Reveal=')) ''
+    Check 'int' 'template lists every plugin by name' (($iniTpl -match '(?m)^Plugins=entry-actions,item-marks,retention,transform\r?$') -and (-not ($iniTpl -match 'PluginDisabled'))) ''
+    # every plugin key is documented, and the template enables all of them
+    Check 'int' 'config init documents every plugin key' (($iniTpl -match '(?m)^item-marks\.MaxPins=50') -and ($iniTpl -match '(?m)^item-marks\.StickyPins=1') -and ($iniTpl -match '(?m)^entry-actions\.Reveal=1')) ''
 
     # init must never overwrite a value the user set - only reset may throw settings away
     [IO.File]::WriteAllText($roIni, ("Theme=win11-light`r`nRows=7`r`nMaxItems=42`r`n"), $Utf8)
@@ -1221,23 +1233,26 @@ try {
     $iniTpl = [IO.File]::ReadAllText($roIni)
     Check 'int' 'config reset restores the defaults' (($iniTpl -match '(?m)^Theme=win11-dark\r?$') -and ($iniTpl -match '(?m)^Rows=10\r?$') -and ($iniTpl -match '(?m)^Animations=1\r?$')) $o.Trim()
 
-    # --------------------------------------- base commands / opt-in plugin commands
+    # --------------------------------------- plugin commands (loaded by default)
     [void](Clip $intDir @('clear', '-All'))
     [void](Clip $intDir @('put', 'https://example.com/hello'))
     Remove-Item -LiteralPath $cfg2 -Force -ErrorAction SilentlyContinue
     $o = Clip $intDir @('kind', '1')
-    Check 'int' 'kind is a plugin command' ($o -match 'unknown command') $o.Trim()
+    Check 'int' 'kind is available by default' ($o -match 'link') $o.Trim()
     $o = Clip $intDir @('open', '99')
-    Check 'int' 'plugin command off by default' ($o -match 'unknown command') $o.Trim()
-    $o = Clip $intDir @('star', '1')
-    Check 'int' 'pin and star verbs are plugin commands' ($o -match 'unknown command') $o.Trim()
+    Check 'int' 'open reports a bad index' ($o -match 'index out of range') $o.Trim()
     $o = Clip $intDir @('config')
-    Check 'int' 'config shows base only' ($o -match 'plugins     : none \(base tool only') $o.Trim()
+    Check 'int' 'config lists every loaded plugin' (($o -match 'plugins     : loaded') -and ($o -match 'item-marks') -and ($o -match 'entry-actions') -and ($o -match 'retention') -and ($o -match 'transform')) $o.Trim()
+    $o = Clip $intDir @('status')
+    Check 'int' 'status lists every loaded plugin' ($o -match 'plugins     : entry-actions, item-marks, retention, transform') $o.Trim()
     $o = Clip $intDir @('help')
-    Check 'int' 'base help has no kind row' (-not ($o -match '(?m)^    kind N')) ''
-    Check 'int' 'base help has no pin or star rows' ((-not ($o -match '(?m)^    (pin|unpin|star|unstar) N\s')) -and (-not ($o -match 'Ctrl\+S'))) ''
+    Check 'int' 'help has the plugin groups by default' (($o -match '\[plugin: item-marks\]') -and ($o -match '(?m)^    pin\s')) ''
+    Check 'int' 'help lists the plugin panel keys' ($o -match 'Ctrl\+S\s+star.*\(item-marks\)') ''
 
+    # a shorter list narrows it: a plugin that is not named never runs
     [IO.File]::WriteAllLines($cfg2, @('Plugins=entry-actions'), $Utf8)
+    $o = Clip $intDir @('star', '1')
+    Check 'int' 'a shorter list turns the other plugins off' ($o -match 'unknown command') $o.Trim()
     $o = Clip $intDir @('open', '99')
     Check 'int' 'Plugins= enables the plugin' ($o -match 'index out of range') $o.Trim()
     $o = Clip $intDir @('config')

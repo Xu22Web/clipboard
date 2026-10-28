@@ -65,5 +65,5 @@ $script:IniSchema = [ordered]@{
   Animations        = @{ Kind = 'bool'; Default = 1;              Desc = '1 = hover / selection / scrollbar transitions, 0 = instant' }
   Autostart         = @{ Kind = 'bool'; Default = 1;              Desc = '1 = install creates the logon shortcut (serve)' }
   DesktopShortcut   = @{ Kind = 'bool'; Default = 1;              Desc = '1 = install creates the desktop shortcut (ui)' }
-  Plugins           = @{ Kind = 'list'; Default = '';             Desc = 'comma separated plugin names to load (empty = base tool only)' }
+  Plugins           = @{ Kind = 'list'; Default = '';             Desc = 'comma separated plugin names to load (default: every plugin in the plugins folder)' }
 }
