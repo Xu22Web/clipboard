@@ -1208,10 +1208,8 @@ function Show-Picker {
         }
       })
     # ---- input plumbing for the hook model ------------------------------------
-    # While the hook is running the panel never activates, so the search box must not take the
-    # real focus either - that would defeat the whole point. Keys and characters are posted
-    # straight to the controls instead, which keeps every existing handler (the TextChanged
-    # filter, the KeyDown shortcuts) working unchanged.
+    # Under the hook the panel never activates, so the box must not take the real focus
+    # either: keys are posted to the controls, keeping every handler working.
     function Focus-Search {
       if (-not $script:PickerHook) { $txt.Focus() }
     }
@@ -1219,12 +1217,24 @@ function Show-Picker {
     function Invoke-HookedKey {
       $keys = @(Get-HookedKeys)
       if ($keys.Count -eq 0) { return }
-      foreach ($vk in $keys) {
+      for ($i = 0; $i -lt $keys.Count; $i++) {
+        $vk = $keys[$i]
         $ch = Get-HookedChar $vk
         $mod = [Windows.Forms.Control]::ModifierKeys
         $plain = ($mod -band ([Windows.Forms.Keys]::Control -bor [Windows.Forms.Keys]::Alt)) -eq 0
-        # text goes to the box; Backspace too (the box deletes with WM_CHAR 0x08). Esc,
-        # Enter and Tab arrive as other control characters and belong on the shortcut path.
+        # an input method needs a real focus: the first letter typed in native mode hands
+        # the keyboard over and the remaining keys are replayed for the IME (keep together)
+        if ($plain -and $vk -ge 0x30 -and $vk -le 0x5A -and $script:ImeNative) {
+          Write-Log 'picker: handing the keyboard over for the input method'
+          Switch-PickerToTakeover
+          foreach ($k in $keys[$i..($keys.Count - 1)]) {
+            [Cb.Win]::keybd_event([byte]$k, 0, 0, [IntPtr]::Zero)
+            [Cb.Win]::keybd_event([byte]$k, 0, 2, [IntPtr]::Zero)
+          }
+          return
+        }
+        # text (and Backspace, WM_CHAR 0x08) goes to the box; Esc/Enter/Tab are control
+        # characters instead and belong on the shortcut path
         $isText = $ch -ne [char]0 -and (-not [char]::IsControl($ch) -or $ch -eq [char]8)
         if ($isText -and $plain) {
           [void][Cb.Win]::SendMessage($txt.Handle, 0x0102, [IntPtr][int]$ch, [IntPtr]1)   # WM_CHAR
@@ -1236,8 +1246,7 @@ function Show-Picker {
     }
 
     function Switch-PickerToTakeover {
-      # an IME is composing and needs a real focus (and its candidate window): give up the
-      # hook, activate the panel, and let the normal key handling take over
+      # an IME needs a real focus and its candidate window: drop the hook and activate
       $script:PickerHook = $false
       $script:PickerEscalated = $true
       Disable-KeyHook
@@ -1264,8 +1273,7 @@ function Show-Picker {
         Size-List
         Sync-Sb
         Update-List ''
-        # The search box looks focused from the first frame (accent underline) but only takes
-        # the real focus when the hook is not available - see Focus-Search.
+        # the box looks focused (accent underline) but only takes the real focus without a hook
         Focus-Search
         $script:SearchFocus = $true
         $box.Invalidate()
@@ -1299,7 +1307,7 @@ function Show-Picker {
     #              foreground is handed back on close.
     $script:PickerHook = $false
     $script:PickerEscalated = $false
-    $script:ImeCheckAt = Get-Date
+    $script:ImeCheckAt = Get-Date; $script:ImeNative = $false
     # seed from the real button state: starting at $false would read a button the user was
     # already holding as a fresh click and close the panel on its first frame
     $script:PrevMouseDown = ([Cb.Win]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
@@ -1310,31 +1318,24 @@ function Show-Picker {
     # through a real focus, so the panel hands itself the keyboard as soon as one is active
     # (see the loop) - without that, Chinese/Japanese/Korean could never be typed in.
     $script:PickerHook = Enable-KeyHook
-    if (-not $script:PickerHook) {
-      $form.ActiveControl = $txt
-      $form.Activate()
-    }
+    if (-not $script:PickerHook) { $form.ActiveControl = $txt; $form.Activate() }
     Write-Log ('picker: input=' + $(if ($script:PickerHook) { 'hook' } else { 'takeover' }))
-    # HWND_TOPMOST with SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE: on top of the other windows
-    # without touching the activation state, which is what keeps the caret where it was
+    # HWND_TOPMOST with SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE keeps the caret where it was
     [void][Cb.Win]::SetWindowPos($form.Handle, [IntPtr](-1), 0, 0, 0, 0, 0x13)
 
     while (-not $form.IsDisposed) {
       [Windows.Forms.Application]::DoEvents()
       if ($script:PickerClose) { $form.Close(); break }
       if ($script:PickerHook) {
+        # cache the IME state instead of asking per keystroke (a cross-process call)
+        if (((Get-Date) - $script:ImeCheckAt).TotalMilliseconds -gt 400) {
+          $script:ImeCheckAt = Get-Date
+          $script:ImeNative = Test-ImeOpen $prev
+        }
         # the hook queues the keys; replay them into the panel's own controls
         Invoke-HookedKey
-        if (Test-KeyHookEscalate) {
-          Switch-PickerToTakeover
-        } elseif (((Get-Date) - $script:ImeCheckAt).TotalMilliseconds -gt 400) {
-          # switching the input method on (Ctrl+Space, a language bar click) cannot work
-          # through the hook, so hand the keyboard over within half a second
-          $script:ImeCheckAt = Get-Date
-          if (Test-ImeOpen $prev) { Switch-PickerToTakeover }
-        }
-        # a click outside dismisses it: the panel never activates under the hook, so
-        # Add_Deactivate never fires and the button state has to be watched instead
+        if (-not $script:PickerHook) { continue }   # handed over above
+        # a click outside dismisses it (Add_Deactivate never fires under the hook)
         $mouseDown = ([Cb.Win]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
         if ($mouseDown -and -not $script:PrevMouseDown -and -not $form.Bounds.Contains([Windows.Forms.Cursor]::Position)) {
           Write-Log 'picker: dismissed by a click outside'
