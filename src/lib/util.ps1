@@ -104,6 +104,8 @@ namespace Cb {
     // rows at the very top that never scroll: the pinned block
     public int PinnedCount = 0;
     public System.Drawing.Color SeparatorColor = System.Drawing.Color.Empty;
+    // rows one wheel notch scrolls; 0 means the usual three
+    public int WheelRows = 0;
 
     private int topIndex = 0;
     private int selected = -1;
@@ -209,6 +211,16 @@ namespace Cb {
         if (i >= 0) SelectedIndex = i;
       }
       base.OnMouseDown(e);
+    }
+
+    // A ListBox scrolls itself on the wheel; this one has to do it too, or the event would
+    // just bubble to the parent and nothing would move.
+    protected override void OnMouseWheel(System.Windows.Forms.MouseEventArgs e) {
+      int step = WheelRows > 0 ? WheelRows : 3;
+      if (e.Delta > 0) ScrollBy(-step); else ScrollBy(step);
+      System.Windows.Forms.HandledMouseEventArgs h = e as System.Windows.Forms.HandledMouseEventArgs;
+      if (h != null) h.Handled = true;
+      base.OnMouseWheel(e);
     }
 
     protected override void OnPaint(System.Windows.Forms.PaintEventArgs e) {

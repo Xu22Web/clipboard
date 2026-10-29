@@ -457,12 +457,6 @@ function Show-Picker {
       $sbar.Invalidate()
     }
 
-    # The control scrolls itself to keep the selection on screen; a frozen row never needs
-    # that, so this is only about an empty list.
-    function Keep-SelectionVisible {
-      if ($lst.ItemCount -gt 0) { $lst.EnsureVisible($lst.SelectedIndex) }
-    }
-
     # move the list so the thumb lands at $thumbTop
     function Sb-ScrollTo([int]$thumbTop) {
       if ($script:SbLen -le 0) { return }
@@ -481,14 +475,15 @@ function Show-Picker {
       Sync-Sb
     }
 
-    # focus stays in the search box, so wheel events bubble up here instead of the list
+    # rows per wheel notch: the ini setting wins, otherwise the system's own line count
+    $wheelLines = $(try { [Windows.Forms.SystemInformation]::MouseWheelScrollLines } catch { 3 })
+    if ($script:ScrollLines -gt 0) { $wheelLines = [int]$script:ScrollLines }
+    $lst.WheelRows = [Math]::Max(1, [int]$wheelLines)
+
+    # the list scrolls itself on the wheel; with the pointer anywhere else it bubbles here
     $form.Add_MouseWheel({
         param($s, $e)
-        $lines = 0
-        try { $lines = [Windows.Forms.SystemInformation]::MouseWheelScrollLines } catch { }
-        if ($script:ScrollLines -gt 0) { $step = [int]$script:ScrollLines }
-        elseif ($lines -lt 1) { $step = (Get-Rows) }
-        else { $step = [int]$lines }
+        $step = $lst.WheelRows
         if ($e.Delta -gt 0) { Scroll-By (-$step) } else { Scroll-By $step }
       })
 
@@ -1100,9 +1095,6 @@ function Show-Picker {
       })
     $lst.Add_DoubleClick({ if ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex } })
     $lst.Add_MouseUp({ param($s, $e) if ($e.Button -eq 'Left') { Sync-Sb; Focus-Search } })
-    # the list can also scroll itself when it owns the focus: keep the painted thumb and
-    # the selection in sync when that happens
-    $lst.Add_MouseWheel({ Keep-SelectionVisible; Sync-Sb; $lst.Invalidate() })
 
     $footTimer = New-Object Windows.Forms.Timer
     $footTimer.Interval = 3200

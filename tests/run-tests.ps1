@@ -1115,6 +1115,17 @@ try {
       Check 'unit' 'the last row can reach the bottom edge' (($pl.MaxTop -eq 23) -and ($pl.TopIndex -eq 23)) ([string]$pl.TopIndex + '/' + [string]$pl.MaxTop)
       # the control keeps a row count only: the labels stay with the caller
       Check 'unit' 'the list stores a row count, not the labels' (-not ($pl.PSObject.Properties.Name -contains 'Items')) ''
+      # a Control that only syncs the scrollbar leaves the wheel dead: the list scrolls itself
+      $pl.WheelRows = 2
+      $pl.ScrollTo(3)
+      $wheelM = $pl.GetType().GetMethod('OnMouseWheel', [System.Reflection.BindingFlags]'Instance,NonPublic')
+      $wheelArg = New-Object 'object[]' 1
+      $wheelArg[0] = [Windows.Forms.MouseEventArgs]::new([Windows.Forms.MouseButtons]::None, 0, 10, 10, -120)
+      [void]$wheelM.Invoke($pl, $wheelArg)
+      Check 'unit' 'the wheel scrolls the list itself' ($pl.TopIndex -eq 5) ([string]$pl.TopIndex)
+      $pl.ScrollTo(999)
+      [void]$wheelM.Invoke($pl, $wheelArg)
+      Check 'unit' 'the wheel never scrolls past the last row' (($pl.TopIndex -eq $pl.MaxTop) -and ($pl.TopIndex + $pl.VisibleRows - $pl.PinnedCount - 1 -eq ($pl.ItemCount - 1))) ([string]$pl.TopIndex + '/' + [string]$pl.MaxTop)
       $pl.Dispose()
     }
 
