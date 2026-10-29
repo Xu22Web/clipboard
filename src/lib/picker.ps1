@@ -429,16 +429,14 @@ function Show-Picker {
       return $script:MeasureG
     }
 
-    # ListBox has no VerticalScrollbar property, so the scrollbar is kept just outside the
-    # visible area by the clipping host instead.
+    # the list is wider than its host, so the host clips the strip a native bar would use
     function Size-List {
       $w = $listHost.ClientSize.Width
       $h = $listHost.ClientSize.Height
       if ($w -gt 0 -and $h -gt 0) { $lst.SetBounds(0, 0, $w + (Px 40), $h) }
     }
 
-    # recompute thumb geometry from the current TopIndex. The frozen block is outside the
-    # scrollable range, so the thumb maps onto the rows below it only.
+    # thumb geometry from TopIndex; the frozen block stays out of the scrollable range
     function Sync-Sb {
       $n = $lst.ItemCount
       $vis = Get-Rows
@@ -465,8 +463,8 @@ function Show-Picker {
       $room = $lst.MaxTop - $pin
       if ($room -le 0 -or $span -le 0) { return }
       $i = $pin + [int][Math]::Round(($thumbTop - (Px 3)) * $room / $span)
+      # ScrollTo raises ScrollChanged, which syncs the thumb for us
       $lst.ScrollTo($i)
-      Sync-Sb
       $lst.Invalidate()
     }
 
@@ -479,6 +477,8 @@ function Show-Picker {
     $wheelLines = $(try { [Windows.Forms.SystemInformation]::MouseWheelScrollLines } catch { 3 })
     if ($script:ScrollLines -gt 0) { $wheelLines = [int]$script:ScrollLines }
     $lst.WheelRows = [Math]::Max(1, [int]$wheelLines)
+    # every way the list can scroll (wheel, drag, keys, selection) has to move the thumb
+    $lst.Add_ScrollChanged({ Sync-Sb })
 
     # the list scrolls itself on the wheel; with the pointer anywhere else it bubbles here
     $form.Add_MouseWheel({
@@ -1346,7 +1346,10 @@ function Show-Picker {
         $fg = [Cb.Win]::GetForegroundWindow()
         if ($fg -ne $form.Handle -and $fg -ne $prev) { $form.Close(); break }
       }
-      Start-Sleep -Milliseconds 12
+      # Idle ticks cost real CPU in PowerShell: 8 ms while something moves or the menu is
+      # open, 20 ms otherwise, which keeps typing responsive and the fan quiet.
+      $busy = ($am -ne 0 -or $cm.Visible -or $script:PickerClose)
+      Start-Sleep -Milliseconds $(if ($busy) { 8 } else { 20 })
     }
 
     # only takeover mode moved the foreground, which is also the only mode that restores it

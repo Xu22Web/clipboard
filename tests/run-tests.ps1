@@ -1118,11 +1118,15 @@ try {
       # a Control that only syncs the scrollbar leaves the wheel dead: the list scrolls itself
       $pl.WheelRows = 2
       $pl.ScrollTo(3)
+      # the panel moves its scrollbar thumb from this event, so a scroll has to report it
+      $script:plScrolls = 0
+      $pl.Add_ScrollChanged({ $script:plScrolls = $script:plScrolls + 1 })
       $wheelM = $pl.GetType().GetMethod('OnMouseWheel', [System.Reflection.BindingFlags]'Instance,NonPublic')
       $wheelArg = New-Object 'object[]' 1
       $wheelArg[0] = [Windows.Forms.MouseEventArgs]::new([Windows.Forms.MouseButtons]::None, 0, 10, 10, -120)
       [void]$wheelM.Invoke($pl, $wheelArg)
       Check 'unit' 'the wheel scrolls the list itself' ($pl.TopIndex -eq 5) ([string]$pl.TopIndex)
+      Check 'unit' 'a scroll tells the panel to move the thumb' ($script:plScrolls -gt 0) ([string]$script:plScrolls)
       $pl.ScrollTo(999)
       [void]$wheelM.Invoke($pl, $wheelArg)
       Check 'unit' 'the wheel never scrolls past the last row' (($pl.TopIndex -eq $pl.MaxTop) -and ($pl.TopIndex + $pl.VisibleRows - $pl.PinnedCount - 1 -eq ($pl.ItemCount - 1))) ([string]$pl.TopIndex + '/' + [string]$pl.MaxTop)

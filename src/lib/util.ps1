@@ -113,6 +113,8 @@ namespace Cb {
 
     public event EventHandler DrawItem;
     public event EventHandler SelectedIndexChanged;
+    // raised whenever the top row moves, so the host can move its scrollbar thumb too
+    public event EventHandler ScrollChanged;
 
     public PinList() {
       SetStyle(System.Windows.Forms.ControlStyles.UserPaint |
@@ -174,6 +176,8 @@ namespace Cb {
       if (value == topIndex) return;
       topIndex = value;
       Invalidate();
+      EventHandler h = ScrollChanged;
+      if (h != null) h(this, EventArgs.Empty);
     }
 
     public void BeginUpdate() { updates++; }

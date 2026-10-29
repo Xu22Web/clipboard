@@ -69,8 +69,7 @@
   # frozen block may never fill the list, or the rows below would be out of reach.
   # The count reads the mark string directly - 300 Test-Mark calls cost ~17 ms, this
   # costs ~0.4 ms and runs on every pin.
-  PinRoom       = {
-    $cap = 0
+  PinRoom       = {    $cap = 0
     if (Get-Command Get-PluginStickyCap -ErrorAction SilentlyContinue) { $cap = [int](Get-PluginStickyCap) }
     if ($cap -le 0) { return '' }
     $pins = 0
@@ -78,23 +77,23 @@
     if ($pins -lt $cap) { return '' }
     return ('sticky pins already take ' + $pins + ' of ' + $cap + ' rows - unpin one first')
   }
-  # the pin cap spans several rows, so it runs as one pass over the whole record list
-  TrimPins      = {
+  # Set the pin and apply the pin cap in one pass: Set-Mark followed by a separate trim
+  # reads and rewrites the whole store twice, which doubled the cost of every pin.
+  PinOne        = {
+    param($payload)
     $cap = [int](Get-PluginSetting 'item-marks' 'MaxPins')
-    if ($cap -le 0) { return }
-    # GetNewClosure keeps $cap visible inside the block Update-Records runs
     $body = {
       param($list)
-      $count = 0
-      foreach ($r in $list) { if (([string]$r.Marks).IndexOf('p') -ge 0) { $count++ } }
-      if ($count -le $cap) { return }
+      foreach ($r in $list) { if ($r.Payload -ceq $payload) { [void](Set-RecordMark $r 'p' $true) } }
+      if ($cap -le 0) { return }
+      $n = 0
+      foreach ($r in $list) { if (([string]$r.Marks).IndexOf('p') -ge 0) { $n++ } }
       # the newest pin sits on top, so dropping from the end drops the oldest first
-      for ($i = $list.Count - 1; $i -ge 0 -and $count -gt $cap; $i--) {
-        if (([string]$list[$i].Marks).IndexOf('p') -ge 0) { [void](Set-RecordMark $list[$i] 'p' $false); $count-- }
+      for ($i = $list.Count - 1; $i -ge 0 -and $n -gt $cap; $i--) {
+        if (([string]$list[$i].Marks).IndexOf('p') -ge 0) { [void](Set-RecordMark $list[$i] 'p' $false); $n-- }
       }
-      Write-Log ('pin cap applied, kept ' + $cap)
     }.GetNewClosure()
-    Update-Records $body
+    [void](Update-Records $body)
   }
   Commands      = @{
     'pin' = {
@@ -110,10 +109,8 @@
         Write-Host '    raise Rows or item-marks.StickyRows for more room, or turn StickyPins off'
         return
       }
-      if (Set-Mark $recs[$i - 1].Payload 'p' $true) {
-        & (Get-PluginData 'item-marks' 'TrimPins')
-        Write-Host ('pinned: ' + (Format-Item $recs[$i - 1].Payload 60))
-      } else { Write-Host 'already pinned' }
+      & (Get-PluginData 'item-marks' 'PinOne') $recs[$i - 1].Payload
+      Write-Host ('pinned: ' + (Format-Item $recs[$i - 1].Payload 60))
     }
     'unpin' = {
       param($value)
@@ -192,8 +189,8 @@
           $note = [string](& (Get-PluginData 'item-marks' 'PinRoom'))
           if ($note) { return $note }
         }
-        [void](Set-Mark ([string]$rec.Payload) 'p' $on)
-        & (Get-PluginData 'item-marks' 'TrimPins')
+        if ($on) { & (Get-PluginData 'item-marks' 'PinOne') ([string]$rec.Payload) }
+        else { [void](Set-Mark ([string]$rec.Payload) 'p' $false) }
       }
     }
     @{
@@ -232,8 +229,8 @@
           $note = [string](& (Get-PluginData 'item-marks' 'PinRoom'))
           if ($note) { return $note }
         }
-        [void](Set-Mark ([string]$rec.Payload) 'p' $on)
-        & (Get-PluginData 'item-marks' 'TrimPins')
+        if ($on) { & (Get-PluginData 'item-marks' 'PinOne') ([string]$rec.Payload) }
+        else { [void](Set-Mark ([string]$rec.Payload) 'p' $false) }
       }
     }
     @{
