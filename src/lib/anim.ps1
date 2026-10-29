@@ -18,7 +18,7 @@ $script:AnimKeys = @('Hover', 'Sel', 'PrevSel', 'Sb', 'Grip', 'Field')
 $script:AnimPaint = @{ Hover = 1; Sel = 1; PrevSel = 1; Sb = 2; Grip = 4; Field = 8 }
 
 function New-AnimState {
-  $s = @{ HoverIndex = -1; SelIndex = -1; PrevSelIndex = -1 }
+  $s = @{ HoverIndex = -1; PrevHoverIndex = -1; SelIndex = -1; PrevSelIndex = -1 }
   foreach ($k in @($script:AnimKeys)) {
     $s[$k] = 0.0
     $s[$k + 'Target'] = 0.0
@@ -31,8 +31,10 @@ function Set-AnimTarget($state, [string]$key, [double]$value) {
   $state[$key + 'Target'] = $value
 }
 
-# the pointer entered a row, or left every row (-1)
+# the pointer entered a row, or left every row (-1); the row it left is remembered so the
+# panel repaints it, otherwise the hover tint would stay behind
 function Set-AnimHover($state, [int]$index) {
+  if ($index -ne [int]$state['HoverIndex']) { $state['PrevHoverIndex'] = [int]$state['HoverIndex'] }
   $state['HoverIndex'] = $index
   Set-AnimTarget $state 'Hover' $(if ($index -ge 0) { 1.0 } else { 0.0 })
 }

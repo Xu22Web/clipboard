@@ -239,6 +239,9 @@ try {
     Check 'struct' 'the panel form never activates' (($winText -match 'ShowWithoutActivation') -and ($winText -match '0x08000000')) 'no-activate override missing'
     Check 'struct' 'panel hands the foreground back when it closes' ($pickerText -match 'SetForegroundWindow\(\$prev\)') 'restore call missing'
     Check 'struct' 'panel installs and removes the key hook' (($pickerText -match 'Enable-KeyHook') -and ($pickerText -match 'Disable-KeyHook')) 'hook calls missing'
+    # the rows are painted by Cb.PinList, which has no Items collection: a leftover
+    # $lst.Items.Count silently reads 0 and the row never repaints
+    Check 'struct' 'panel reads the list through its own members' (-not ($pickerText -match '\$lst\.Items\b')) '$lst.Items found'
     Check 'struct' 'paste releases the key hook before injecting' (($pickerText -match '(?s)function Paste-Clip\s*\{.{0,400}Disable-KeyHook')) 'Disable-KeyHook missing before SendKeys'
 
     # the Shown handler must go through Focus-Search: taking the real focus there would
@@ -472,6 +475,15 @@ try {
     Check 'unit' 'anim starts at rest' (($st.Hover -eq 0) -and ($st.HoverTarget -eq 0) -and ($st.HoverIndex -eq -1)) ''
     Set-AnimHover $st 3
     Check 'unit' 'anim hover targets one row' (($st.HoverIndex -eq 3) -and ($st.HoverTarget -eq 1)) ''
+    # a separate state, so the eased Hover value below still starts from rest
+    $st2 = New-AnimState
+    Set-AnimHover $st2 3
+    Set-AnimHover $st2 4
+    Check 'unit' 'anim hover remembers the row it left' (($st2.HoverIndex -eq 4) -and ($st2.PrevHoverIndex -eq 3)) ($st2.PrevHoverIndex -as [string])
+    Set-AnimHover $st2 4
+    Check 'unit' 'anim hover ignores a repeat' ($st2.PrevHoverIndex -eq 3) ''
+    Set-AnimHover $st2 -1
+    Check 'unit' 'leaving the list repaints the last row' (($st2.HoverIndex -eq -1) -and ($st2.PrevHoverIndex -eq 4)) ($st2.PrevHoverIndex -as [string])
     $mask = Invoke-AnimFrame $st 0.5
     Check 'unit' 'anim frame eases by a fraction' ((($mask -band 1) -ne 0) -and ($st.Hover -eq 0.5)) ($mask -as [string])
     $null = Invoke-AnimFrame $st 1.0

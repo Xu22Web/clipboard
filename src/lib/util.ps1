@@ -201,6 +201,16 @@ namespace Cb {
       return (i >= 0 && i < ItemCount) ? i : -1;
     }
 
+    // Clicking a row selects it. A plain Control has no built-in hit testing the way a
+    // ListBox does, so the host would otherwise have to wire this per panel.
+    protected override void OnMouseDown(System.Windows.Forms.MouseEventArgs e) {
+      if (e.Button == System.Windows.Forms.MouseButtons.Left) {
+        int i = IndexFromPoint(e.Location);
+        if (i >= 0) SelectedIndex = i;
+      }
+      base.OnMouseDown(e);
+    }
+
     protected override void OnPaint(System.Windows.Forms.PaintEventArgs e) {
       System.Drawing.Graphics g = e.Graphics;
       using (System.Drawing.SolidBrush back = new System.Drawing.SolidBrush(BackColor)) { g.FillRectangle(back, ClientRectangle); }
