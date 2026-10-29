@@ -879,6 +879,9 @@ function Show-Picker {
         } catch { }
       })
     $lst.ContextMenuStrip = $cm
+    # Picking an item is a left click outside the panel: remember when the menu closed so
+    # the loop below does not dismiss the panel on the very click that chose the item.
+    $cm.Add_Closed({ $script:MenuClosedAt = Get-Date })
 
     # one StringFormat set per process, shared with the drawing helpers in lib/picker-draw.ps1
     $sfSet = New-PickerStringFormats
@@ -1297,6 +1300,7 @@ function Show-Picker {
     $script:ImeCheckAt = Get-Date; $script:ImeNative = $false
     # seed from the real button state: starting at $false would read a button the user is
     # already holding as a fresh click and close the panel on its first frame
+    $script:MenuClosedAt = $null
     $script:PrevMouseDown = ([Cb.Win]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
     # Non-modal on purpose: ShowDialog would block this message pump. The rounded region is
     # set before the first paint: doing it in Shown let one square frame through first,
@@ -1331,7 +1335,8 @@ function Show-Picker {
         if (-not $script:PickerHook) { continue }   # handed over above
         # a click outside dismisses it (Add_Deactivate never fires under the hook)
         $mouseDown = ([Cb.Win]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
-        if ($mouseDown -and -not $script:PrevMouseDown -and -not $form.Bounds.Contains([Windows.Forms.Cursor]::Position)) {
+        $justPicked = $script:MenuClosedAt -and (((Get-Date) - $script:MenuClosedAt).TotalMilliseconds -lt 400)
+        if ($mouseDown -and -not $script:PrevMouseDown -and -not $justPicked -and -not $form.Bounds.Contains([Windows.Forms.Cursor]::Position)) {
           Write-Log 'picker: dismissed by a click outside'
           $form.Close(); break
         }
