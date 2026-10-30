@@ -266,6 +266,12 @@ if ($verify) {
     Fail 'the packaged copy failed its own tests, output removed'
   }
   if ($total) { Write-Step ('tests: ' + ([string]$total).Trim()) }
+  # the suite runs the packaged copy itself, so that copy has just created its own data\
+  # and settings; they are the user's, never the package's, so they go away again here.
+  foreach ($leak in @('data', 'clipboard.ini')) {
+    $p = Join-Path $dest $leak
+    if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue }
+  }
 }
 
 # ---------------------------------------------------------------- zip (optional)
