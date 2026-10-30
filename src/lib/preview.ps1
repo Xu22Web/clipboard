@@ -90,14 +90,14 @@ function Invoke-PreviewPaint($win, $e) {
   $g = $e.Graphics
   $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
   $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+  # Fill through Clear: the window carries the same rounded region as the panel, so this
+  # covers the whole silhouette without leaving a rim of the form colour in any corner.
+  $g.Clear($c.Bg)
   $path = New-RoundPath 0 0 ($win.ClientSize.Width - 1) ($win.ClientSize.Height - 1) (Px 8)
-  $fill = New-Object Drawing.SolidBrush $c.Bg
   $pen = New-Object Drawing.Pen $c.Border, 1
   try {
-    $g.FillPath($fill, $path)
     $g.DrawPath($pen, $path)
   } finally {
-    $fill.Dispose()
     $pen.Dispose()
     $path.Dispose()
   }
@@ -155,10 +155,23 @@ function Update-Preview($ps, $record, $anchorTop, $cfg, $panel) {
   $at = Place-Preview $x ($anchorTop - (Px 4)) $w $h $cfg.Area
   $win = $ps.Win
   if ($null -eq $win -or $win.IsDisposed) { $win = New-PreviewWindow $ps }
+  if ($win.BackColor -ne $cfg.Bg) { $win.BackColor = $cfg.Bg }
   $win.SetBounds($at.X, $at.Y, $w, $h)
+  Set-CardRegion $win (Px 8)
   if (-not $win.Visible) { $win.Show() }
   [void][Cb.Win]::SetWindowPos($win.Handle, [IntPtr](-1), 0, 0, 0, 0, 0x13)
   $win.Invalidate()
+}
+
+# The card needs the panel's silhouette: a borderless form is a square window, so without a
+# region the light form colour shows in the four corners and the drawn border is clipped. The
+# region is replaced on every resize, and the old handle goes with it (WinForms keeps none).
+function Set-CardRegion($win, [int]$r) {
+  try {
+    $old = $win.Region
+    $win.Region = New-RoundRegion $win.Width $win.Height $r
+    if ($null -ne $old) { $old.Dispose() }
+  } catch { }
 }
 
 function Hide-Preview($ps) {
@@ -175,5 +188,12 @@ function Close-Preview($ps) {
   $ps.Key = -1
   $ps.Lines = @()
   $ps.Cfg = $null
-  try { if ($null -ne $win -and -not $win.IsDisposed) { $win.Dispose() } } catch { }
+  # the rounded region is ours: WinForms keeps the handle after Dispose, so drop it here
+  try {
+    if ($null -ne $win -and -not $win.IsDisposed) {
+      $rgn = $win.Region
+      $win.Dispose()
+      if ($null -ne $rgn) { $rgn.Dispose() }
+    }
+  } catch { }
 }
