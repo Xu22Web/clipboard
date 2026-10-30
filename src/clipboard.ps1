@@ -49,7 +49,7 @@ $coreModules = @(
 # bare command that opens the panel. Every other command - put, get, list, del, clear,
 # status, config, help, diag - skips parsing it entirely. -Library loads everything,
 # because the tests call those functions by name.
-$panelModules = @('anim', 'picker-draw', 'pinlist', 'keyhook', 'picker', 'serve')
+$panelModules = @('anim', 'picker-draw', 'pinlist', 'preview', 'keyhook', 'picker', 'serve')
 $needPanel = ($Library -or $Command -eq '' -or $Command -eq 'ui' -or $Command -eq 'serve')
 $requiredModules = $coreModules
 if ($needPanel) { $requiredModules = $coreModules + $panelModules }

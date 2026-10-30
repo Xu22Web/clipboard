@@ -12,8 +12,41 @@
 # never knows what a mark means. A flag string such as "tps" is therefore read as "text
 # entry, marks p and s".
 # Only this format is read. A file without the CBHIST2 tag is ignored as unknown.
+#
+# Key is not stored: it numbers the records of one parse, so caches can key on a small int.
 function New-Record([string]$payload, [long]$time, [string]$marks = '') {
-  return [pscustomobject]@{ Payload = $payload; Time = $time; Marks = $marks }
+  return [pscustomobject]@{ Payload = $payload; Time = $time; Marks = $marks; Key = 0; Blob = '' }
+}
+
+# ---- blobs ------------------------------------------------------------------
+# One file per big payload, named after its sha1: the same text captured twice reuses it.
+function Get-BlobDir { return (Join-Path $StoreDir 'blobs') }
+
+function Save-Blob([string]$text) {
+  $sha = [Security.Cryptography.SHA1]::Create()
+  try { $hex = ([BitConverter]::ToString($sha.ComputeHash($Utf8.GetBytes($text))) -replace '-', '').ToLowerInvariant() }
+  finally { $sha.Dispose() }
+  $dir = Get-BlobDir
+  if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+  $path = Join-Path $dir ($hex + '.txt')
+  if (-not (Test-Path -LiteralPath $path)) { [IO.File]::WriteAllText($path, $text, $Utf8) }
+  return $hex
+}
+
+function Read-Blob([string]$ref) {
+  $hex = $ref.Substring(([string]$script:BlobMark).Length)
+  try { return [IO.File]::ReadAllText((Join-Path (Get-BlobDir) ($hex + '.txt')), [Text.Encoding]::UTF8) } catch { return $null }
+}
+
+# drop the blobs no record points at any more (a delete, a trim, a clear)
+function Remove-OrphanBlobs($records) {
+  $dir = Get-BlobDir
+  if (-not (Test-Path -LiteralPath $dir)) { return }
+  $keep = @{}
+  foreach ($r in @($records)) { if ([string]$r.Blob) { $keep[[string]$r.Blob] = 1 } }
+  foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.txt' -ErrorAction SilentlyContinue)) {
+    if (-not $keep.ContainsKey([string]$f.BaseName)) { try { Remove-Item -LiteralPath $f.FullName -Force } catch { } }
+  }
 }
 
 # does this record carry the mark?
@@ -152,7 +185,17 @@ function Get-Records {
       [void][long]::TryParse($rec.Substring($a + 1, $b - $a - 1), [ref]$tick)
       $payload = $rec.Substring($b + 1)
       if ($payload.Length -eq 0) { continue }
-      $out.Add((New-Record $payload $tick $flags.Substring(1)))
+      # a blob reference is STX + 'B:' + 40 hex chars; anything else is the text itself
+      if ($payload.Length -eq 43 -and $payload[0] -eq [char]2) {
+        $full = Read-Blob $payload
+        if ($null -eq $full) { continue }   # the blob is gone: the row goes with it
+        $one = New-Record $full $tick $flags.Substring(1)
+        $one.Blob = $payload.Substring(3)
+      } else {
+        $one = New-Record $payload $tick $flags.Substring(1)
+      }
+      $one.Key = [int](++$script:RecKey)
+      $out.Add($one)
     }
   } catch { return @() }
   $script:RecCache = @{ Stamp = $stamp; Records = $out.ToArray() }
@@ -167,13 +210,30 @@ function Save-Records($records) {
     foreach ($r in $records) {
       $flags = 't'
       if ($r.Payload.Length -gt 0 -and $r.Payload[0] -eq [char]1) { $flags = 'f' }
-      [void]$sb.Append($RS).Append($flags + [string]$r.Marks).Append($US).Append([string][long]$r.Time).Append($US).Append($r.Payload)
+      $body = [string]$r.Payload
+      # a big payload lives in its own file, so the rewrite a capture costs is a few KB of
+      # history instead of the whole store
+      if ($body.Length -gt $script:BlobChars) {
+        $r.Blob = Save-Blob $body
+        $body = [string]$script:BlobMark + [string]$r.Blob
+      } elseif ($r.Blob) { $r.Blob = '' }
+      [void]$sb.Append($RS).Append($flags + [string]$r.Marks).Append($US).Append([string][long]$r.Time).Append($US).Append($body)
     }
   }
   $tmp = $StoreFile + '.tmp'
   [IO.File]::WriteAllText($tmp, $sb.ToString(), $Utf8)
   Move-Item -LiteralPath $tmp -Destination $StoreFile -Force
+  # The caller already holds the records it just wrote, so hand them to the read cache: the
+  # next Get-Records would parse the whole file again (114 ms on a 4 MB store) after every
+  # capture. Records that have never been parsed get their number here.
   $script:RecCache = $null
+  try {
+    $arr = @($records)
+    foreach ($r in $arr) { if ([int]$r.Key -le 0) { $r.Key = [int](++$script:RecKey) } }
+    $fi = Get-Item -LiteralPath $StoreFile -ErrorAction Stop
+    $script:RecCache = @{ Stamp = ([string]$fi.Length + ':' + [string]$fi.LastWriteTimeUtc.Ticks); Records = $arr }
+  } catch { }
+  Remove-OrphanBlobs $records
 }
 
 function Use-StoreLock([scriptblock]$body) {
@@ -251,11 +311,18 @@ function Get-StickyTopRows($rows, [string]$stickyMark, [int]$stickyMax) {
 # search that does not match it hides it like any other row.
 function Select-QueryRows($entries, [string[]]$tokens) {
   $rows = New-Object System.Collections.Generic.List[object]
+  # A row only ever shows the head of a big payload, so the search looks at that head too:
+  # IndexOf over a 200 KB entry on every keystroke is what made typing stutter.
+  $head = 4096
   foreach ($rec in @($entries)) {
     $matched = $true
     if (@($tokens).Count -gt 0) {
+      $text = [string]$rec.Payload
+      $len = [Math]::Min($text.Length, $head)
       foreach ($t in @($tokens)) {
-        if ($t -and ([string]$rec.Payload).IndexOf($t, [StringComparison]::OrdinalIgnoreCase) -lt 0) { $matched = $false; break }
+        if (-not $t) { continue }
+        if ($t.Length -gt $len) { $matched = $false; break }
+        if ($text.IndexOf($t, 0, $len, [StringComparison]::OrdinalIgnoreCase) -lt 0) { $matched = $false; break }
       }
     }
     if ($matched) { $rows.Add($rec) }

@@ -148,7 +148,7 @@ try {
 
   # the entry file names these; a package must carry all of them
   $requiredLib = @('base', 'ini', 'values', 'util', 'keyhook', 'theme-stub', 'clip', 'store', 'hotkey', 'entry',
-    'picker-geom', 'anim', 'picker-draw', 'pinlist', 'picker', 'serve', 'diag', 'shortcut', 'config', 'usage', 'dispatch')
+    'picker-geom', 'anim', 'picker-draw', 'pinlist', 'preview', 'picker', 'serve', 'diag', 'shortcut', 'config', 'usage', 'dispatch')
   $missingLib = @()
   foreach ($m in $requiredLib) {
     if (-not (Test-Path -LiteralPath (Join-Path $libPath ($m + '.ps1')))) { $missingLib += $m }
@@ -250,6 +250,9 @@ try {
     Check 'struct' 'an open menu never counts as a click outside' ($pickerText -match '\$cm\.Visible[^\r\n]*-and -not \$form\.Bounds') 'outside-click check ignores the menu'
     # per-open GDI handles: the group heading font and the rounded region the form paints with
     Check 'struct' 'panel releases its menu font and form region' (($pickerText -match 'groupFont\.Dispose\(\)') -and ($pickerText -match 'function Set-RoundRegion')) 'GDI handles released nowhere'
+    # hover is a card that waits and is prepared once, not a tooltip rebuilt on every move
+    Check 'struct' 'hover shows a card, not a tooltip' (-not ($pickerText -match 'Windows\.Forms\.ToolTip')) 'ToolTip found in the picker'
+    Check 'struct' 'the card waits for the cursor to rest' ($pickerText -match 'PvIdx[^\r\n]*PvAt') 'no hover rest timer'
 
     # the Shown handler must go through Focus-Search: taking the real focus there would
     # activate the panel and defeat the hook model
@@ -309,6 +312,17 @@ try {
 
     $cut = Format-Item ('x' * 50) 10
     Check 'unit' 'Format-Item truncates' ($cut.Length -eq 13 -and $cut.EndsWith('...')) $cut
+
+    # hover preview: the payload is clamped before it is split, so the card costs the same
+    # whatever the size of the entry is
+    $pvLines = Get-PreviewLines ((('line ' + [Environment]::NewLine) * 4000)) 40 6
+    Check 'unit' 'preview fills the card and marks the rest' ($pvLines.Count -eq 6 -and $pvLines[5] -eq '...') ([string]$pvLines.Count + ' lines, last=' + $pvLines[5])
+    $pvCut = Get-PreviewLines ('x' * 500) 20 2
+    Check 'unit' 'preview cuts a long line to the card width' ($pvCut.Count -eq 1 -and $pvCut[0].Length -eq 20 -and $pvCut[0].EndsWith('...')) ([string]$pvCut[0].Length)
+    $pvInfo = Get-PreviewInfo ('a' * 9000)
+    Check 'unit' 'preview counts the clamped head' ($pvInfo -match '6000\+ chars') $pvInfo
+    $pvFiles = Get-PreviewLines $files 60 3
+    Check 'unit' 'preview names the files of a file list' ($pvFiles[0] -match '\[files\]' -and $pvFiles[0] -match 'a.txt') $pvFiles[0]
 
     # config file
     $cfg = Join-Path $unitDir 'clipboard.ini'
@@ -407,6 +421,22 @@ try {
     Check 'unit' 'record roundtrip time' (($r2[0].Time -eq ($now - 60)) -and ($r2[1].Time -eq ($now - 30))) ($r2[0].Time -as [string])
     Check 'unit' 'record roundtrip marks' ((Test-Mark $r2[0] 'p') -and (-not (Test-Mark $r2[1] 'p'))) ''
     Check 'unit' 'record keeps a mark the base never heard of' ((Test-Mark (New-Record 'x' 0 'zq') 'z') -and (Test-Mark (New-Record 'x' 0 'zq') 'q')) ''
+
+    # a payload above BlobChars lives in its own file: the history keeps a reference, so the
+    # rewrite a capture costs stays small, and the record still comes back whole
+    $bigText = ('big line ' + [Environment]::NewLine) * 5000
+    $blobList = New-Object System.Collections.Generic.List[object]
+    $blobList.Add((New-Record $bigText $now 'p'))
+    $blobList.Add((New-Record 'small tail' $now ''))
+    Save-Records $blobList.ToArray()
+    $rawStore = [IO.File]::ReadAllText($StoreFile, $Utf8)
+    $blobFiles = @(Get-ChildItem -LiteralPath (Get-BlobDir) -Filter '*.txt' -ErrorAction SilentlyContinue)
+    Check 'unit' 'a big payload leaves the history file' ((-not $rawStore.Contains('big line')) -and $blobFiles.Count -eq 1) ([string]$blobFiles.Count + ' blob(s), store ' + $rawStore.Length + ' chars')
+    $back = @(Get-Records)
+    Check 'unit' 'a big payload comes back whole' (($back.Count -eq 2) -and ($back[0].Payload -ceq $bigText) -and [string]$back[0].Blob) ([string]$back[0].Payload.Length)
+    Save-Records @($back[1])
+    $leftBlobs = @(Get-ChildItem -LiteralPath (Get-BlobDir) -Filter '*.txt' -ErrorAction SilentlyContinue)
+    Check 'unit' 'a dropped record takes its blob with it' ($leftBlobs.Count -eq 0) ([string]$leftBlobs.Count + ' left')
 
     # no legacy format support: a store without the CBHIST2 tag is ignored
     [IO.File]::WriteAllText($StoreFile, ('alpha' + $RS + 'beta'), $Utf8)

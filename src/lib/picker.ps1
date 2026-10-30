@@ -81,9 +81,10 @@ function Show-Picker {
     if (Get-Command Get-PluginPanelKeys -ErrorAction SilentlyContinue) { $panelKeys = @(Get-PluginPanelKeys) }
     $ctrlHints = @($panelKeys | Where-Object { $_.Ctrl -and -not $_.Alt -and -not $_.Shift -and ([string]$_.Key).Length -eq 1 })
     # Both caches survive a refresh: a keystroke changes which rows match, not how a row
-    # looks, and the key carries the flags (ordinal, so case-only twins stay apart).
-    $rowCache = [hashtable]::new([StringComparer]::Ordinal)
-    $labelCache = [hashtable]::new([StringComparer]::Ordinal)
+    # looks. They are keyed by the record's number, because keying by the payload meant
+    # hashing a 200 KB text on every paint (~10 ms per row per frame).
+    $rowCache = @{}
+    $labelCache = @{}
     function Find-PanelKey([string]$keyName, [bool]$ctrl, [bool]$alt, [bool]$shift) {
       $name = ([string]$keyName).ToUpperInvariant()
       foreach ($k in $panelKeys) {
@@ -478,7 +479,7 @@ function Show-Picker {
     if ($script:ScrollLines -gt 0) { $wheelLines = [int]$script:ScrollLines }
     $lst.WheelRows = [Math]::Max(1, [int]$wheelLines)
     # every way the list can scroll (wheel, drag, keys, selection) has to move the thumb
-    $lst.Add_ScrollChanged({ Sync-Sb })
+    $lst.Add_ScrollChanged({ Sync-Sb; Hide-Preview $pv; $script:PvIdx = -1 })
 
     # the list scrolls itself on the wheel; with the pointer anywhere else it bubbles here
     $form.Add_MouseWheel({
@@ -576,10 +577,10 @@ function Show-Picker {
         $script:StickyTop = Get-StickyTopRows $rows $plan.Mark $plan.Max
         $res = New-Object System.Collections.Generic.List[object]
         $labs = New-Object System.Collections.Generic.List[string]
-        $mk = $(if ($script:ShowNewlineMarker) { '1' } else { '0' })
+        $mk = $(if ($script:ShowNewlineMarker) { 1 } else { 0 })
         foreach ($rec in $rows) {
           $res.Add($rec)
-          $lkey = $rec.Payload + [char]0 + $mk
+          $lkey = ([int]$rec.Key * 2) + $mk
           $lab = $labelCache[$lkey]
           if ($null -eq $lab) {
             $lab = Get-ItemLabel $rec.Payload $script:ShowNewlineMarker
@@ -621,6 +622,8 @@ function Show-Picker {
       } else {
         $empty.Visible = $false
       }
+      Hide-Preview $pv
+      $script:PvIdx = -1
       Sync-Placeholder
       $lst.Invalidate()
       Sync-Sb
@@ -897,6 +900,8 @@ function Show-Picker {
     $sfRight = $sfSet.Right
     $sfCenter = $sfSet.Center
     $sfSeg = $sfSet.Seg
+    # the hover card (lib/preview.ps1): geometry and brushes once per panel, never per hover
+    $pvCfg = New-PreviewConfig $ui $sfNone $fBody $fSmall
 
     # draw one label in pieces so the matched tokens can be tinted; the tail is trimmed
     # with an ellipsis once the available width is exhausted (lib/picker-draw.ps1)
@@ -922,10 +927,9 @@ function Show-Picker {
         $decor = $null
         if ($isData) {
           $rec = $script:Filtered[$e.Index]
-          # the flags are part of the key: a mark change repaints that row and nothing else
-          $rkey = $rec.Payload + [char]0 + [string]$rec.Marks
-          $row = $rowCache[$rkey]
-          if ($null -eq $row) {
+          # keyed by the record's number; a mark change is caught by the Marks check below
+          $row = $rowCache[[int]$rec.Key]
+          if ($null -eq $row -or $row.Marks -cne [string]$rec.Marks) {
             $dec = $null
             if (Get-Command Get-PluginRowDecor -ErrorAction SilentlyContinue) {
               try { $dec = Get-PluginRowDecor $rec } catch { $dec = $null }
@@ -934,9 +938,9 @@ function Show-Picker {
             if ($dec -and $dec.Glyph) { $glyph = [string]$dec.Glyph } else { $glyph = Get-RowGlyph $rec.Payload }
             $bytes = 0
             try { $bytes = $Utf8.GetByteCount($rec.Payload) } catch { }
-            $row = @{ Decor = $dec; Glyph = $glyph; Bytes = $bytes }
+            $row = @{ Decor = $dec; Glyph = $glyph; Bytes = $bytes; Marks = [string]$rec.Marks }
             if ($rowCache.Count -gt 1200) { $rowCache.Clear() }
-            $rowCache[$rkey] = $row
+            $rowCache[[int]$rec.Key] = $row
           }
           $decor = $row.Decor
         }
@@ -1051,10 +1055,17 @@ function Show-Picker {
           $g.DrawString(('Ctrl+' + (Get-QuickKeyLabel $offset)), $fSmall, (Get-Brush $capInk), $capRect, $sfCenter)
         }
       })
-    $tip = New-Object Windows.Forms.ToolTip
-    $tip.InitialDelay = 700
-    $tip.ReshowDelay = 100
-    $tip.AutoPopDelay = 30000
+    # Hover preview (lib/preview.ps1): it waits for the cursor to rest and prepares a record's
+    # text once, so sweeping the list costs a timestamp per row and nothing else.
+    $pv = New-PreviewState
+    $script:PvAt = Get-Date; $script:PvIdx = -1
+    function Show-HoverPreview {
+      if ($null -eq $pv -or $script:Hover -lt 0 -or $script:Hover -ge $script:Filtered.Count) { Hide-Preview $pv; $script:PvIdx = -1; return }
+      $pvCfg.Area = [Windows.Forms.Screen]::FromPoint([Windows.Forms.Cursor]::Position).WorkingArea
+      $at = $lst.PointToScreen($lst.GetItemRectangle($script:Hover).Location)
+      Update-Preview $pv $script:Filtered[$script:Hover] $at.Y $pvCfg $form.Bounds
+      $script:PvIdx = $script:Hover
+    }
     $lst.Add_SelectedIndexChanged({ if (-not $lst.IsDisposed) { Set-AnimSelection $script:Anim $lst.SelectedIndex } })
     $lst.Add_MouseMove({
         param($s, $e)
@@ -1064,32 +1075,21 @@ function Show-Picker {
           $old = $script:Hover
           $script:Hover = $i
           Set-AnimHover $script:Anim $i
+          # a new row restarts the rest timer and drops the card of the old one at once
+          $script:PvAt = Get-Date
+          $script:PvIdx = -1
+          Hide-Preview $pv
           foreach ($k in @($old, $i)) {
             if ($k -ge 0 -and $k -lt $lst.ItemCount) { $lst.Invalidate($lst.GetItemRectangle($k)) }
           }
-          # Win11 shows a tooltip when a row is truncated
-          try {
-            if ($i -ge 0 -and $i -lt $script:Filtered.Count) {
-              $full = [string]$script:Labels[$i]
-              $mw = [single](Get-MeasureGraphics).MeasureString($full, $fBody, 100000, $sfSeg).Width
-              $avail = [single]($listHost.ClientSize.Width - (Px 168))
-              if ($mw -gt $avail -and $full.Length -gt 0) {
-                if ($full.Length -gt 800) { $full = $full.Substring(0, 800) + '...' }
-                $tip.SetToolTip($lst, $full)
-              } else {
-                $tip.SetToolTip($lst, '')
-              }
-            } else {
-              $tip.SetToolTip($lst, '')
-            }
-          } catch { }
         }
       })
     $lst.Add_MouseLeave({
-        try { $tip.SetToolTip($lst, '') } catch { }
         if ($lst.IsDisposed) { $script:Hover = -1; return }
         Set-AnimHover $script:Anim -1
         $script:Hover = -1
+        $script:PvIdx = -1
+        Hide-Preview $pv
       })
     $lst.Add_DoubleClick({ if ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex } })
     $lst.Add_MouseUp({ param($s, $e) if ($e.Button -eq 'Left') { Sync-Sb; Focus-Search } })
@@ -1285,11 +1285,9 @@ function Show-Picker {
         if (((Get-Date) - $script:ShownAt).TotalMilliseconds -gt 450) { $form.Close() }
       })
 
-    # Two input models, decided at runtime:
-    #   hook     - the form never activates; a low-level hook feeds the controls, so the
-    #              window the user typed in keeps the foreground, the focus and the caret.
-    #   takeover - no hook, or an IME asked for a real focus: the panel activates and the
-    #              foreground is handed back on close.
+    # Two input models: hook - the form never activates and a low-level hook feeds the
+    # controls, so the window the user typed in keeps the focus; takeover - no hook or an
+    # IME asked for a real focus, the panel activates and hands the foreground back on close.
     $script:PickerHook = $false
     $script:PickerEscalated = $false
     $script:ImeCheckAt = Get-Date; $script:ImeNative = $false
@@ -1342,6 +1340,8 @@ function Show-Picker {
         $fg = [Cb.Win]::GetForegroundWindow()
         if ($fg -ne $form.Handle -and $fg -ne $prev) { $form.Close(); break }
       }
+      # a card waits for the cursor to rest, so sweeping the list never builds one
+      if ($script:Hover -ge 0 -and $script:PvIdx -ne $script:Hover -and -not $cm.Visible -and ((Get-Date) - $script:PvAt).TotalMilliseconds -gt 350) { Show-HoverPreview }
       # Idle ticks cost real CPU: 8 ms while something moves or the menu is open, else 20 ms.
       $busy = ($am -ne 0 -or $cm.Visible -or $script:PickerClose)
       Start-Sleep -Milliseconds $(if ($busy) { 8 } else { 20 })
@@ -1374,7 +1374,8 @@ function Show-Picker {
     $deb.Dispose()
     $footTimer.Dispose()
     $confirmTimer.Dispose()
-    $tip.Dispose()
+    Close-Preview $pv
+    try { $pvCfg.InkBrush.Dispose(); $pvCfg.DimBrush.Dispose() } catch { }
     try { if ($script:MeasureG) { $script:MeasureG.Dispose() } } catch { }
     $script:MeasureG = $null
     $cm.Dispose()
