@@ -252,6 +252,9 @@ try {
     Check 'struct' 'panel releases its menu font and form region' (($pickerText -match 'groupFont\.Dispose\(\)') -and ($pickerText -match 'function Set-RoundRegion')) 'GDI handles released nowhere'
     # hover is a card that waits and is prepared once, not a tooltip rebuilt on every move
     Check 'struct' 'hover shows a card, not a tooltip' (-not ($pickerText -match 'Windows\.Forms\.ToolTip')) 'ToolTip found in the picker'
+    # an activating popup deactivates the window the user came from; Explorer's address bar and
+    # search box collapse then, and the paste that follows lands nowhere
+    Check 'struct' 'the context menu never takes the foreground' ($pickerText -match '(?s)\[void\]\$cm\.Handle.{0,200}0x08000000') 'menu activation guard missing'
     Check 'struct' 'the card waits for the cursor to rest' ($pickerText -match 'PvIdx[^\r\n]*PvAt') 'no hover rest timer'
 
     # the Shown handler must go through Focus-Search: taking the real focus there would

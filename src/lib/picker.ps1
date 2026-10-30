@@ -80,9 +80,8 @@ function Show-Picker {
     $panelKeys = @()
     if (Get-Command Get-PluginPanelKeys -ErrorAction SilentlyContinue) { $panelKeys = @(Get-PluginPanelKeys) }
     $ctrlHints = @($panelKeys | Where-Object { $_.Ctrl -and -not $_.Alt -and -not $_.Shift -and ([string]$_.Key).Length -eq 1 })
-    # Both caches survive a refresh: a keystroke changes which rows match, not how a row
-    # looks. They are keyed by the record's number, because keying by the payload meant
-    # hashing a 200 KB text on every paint (~10 ms per row per frame).
+    # Both caches survive a refresh: a keystroke changes which rows match, not how a row looks.
+    # They are keyed by the record's number - keying by the payload hashed 200 KB per paint.
     $rowCache = @{}
     $labelCache = @{}
     function Find-PanelKey([string]$keyName, [bool]$ctrl, [bool]$alt, [bool]$shift) {
@@ -132,9 +131,8 @@ function Show-Picker {
     $lst.Font = $fBody
     $lst.AccessibleName = 'Clipboard entries'
 
-    # The native Win32 scrollbar cannot be themed and ListBox has no property to hide it.
-    # So the list lives in a clipping host and is made wider than the host: the scrollbar
-    # ends up outside the visible area, while TopIndex scrolling keeps working.
+    # The native scrollbar cannot be themed and ListBox has no property to hide it, so the list
+    # sits in a clipping host and is made wider than it: the scrollbar lands outside the view.
     $listHost = New-Object Windows.Forms.Panel
     $listHost.Dock = 'Fill'
     $listHost.BackColor = $ui.Surface
@@ -645,9 +643,8 @@ function Show-Picker {
         if (Test-Modifiers-Up) { break }
         Start-Sleep -Milliseconds 30
       }
-      # SetForegroundWindow can be refused by the foreground lock, and SendKeys types into
-      # whatever is in front at that moment - so hand over, then verify before typing. A
-      # refused hand-over used to paste into the wrong window.
+      # SetForegroundWindow can be refused by the foreground lock and SendKeys types into
+      # whatever is in front, so hand over and verify before typing.
       $ready = $false
       for ($try = 0; $try -lt 24 -and -not $ready; $try++) {
         [void][Cb.Win]::SetForegroundWindow($target)
@@ -756,6 +753,10 @@ function Show-Picker {
     $cm = New-Object Windows.Forms.ContextMenuStrip
     $cm.Font = $fBody
     $cm.ShowImageMargin = $false
+    # The popup must not take the foreground: that deactivates the window the user came from,
+    # and Explorer's address bar / search box collapse - the paste then lands in the file view.
+    [void]$cm.Handle
+    [void][Cb.Win]::SetWindowLong($cm.Handle, -20, ([Cb.Win]::GetWindowLong($cm.Handle, -20) -bor 0x08000000))
     # Without visual styles the default renderer paints separators invisibly; the
     # professional renderer draws real divider lines between the plugin groups.
     try { $cm.Renderer = New-Object Windows.Forms.ToolStripProfessionalRenderer } catch { }
@@ -772,9 +773,8 @@ function Show-Picker {
     $m6 = $cm.Items.Add('Clear history')
     $m6.Add_Click({ Request-Clear })
 
-    # plugin actions: appended after the built-in ones, hidden unless their Test passes.
-    # Items stay grouped per plugin, so a menu never mixes two of them: a header names the
-    # plugin and a separator closes the previous group.
+    # plugin actions: appended after the built-in ones, hidden unless their Test passes. Items
+    # stay grouped per plugin: a header names it and a separator closes the previous group.
     $pluginItems = New-Object System.Collections.Generic.List[object]
     $groupHeads = New-Object System.Collections.Generic.List[object]
     try {
