@@ -22,6 +22,10 @@ function Apply-Config {
   $script:HighlightOn = $true
   $script:HighlightMax = 8192
   $script:ShowNewlineMarker = $true
+  $script:PreviewHover = $true
+  $script:PreviewDelay = 350
+  $script:PreviewChars = 6000
+  $script:BlobChars = 32768
   $script:UndoOn = $true
   $script:DpiAware = $true
   $script:ScrollLines = 0
@@ -65,6 +69,10 @@ function Apply-Config {
   $v = Get-CfgValue 'Highlight';         if ($v -eq '0') { $script:HighlightOn = $false }
   $v = Get-CfgValue 'HighlightMaxBytes'; if ($null -ne $v) { $script:HighlightMax = [int]$v }
   $v = Get-CfgValue 'ShowNewlineMarker'; if ($v -eq '0') { $script:ShowNewlineMarker = $false }
+  $v = Get-CfgValue 'PreviewHover';      if ($v -eq '0') { $script:PreviewHover = $false }
+  $v = Get-CfgValue 'PreviewDelay';      if ($null -ne $v) { $script:PreviewDelay = [int]$v }
+  $v = Get-CfgValue 'PreviewChars';      if ($null -ne $v) { $script:PreviewChars = [int]$v }
+  $v = Get-CfgValue 'BlobThreshold';     if ($null -ne $v) { $script:BlobChars = [int]$v }
   $v = Get-CfgValue 'Undo';              if ($v -eq '0') { $script:UndoOn = $false }
   $v = Get-CfgValue 'Autostart';         if ($v -eq '0') { $script:Autostart = $false }
   $v = Get-CfgValue 'DesktopShortcut';   if ($v -eq '0') { $script:DesktopShortcut = $false }
@@ -119,6 +127,10 @@ function Get-ConfigReport {
     Highlight         = [string][int][bool]$script:HighlightOn
     HighlightMaxBytes = [string]$script:HighlightMax
     ShowNewlineMarker = [string][int][bool]$script:ShowNewlineMarker
+    PreviewHover      = [string][int][bool]$script:PreviewHover
+    PreviewDelay      = [string]$script:PreviewDelay
+    PreviewChars      = [string]$script:PreviewChars
+    BlobThreshold     = [string]$script:BlobChars
     Undo              = [string][int][bool]$script:UndoOn
     DpiAware          = [string][int][bool]$script:DpiAware
     ScrollLines       = [string]$script:ScrollLines
@@ -383,6 +395,9 @@ function Get-IniTemplateLines {
     'MaxBytes=204800',
     '# total store size cap in bytes; oldest entries are dropped beyond it',
     'MaxTotal=4194304',
+    '# payloads above this many characters are kept in data\blobs instead of this file,',
+    '# 0 = always inline (one self-contained history.dat)',
+    'BlobThreshold=32768',
     '# clipboard poll interval in ms',
     'Interval=300',
     '# 1 = clipboard only, never inject a paste',
@@ -418,6 +433,12 @@ function Get-IniTemplateLines {
     'HighlightMaxBytes=8192',
     '# 1 = show <NL> for line breaks, 0 = collapse them into a single space',
     'ShowNewlineMarker=1',
+    '# 1 = hover a row to preview its text beside the panel, 0 = no card at all',
+    'PreviewHover=1',
+    '# ms the cursor has to rest on a row before the card appears',
+    'PreviewDelay=350',
+    '# characters of an entry the card reads and shows (the rest is elided)',
+    'PreviewChars=6000',
     '# wheel step in rows, 0 = follow the system setting',
     'ScrollLines=0',
     '# 1 = fade / grow transitions on hover, selection, scrollbar and search field, 0 = instant',

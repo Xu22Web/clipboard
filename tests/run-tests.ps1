@@ -321,6 +321,12 @@ try {
     Check 'unit' 'preview cuts a long line to the card width' ($pvCut.Count -eq 1 -and $pvCut[0].Length -eq 20 -and $pvCut[0].EndsWith('...')) ([string]$pvCut[0].Length)
     $pvInfo = Get-PreviewInfo ('a' * 9000)
     Check 'unit' 'preview counts the clamped head' ($pvInfo -match '6000\+ chars') $pvInfo
+    # PreviewChars is a setting now, so the card really reads only that much
+    $savedChars = $script:PreviewChars
+    $script:PreviewChars = 200
+    $pvSmall = Get-PreviewLines ('y' * 900) 60 4
+    Check 'unit' 'PreviewChars bounds what the card reads' ($pvSmall.Count -eq 1 -and $pvSmall[0].Length -eq 60 -and $pvSmall[0].EndsWith('...')) ([string]$pvSmall.Count)
+    $script:PreviewChars = $savedChars
     $pvFiles = Get-PreviewLines $files 60 3
     Check 'unit' 'preview names the files of a file list' ($pvFiles[0] -match '\[files\]' -and $pvFiles[0] -match 'a.txt') $pvFiles[0]
 
@@ -437,6 +443,19 @@ try {
     Save-Records @($back[1])
     $leftBlobs = @(Get-ChildItem -LiteralPath (Get-BlobDir) -Filter '*.txt' -ErrorAction SilentlyContinue)
     Check 'unit' 'a dropped record takes its blob with it' ($leftBlobs.Count -eq 0) ([string]$leftBlobs.Count + ' left')
+    # BlobThreshold is a setting: 0 means every payload stays inline
+    $savedBlob = $script:BlobChars
+    $script:BlobChars = 100
+    $inlineList = New-Object System.Collections.Generic.List[object]
+    $inlineList.Add((New-Record ('z' * 400) $now ''))
+    Save-Records $inlineList.ToArray()
+    $inlineRaw = [IO.File]::ReadAllText($StoreFile, $Utf8)
+    $inlineBlobs = @(Get-ChildItem -LiteralPath (Get-BlobDir) -Filter '*.txt' -ErrorAction SilentlyContinue)
+    Check 'unit' 'BlobThreshold decides what leaves the file' ((-not $inlineRaw.Contains('zzzz')) -and $inlineBlobs.Count -eq 1) ([string]$inlineBlobs.Count + ' blob(s)')
+    $script:BlobChars = $savedBlob
+    # the four new settings are real schema entries with the shipped defaults
+    $sch = $script:IniSchema
+    Check 'unit' 'preview and blob settings carry defaults' (($sch['PreviewHover'].Default -eq 1) -and ($sch['PreviewDelay'].Default -eq 350) -and ($sch['PreviewChars'].Default -eq 6000) -and ($sch['BlobThreshold'].Default -eq 32768)) ''
 
     # no legacy format support: a store without the CBHIST2 tag is ignored
     [IO.File]::WriteAllText($StoreFile, ('alpha' + $RS + 'beta'), $Utf8)
@@ -1308,6 +1327,10 @@ try {
     Check 'int' 'config set rejects DataDir' ($o -match 'DataDir cannot be changed') $o.Trim()
     $o = Clip $intDir @('config', 'set', 'Hotkey', 'Ctrl+Nope')
     Check 'int' 'config set rejects bad hotkey' ($o -match 'unknown key name') $o.Trim()
+    $o = Clip $intDir @('config', 'set', 'PreviewDelay', '900')
+    Check 'int' 'a preview setting is writable' ($o -match '350 -> 900') $o.Trim()
+    $o = Clip $intDir @('config', 'set', 'PreviewDelay', '350')
+    Check 'int' 'a preview setting is restorable' ($o -match '900 -> 350') $o.Trim()
 
     # ------------------------------------------- settings are never created silently
     $roDir = New-Sandbox 'readonly'

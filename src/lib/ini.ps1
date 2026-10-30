@@ -43,6 +43,7 @@ $script:IniSchema = [ordered]@{
   MaxItems          = @{ Kind = 'int'; Min = 1; Max = 100000; Default = 300; Desc = 'entry cap (rows a mark protects are exempt)' }
   MaxBytes          = @{ Kind = 'int'; Min = 1; Max = 104857600; Default = 204800; Desc = 'per entry size cap' }
   MaxTotal          = @{ Kind = 'int'; Min = 1024; Max = 1073741824; Default = 4194304; Desc = 'total store size cap in bytes' }
+  BlobThreshold     = @{ Kind = 'int'; Min = 0; Max = 1048576; Default = 32768; Desc = 'payloads above this many chars live in data\blobs, 0 = never' }
   Interval          = @{ Kind = 'int'; Min = 50; Max = 60000; Default = 300; Desc = 'clipboard poll interval in ms' }
   NoPaste           = @{ Kind = 'bool'; Default = 0;              Desc = '1 = clipboard only, never inject a paste' }
   Balloon           = @{ Kind = 'bool'; Default = 1;              Desc = '1 = tray balloon on startup' }
@@ -59,6 +60,9 @@ $script:IniSchema = [ordered]@{
   Highlight         = @{ Kind = 'bool'; Default = 1;              Desc = '1 = highlight search matches' }
   HighlightMaxBytes = @{ Kind = 'int'; Min = 0; Max = 1048576; Default = 8192; Desc = 'skip highlight above this size (0 = always)' }
   ShowNewlineMarker = @{ Kind = 'bool'; Default = 1;              Desc = '1 = show <NL> for line breaks, 0 = collapse to a space' }
+  PreviewHover      = @{ Kind = 'bool'; Default = 1;              Desc = '1 = hover preview card, 0 = no card at all' }
+  PreviewDelay      = @{ Kind = 'int'; Min = 0; Max = 5000; Default = 350; Desc = 'ms the cursor rests on a row before the card appears' }
+  PreviewChars      = @{ Kind = 'int'; Min = 200; Max = 200000; Default = 6000; Desc = 'characters of an entry the card reads' }
   Undo              = @{ Kind = 'bool'; Default = 1;              Desc = '1 = Ctrl+Z undoes the last delete' }
   DpiAware          = @{ Kind = 'bool'; Default = 1;              Desc = '1 = per-monitor DPI aware rendering' }
   ScrollLines       = @{ Kind = 'int'; Min = -1; Max = 50; Default = 0; Desc = 'wheel step in rows (0 = follow the system)' }

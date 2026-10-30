@@ -128,6 +128,7 @@ Git Bash / MSYS2 下直接 `./src/clipboard`，CMD 下 `src\clipboard.cmd`。
 | `MaxItems` | `300` | 最多保留条数（置顶条目不受裁剪影响） |
 | `MaxBytes` | `204800` | 单条上限，超出不入库 |
 | `MaxTotal` | `4194304` | 总容量上限，超出丢最旧的（置顶条目保留） |
+| `BlobThreshold` | `32768` | 超过该字符数的条目正文存到 `data/blobs/`，历史文件只留引用；`0` = 始终内联（单个 `history.dat` 自包含） |
 | `Interval` | `300` | 剪贴板轮询间隔（毫秒） |
 | `NoPaste` | `0` | `1` = 只写剪贴板，不自动粘贴 |
 | `Balloon` | `1` | `1` = 启动时弹托盘气泡 |
@@ -143,6 +144,9 @@ Git Bash / MSYS2 下直接 `./src/clipboard`，CMD 下 `src\clipboard.cmd`。
 | `Highlight` | `1` | `1` = 高亮搜索命中 |
 | `HighlightMaxBytes` | `8192` | 超过该大小的条目不参与高亮（`0` = 总是高亮） |
 | `ShowNewlineMarker` | `1` | `1` = 换行显示为 ` <NL> `，`0` = 折成空格 |
+| `PreviewHover` | `1` | `1` = 鼠标停留时在面板旁弹出预览卡片，`0` = 完全不弹 |
+| `PreviewDelay` | `350` | 停在该行多久（毫秒）才弹卡片；快速扫过列表不会弹 |
+| `PreviewChars` | `6000` | 卡片最多读取 / 显示的字符数（超出部分以 `...` 省略） |
 | `Undo` | `1` | `1` = 面板内 `Ctrl+Z` 撤销上一次删除 |
 | `DpiAware` | `1` | `1` = 按系统 DPI 渲染，`0` = 旧渲染方式 |
 | `ScrollLines` | `0` | 滚轮步长（行），`0` = 跟随系统设置 |

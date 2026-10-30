@@ -1341,7 +1341,7 @@ function Show-Picker {
         if ($fg -ne $form.Handle -and $fg -ne $prev) { $form.Close(); break }
       }
       # a card waits for the cursor to rest, so sweeping the list never builds one
-      if ($script:Hover -ge 0 -and $script:PvIdx -ne $script:Hover -and -not $cm.Visible -and ((Get-Date) - $script:PvAt).TotalMilliseconds -gt 350) { Show-HoverPreview }
+      if ($script:PreviewHover -and $script:Hover -ge 0 -and $script:PvIdx -ne $script:Hover -and -not $cm.Visible -and ((Get-Date) - $script:PvAt).TotalMilliseconds -gt $script:PreviewDelay) { Show-HoverPreview }
       # Idle ticks cost real CPU: 8 ms while something moves or the menu is open, else 20 ms.
       $busy = ($am -ne 0 -or $cm.Visible -or $script:PickerClose)
       Start-Sleep -Milliseconds $(if ($busy) { 8 } else { 20 })

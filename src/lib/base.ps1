@@ -109,4 +109,7 @@ $script:BlobMark = [string][char]2 + 'B:'
 # how much of an entry the hover preview reads: the card shows a screenful, and clamping here
 # is what keeps a 200 KB entry as cheap as a 200 character one
 $script:PreviewChars = 6000
+# the card only appears after the cursor has rested on a row, and can be switched off
+$script:PreviewHover = $true
+$script:PreviewDelay = 350
 $script:IniCache = $null
