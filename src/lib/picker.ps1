@@ -1,6 +1,5 @@
-# lib/picker.ps1 - the history panel. One function owns the whole window lifecycle
-# (create, filter, draw, keys, paste) because its parts share the control tree and the
-# per-open state; the standalone pieces live in picker-geom / entry / plugins.
+# lib/picker.ps1 - the history panel. One function owns the whole window lifecycle (create,
+# filter, draw, keys, paste); the standalone pieces live in picker-geom / entry / plugins.
 
 function Show-Picker {
   if ($script:PickerOpen) { $script:PickerClose = $true; return }   # a second hotkey press closes it
@@ -82,8 +81,7 @@ function Show-Picker {
     if (Get-Command Get-PluginPanelKeys -ErrorAction SilentlyContinue) { $panelKeys = @(Get-PluginPanelKeys) }
     $ctrlHints = @($panelKeys | Where-Object { $_.Ctrl -and -not $_.Alt -and -not $_.Shift -and ([string]$_.Key).Length -eq 1 })
     # Both caches survive a refresh: a keystroke changes which rows match, not how a row
-    # looks. Keys include the flags, so a mark change invalidates its own entry; the
-    # comparer is ordinal, or two payloads differing only in case would share one entry.
+    # looks, and the key carries the flags (ordinal, so case-only twins stay apart).
     $rowCache = [hashtable]::new([StringComparer]::Ordinal)
     $labelCache = [hashtable]::new([StringComparer]::Ordinal)
     function Find-PanelKey([string]$keyName, [bool]$ctrl, [bool]$alt, [bool]$shift) {
@@ -98,12 +96,16 @@ function Show-Picker {
       return $null
     }
 
+    # A replaced region has to be disposed by hand: WinForms does not own it, so every open
+    # and every resize would otherwise leak one HRGN into the resident process.
+    function Set-RoundRegion {
+      try { $old = $form.Region; $form.Region = New-RoundRegion $form.ClientSize.Width $form.ClientSize.Height (Px 8); if ($null -ne $old) { $old.Dispose() } } catch { }
+    }
     $form = New-Object Cb.FluentForm
     $form.FormBorderStyle = 'None'
     $form.StartPosition = 'Manual'
-    # no TopMost property here: assigning it makes WinForms call SetWindowPos without
-    # SWP_NOACTIVATE, which activates the panel and takes the caret away from the user.
-    # The panel is raised with a no-activate SetWindowPos right after Show() instead.
+    # no TopMost property: assigning it makes WinForms call SetWindowPos without
+    # SWP_NOACTIVATE, which activates the panel; it is raised right after Show() instead.
     $form.ShowInTaskbar = $false
     $form.KeyPreview = $true
     $form.Text = 'Clipboard history'
@@ -347,10 +349,8 @@ function Show-Picker {
         return ,@(@('Esc', 'Close'))
       }
       if ($script:CtrlHeld) {
-        # Ctrl is held while these hints show, but a bare "1-9,0" reads as a plain digit row
-        # (and "Z"/"P" like ordinary letters), so each chip spells the whole combination out.
-        # Core combinations come first: the footer truncates whatever does not fit, and the
-        # plugin keys at the end are the optional ones.
+        # Ctrl is held while these show; each chip spells the whole combination out, core
+        # ones first, because the footer truncates and the plugin keys are the optional ones.
         $pairs = @(@('Ctrl+1-9,0', 'Pick'))
         $pairs += ,@('Ctrl+Enter', 'Copy only')
         $pairs += ,@('Ctrl+Z', 'Undo')
@@ -554,7 +554,7 @@ function Show-Picker {
       })
     $form.Add_Resize({
         if ($form.WindowState -ne [Windows.Forms.FormWindowState]::Normal) { return }
-        try { $form.Region = New-RoundRegion $form.ClientSize.Width $form.ClientSize.Height (Px 8) } catch { }
+        Set-RoundRegion
         Layout-Chrome
         Size-List
         Sync-Sb
@@ -753,9 +753,8 @@ function Show-Picker {
     $cm = New-Object Windows.Forms.ContextMenuStrip
     $cm.Font = $fBody
     $cm.ShowImageMargin = $false
-    # Without visual styles the default system renderer paints separators invisibly, which
-    # would make the plugin groups read as one flat list; the professional renderer draws
-    # real divider lines.
+    # Without visual styles the default renderer paints separators invisibly; the
+    # professional renderer draws real divider lines between the plugin groups.
     try { $cm.Renderer = New-Object Windows.Forms.ToolStripProfessionalRenderer } catch { }
     # a group header is a grey, non-clickable line naming the plugin that owns the items
     $groupFont = $null
@@ -857,10 +856,8 @@ function Show-Picker {
             $h.Item.Visible = $any
             $keep[$h.Index] = $any
           }
-          # a separator only makes sense between two items that stay on screen, and two
-          # separators never sit back to back: when every action of a plugin is hidden, the
-          # separator before its header and the one after its group would otherwise both
-          # survive and leave an empty band between the neighbouring groups
+          # a separator needs an item on both sides and never sits back to back, or hiding
+          # every action of a plugin leaves an empty band between the neighbouring groups
           $prevSep = $false
           for ($k = 0; $k -lt $cm.Items.Count; $k++) {
             $it = $cm.Items[$k]
@@ -957,10 +954,8 @@ function Show-Picker {
           return
         }
 
-        # Trailing meta column, fixed for every row so nothing shifts around:
+        # Trailing meta columns, fixed for every row so nothing shifts around:
         #   [mark 14] [2] [mark 14] [6] [time 52] [12] [key cap 48] [10]
-        # The cap spells the combination out (Ctrl+1 ... Ctrl+0): a bare digit reads as a
-        # list number instead of a shortcut.
         $capW = Px 48
         $capH = Px 18
         $capX = $r.Right - (Px 10) - $capW
@@ -1257,7 +1252,7 @@ function Show-Picker {
         $pen.Dispose()
       })
     $form.Add_Shown({
-        try { $form.Region = New-RoundRegion $form.ClientSize.Width $form.ClientSize.Height (Px 8) } catch { }
+        Set-RoundRegion
         Layout-Chrome
         Size-List
         Sync-Sb
@@ -1275,8 +1270,9 @@ function Show-Picker {
     # alive - the window-size save below happens after the loop and would otherwise throw
     $script:PickerGeo = $null
     $form.Add_FormClosing({
-        # Close() can arrive a second time right after Dispose() (Hide then Close, plus the
-        # deactivate timer); reading Width on a disposed form throws
+        # a drop-down left standing keeps its menu filter, which then eats every later click
+        try { if (-not $cm.IsDisposed -and $cm.Visible) { $cm.Close() } } catch { Write-Log ('menu close failed: ' + $_.Exception.Message) }
+        # Close() can arrive again after Dispose() (Hide then Close, plus the deactivate timer)
         if ($form.IsDisposed) { return }
         $script:PickerGeo = @{ W = $form.Width; H = $form.Height; L = $form.Left; T = $form.Top }
       })
@@ -1291,9 +1287,8 @@ function Show-Picker {
 
     # Two input models, decided at runtime:
     #   hook     - the form never activates; a low-level hook feeds the controls, so the
-    #              window the user was typing in keeps the foreground, the focus and the
-    #              caret. Closing only unhooks; nothing has to be restored.
-    #   takeover - no hook (or an IME asked for a real focus): the panel activates, and the
+    #              window the user typed in keeps the foreground, the focus and the caret.
+    #   takeover - no hook, or an IME asked for a real focus: the panel activates and the
     #              foreground is handed back on close.
     $script:PickerHook = $false
     $script:PickerEscalated = $false
@@ -1303,9 +1298,8 @@ function Show-Picker {
     $script:MenuClosedAt = $null
     $script:PrevMouseDown = ([Cb.Win]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
     # Non-modal on purpose: ShowDialog would block this message pump. The rounded region is
-    # set before the first paint: doing it in Shown let one square frame through first,
-    # which is the "incomplete" flash the panel used to have.
-    try { $form.Region = New-RoundRegion $form.ClientSize.Width $form.ClientSize.Height (Px 8) } catch { }
+    # set before the first paint, or one square frame shows through first.
+    Set-RoundRegion
     $form.Show()
     # The hook keeps the foreground window untouched. An input method can only be driven
     # through a real focus, so the panel hands itself the keyboard as soon as one is active
@@ -1333,10 +1327,12 @@ function Show-Picker {
         }
         if ($form.IsHandleCreated) { Invoke-HookedKey }
         if (-not $script:PickerHook) { continue }   # handed over above
-        # a click outside dismisses it (Add_Deactivate never fires under the hook)
+        # a click outside dismisses it (Add_Deactivate never fires under the hook). A menu
+        # that is up owns its own clicks - one of those is never a click outside the panel,
+        # or picking an item (the popup reaches past the panel) would close the panel too.
         $mouseDown = ([Cb.Win]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
         $justPicked = $script:MenuClosedAt -and (((Get-Date) - $script:MenuClosedAt).TotalMilliseconds -lt 400)
-        if ($mouseDown -and -not $script:PrevMouseDown -and -not $justPicked -and -not $form.Bounds.Contains([Windows.Forms.Cursor]::Position)) {
+        if ($mouseDown -and -not $script:PrevMouseDown -and -not $justPicked -and -not $cm.Visible -and -not $form.Bounds.Contains([Windows.Forms.Cursor]::Position)) {
           Write-Log 'picker: dismissed by a click outside'
           $form.Close(); break
         }
@@ -1346,8 +1342,7 @@ function Show-Picker {
         $fg = [Cb.Win]::GetForegroundWindow()
         if ($fg -ne $form.Handle -and $fg -ne $prev) { $form.Close(); break }
       }
-      # Idle ticks cost real CPU in PowerShell: 8 ms while something moves or the menu is
-      # open, 20 ms otherwise, which keeps typing responsive and the fan quiet.
+      # Idle ticks cost real CPU: 8 ms while something moves or the menu is open, else 20 ms.
       $busy = ($am -ne 0 -or $cm.Visible -or $script:PickerClose)
       Start-Sleep -Milliseconds $(if ($busy) { 8 } else { 20 })
     }
@@ -1383,7 +1378,9 @@ function Show-Picker {
     try { if ($script:MeasureG) { $script:MeasureG.Dispose() } } catch { }
     $script:MeasureG = $null
     $cm.Dispose()
-    $form.Dispose()
+    # GDI handles this panel owns: the group heading font, and the region the form paints with
+    try { if ($null -ne $groupFont) { $groupFont.Dispose() } } catch { }
+    try { $rgn = $form.Region; $form.Dispose(); if ($null -ne $rgn) { $rgn.Dispose() } } catch { }
   } catch {
     Write-Log ('picker error: ' + $_.Exception.Message)
     try {
@@ -1395,6 +1392,8 @@ function Show-Picker {
   } finally {
     # process-wide: a hook that outlives the panel swallows every key, so release it here
     Disable-KeyHook
+    # an error can leave the window on screen with no loop left to serve it
+    try { if ($form -and -not $form.IsDisposed) { $form.Close() } } catch { }
     $script:PickerOpen = $false
   }
 }

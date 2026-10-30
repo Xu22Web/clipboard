@@ -243,6 +243,13 @@ try {
     # $lst.Items.Count silently reads 0 and the row never repaints
     Check 'struct' 'panel reads the list through its own members' (-not ($pickerText -match '\$lst\.Items\b')) '$lst.Items found'
     Check 'struct' 'paste releases the key hook before injecting' (($pickerText -match '(?s)function Paste-Clip\s*\{.{0,400}Disable-KeyHook')) 'Disable-KeyHook missing before SendKeys'
+    # A drop-down that outlives the panel keeps the menu filter WinForms installed for it,
+    # and that filter eats every later click of the process: whichever path closes the panel
+    # has to close the menu first, and a click on the open menu is never a click outside.
+    Check 'struct' 'panel closes the menu before it closes itself' ($pickerText -match '(?s)Add_FormClosing\(\{.{0,600}\$cm\.Close\(\)') 'menu not closed in FormClosing'
+    Check 'struct' 'an open menu never counts as a click outside' ($pickerText -match '\$cm\.Visible[^\r\n]*-and -not \$form\.Bounds') 'outside-click check ignores the menu'
+    # per-open GDI handles: the group heading font and the rounded region the form paints with
+    Check 'struct' 'panel releases its menu font and form region' (($pickerText -match 'groupFont\.Dispose\(\)') -and ($pickerText -match 'function Set-RoundRegion')) 'GDI handles released nowhere'
 
     # the Shown handler must go through Focus-Search: taking the real focus there would
     # activate the panel and defeat the hook model
