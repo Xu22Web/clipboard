@@ -43,6 +43,7 @@
     SaveWindowPos     = @{ Type = 'bool'; Ref = [ref]$script:SaveWinPos; Default = 0; Description = '1 = write the moved panel back to this file' }
     ShowTime          = @{ Type = 'bool'; Ref = [ref]$script:ShowTime; Default = 1; Description = '1 = relative time column' }
     ShowTypeIcon      = @{ Type = 'bool'; Ref = [ref]$script:ShowTypeIcon; Default = 1; Description = '1 = show the row icon a plugin provides (none without one)' }
+    ShowThumbnails    = @{ Type = 'bool'; Ref = [ref]$script:ShowThumbnails; Default = 1; Description = '1 = show a small picture in the icon slot of a picture or formatted-text row' }
     Highlight         = @{ Type = 'bool'; Ref = [ref]$script:HighlightOn; Default = 1; Description = '1 = highlight search matches' }
     HighlightMaxBytes = @{ Type = 'int'; Ref = [ref]$script:HighlightMax; Default = 8192; Minimum = 0; Maximum = 1048576; Description = 'skip highlight above this size (0 = always)' }
     ShowNewlineMarker = @{ Type = 'bool'; Ref = [ref]$script:ShowNewlineMarker; Default = 1; Description = '1 = show <NL> for line breaks, 0 = collapse to a space' }

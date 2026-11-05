@@ -97,6 +97,8 @@ $script:SaveWinWidth = $false
 $script:SaveWinPos = $false
 $script:ShowTime = $true
 $script:ShowTypeIcon = $true
+# a picture or formatted-text row shows a small copy of its first picture in the icon slot
+$script:ShowThumbnails = $true
 $script:HighlightOn = $true
 $script:HighlightMax = 8192
 $script:ShowNewlineMarker = $true

@@ -474,6 +474,70 @@ function Set-MediaCache([string]$key, $bmp) {
   return $bmp
 }
 
+# ---- row thumbnails ---------------------------------------------------------
+# A picture row shows a small copy of itself in the icon slot. This keeps its own cache: the
+# hover card holds four big bitmaps, while row paint sweeps dozens of tiny ones and would
+# evict the card on every scroll. Entries survive the panel on purpose - a reopen is instant.
+$script:RowThumbMax = 64
+$script:RowThumbCache = @{ Order = (New-Object System.Collections.Generic.List[string]); Map = @{} }
+
+function Clear-RowThumbCache {
+  $c = $script:RowThumbCache
+  if ($null -eq $c) { return }
+  foreach ($k in @($c.Map.Keys)) {
+    $v = $c.Map[$k]
+    if ($null -ne $v) { try { $v.Dispose() } catch { } }
+  }
+  $c.Map.Clear()
+  $c.Order.Clear()
+}
+
+# The bitmap belongs to this cache, so a caller draws it and never disposes it.
+function Get-RowThumbBitmap($record, [int]$side) {
+  if ($null -eq $record -or $side -lt 8) { return $null }
+  $payload = [string]$record.Payload
+  if (-not (Test-ImagePayload $payload)) { return $null }
+  $ref = Get-ImageRef $payload
+  if ($null -eq $ref) { return $null }
+  $c = $script:RowThumbCache
+  $key = $ref.Sha1 + ':' + [string]$side
+  if ($c.Map.ContainsKey($key)) { return $c.Map[$key] }
+  Load-Forms
+  # the small copy the card already writes is what a row wants: a 512 px decode instead of 4K
+  $bytes = $null
+  try {
+    $thumbPath = Get-ImageThumbPath $ref.Sha1
+    if (Test-Path -LiteralPath $thumbPath) { $bytes = [IO.File]::ReadAllBytes($thumbPath) }
+  } catch { $bytes = $null }
+  if ($null -eq $bytes) { $bytes = Read-ImageBytes $ref.Sha1 }
+  if ($null -eq $bytes) { return $null }
+  $src = $null
+  $out = $null
+  try {
+    $ms = New-Object IO.MemoryStream
+    $ms.Write($bytes, 0, $bytes.Length)
+    $ms.Position = 0
+    $src = [Drawing.Image]::FromStream($ms)
+    $out = New-MediaScaledBitmap $src $side $side
+  } catch {
+    if ($null -ne $out) { try { $out.Dispose() } catch { } }
+    $out = $null
+  } finally {
+    if ($null -ne $src) { $src.Dispose() }
+  }
+  if ($null -eq $out) { return $null }
+  $c.Map[$key] = $out
+  $c.Order.Add($key)
+  while ($c.Order.Count -gt $script:RowThumbMax) {
+    $first = [string]$c.Order[0]
+    $c.Order.RemoveAt(0)
+    $gone = $c.Map[$first]
+    $c.Map.Remove($first)
+    if ($null -ne $gone) { try { $gone.Dispose() } catch { } }
+  }
+  return $out
+}
+
 # 1 + the last row that differs from the paper colour: how much of the page the document
 # used. Reading the pixels through LockBits keeps this at a few milliseconds.
 function Get-InkBottom($bmp, $paper) {

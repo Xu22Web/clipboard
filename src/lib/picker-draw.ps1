@@ -10,6 +10,28 @@
 
 # One StringFormat set for the whole process. Idempotent: Show-Picker calls it every time
 # the panel opens and gets the same objects back.
+# A row thumbnail fills a square slot, keeping its aspect ratio. The bitmap belongs to the
+# media cache, so it is drawn here and never disposed here.
+function Draw-RowThumb($g, $bmp, [int]$x, [int]$y, [int]$side) {
+  if ($null -eq $bmp -or $side -lt 8) { return $false }
+  $w = $bmp.Width
+  $h = $bmp.Height
+  if ($w -lt 1 -or $h -lt 1) { return $false }
+  $old = $g.InterpolationMode
+  try {
+    $g.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $scale = [Math]::Min($side / [double]$w, $side / [double]$h)
+    $dw = [int][Math]::Max(1, [Math]::Round($w * $scale))
+    $dh = [int][Math]::Max(1, [Math]::Round($h * $scale))
+    $g.DrawImage($bmp, ($x + [int](($side - $dw) / 2)), ($y + [int](($side - $dh) / 2)), $dw, $dh)
+    return $true
+  } catch {
+    return $false
+  } finally {
+    $g.InterpolationMode = $old
+  }
+}
+
 # The words an empty list shows: why it is empty and what the user can do about it. Plain
 # text only, so the panel keeps the drawing and this stays measurable without a window.
 function Get-EmptyState($entries, $query, [string]$q, $glyphs) {

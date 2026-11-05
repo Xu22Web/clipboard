@@ -136,6 +136,7 @@ function Get-ConfigReport {
     SaveWindowPos     = [string][int][bool]$script:SaveWinPos
     ShowTime          = [string][int][bool]$script:ShowTime
     ShowTypeIcon      = [string][int][bool]$script:ShowTypeIcon
+    ShowThumbnails    = [string][int][bool]$script:ShowThumbnails
     Highlight         = [string][int][bool]$script:HighlightOn
     HighlightMaxBytes = [string]$script:HighlightMax
     ShowNewlineMarker = [string][int][bool]$script:ShowNewlineMarker
@@ -451,6 +452,8 @@ function Get-IniTemplateLines {
     'ShowTime=1',
     '# 1 = show the row icon a plugin provides (there is none without one)',
     'ShowTypeIcon=1',
+    '# 1 = show a small picture in the icon slot of a picture or formatted-text row',
+    'ShowThumbnails=1',
     '# 1 = highlight the search matches',
     'Highlight=1',
     '# skip the highlight above this payload size in bytes, 0 = always highlight',

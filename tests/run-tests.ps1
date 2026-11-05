@@ -590,6 +590,18 @@ try {
     Check 'unit' 'the same picture is stored once' (@(Get-ChildItem -LiteralPath (Get-MediaDir) -Filter '*.png').Count -eq 1) ([string]@(Get-ChildItem -LiteralPath (Get-MediaDir) -Filter '*.png').Count)
     $imgRec = New-Record $p1 $now ''
     Check 'unit' 'a record knows its media weight' ((Get-RecordMediaBytes $imgRec) -eq $png.Length) ([string](Get-RecordMediaBytes $imgRec))
+    # the row thumbnail is a small copy of the picture, drawn into the icon slot
+    $thumb = Get-RowThumbBitmap $imgRec 28
+    Check 'unit' 'a picture row gets a thumbnail' (($null -ne $thumb) -and ($thumb.Width -le 28) -and ($thumb.Height -le 28)) ''
+    Check 'unit' 'the same row reuses its thumbnail' ([object]::ReferenceEquals($thumb, (Get-RowThumbBitmap $imgRec 28))) ''
+    Check 'unit' 'a text row has no thumbnail' ($null -eq (Get-RowThumbBitmap (New-Record 'plain text' 1 '') 28)) ''
+    $canvas = New-Object Drawing.Bitmap 28, 28
+    $gfx = [Drawing.Graphics]::FromImage($canvas)
+    Check 'unit' 'Draw-RowThumb refuses a missing picture' ((Draw-RowThumb $gfx $null 0 0 28) -eq $false) ''
+    $drew = Draw-RowThumb $gfx $thumb 0 0 28
+    $gfx.Dispose()
+    $canvas.Dispose()
+    Check 'unit' 'Draw-RowThumb paints into the slot' $drew ''
 
     $richRtf = '{\rtf1\ansi\deff0{\fonttbl{\f0\fswiss Segoe UI;}}\f0\fs24\b bold title\b0\par second line\par third line\par}'
     $richCap = @{ Html = $Utf8.GetBytes('<html><body><p>hi</p></body></html>'); Rtf = $richRtf }

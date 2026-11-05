@@ -560,9 +560,8 @@ function Show-Picker {
     function Update-List([string]$q) {
       $lst.BeginUpdate()
       try {
-        # the words are compiled once: fields, patterns and the pinyin switch live in lib/query.ps1
+        # compiled in lib/query.ps1; highlight still works on plain words only
         $query = New-Query -Line $q
-        # highlight still works on plain words, so a field never tints a row
         $tokens = @($query.Terms)
         $script:Tokens = $tokens
         # sticky pins: the plugin names the mark and the cap, the base decides how many rows
@@ -996,7 +995,13 @@ function Show-Picker {
         # the icon is drawn only when a plugin supplied one; without a typing plugin the
         # row starts at the text and nothing is reserved for an icon
         $rowGlyph = [string]$row.Glyph
-        if ($script:ShowTypeIcon -and $script:IconFamily -and $rowGlyph) {
+        # a picture row shows itself in the slot; the bitmap belongs to the media cache
+        $side = Px ($m['TextGap'] - $m['IconX'])
+        $thumb = $null
+        if ($script:ShowThumbnails) { try { $thumb = Get-RowThumbBitmap $rec $side } catch { $thumb = $null } }
+        if ($null -ne $thumb -and (Draw-RowThumb $g $thumb ($r.X + (Px $m['IconX'])) ($r.Y + [int](($r.Height - $side) / 2)) $side)) {
+          $textX = $r.X + (Px $m['TextGap'])
+        } elseif ($script:ShowTypeIcon -and $script:IconFamily -and $rowGlyph) {
           $glyphColor = $(if ($sel) { $ui.Text } else { $ui.Dim })
           if ($decor -and $decor.GlyphColor -and (Get-Command Get-UiColor -ErrorAction SilentlyContinue)) {
             $gcc = Get-UiColor $decor.GlyphColor

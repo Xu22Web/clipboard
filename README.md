@@ -178,6 +178,7 @@ xpm build        # 打包到 dist\clipboard-<version>\
 | `SaveWindowPos` | `0` | `1` = 关闭面板时把当前位置写回 ini |
 | `ShowTime` | `1` | `1` = 显示相对时间列 |
 | `ShowTypeIcon` | `1` | `1` = 显示插件给的行图标；没有插件时本来就没有图标 |
+| `ShowThumbnails` | `1` | `1` = 图片条目在图标槽里画一张小图（占满图标到文字之间的空间，等比缩放）；关掉只留文字标签 |
 | `Highlight` | `1` | `1` = 高亮搜索命中 |
 | `HighlightMaxBytes` | `8192` | 超过该大小的条目不参与高亮（`0` = 总是高亮） |
 | `ShowNewlineMarker` | `1` | `1` = 换行显示为 ` <NL> `，`0` = 折成空格 |
