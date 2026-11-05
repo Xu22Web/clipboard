@@ -53,7 +53,7 @@ function Draw-KeyChips($g, [int]$x, [int]$cy, $pairs, $keyColor, $actionColor, [
   if (-not $font) { return }
   if ($limit -lt (Px 60)) { return }
   $ui = Get-UiPalette
-  $chipH = Px 18
+  $chipH = Px $script:Metric['ChipHeight']
   $big = New-Object Drawing.SizeF -ArgumentList @(1000, 100)
   # a caller that returns one pair from a function gets it flattened by PowerShell's list
   # handling, so ['Esc','Close'] arrives instead of [['Esc','Close']]. Re-pair flat strings.
@@ -71,7 +71,7 @@ function Draw-KeyChips($g, [int]$x, [int]$cy, $pairs, $keyColor, $actionColor, [
     $chipW = [int]($kw + (Px 14))
     if (($x + $chipW + (Px 6) + $aw) -gt $limit) { return }
     $chipY = $cy - [int]($chipH / 2)
-    $kp = New-RoundPath $x $chipY $chipW $chipH (Px 4)
+    $kp = New-RoundPath $x $chipY $chipW $chipH (Px $script:Metric['CapRadius'])
     $kb = New-Object Drawing.SolidBrush $ui.KeyCapBg
     $g.FillPath($kb, $kp)
     $kb.Dispose()

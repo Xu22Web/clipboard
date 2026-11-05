@@ -2,7 +2,7 @@
 
 [← 主说明](../../README.md) · [主题格式](../../README.md#主题)
 
-和 [`win11-dark`](win11-dark.md) 是同一套布局，只把底色与文字反相：白天或亮屏环境更省眼。
+与 [`win11-dark`](win11-dark.md) 使用同一套布局，仅将底色与文字反相。
 
 ## 启用
 
@@ -30,10 +30,10 @@ clipboard config set Theme win11-light    # 主题名 = 文件名，不接受别
 | 字号 | Body 10.5 / Small 9 / Tiny 9 / Title 13 / Icon 12 / IconSmall 10 / IconBig 24 |
 | `[item-marks]` | `StarColor=#9D5D00`、`EmphasisInk=#005FB8` / `EmphasisFill=#24005FB8`（强调色本身 + 14% 蓝底） |
 
-浅色主题的叠层色是带 alpha 的**黑**，压在近白的 `Surface` 上形成同样的层次感。
+浅色主题的叠层色是带 alpha 的**黑**，叠加在近白的 `Surface` 上形成层次。
 
-## 想改它
+## 修改方式
 
-- 换一两个颜色：复制成 `themes/<你的名字>.ini`，改 `name=` 与 token，再把 `Theme=` 指过去。
+- 调整颜色：复制为 `themes\<名称>.ini`，修改 `name=` 与 token，再把 `Theme=` 指向新文件。
 - token 名单与各段写法：见 [主说明的主题一节](../../README.md#主题)。
-- 浅色主题里请特别注意 `Mark` / `Warn` / 星标这类"彩色小字"：在 `#F3F3F3` 上要压暗，直接用深色主题的亮色会看不清。
+- 浅色主题中 `Mark` / `Warn` / 星标等彩色小字需压暗，直接使用深色主题的亮色会降低可读性。

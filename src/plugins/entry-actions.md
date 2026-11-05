@@ -1,11 +1,11 @@
-# entry-actions —— 看清条目，再对它动手
+# entry-actions —— 类型分析与打开
 
 [← 回到主说明](../../README.md) · [插件契约](../../README.md#插件)
 
-一个插件同时管两件事，因为它们本来就是一件事：**先判断这条是什么，再按类型对它操作**。
+类型判断与按类型操作属于同一流程：**先判断条目类型，再据此操作**。
 
-- **判断**：`kind` 给出类型、大小、目标拆解（域名 / 路径 / 邮箱 / 文件清单）以及嗅探到的格式（JSON、XML、Base64、颜色、IP、UUID、哈希…）；`kinds` 统计整个历史里各类型的分布。
-- **动手**：`open` 按类型打开——链接丢给浏览器、文件路径在资源管理器里定位、文件清单打开第一个。
+- **判断**：`kind` 给出类型、大小、目标拆解（域名 / 路径 / 邮箱 / 文件清单 / 图片尺寸）以及嗅探到的格式（JSON、XML、Base64、颜色、IP、UUID、哈希…）；`kinds` 统计整个历史里各类型的分布。
+- **动手**：`open` 按类型打开——链接丢给浏览器、文件路径在资源管理器里定位、文件清单打开第一个、图片交给系统默认看图程序。
 
 ## 启用
 
@@ -38,6 +38,7 @@ entry 3   kind link
 | `mail` | `user` / `domain` |
 | `path` | 文件名、扩展名、所在目录、是否存在 |
 | `files` | 文件数量 + 前 5 个文件名 |
+| `image` | 尺寸、格式、体积、`data\media\` 里的位置（文件丢失时会标出来） |
 | `code` | 语法猜测（C / C# / Python / PowerShell / JavaScript / Java / Go / SQL） |
 
 `format` 一行由多个嗅探器叠加而成，例如 `json, colour #FF6600, rgb(255,102,0)`、`base64 128 bytes`、`hash sha256`、`uuid`、`ipv4`、`date`、`version`、`number 1234.5`、`yaml-like`。
@@ -63,6 +64,7 @@ kinds in 42 entries:
 | 链接（`http` / `https` / `ftp` / `file`） | 用 `Browser` 指定的浏览器打开，留空则用系统默认 |
 | 文件路径 | `Reveal=1` 在资源管理器里定位该文件，`0` 直接运行 |
 | 文件清单（资源管理器里多选复制得到） | 取第一个文件，行为同上 |
+| 图片 | 打开 `data\media\` 里对应的 PNG（系统默认看图程序） |
 | 其他 | `Start-Process` 交给 shell |
 
 ```
@@ -79,6 +81,7 @@ opened: https://example.com/docs/start
 | `link` | 链接 |
 | `mail` | 邮件 |
 | `path` / `files` | 文件夹 |
+| `image` | 图片 |
 | `code` | 代码 |
 | `multi` | 多行 |
 | `text` | 文档 |
@@ -89,12 +92,10 @@ opened: https://example.com/docs/start
 
 | 位置 | 行为 |
 |---|---|
-| `Ctrl+O` | 打开当前选中的链接 / 路径（对不支持的条目自动不响应） |
-| 右键 `Open link or path` | 同上，仅对链接 / 路径 / 文件清单显示 |
+| `Ctrl+O` | 打开当前选中的链接 / 路径 / 图片（对不支持的条目自动不响应） |
+| 右键 `Open link or path` | 同上，对链接 / 路径 / 文件清单 / 图片显示 |
 
-`Ctrl+O` 与右键项共用同一套判断与执行逻辑，所以两者行为永远一致。
-
-两个入口都调用插件里的共享块，不是各自复制一份：
+`Ctrl+O` 与右键项共用同一套判断与执行逻辑，行为一致。两个入口都调用插件中的共享块：
 
 | 块 | 作用 |
 |---|---|
@@ -104,6 +105,8 @@ opened: https://example.com/docs/start
 | `Sniff` | 格式嗅探（只返回结果，不管输出格式） |
 
 ## 设置项（`clipboard.ini`）
+
+这些键声明在 `schema\plugins\entry-actions.ps1`，加载时合并进设置；文件里写在 `[entry-actions]` 段内，`config set` 用 `<插件名>.<Key>`：
 
 | 键 | 默认 | 说明 |
 |---|---|---|
@@ -122,7 +125,7 @@ clipboard config set entry-actions.Reveal 0
 
 ## 说明
 
-- 基础工具只区分**文本**与**文件列表**（`Get-EntryKind`，用于存储与粘贴往返），且**自己不画行图标**：行首图标全部来自本插件的 `TypeGlyph`，所以不启用本插件时行首没有图标。命令、右键与 `Ctrl+O` 用的是同一个分类器（`KindOf`），不存在第二份分类规则。
-- 条目上的标记（置顶 / 收藏 / 高亮）不写在本插件里：`kind` 的 `state` 行向基础层要标记名称（`Get-RecordMarkWords`），`kinds` 的尾行用同源计数，所以装不装 `item-marks` 都不会出错。
+- 基础工具只区分**文本 / 文件列表 / 图片**（`Get-EntryKind`，用于存储与粘贴往返），**自身不绘制行图标**：行首图标均来自本插件的 `TypeGlyph`。命令、右键与 `Ctrl+O` 使用同一个分类器（`KindOf`），分类规则只有一份。
+- 条目上的标记（置顶 / 收藏 / 高亮）不写在本插件里：`kind` 的 `state` 行向基础层查询标记名称（`Get-RecordMarkWords`），`kinds` 的尾行使用同源计数，启用或不启用 `item-marks` 均可用。
 - 嗅探只取前 8000 个字符，避免大段文本拖慢输出；`json` 用 `ConvertFrom-Json` 真正解析一次，解析失败会显示 `json-like (invalid)`。
 - 嗅探会读取条目内容但不会写入任何东西，也不会修改历史。

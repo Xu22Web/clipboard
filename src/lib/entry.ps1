@@ -1,14 +1,23 @@
-# lib/entry.ps1 - the base view of an entry: text, file list or empty, and which glyph the
-# row gets.
+# lib/entry.ps1 - the base view of an entry: text, file list, image or empty, and which
+# glyph the row gets.
 #
 # Deliberately small: richer typing, opening and per-kind icons belong to the entry-actions
 # plugin. The base only needs enough to store, label and paste a payload.
 
-# The base only needs to tell a file list from text: that is all storage, the row glyph and
-# the clipboard round trip care about. Richer typing lives in the entry-actions plugin.
+# Payload kinds: a file list starts with char 1, an image with char 3 (its descriptor names
+# a file in data\media), everything else is text. Callers ask these two instead of comparing
+# the leading character, so a new kind is one edit here and one in media.ps1.
+function Test-FilePayload([string]$payload) {
+  return ($null -ne $payload -and $payload.Length -gt 0 -and $payload[0] -eq [char]1)
+}
+
+# The base only needs to tell a file list, an image descriptor and text apart: that is all
+# storage, the row glyph and the clipboard round trip care about. Richer typing lives in the
+# entry-actions plugin.
 function Get-EntryKind([string]$payload) {
   if ([string]::IsNullOrEmpty($payload)) { return 'empty' }
-  if ($payload[0] -eq [char]1) { return 'files' }
+  if (Test-FilePayload $payload) { return 'files' }
+  if (Test-ImagePayload $payload) { return 'image' }
   return 'text'
 }
 
@@ -52,10 +61,18 @@ function Get-ActionText($action, $record) {
 # single-line display text for one payload (picker rows and CLI listings)
 function Get-ItemLabel([string]$t, [bool]$nlMarker = $true) {
   $one = $t
-  if ($one.Length -gt 0 -and $one[0] -eq [char]1) {
+  if (Test-FilePayload $one) {
     $names = @($one.Substring(1) -split "`n" | Where-Object { $_ } | ForEach-Object { Split-Path -Leaf $_ })
     if ($names.Count -gt 3) { $one = '[files] ' + (($names[0..2]) -join ', ') + ' (+' + ($names.Count - 3) + ')' }
     else { $one = '[files] ' + ($names -join ', ') }
+  } elseif (Test-ImagePayload $one) {
+    # an image entry is a descriptor, not pixels: name the size, the format and the weight
+    $ref = Get-ImageRef $one
+    if ($null -ne $ref) {
+      $one = '[image] ' + [string]$ref.W + 'x' + [string]$ref.H + ' - ' + [string]$ref.Fmt + ' - ' + (Format-Size $ref.Bytes)
+    } else {
+      $one = '[image]'
+    }
   } else {
     # only the head of a large payload is ever shown, so skip the cleanup work on the
     # rest of a 200 KB entry on every keystroke
@@ -73,6 +90,21 @@ function Get-ItemLabel([string]$t, [bool]$nlMarker = $true) {
 
 function Format-Item([string]$t, [int]$max) {
   $one = Get-ItemLabel $t $true
+  if ($one.Length -gt $max) { $one = $one.Substring(0, $max) + '...' }
+  return $one
+}
+
+# The label of a record rather than of a payload: an entry that kept its formatting says so,
+# because the row text alone cannot show it (the payload is the plain text either way).
+function Get-RecordLabel($record, [bool]$nlMarker = $true) {
+  if ($null -eq $record) { return '' }
+  $one = Get-ItemLabel ([string]$record.Payload) $nlMarker
+  if ([string]$record.Rich) { return ('[rich] ' + $one) }
+  return $one
+}
+
+function Format-Record($record, [int]$max) {
+  $one = Get-RecordLabel $record $true
   if ($one.Length -gt $max) { $one = $one.Substring(0, $max) + '...' }
   return $one
 }

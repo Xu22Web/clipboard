@@ -1,20 +1,10 @@
-# lib/util.ps1 - process-wide plumbing: logging, assemblies, DPI, pixels, time and rounded
-# paths. No clipboard, no settings, no panel state: safe to call from a command, from the
-# picker and from the resident loop alike.
-
-function Ensure-Dir {
-  if (-not (Test-Path -LiteralPath $StoreDir)) { New-Item -ItemType Directory -Path $StoreDir -Force | Out-Null }
-}
-
-function Write-Log([string]$msg) {
-  try {
-    Ensure-Dir
-    if ((Test-Path -LiteralPath $LogFile) -and (Get-Item -LiteralPath $LogFile).Length -gt 65536) {
-      Remove-Item -LiteralPath $LogFile -Force
-    }
-    [IO.File]::AppendAllText($LogFile, ((Get-Date -Format 'MM-dd HH:mm:ss') + ' ' + $msg + [Environment]::NewLine), $Utf8)
-  } catch { }
-}
+# lib/native.ps1 - the platform layer: the Win32 entry points, the WinForms types the panel
+# needs, the assembly loading, the font probe and the DPI factor.
+#
+# Everything here touches the machine (Add-Type, RegisterHotKey, the installed fonts), which
+# is why it is not in utils\: that folder holds the pure helpers - log, time, format, draw.
+# No clipboard, no settings and no panel state beyond the DPI factor, so a command, the
+# picker and the resident loop can all call into this file.
 
 function Add-Native {
   if ($script:NativeReady) { return }
@@ -48,6 +38,54 @@ namespace Cb {
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern uint GetDpiForSystem();
+  }
+  // RTF into a bitmap: a RichTextBox lays a document out into a device context through
+  // EM_FORMATRANGE, which works while the control is not on screen at all. DrawToBitmap on
+  // an unparented control renders nothing, so the preview card (lib/media.ps1) uses this.
+  public static class Rich {
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FORMATRANGE {
+      public IntPtr hdc;
+      public IntPtr hdcTarget;
+      public RECT rc;
+      public RECT rcPage;
+      public int cpMin;
+      public int cpMax;
+    }
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, ref FORMATRANGE lParam);
+    public static string LastError = "";
+    public static bool RenderTo(System.Windows.Forms.RichTextBox box, System.Drawing.Graphics g, int width, int height) {
+      const int EM_FORMATRANGE = 0x0400 + 57;
+      // the dpi has to be read before the device context is taken: while its hdc is out the
+      // Graphics is locked and any other property access throws
+      double dpi = g.DpiX > 0 ? g.DpiX : 96.0;
+      IntPtr hdc = IntPtr.Zero;
+      try {
+        hdc = g.GetHdc();
+        FORMATRANGE fr = new FORMATRANGE();
+        fr.hdc = hdc;
+        fr.hdcTarget = hdc;
+        fr.rc.Left = 0;
+        fr.rc.Top = 0;
+        fr.rc.Right = (int)(width * 1440.0 / dpi);
+        fr.rc.Bottom = (int)(height * 1440.0 / dpi);
+        fr.rcPage = fr.rc;
+        fr.cpMin = 0;
+        fr.cpMax = -1;
+        SendMessage(box.Handle, EM_FORMATRANGE, (IntPtr)1, ref fr);
+        // wParam 0 frees the layout the control cached for this range
+        SendMessage(box.Handle, EM_FORMATRANGE, IntPtr.Zero, ref fr);
+        return true;
+      } catch (Exception ex) {
+        LastError = ex.GetType().Name + ": " + ex.Message;
+        return false;
+      } finally {
+        if (hdc != IntPtr.Zero) { g.ReleaseHdc(hdc); }
+      }
+    }
   }
   public class HotWindow : System.Windows.Forms.NativeWindow {
     public event EventHandler Hot;
@@ -303,50 +341,4 @@ function Initialize-Dpi {
       if ($d -ge 96 -and $d -le 480) { $script:UiScale = [double]$d / 96.0 }
     } catch { }
   } catch { $script:UiScale = 1.0 }
-}
-
-# scale one design pixel value (96 dpi baseline) to the current DPI
-function Px([double]$v) {
-  if ($v -eq 0) { return 0 }
-  $n = [int][Math]::Round($v * [double]$script:UiScale)
-  if ($n -lt 1) { return 1 }
-  return $n
-}
-
-function Get-Epoch {
-  return [long]([DateTime]::UtcNow - [DateTime]'1970-01-01T00:00:00Z').TotalSeconds
-}
-
-# compact relative time for the picker rows: now / 5m / 3h / 2d / 10-24
-function Get-RelTime([long]$t) {
-  if ($t -le 0) { return '' }
-  $d = (Get-Epoch) - $t
-  if ($d -lt 0) { $d = 0 }
-  if ($d -lt 60) { return 'now' }
-  if ($d -lt 3600) { return ([string][int]($d / 60)) + 'm' }
-  if ($d -lt 86400) { return ([string][int]($d / 3600)) + 'h' }
-  if ($d -lt 518400) { return ([string][int]($d / 86400)) + 'd' }
-  try { return ([DateTime]'1970-01-01T00:00:00Z').ToLocalTime().AddSeconds($t).ToString('MM-dd') } catch { return '' }
-}
-
-function New-RoundPath([int]$x, [int]$y, [int]$w, [int]$h, [int]$r) {
-  if ($w -lt 2) { $w = 2 }
-  if ($h -lt 2) { $h = 2 }
-  if (($r * 2) -gt $h) { $r = [int]($h / 2) }
-  if (($r * 2) -gt $w) { $r = [int]($w / 2) }
-  $d = [Math]::Max(1, $r * 2)
-  $p = New-Object Drawing.Drawing2D.GraphicsPath
-  $p.AddArc($x, $y, $d, $d, 180, 90)
-  $p.AddArc($x + $w - $d, $y, $d, $d, 270, 90)
-  $p.AddArc($x + $w - $d, $y + $h - $d, $d, $d, 0, 90)
-  $p.AddArc($x, $y + $h - $d, $d, $d, 90, 90)
-  $p.CloseFigure()
-  return $p
-}
-
-function New-RoundRegion([int]$w, [int]$h, [int]$r) {
-  $p = New-RoundPath 0 0 $w $h $r
-  $reg = New-Object Drawing.Region -ArgumentList $p
-  $p.Dispose()
-  return $reg
 }

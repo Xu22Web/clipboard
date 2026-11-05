@@ -4,7 +4,8 @@
 # touched. With KeepPinned=1 the rows carrying the sort mark (what pinning declares) are
 # kept too, so this file never has to know which mark that is.
 #
-# Settings: retention.MaxAgeDays / retention.SweepMinutes / retention.KeepPinned
+# Settings: retention.MaxAgeDays / retention.SweepMinutes / retention.KeepPinned, described
+# in schema\plugins\retention.ps1 and merged into the settings schema when this file loads.
 #
 # The sweep is one shared block: the resident Tick calls it silently, `sweep force` runs
 # it on demand and reports. Tick.Seconds is a scriptblock, so the interval follows
@@ -14,11 +15,6 @@
   Description = 'Delete entries older than N days; protected entries are always kept'
   CommandHelp = @{
     'sweep' = 'run the expiry sweep now ("sweep force" reports what it did)'
-  }
-  Settings    = [ordered]@{
-    MaxAgeDays   = @{ Kind = 'int'; Min = 0; Max = 3650; Default = 0; Desc = 'delete entries older than this many days, 0 = keep forever' }
-    SweepMinutes = @{ Kind = 'int'; Min = 1; Max = 1440; Default = 30; Desc = 'how often the sweep may run, in minutes' }
-    KeepPinned   = @{ Kind = 'bool'; Default = 1; Desc = '1 = never expire the row carrying the sort mark (a pinned entry)' }
   }
   # returns the number of rows removed; one write for the whole list
   Sweep       = {

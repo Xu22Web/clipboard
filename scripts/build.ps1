@@ -1,30 +1,36 @@
 #Requires -Version 5.1
 <#
-  build.ps1 - package the tool the way a front-end build packages a bundle: the output is
-  still plain PowerShell, but every .ps1 is rewritten from its syntax tree (comments and
-  indentation gone, internal functions and local variables renamed), so the folder keeps
-  the same shape and behaviour while being noticeably smaller. Nothing is compiled.
+  scripts\build.ps1 - package the tool the way a front-end build packages a bundle: the
+  output is still plain PowerShell, but every .ps1 is rewritten from its syntax tree
+  (comments and indentation gone, internal functions and local variables renamed), so the
+  folder keeps the same shape and behaviour while being noticeably smaller. Nothing is
+  compiled.
 
-      powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1
-      powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1 -Config other.ini
+      xpm build                          settings from build.ini
+      xpm build -Config other.ini         a different settings file
 
-  Every setting lives in build.ini next to this script: version, output folder, whether to
-  minify and rename, whether to verify the result by running the CLI test suite against
-  it, whether to also write a zip. The only switch is -Config.
+  build.ini holds the build options only: output folder, whether to minify and rename,
+  whether to verify the result by running the CLI suite against it, whether to also write a
+  zip. The version is not a build option: package.ini owns it. The development copy reads it
+  at run time (src\lib\base.ps1); the build replaces that block with a literal, so a package
+  carries the version and reads no file.
 
-  What goes in: everything under src\ (the entry file clipboard.ps1, the two launchers,
-  lib\ with its 16 required modules plus the two optional loaders, the selected plugins
-  and themes) plus (by default) the documentation. What never goes in:
-  src\data\, src\clipboard.ini, tests\, build\, dist\, .git - a package carries the
-  program, not your history or your settings. Reading only src\ is also what keeps the
-  build from walking into its own output.
+  Two batch files are written next to clipboard.ps1: install.bat (config init + migrate +
+  install) and uninstall.bat (stop + uninstall purge).
+
+  What goes in: everything under src\ (the entry file, the two launchers, lib\ with its
+  modules, utils\ with the pure helpers, the selected plugins and themes) plus (by default)
+  the documentation. What never goes in: src\data\, src\clipboard.ini, tests\, scripts\,
+  dist\, .git - a package carries the program, not the history, the settings or the tooling.
+  Reading only src\ is also what keeps the build from walking into its own output.
 #>
 param(
   [string]$Config = ''
 )
 
 $ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent $PSCommandPath
+# this file lives in scripts\: the repository root is one level up
+$root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 # the program lives in src\, the build tooling and the docs stay at the repo root
 $srcRoot = Join-Path $root 'src'
 if (-not (Test-Path -LiteralPath $srcRoot)) { Write-Host ('[x] missing: ' + $srcRoot); exit 1 }
@@ -33,30 +39,31 @@ function Write-Step([string]$text) { Write-Host ('[..] ' + $text) }
 function Fail([string]$text) { Write-Host ('[x] ' + $text); exit 1 }
 
 # ---------------------------------------------------------------- settings
-function Read-Settings([string]$path) {
-  $map = @{}
-  if (-not (Test-Path -LiteralPath $path)) { return $map }
-  foreach ($line in [IO.File]::ReadAllLines($path)) {
-    $t = $line.Trim()
-    if (-not $t) { continue }
-    if ($t.StartsWith('#') -or $t.StartsWith(';')) { continue }
-    if ($t.StartsWith('[')) { continue }
-    $i = $t.IndexOf('=')
-    if ($i -lt 1) { continue }
-    $map[$t.Substring(0, $i).Trim()] = $t.Substring($i + 1).Trim()
-  }
-  return $map
+# build.ini and package.ini are read by the layer the program itself uses
+# (src\utils\ini.ps1 + import.ps1): "Key=Value" per line, "#" or ";" comments, and a
+# "[section]" line grouping the keys that follow - so "[build]" + "OutDir=dist" is the same
+# key as "build.OutDir=dist".
+$iniTools = Join-Path $srcRoot 'utils'
+foreach ($tool in @('ini', 'import')) {
+  $toolPath = Join-Path $iniTools ($tool + '.ps1')
+  if (-not (Test-Path -LiteralPath $toolPath)) { Fail ('missing: ' + $toolPath) }
+  . $toolPath
 }
 
 if (-not $Config) { $Config = Join-Path $root 'build.ini' }
-$cfg = Read-Settings $Config
+$cfg = Import-IniMap $Config
 if (-not (Test-Path -LiteralPath $Config)) {
   Write-Step ('no ' + (Split-Path -Leaf $Config) + ', using built-in defaults')
 }
 
 function Cfg([string]$key, [string]$fallback) {
-  if ($cfg.ContainsKey($key)) {
-    $v = [string]$cfg[$key]
+  # a build key may be written inside [build] or with its dotted name at the top level.
+  # The dotted name is built first: "@('build.' + $key, $key)" would join the two into one
+  # string, because "," binds tighter than "+" inside an array literal.
+  $dotted = 'build.' + $key
+  foreach ($candidate in @($dotted, $key)) {
+    if (-not $cfg.ContainsKey($candidate)) { continue }
+    $v = [string]$cfg[$candidate]
     if ($v -ne '') { return $v }
   }
   return $fallback
@@ -73,16 +80,27 @@ function CfgList([string]$key) {
   return @($raw -split '[,;\s]+' | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
 }
 
-$version = Cfg 'Version' ''
-if (-not $version) {
-  try {
-    $git = Get-Command git -ErrorAction SilentlyContinue
-    if ($git) { $version = [string](& git -C $root describe --tags --always --dirty 2>$null) }
-  } catch { $version = '' }
-  if (-not $version) { $version = Get-Date -Format 'yyyyMMdd' }
+# src\lib\base.ps1 keeps the version between two markers for the development run; a package
+# gets the number itself instead of code that reads package.ini.
+function Get-VersionPatchedText([string]$text, [string]$version) {
+  $begin = $text.IndexOf('#@version-begin')
+  $end = $text.IndexOf('#@version-end')
+  if ($begin -lt 0 -or $end -lt $begin) { Fail 'src\lib\base.ps1 has no #@version-begin / #@version-end block' }
+  $head = $text.Substring(0, $begin)
+  $tail = $text.Substring($text.IndexOf("`n", $end) + 1)
+  return ($head + "`$script:Version = '" + $version + "'`r`n" + $tail)
 }
-$version = ($version.Trim() -replace '[^0-9A-Za-z\.\-_]', '')
-if (-not $version) { Fail 'Version= in the settings file is not usable' }
+
+# package.ini owns the version and the command shortcuts; the build only reads it here
+$pkg = Import-IniMap (Join-Path $root 'package.ini')
+$version = ''
+foreach ($candidate in @('package.Version', 'Version')) {
+  if ($pkg.ContainsKey($candidate) -and [string]$pkg[$candidate]) { $version = [string]$pkg[$candidate]; break }
+}
+$version = $version.Trim()
+if (-not $version) { Fail 'no Version= in package.ini' }
+$version = ($version -replace '[^0-9A-Za-z\.\-_]', '')
+if ($version -notmatch '^\d+\.\d+\.\d+$') { Fail ('Version= in package.ini is not <major>.<minor>.<patch>: ' + $version) }
 
 $name = 'clipboard-' + $version
 $outSetting = Cfg 'OutDir' 'dist'
@@ -98,7 +116,7 @@ $pluginNames = CfgList 'Plugins'
 $themeNames = CfgList 'Themes'
 
 Write-Step ('settings ' + $Config)
-Write-Step ('  version ' + $version)
+Write-Step ('  version ' + $version + '   (package.ini)')
 Write-Step ('  output  ' + $dest)
 Write-Step ('  minify  ' + $(if ($minify) { 'yes' } else { 'no' }) + '   rename ' + $(if ($rename) { 'yes' } else { 'no' }) + '   verify ' + $(if ($verify) { 'yes' } else { 'no' }) + '   zip ' + $(if ($wantZip) { 'yes' } else { 'no' }))
 Write-Step ('  docs    ' + $(if ($includeDocs) { 'yes' } else { 'no' }) + '   overwrite ' + $(if ($overwrite) { 'yes' } else { 'no' }))
@@ -111,6 +129,8 @@ foreach ($f in @('clipboard.ps1', 'clipboard.cmd', 'clipboard')) {
   if (-not (Test-Path -LiteralPath (Join-Path $srcRoot $f))) { Fail ('missing: src\' + $f) }
 }
 if (-not (Test-Path -LiteralPath (Join-Path $srcRoot 'lib'))) { Fail 'missing: src\lib\' }
+if (-not (Test-Path -LiteralPath (Join-Path $srcRoot 'utils'))) { Fail 'missing: src\utils\' }
+if (-not (Test-Path -LiteralPath (Join-Path $srcRoot 'schema'))) { Fail 'missing: src\schema\' }
 
 $pluginFiles = @()
 $themeFiles = @()
@@ -133,6 +153,21 @@ foreach ($kind in @(@{ Dir = 'plugins'; Ext = '.ps1'; Names = $pluginNames }, @{
   if ($kind.Dir -eq 'plugins') { $pluginFiles = $picked } else { $themeFiles = $picked }
 }
 
+# A plugin's keys are described by its own schema file (src\schema\plugins\<name>.ps1), so
+# the shipped schemas follow the shipped plugins: a package documents what it can run.
+$pluginSchemas = @()
+$schemaPluginDir = Join-Path $srcRoot 'schema\plugins'
+if (Test-Path -LiteralPath $schemaPluginDir) {
+  if ($pluginNames.Count -eq 0) {
+    $pluginSchemas = @(Get-ChildItem -LiteralPath $schemaPluginDir -Filter '*.ps1' -File | ForEach-Object { $_.FullName })
+  } else {
+    foreach ($n in $pluginNames) {
+      $file = Join-Path $schemaPluginDir ($n + '.ps1')
+      if (Test-Path -LiteralPath $file) { $pluginSchemas += $file }
+    }
+  }
+}
+
 # ---------------------------------------------------------------- stage
 $stageRoot = Join-Path $env:TEMP ('clipboard-build-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 $stage = Join-Path $stageRoot $name
@@ -144,13 +179,17 @@ try {
   $scriptFiles = @()
   $scriptFiles += Join-Path $srcRoot 'clipboard.ps1'
   $scriptFiles += @(Get-ChildItem -LiteralPath (Join-Path $srcRoot 'lib') -Filter '*.ps1' -File | ForEach-Object { $_.FullName })
+  $scriptFiles += @(Get-ChildItem -LiteralPath (Join-Path $srcRoot 'utils') -Filter '*.ps1' -File | ForEach-Object { $_.FullName })
+  # the schema files are data, but they name the variables Apply-Config writes through, so
+  # they are renamed with the rest of the shared scope instead of being copied verbatim
+  $scriptFiles += @(Get-ChildItem -LiteralPath (Join-Path $srcRoot 'schema') -Filter '*.ps1' -File | ForEach-Object { $_.FullName })
   $scriptFiles += @($pluginFiles | Where-Object { $_ -like '*.ps1' })
 
   $map = @{}
   $scopeMaps = @{}
   $globalMap = @{}
   if ($minify) {
-    . (Join-Path $root 'build\minify.ps1')
+    . (Join-Path $root 'scripts\minify.ps1')
     if ($rename) {
       $map = New-FunctionMap $scriptFiles
       Write-Step ('internal functions renamed: ' + $map.Count)
@@ -175,25 +214,35 @@ try {
   $before = 0
   $after = 0
   $rows = New-Object System.Collections.Generic.List[object]
+  $baseFile = Join-Path $srcRoot 'lib\base.ps1'
   foreach ($file in $scriptFiles) {
     $rel = $file.Substring($srcRoot.Length).TrimStart([char]92, [char]47)
     $target = Join-Path $stage $rel
     $parent = Split-Path -Parent $target
     if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+    # The development copy reads the version from package.ini. A package carries the number
+    # itself, so it needs neither that file nor a code path that looks for it.
+    $input = $file
+    if ($file -eq $baseFile) {
+      $input = Join-Path $stageRoot 'verpatch\base.ps1'
+      New-Item -ItemType Directory -Path (Split-Path -Parent $input) -Force | Out-Null
+      [IO.File]::WriteAllText($input, (Get-VersionPatchedText ([IO.File]::ReadAllText($file)) $version))
+    }
     if ($minify) {
       if ($rename) {
         $vars = $scopeMaps['*']
         if ($scopeMaps.ContainsKey($file)) { $vars = $scopeMaps[$file] }
         $globals = $globalMap
         if ($scopeMaps.ContainsKey($file)) { $globals = @{} }   # a plugin has a scope of its own
-        $r = Invoke-MinifyFile -Path $file -OutPath $target -FunctionMap $map -ScriptVarMap $vars -GlobalVarMap $globals
-      } else { $r = Invoke-MinifyFile -Path $file -OutPath $target -NoRename }
+        $r = Invoke-MinifyFile -Path $input -OutPath $target -FunctionMap $map -ScriptVarMap $vars -GlobalVarMap $globals
+      } else { $r = Invoke-MinifyFile -Path $input -OutPath $target -NoRename }
+      $r.Path = $file
       $before += $r.Before
       $after += $r.After
       $rows.Add($r)
     } else {
-      Copy-Item -LiteralPath $file -Destination $target -Force
-      $len = (Get-Item -LiteralPath $file).Length
+      Copy-Item -LiteralPath $input -Destination $target -Force
+      $len = (Get-Item -LiteralPath $input).Length
       $before += $len
       $after += $len
     }
@@ -203,8 +252,48 @@ try {
   foreach ($f in @('clipboard.cmd', 'clipboard')) {
     Copy-Item -LiteralPath (Join-Path $srcRoot $f) -Destination $stage -Force
   }
+  # a packaged copy is set up by double-clicking, so the two scripts sit next to
+  # clipboard.ps1 and only call commands the program already has
+  $installBat = @(
+    '@echo off',
+    'rem clipboard - write a commented clipboard.ini, upgrade an older history, then create',
+    'rem the two shortcuts.',
+    'setlocal',
+    'powershell -NoProfile -ExecutionPolicy Bypass -Sta -File "%~dp0clipboard.ps1" config init',
+    'powershell -NoProfile -ExecutionPolicy Bypass -Sta -File "%~dp0clipboard.ps1" migrate',
+    'powershell -NoProfile -ExecutionPolicy Bypass -Sta -File "%~dp0clipboard.ps1" install',
+    'echo.',
+    'echo done. the hotkey is the Hotkey= line in clipboard.ini.',
+    'pause',
+    'endlocal'
+  ) -join "`r`n"
+  $uninstallBat = @(
+    '@echo off',
+    'rem clipboard - stop the resident, remove the shortcuts, delete data\ and clipboard.ini.',
+    'setlocal',
+    'powershell -NoProfile -ExecutionPolicy Bypass -Sta -File "%~dp0clipboard.ps1" stop',
+    'timeout /t 2 /nobreak >nul',
+    'powershell -NoProfile -ExecutionPolicy Bypass -Sta -File "%~dp0clipboard.ps1" uninstall purge',
+    'echo.',
+    'echo done. data\ and clipboard.ini are gone.',
+    'pause',
+    'endlocal'
+  ) -join "`r`n"
+  $ascii = New-Object System.Text.ASCIIEncoding
+  [IO.File]::WriteAllText((Join-Path $stage 'install.bat'), ($installBat + "`r`n"), $ascii)
+  [IO.File]::WriteAllText((Join-Path $stage 'uninstall.bat'), ($uninstallBat + "`r`n"), $ascii)
+  Write-Step 'wrote install.bat and uninstall.bat'
   foreach ($f in @($pluginFiles) + @($themeFiles)) {
     if ($f -like '*.ps1') { continue }
+    $rel = $f.Substring($srcRoot.Length).TrimStart([char]92, [char]47)
+    $target = Join-Path $stage $rel
+    $parent = Split-Path -Parent $target
+    if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+    Copy-Item -LiteralPath $f -Destination $target -Force
+  }
+  # plugin schemas are data, not code: they are copied verbatim, and only for the plugins
+  # that actually ship
+  foreach ($f in @($pluginSchemas)) {
     $rel = $f.Substring($srcRoot.Length).TrimStart([char]92, [char]47)
     $target = Join-Path $stage $rel
     $parent = Split-Path -Parent $target
@@ -221,7 +310,7 @@ try {
   }
 
   # a package never carries the user's history, settings or build leftovers
-  foreach ($leak in @('data', 'clipboard.ini', 'tests', 'dist', 'build.ini', 'src')) {
+  foreach ($leak in @('data', 'clipboard.ini', 'tests', 'scripts', 'build.ini', 'package.ini', 'src')) {
     $p = Join-Path $stage $leak
     if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force }
   }
@@ -286,6 +375,8 @@ if ($wantZip) {
 Write-Host ''
 Write-Host 'result:'
 Write-Host ('  ' + $dest)
+Write-Host '  install.bat                   clipboard.ini template + startup / desktop shortcuts'
+Write-Host '  uninstall.bat                 stop, remove the shortcuts, delete data\ and the ini'
 Write-Host '  clipboard.cmd config init      write a commented clipboard.ini'
 Write-Host '  clipboard.cmd install         startup shortcut + desktop shortcut'
 exit 0

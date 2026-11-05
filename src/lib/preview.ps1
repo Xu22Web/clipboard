@@ -14,7 +14,34 @@
 # One panel's preview: the window plus what it is showing. Held by the picker, given back to
 # every call here, so no state lives in this file.
 function New-PreviewState {
-  return @{ Win = $null; Key = -1; Lines = @(); Head = ''; Cfg = $null }
+  return @{ Win = $null; Key = -1; Lines = @(); Head = ''; Cfg = $null; Kind = 'text'; Ref = ''; Bmp = $null }
+}
+
+# What the card shows for one record: its kind, the caption, the text lines and the media
+# reference a bitmap is loaded from. Images and formatted text are recognised here so the
+# paint path only has to know "bitmap or lines".
+function Get-PreviewContent($record, [int]$cols, [int]$maxLines) {
+  $out = @{ Kind = 'text'; Head = ''; Lines = @(); Ref = '' }
+  if ($null -eq $record) { return $out }
+  $payload = [string]$record.Payload
+  $img = $null
+  if (Get-Command Get-ImageRef -ErrorAction SilentlyContinue) { $img = Get-ImageRef $payload }
+  if ($null -ne $img) {
+    $out.Kind = 'image'
+    $out.Ref = [string]$img.Sha1
+    $out.Head = 'image - ' + [string]$img.W + 'x' + [string]$img.H + ' - ' + [string]$img.Fmt + ' - ' + (Format-Size $img.Bytes)
+    return $out
+  }
+  $out.Lines = Get-PreviewLines $payload $cols $maxLines
+  $out.Head = Get-PreviewInfo $payload
+  $rich = ''
+  if ($null -ne $record.PSObject.Properties['Rich']) { $rich = [string]$record.Rich }
+  if ($rich) {
+    $out.Kind = 'rich'
+    $out.Ref = $rich
+    $out.Head = 'formatted - ' + $out.Head
+  }
+  return $out
 }
 
 # The lines the card shows, already cut to what fits. Pure: no window, no measuring, so it
@@ -24,7 +51,7 @@ function Get-PreviewLines([string]$payload, [int]$cols, [int]$maxLines) {
   if ([string]::IsNullOrEmpty($payload) -or $cols -lt 12 -or $maxLines -lt 1) { return , $out }
   $text = $payload
   # a file list is stored as one path per line behind a marker; the card names the files
-  if ($text[0] -eq [char]1) {
+  if (Test-FilePayload $text) {
     $names = @($text.Substring(1) -split "`n" | Where-Object { $_ } | ForEach-Object { Split-Path -Leaf $_ })
     $text = '[files] ' + ($names -join '  ')
   }
@@ -53,7 +80,7 @@ function Get-PreviewInfo([string]$payload) {
   $text = $payload
   if ($text.Length -gt $script:PreviewChars) { $text = $text.Substring(0, $script:PreviewChars) }
   $kind = 'text'
-  if ($payload[0] -eq [char]1) { $kind = 'files' }
+  if (Test-FilePayload $payload) { $kind = 'files' }
   $lines = 1
   $at = $text.IndexOf("`n")
   while ($at -ge 0) { $lines++; $at = $text.IndexOf("`n", $at + 1) }
@@ -80,6 +107,10 @@ function New-PreviewConfig($ui, $sf, $font, $smallFont) {
   if ($charW -gt 1) { $cfg.Cols = [Math]::Max(12, [int](($cfg.W - 2 * $cfg.Pad) / $charW)) }
   $roomH = [Math]::Min((Px 460), [int]([Windows.Forms.Screen]::FromPoint([Windows.Forms.Cursor]::Position).WorkingArea.Height * 0.55))
   $cfg.MaxLines = [Math]::Max(2, [int](($roomH - 2 * $cfg.Pad - $cfg.LineH) / $cfg.LineH))
+  # the area a picture or a rendered page may take: the same room the text lines use
+  $cfg.ImgH = [Math]::Max((Px 120), [Math]::Min((Px 340), $roomH - 2 * $cfg.Pad - $cfg.LineH))
+  # a document keeps its own ink colours, so its page stays light on any theme
+  $cfg.Paper = [Drawing.Color]::White
   return $cfg
 }
 
@@ -105,6 +136,12 @@ function Invoke-PreviewPaint($win, $e) {
   $caption = New-Object Drawing.RectangleF -ArgumentList @([single]$c.Pad, [single]$y, [single]($c.W - 2 * $c.Pad), [single]$c.LineH)
   $g.DrawString($ps.Head, $c.Small, $c.DimBrush, $caption, $c.Sf)
   $y += $c.LineH
+  $bmp = $ps.Bmp
+  if ($null -ne $bmp) {
+    # already scaled to the card width by lib/media.ps1: painting it is a blit, not a resize
+    try { $g.DrawImageUnscaled($bmp, [int]$c.Pad, [int]$y) } catch { }
+    return
+  }
   foreach ($line in $ps.Lines) {
     $rect = New-Object Drawing.RectangleF -ArgumentList @([single]$c.Pad, [single]$y, [single]($c.W - 2 * $c.Pad), [single]$c.LineH)
     $g.DrawString($line, $c.Font, $c.InkBrush, $rect, $c.Sf)
@@ -142,12 +179,41 @@ function Update-Preview($ps, $record, $anchorTop, $cfg, $panel) {
   $key = [int]$record.Key
   if ($key -eq $ps.Key) { return }
   $ps.Key = $key
-  $ps.Lines = Get-PreviewLines ([string]$record.Payload) $cfg.Cols $cfg.MaxLines
-  $ps.Head = Get-PreviewInfo ([string]$record.Payload)
-  if ($ps.Lines.Count -eq 0) { Hide-Preview $ps; return }
+  $c = Get-PreviewContent $record $cfg.Cols $cfg.MaxLines
+  $ps.Kind = [string]$c.Kind
+  $ps.Ref = [string]$c.Ref
+  $ps.Lines = $c.Lines
+  $ps.Head = [string]$c.Head
+  $ps.Bmp = $null
+  if ($ps.Kind -ne 'text') {
+    $maxW = $cfg.W - 2 * $cfg.Pad
+    $maxH = $cfg.ImgH
+    $bmp = $null
+    if ($ps.Kind -eq 'image') { $bmp = Get-ImagePreviewBitmap $ps.Ref $maxW $maxH }
+    else { $bmp = Get-RichPreviewBitmap $ps.Ref $maxW $maxH $cfg.Font $cfg.Paper }
+    if ($null -ne $bmp) {
+      $ps.Bmp = $bmp
+    } else {
+      # the file is gone, or the format cannot be laid out: show the words we already have
+      $ps.Kind = 'text'
+      if ($ps.Lines.Count -eq 0) {
+        $list = New-Object System.Collections.Generic.List[string]
+        $list.Add('the preview is not available')
+        $ps.Lines = $list
+      }
+    }
+  }
+  if ($null -eq $ps.Bmp -and $ps.Lines.Count -eq 0) { Hide-Preview $ps; return }
   $ps.Cfg = $cfg
-  $h = $cfg.Pad * 2 + $cfg.LineH * (1 + $ps.Lines.Count)
-  $w = $cfg.W
+  if ($null -ne $ps.Bmp) {
+    # an image card hugs the picture; a rendered page uses the full card width
+    $w = $cfg.W
+    if ($ps.Kind -eq 'image') { $w = [Math]::Max((Px 220), [Math]::Min($cfg.W, $ps.Bmp.Width + 2 * $cfg.Pad)) }
+    $h = $cfg.Pad * 2 + $cfg.LineH + $ps.Bmp.Height
+  } else {
+    $w = $cfg.W
+    $h = $cfg.Pad * 2 + $cfg.LineH * (1 + $ps.Lines.Count)
+  }
   # beside the panel, on the side that has room; never under the cursor, so the row keeps
   # its hover while the card is up
   $x = $panel.Right + $cfg.Gap
@@ -196,4 +262,8 @@ function Close-Preview($ps) {
       if ($null -ne $rgn) { $rgn.Dispose() }
     }
   } catch { }
+  # the card is the only consumer of a decoded image or a rendered page
+  if (Get-Command Clear-MediaCache -ErrorAction SilentlyContinue) {
+    try { Clear-MediaCache } catch { }
+  }
 }

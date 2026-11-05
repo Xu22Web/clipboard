@@ -22,7 +22,7 @@ param(
   [switch]$Integration,
   [switch]$E2E,
   # directory holding clipboard.ps1 + lib + plugins + themes; default is this repo.
-  # build.ps1 points it at the packaged copy to prove the minified code still behaves.
+  # scripts\build.ps1 points it at the packaged copy to prove the minified code still behaves.
   [string]$Source = ''
 )
 
@@ -48,6 +48,16 @@ if ($isPackaged) {
 }
 
 $script:results = New-Object System.Collections.Generic.List[object]
+
+# The version lives in package.ini. A development copy reads it at run time, a package
+# carries it as a constant, so this is the number both of them have to report.
+$programVersion = ''
+$verFile = Join-Path $repoRoot 'package.ini'
+if (Test-Path -LiteralPath $verFile) {
+  # the key is Version=; .NET regex is case-sensitive, so the test reads it either way
+  $verMatch = [regex]::Match([IO.File]::ReadAllText($verFile), '(?mi)^\s*version\s*=\s*(\S+)\s*$')
+  if ($verMatch.Success) { $programVersion = $verMatch.Groups[1].Value }
+}
 
 function Check([string]$group, [string]$name, [bool]$ok, [string]$detail) {
   $script:results.Add([pscustomobject]@{
@@ -76,10 +86,14 @@ function New-Sandbox([string]$name) {
   $dir = Join-Path $tmpRoot $name
   New-Item -ItemType Directory -Path $dir -Force | Out-Null
   Copy-Item -LiteralPath $clipPs1 -Destination $dir -Force
-  foreach ($sub in @('lib', 'plugins', 'themes')) {
+  foreach ($sub in @('lib', 'utils', 'schema', 'plugins', 'themes')) {
     $src = Join-Path $srcRoot $sub
     if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $dir -Recurse -Force }
   }
+  # the version lives in package.ini, one level above src\ in the repository and beside the
+  # script in a sandbox - copying it keeps the sandbox reporting the real number
+  $pkgIni = Join-Path $repoRoot 'package.ini'
+  if (Test-Path -LiteralPath $pkgIni) { Copy-Item -LiteralPath $pkgIni -Destination $dir -Force }
   return $dir
 }
 
@@ -143,15 +157,25 @@ try {
   # rule (sizes, the $Root line) would not survive renaming.
   $entryPath = Join-Path $srcRoot 'clipboard.ps1'
   $libPath = Join-Path $srcRoot 'lib'
+  $utilsPath = Join-Path $srcRoot 'utils'
+  $schemaPath = Join-Path $srcRoot 'schema'
   $libFiles = @()
   if (Test-Path -LiteralPath $libPath) { $libFiles = @(Get-ChildItem -LiteralPath $libPath -Filter '*.ps1' -File | Sort-Object -Property Name) }
+  # the pure helpers and the schema files follow the same rules (no param block, no path
+  # from their own file, no duplicate name, a line budget), so they are walked as well
+  if (Test-Path -LiteralPath $utilsPath) { $libFiles += @(Get-ChildItem -LiteralPath $utilsPath -Filter '*.ps1' -File | Sort-Object -Property Name) }
+  if (Test-Path -LiteralPath $schemaPath) { $libFiles += @(Get-ChildItem -LiteralPath $schemaPath -Filter '*.ps1' -File | Sort-Object -Property Name) }
 
-  # the entry file names these; a package must carry all of them
-  $requiredLib = @('base', 'ini', 'values', 'util', 'keyhook', 'theme-stub', 'clip', 'store', 'hotkey', 'entry',
-    'picker-geom', 'anim', 'picker-draw', 'pinlist', 'preview', 'picker', 'serve', 'diag', 'shortcut', 'config', 'usage', 'dispatch')
+  # the entry file names these by relative path; a package must carry all of them
+  $requiredLib = @('lib\base', 'lib\native', 'lib\keyhook', 'lib\theme-stub',
+    'lib\media', 'lib\clip', 'lib\store', 'lib\hotkey', 'lib\entry', 'lib\picker-geom', 'lib\anim',
+    'lib\picker-draw', 'lib\pinlist', 'lib\preview', 'lib\picker', 'lib\serve', 'lib\diag', 'lib\shortcut',
+    'lib\config', 'lib\usage', 'lib\dispatch',
+    'utils\ini', 'utils\import', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\draw',
+    'schema\clipboard', 'schema\theme')
   $missingLib = @()
   foreach ($m in $requiredLib) {
-    if (-not (Test-Path -LiteralPath (Join-Path $libPath ($m + '.ps1')))) { $missingLib += $m }
+    if (-not (Test-Path -LiteralPath (Join-Path $srcRoot ($m + '.ps1')))) { $missingLib += $m }
   }
   Check 'struct' 'every required module exists' ($missingLib.Count -eq 0) ($missingLib -join ', ')
 
@@ -205,6 +229,27 @@ try {
   # loop means one exception on the way out leaves the keyboard dead.
   $pickerText = [IO.File]::ReadAllText((Join-Path $srcRoot 'lib\picker.ps1'))
   Check 'struct' 'no whole-window opacity transition' (-not ($pickerText -match '\$form\.Opacity\s*=')) ''
+
+  # A payload kind is a leading character. Every module asks base.ps1's predicates instead of
+  # comparing that character itself, so adding a kind stays a change in two files.
+  $prefixFiles = @($libFiles | Where-Object { $_.Name -notin @('base.ps1', 'entry.ps1', 'media.ps1') })
+  $prefixFiles += @(Get-ChildItem -LiteralPath (Join-Path $srcRoot 'plugins') -Filter '*.ps1' -File -ErrorAction SilentlyContinue)
+  $offenders = @()
+  foreach ($f in $prefixFiles) {
+    if ([IO.File]::ReadAllText($f.FullName) -match '\[char\](1|3)\b') { $offenders += $f.Name }
+  }
+  Check 'struct' 'payload kinds go through the predicates' ($offenders.Count -eq 0) ($offenders -join ', ')
+
+  # The panel layout and its timers are read from the two tables base.ps1 publishes, so a
+  # theme or a tuning pass touches one place. A bare literal creeping back into the draw
+  # code is how the row height and the hit test drifted apart before. The table names are
+  # renamed in a package, so only the source can be checked.
+  if (-not $isPackaged) {
+    $metricRefs = [regex]::Matches($pickerText, '\$m\[').Count
+    $timingRefs = [regex]::Matches($pickerText, '\$script:Timing\[').Count
+    Check 'struct' 'row layout comes from the metric table' ($metricRefs -ge 12) ($metricRefs -as [string])
+    Check 'struct' 'panel timers come from the timing table' ($timingRefs -ge 8) ($timingRefs -as [string])
+  }
   if (-not $isPackaged) {
     # the packaged copy has its function names minified, so only the source can be checked
     $pickerAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $srcRoot 'lib\picker.ps1'), [ref]$null, [ref]$null)
@@ -217,6 +262,42 @@ try {
   if (-not $isPackaged) {
     $entryLines = @([IO.File]::ReadAllLines($entryPath)).Count
     Check 'struct' 'entry file stays an entry point' ($entryLines -le 200) ([string]$entryLines + ' lines')
+
+    # the tooling lives outside src\: package.ini declares the commands, xpm runs them
+    $tooling = @('package.ini', 'xpm.ps1', 'xpm.cmd', 'xpm', 'build.ini',
+      'scripts\build.ps1', 'scripts\minify.ps1', 'scripts\dev.ps1', 'scripts\test.ps1', 'scripts\shot.ps1')
+    $missingTool = @()
+    foreach ($tool in $tooling) {
+      if (-not (Test-Path -LiteralPath (Join-Path $repoRoot $tool))) { $missingTool += $tool }
+    }
+    Check 'struct' 'the tooling ships with the repo' ($missingTool.Count -eq 0) ($missingTool -join ', ')
+    $pkgText = ''
+    if (Test-Path -LiteralPath (Join-Path $repoRoot 'package.ini')) { $pkgText = [IO.File]::ReadAllText((Join-Path $repoRoot 'package.ini')) }
+    # keys are PascalCase: [package] holds Name/Version, [scripts] holds one key per command
+    $scriptBlock = ''
+    $sm = [regex]::Match($pkgText, '(?ms)^\s*\[scripts\]\s*$(.*?)(?=^\s*\[|\z)')
+    if ($sm.Success) { $scriptBlock = $sm.Groups[1].Value }
+    $noCmd = @()
+    foreach ($cmd in @('Dev', 'Build', 'Test', 'Shot')) {
+      if (-not ($scriptBlock -match ('(?m)^' + $cmd + '=\S'))) { $noCmd += $cmd }
+    }
+    Check 'struct' 'package.ini declares every command' (($pkgText -match '(?m)^Name=\S') -and ($pkgText -match '(?m)^Version=\d+\.\d+\.\d+') -and $noCmd.Count -eq 0) ($noCmd -join ', ')
+    # every tracked ini follows the shared convention: lower case section names, PascalCase keys
+    $badIni = @()
+    foreach ($iniRel in @('package.ini', 'build.ini', 'src\themes\win11-dark.ini', 'src\themes\win11-light.ini')) {
+      $iniFile = Join-Path $repoRoot $iniRel
+      if (-not (Test-Path -LiteralPath $iniFile)) { $badIni += ($iniRel + ': missing'); continue }
+      foreach ($line in [IO.File]::ReadAllLines($iniFile)) {
+        $l = $line.Trim()
+        if ($l.Length -eq 0 -or $l.StartsWith('#') -or $l.StartsWith(';')) { continue }
+        if ($l.StartsWith('[')) {
+          if ($l -cnotmatch '^\[[a-z-]+\]$') { $badIni += ($iniRel + ': ' + $l) }
+          continue
+        }
+        if ($l -cnotmatch '^[A-Z][A-Za-z0-9]*=') { $badIni += ($iniRel + ': ' + $l) }
+      }
+    }
+    Check 'struct' 'ini files use lower case sections and PascalCase keys' ($badIni.Count -eq 0) ($badIni -join ', ')
     $huge = @()
     foreach ($f in $libFiles) {
       $count = @([IO.File]::ReadAllLines($f.FullName)).Count
@@ -235,7 +316,7 @@ try {
     Check 'struct' 'panel is raised without the TopMost property' ($topHits -eq 0) ([string]$topHits + ' assignment(s)')
     $showHits = ([regex]::Matches($pickerText, '(?m)^\s*\$form\.Show\(\)\s*$')).Count
     Check 'struct' 'panel is shown once, non-modally' ($showHits -eq 1) ([string]$showHits + ' call(s)')
-    $winText = [IO.File]::ReadAllText((Join-Path $libPath 'util.ps1'))
+    $winText = [IO.File]::ReadAllText((Join-Path $libPath 'native.ps1'))
     Check 'struct' 'the panel form never activates' (($winText -match 'ShowWithoutActivation') -and ($winText -match '0x08000000')) 'no-activate override missing'
     Check 'struct' 'panel hands the foreground back when it closes' ($pickerText -match 'SetForegroundWindow\(\$prev\)') 'restore call missing'
     Check 'struct' 'panel installs and removes the key hook' (($pickerText -match 'Enable-KeyHook') -and ($pickerText -match 'Disable-KeyHook')) 'hook calls missing'
@@ -341,7 +422,7 @@ try {
     $template = [IO.File]::ReadAllText($written)
     Check 'unit' 'template has defaults' (($template -match 'Hotkey=Ctrl\+Alt\+V') -and ($template -match 'MaxItems=300')) ''
 
-    $lines = @('# hash comment', '; semi comment', '[section]', 'Hotkey=Ctrl+Shift+F9', 'Theme = light ', 'Quoted="a b"', 'Garbage', 'MaxItems=7')
+    $lines = @('# hash comment', '; semi comment', 'Hotkey=Ctrl+Shift+F9', 'Theme = light ', 'Quoted="a b"', 'Garbage', 'MaxItems=7')
     [IO.File]::WriteAllLines($cfg, $lines, $Utf8)
     $kv = Read-Ini
     Check 'unit' 'Read-Ini skips comments' (-not $kv.ContainsKey('# hash comment')) ''
@@ -350,6 +431,33 @@ try {
     Check 'unit' 'Read-Ini skips malformed' (-not $kv.ContainsKey('Garbage')) ''
     Check 'unit' 'Read-Ini keeps number' ($kv['MaxItems'] -eq '7') ('MaxItems=' + $kv['MaxItems'])
     Check 'unit' 'Read-Ini reads hotkey' ($kv['Hotkey'] -eq 'Ctrl+Shift+F9') ('Hotkey=' + $kv['Hotkey'])
+
+    # every .ini follows one rule: "[a]" + "b=1" is the same key as "a.b=1", written flat
+    [IO.File]::WriteAllLines($cfg, @('Theme=win11-dark', '[item-marks]', 'MaxPins=50', 'StickyPins=1'), $Utf8)
+    $kv = Read-Ini
+    Check 'unit' 'a section prefixes the keys that follow' (($kv['item-marks.MaxPins'] -eq '50') -and ($kv['item-marks.StickyPins'] -eq '1') -and ($kv['Theme'] -eq 'win11-dark')) ($kv['item-marks.MaxPins'])
+    [void](Set-IniKey 'item-marks.MaxPins' '7')
+    $secText = [IO.File]::ReadAllText($cfg)
+    Check 'unit' 'a grouped key is rewritten inside its section' (($secText -match '(?m)^\[item-marks\]\r?$') -and ($secText -match '(?m)^MaxPins=7\r?$') -and (-not ($secText -match '(?m)^item-marks\.MaxPins='))) $secText.Trim()
+    $kv = Read-Ini
+    Check 'unit' 'the rewritten key reads back' ($kv['item-marks.MaxPins'] -eq '7') ($kv['item-marks.MaxPins'])
+
+    # one engine for every .ini: a parse is cached per file and re-used until the file changes
+    [IO.File]::WriteAllLines($cfg, @('MaxItems=11'), $Utf8)
+    $firstRead = Read-Ini
+    $secondRead = Read-Ini
+    Check 'unit' 'an unchanged file is parsed once' ([object]::ReferenceEquals($firstRead, $secondRead)) ''
+    # the length is the same as the value below, so only the write time tells them apart
+    [IO.File]::WriteAllLines($cfg, @('MaxItems=12'), $Utf8)
+    $external = Read-Ini
+    Check 'unit' 'an external rewrite is noticed' ($external['MaxItems'] -eq '12') ('MaxItems=' + $external['MaxItems'])
+    [void](Set-IniKey 'MaxItems' '13')
+    $afterWrite = Read-Ini
+    Check 'unit' 'a write through the engine is noticed' ($afterWrite['MaxItems'] -eq '13') ('MaxItems=' + $afterWrite['MaxItems'])
+    # a repeated key keeps the last value; the file order is what the command list is drawn from
+    $parsed = Read-IniDoc @('[pkg]', 'B=1', 'A=2', 'B=3')
+    Check 'unit' 'a repeated key keeps the last value' ($parsed.Map['pkg.B'] -eq '3') ('B=' + $parsed.Map['pkg.B'])
+    Check 'unit' 'the key order follows the file' (($parsed.Keys -join ',') -eq 'pkg.B,pkg.A') ($parsed.Keys -join ',')
 
     # Apply-Config must pick up the paste timings and the fallback list
     [IO.File]::WriteAllLines($cfg, @('ModReleaseTimeout=1500', 'PasteSettle=250', 'HotkeyFallbacks=Alt+Q;Alt+W'), $Utf8)
@@ -399,7 +507,8 @@ try {
     Check 'unit' 'store ignores blank input' (@(Get-Records).Count -eq $before) ''
 
     # ------------------------------------------------------------- record store
-    Check 'unit' 'v2 tag written' (([IO.File]::ReadAllText($StoreFile)).StartsWith($V2TAG)) ''
+    $rawHead = [IO.File]::ReadAllText($StoreFile)
+    Check 'unit' 'the store starts with the tag and its layout version' ($rawHead.StartsWith($TAG + $RS + [string]$script:DataVersion)) ($rawHead.Substring(0, [Math]::Min(9, $rawHead.Length)) -replace [string][char]30, '<RS>')
 
     # ------------------------------------------- generic marks (base owns no mark meaning)
     $markPlugin = @{
@@ -459,11 +568,192 @@ try {
     # the four new settings are real schema entries with the shipped defaults
     $sch = $script:IniSchema
     Check 'unit' 'preview and blob settings carry defaults' (($sch['PreviewHover'].Default -eq 1) -and ($sch['PreviewDelay'].Default -eq 350) -and ($sch['PreviewChars'].Default -eq 6000) -and ($sch['BlobThreshold'].Default -eq 32768)) ''
+    Check 'unit' 'media settings carry defaults' (($sch['CaptureImages'].Default -eq 1) -and ($sch['MaxImageBytes'].Default -eq 8388608) -and ($sch['CaptureRich'].Default -eq 1) -and ($sch['MaxRichBytes'].Default -eq 524288) -and ($sch['PasteRich'].Default -eq 1) -and ($sch['MaxMediaTotal'].Default -eq 67108864)) ''
 
-    # no legacy format support: a store without the CBHIST2 tag is ignored
+    # ------------------------------------------------------- images and rich text
+    # 1x1 transparent PNG: the bytes are what makes the identity, so any picture works
+    $png = [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')
+    $p1 = New-ImagePayload $png 1 1 'PNG'
+    $p2 = New-ImagePayload $png 1 1 'PNG'
+    Check 'unit' 'an image payload is derived from its bytes' ($p1.Length -gt 0 -and $p1[0] -eq [char]3 -and $p1 -ceq $p2) $p1
+    $iref = Get-ImageRef $p1
+    Check 'unit' 'an image payload parses back' (($null -ne $iref) -and $iref.W -eq 1 -and $iref.H -eq 1 -and $iref.Bytes -eq $png.Length -and $iref.Sha1.Length -eq 40) ''
+    Check 'unit' 'a text payload is not an image' (-not (Test-ImagePayload 'hello')) ''
+    Check 'unit' 'an image row says what it is' ((Get-ItemLabel $p1 $true) -like '[[]image] 1x1*PNG*') (Get-ItemLabel $p1 $true)
+    Check 'unit' 'an image entry has its own kind' ((Get-EntryKind $p1) -eq 'image') (Get-EntryKind $p1)
+    Check 'unit' 'byte sizes read like sizes' (((Format-Size 512) -eq '512 B') -and ((Format-Size 2048) -eq '2 KB') -and ((Format-Size 2411724) -eq '2.3 MB')) (Format-Size 2411724)
+
+    [void](Write-ImageMedia $p1 $png)
+    Check 'unit' 'an image lands in the media folder' (Test-Path -LiteralPath (Get-MediaPath $iref.Sha1 'png')) ''
+    [void](Write-ImageMedia $p1 $png)
+    Check 'unit' 'the same picture is stored once' (@(Get-ChildItem -LiteralPath (Get-MediaDir) -Filter '*.png').Count -eq 1) ([string]@(Get-ChildItem -LiteralPath (Get-MediaDir) -Filter '*.png').Count)
+    $imgRec = New-Record $p1 $now ''
+    Check 'unit' 'a record knows its media weight' ((Get-RecordMediaBytes $imgRec) -eq $png.Length) ([string](Get-RecordMediaBytes $imgRec))
+
+    $richRtf = '{\rtf1\ansi\deff0{\fonttbl{\f0\fswiss Segoe UI;}}\f0\fs24\b bold title\b0\par second line\par third line\par}'
+    $richCap = @{ Html = $Utf8.GetBytes('<html><body><p>hi</p></body></html>'); Rtf = $richRtf }
+    $rref = New-RichRef $richCap
+    Check 'unit' 'a rich reference is stable' (($rref -ceq (New-RichRef $richCap)) -and $rref.StartsWith('R:')) $rref
+    $rr = Get-RichRef $rref
+    Check 'unit' 'a rich reference parses back' (($null -ne $rr) -and $rr.Bytes -gt 0) $rref
+    [void](Write-RichMedia $rref $richCap)
+    Check 'unit' 'formatted text comes back as stored' (((Read-RichRtf $rref) -eq $richRtf) -and ((Read-RichHtml $rref).Length -eq $richCap.Html.Length)) ''
+    # the card draws the document into a bitmap: an empty one would mean the layout never ran
+    $renderFont = New-Object Drawing.Font 'Segoe UI', 10.5
+    $richBmp = Get-RichPreviewBitmap $rref 380 200 $renderFont ([Drawing.Color]::White)
+    $richInk = 0
+    if ($null -ne $richBmp) { $richInk = Get-InkBottom $richBmp ([Drawing.Color]::White) }
+    Check 'unit' 'formatted text paints into the card' (($null -ne $richBmp) -and ($richBmp.Width -eq 380) -and ($richInk -gt 20) -and ($richInk -le 200)) ([string]$richInk + ' px of ink')
+    $richAgain = Get-RichPreviewBitmap $rref 380 200 $renderFont ([Drawing.Color]::White)
+    Check 'unit' 'a painted page is reused' ([object]::ReferenceEquals($richBmp, $richAgain)) ''
+    Clear-MediaCache
+    $richRec = New-Record 'hi there' $now ''
+    $richRec.Rich = $rref
+    Check 'unit' 'a formatted row says so' ((Get-RecordLabel $richRec $true) -eq '[rich] hi there') (Get-RecordLabel $richRec $true)
+
+    # the card knows all three kinds, and a missing media file degrades to a message
+    $pcImg = Get-PreviewContent $imgRec 40 6
+    Check 'unit' 'the card knows an image' ($pcImg.Kind -eq 'image' -and $pcImg.Ref -and ($pcImg.Head -like 'image - 1x1*')) ([string]$pcImg.Kind + ' / ' + [string]$pcImg.Head)
+    $pcRich = Get-PreviewContent $richRec 40 6
+    Check 'unit' 'the card knows formatted text' ($pcRich.Kind -eq 'rich' -and ($pcRich.Head -like 'formatted -*') -and $pcRich.Lines.Count -gt 0) ([string]$pcRich.Head)
+    $pcText = Get-PreviewContent (New-Record 'plain body' $now '') 40 6
+    Check 'unit' 'the card still knows plain text' ($pcText.Kind -eq 'text' -and $pcText.Lines.Count -eq 1) ([string]$pcText.Kind)
+
+    # CF_HTML keeps byte offsets into its own buffer: the fragment has to come out exactly
+    $fragText = '<p>inside</p>'
+    $fragBytes = [Text.Encoding]::UTF8.GetBytes($fragText)
+    $stub = 'Version:0.9' + "`r`n" + 'StartHTML:0000000000' + "`r`n" + 'EndHTML:0000000000' + "`r`n" + 'StartFragment:0000000000' + "`r`n" + 'EndFragment:0000000000' + "`r`n"
+    $fragAt = $Utf8.GetByteCount($stub)
+    $fragEnd = $fragAt + $fragBytes.Length
+    $cfHtml = 'Version:0.9' + "`r`n" + ('StartHTML:' + ([string]$fragAt).PadLeft(10, [char]48)) + "`r`n" + ('EndHTML:' + ([string]$fragEnd).PadLeft(10, [char]48)) + "`r`n" + ('StartFragment:' + ([string]$fragAt).PadLeft(10, [char]48)) + "`r`n" + ('EndFragment:' + ([string]$fragEnd).PadLeft(10, [char]48)) + "`r`n" + $fragText
+    Check 'unit' 'cf_html offsets select the fragment' ((Get-HtmlText ($Utf8.GetBytes($cfHtml))) -eq 'inside') (Get-HtmlText ($Utf8.GetBytes($cfHtml)))
+    Check 'unit' 'html is read as words when there is no rtf' ((Get-HtmlText ($Utf8.GetBytes('<p>a &amp; b</p><p>c</p>'))) -eq ("a & b`nc")) (Get-HtmlText ($Utf8.GetBytes('<p>a &amp; b</p><p>c</p>')))
+
+    # store round trip: the extra field carries the reference, the bytes stay out of the file
+    $mixList = New-Object System.Collections.Generic.List[object]
+    $mixList.Add($imgRec)
+    $mixList.Add($richRec)
+    $mixList.Add((New-Record 'plain' $now ''))
+    Save-Records $mixList.ToArray()
+    $mixBack = @(Get-Records)
+    Check 'unit' 'an image record survives a save' (($mixBack.Count -eq 3) -and ([string]$mixBack[0].Payload -ceq $p1)) ([string]$mixBack.Count)
+    Check 'unit' 'a rich reference survives a save' ([string]$mixBack[1].Rich -ceq $rref) ([string]$mixBack[1].Rich)
+    Check 'unit' 'a plain record has no rich reference' (-not [string]$mixBack[2].Rich) ([string]$mixBack[2].Rich)
+    Check 'unit' 'the image type letter is written' (([IO.File]::ReadAllText($StoreFile)).Contains($RS + 'i')) ''
+    Check 'unit' 'pixels never enter the history file' (-not ([IO.File]::ReadAllText($StoreFile)).Contains('PNG' + [string][char]1)) ''
+
+    # the clipboard itself: an image goes back as an image, formatted text keeps its formats
+    if (Set-ClipItem $p1) {
+      $hasImage = $false
+      try { $hasImage = [Windows.Forms.Clipboard]::ContainsImage() } catch { }
+      Check 'unit' 'an image goes back to the clipboard' $hasImage ''
+      $capBack = Get-ClipCapture
+      $sameImage = ($null -ne $capBack.Image) -and ((New-ImagePayload $capBack.Image.Png $capBack.Image.W $capBack.Image.H $capBack.Image.Fmt) -ceq $p1)
+      Check 'unit' 'a captured image is the same picture' $sameImage ''
+    } else {
+      Check 'unit' 'an image goes back to the clipboard' $false 'set image failed'
+    }
+    if (Set-ClipItem 'hi there' $rref) {
+      $capRich = Get-ClipCapture
+      Check 'unit' 'formatted text keeps its formats on the clipboard' (($null -ne $capRich.Rich) -and [string]$capRich.Text -eq 'hi there') ''
+    } else {
+      Check 'unit' 'formatted text keeps its formats on the clipboard' $false 'set formatted text failed'
+    }
+
+    # a big picture: the card scales it down once and keeps a small copy beside it
+    $bigBmp = New-Object Drawing.Bitmap 1600, 900
+    $bgfx = [Drawing.Graphics]::FromImage($bigBmp)
+    $bgfx.Clear([Drawing.Color]::Teal)
+    $bgfx.Dispose()
+    $bmStream = New-Object IO.MemoryStream
+    $bigBmp.Save($bmStream, [Drawing.Imaging.ImageFormat]::Png)
+    $bigBmp.Dispose()
+    $bigPng = $bmStream.ToArray()
+    $bigPay = New-ImagePayload $bigPng 1600 900 'PNG'
+    [void](Write-ImageMedia $bigPay $bigPng)
+    $bigRef = Get-ImageRef $bigPay
+    Clear-MediaCache
+    $card = Get-ImagePreviewBitmap $bigRef.Sha1 380 200
+    $cardW = 0
+    $cardH = 0
+    if ($null -ne $card) { $cardW = $card.Width; $cardH = $card.Height }
+    Check 'unit' 'a big picture is scaled into the card' (($null -ne $card) -and ($cardW -le 380) -and ($cardH -le 200) -and ($cardH -gt 100)) ([string]$cardW + 'x' + [string]$cardH)
+    Check 'unit' 'the card leaves a small copy behind' (Test-Path -LiteralPath (Get-ImageThumbPath $bigRef.Sha1)) ''
+    Clear-MediaCache
+    $fromThumb = Get-ImagePreviewBitmap $bigRef.Sha1 380 200
+    Check 'unit' 'the small copy renders the same picture' (($null -ne $fromThumb) -and ($fromThumb.Width -eq $cardW) -and ($fromThumb.Height -eq $cardH)) ''
+    Clear-MediaCache
+    $bigList = New-Object System.Collections.Generic.List[object]
+    $bigList.Add((New-Record $bigPay $now ''))
+    Save-Records $bigList.ToArray()
+    Check 'unit' 'a thumbnail lives while its picture is referenced' (Test-Path -LiteralPath (Get-ImageThumbPath $bigRef.Sha1)) ''
+    Save-Records @()
+    Check 'unit' 'a thumbnail goes with its picture' ((-not (Test-Path -LiteralPath (Get-ImageThumbPath $bigRef.Sha1))) -and (-not (Test-Path -LiteralPath (Get-MediaPath $bigRef.Sha1 'png')))) ''
+
+    # media is dropped with the record it belongs to
+    Save-Records @($mixBack[2])
+    Check 'unit' 'dropping an image removes its file' (-not (Test-Path -LiteralPath (Get-MediaPath $iref.Sha1 'png'))) ''
+    $rSha = (Get-RichRef $rref).Sha1
+    Check 'unit' 'dropping formatted text removes both sidecars' ((-not (Test-Path -LiteralPath (Get-MediaPath $rSha 'html'))) -and (-not (Test-Path -LiteralPath (Get-MediaPath $rSha 'rtf')))) ''
+
+    # the media budget is counted apart from MaxTotal: pictures go first, text rows never do
+    $savedMediaTotal = $script:MaxMediaTotal
+    [void](Write-ImageMedia $p1 $png)
+    $script:MaxMediaTotal = [long]10
+    $budget = New-Object System.Collections.Generic.List[object]
+    $budget.Add($imgRec)
+    $budget.Add((New-Record 'a' $now ''))
+    Trim-Records $budget
+    Check 'unit' 'the media budget drops a picture over the cap' (($budget.Count -eq 1) -and ([string]$budget[0].Payload -eq 'a')) ([string]$budget.Count)
+    $script:MaxMediaTotal = [long]($png.Length + 10)
+    $budget2 = New-Object System.Collections.Generic.List[object]
+    $budget2.Add($imgRec)
+    $budget2.Add((New-Record 'a' $now ''))
+    Trim-Records $budget2
+    Check 'unit' 'the media budget keeps a picture under the cap' ($budget2.Count -eq 2) ([string]$budget2.Count)
+    $script:MaxMediaTotal = $savedMediaTotal
+
+    # a file whose header is not the current layout is not parsed, not overwritten and not
+    # backed up by the reader: `migrate` is the only thing that may touch it
+    [IO.File]::WriteAllText($StoreFile, ('CBHIST' + $RS + '0' + $RS + 't' + $US + [string]$now + $US + $US + 'old text'), $Utf8)
+    $sv = Get-StoreVersion
+    Check 'unit' 'an older layout is recognised, not read' (($sv.Kind -eq 'old') -and ($sv.Version -eq 0) -and (@(Get-Records).Count -eq 0)) ($sv.Kind + ' v' + $sv.Version)
+    Add-Item 'must not overwrite'
+    Check 'unit' 'an older layout is never overwritten' (([IO.File]::ReadAllText($StoreFile)).Contains('old text')) ''
+    # the version is one constant, and it is what the panel and the CLI report
+    Check 'unit' 'the program carries one version' ([string]$script:Version -match '^\d+\.\d+\.\d+$') ([string]$script:Version)
+
+    # no other format support: a file without the CBHIST tag is ignored and left alone
     [IO.File]::WriteAllText($StoreFile, ('alpha' + $RS + 'beta'), $Utf8)
-    Check 'unit' 'unknown store format ignored' (@(Get-Records).Count -eq 0) ('count=' + @(Get-Records).Count)
+    $uv = Get-StoreVersion
+    Check 'unit' 'unknown store format ignored' ((@(Get-Records).Count -eq 0) -and ($uv.Kind -eq 'unknown') -and ($uv.Version -eq -1)) ($uv.Kind + ' v' + $uv.Version)
     Check 'unit' 'unknown format is not backed up' (-not (Test-Path -LiteralPath (Join-Path $unitDir 'history.v1.bak'))) ''
+    # a file that is newer than this build is reported, never downgraded
+    [IO.File]::WriteAllText($StoreFile, ('CBHIST' + $RS + '9' + $RS + 't' + $US + [string]$now + $US + $US + 'future'), $Utf8)
+    $nv = Get-StoreVersion
+    Check 'unit' 'a newer layout is reported as newer' (($nv.Kind -eq 'newer') -and ($nv.Version -eq 9)) ($nv.Kind + ' v' + $nv.Version)
+    [IO.File]::WriteAllText($StoreFile, '', $Utf8)
+
+    # ---------------------------------------------------------------- migration
+    Check 'unit' 'no file needs no migration' ((Invoke-DataMigration).Message -like 'no history file*') ''
+    Save-Records @()
+    Check 'unit' 'a current file needs no migration' ((Invoke-DataMigration).Message -like 'already CBHIST v*') (Invoke-DataMigration).Message
+    # an older file with no step for it is refused, and -Purge archives it instead of guessing
+    [IO.File]::WriteAllText($StoreFile, ('CBHIST' + $RS + '0' + $RS + 't' + $US + [string]$now + $US + $US + 'old text'), $Utf8)
+    $mr = Invoke-DataMigration
+    Check 'unit' 'a version with no step is refused' ((-not $mr.Changed) -and $mr.Message.StartsWith('[!]')) $mr.Message
+    Check 'unit' 'a refused migration leaves the file' (([IO.File]::ReadAllText($StoreFile)).Contains('old text')) ''
+    $mp = Invoke-DataMigration -Purge
+    $backups = @(Get-ChildItem -LiteralPath (Join-Path $unitDir 'data\backup') -Filter '*.dat' -ErrorAction SilentlyContinue)
+    Check 'unit' 'purge archives an unreadable file' ($mp.Changed -and $backups.Count -eq 1 -and -not (Test-Path -LiteralPath $StoreFile)) ([string]$backups.Count + ' backup(s)')
+    Check 'unit' 'the archived copy keeps the old bytes' (([IO.File]::ReadAllText($backups[0].FullName)).Contains('old text')) ''
+    Save-Records @()
+    Check 'unit' 'the store is writable again after a purge' (([IO.File]::ReadAllText($StoreFile)).StartsWith($TAG)) ''
+    # a newer file is never touched, not even by -Purge
+    [IO.File]::WriteAllText($StoreFile, ('CBHIST' + $RS + '9' + $RS + 't' + $US + [string]$now + $US + $US + 'future'), $Utf8)
+    $mn = Invoke-DataMigration -Purge
+    Check 'unit' 'a newer file is never touched' ((-not $mn.Changed) -and (([IO.File]::ReadAllText($StoreFile)).Contains('future'))) $mn.Message
+    [IO.File]::WriteAllText($StoreFile, '', $Utf8)
 
     Save-Records $recList.ToArray()
     Add-Item 'alpha'
@@ -710,6 +1000,22 @@ try {
     Check 'unit' 'light text' ($pal.Text.ToArgb() -eq [Drawing.Color]::FromArgb(26, 26, 26).ToArgb()) $pal.Text.ToString()
     Check 'unit' 'theme fonts loaded' ($script:ThemeFonts.Count -ge 4) (($script:ThemeFonts.Keys | Sort-Object) -join ',')
     Check 'unit' 'theme keeps base metrics' ($script:Metric['RowHeight'] -eq 40) ($script:Metric['RowHeight'] -as [string])
+
+    # [metrics] in a theme restyles the rows; the next theme starts from the built-in table
+    # again, so an override cannot leak from one theme into another
+    $probeTheme = Join-Path $unitDir 'themes\probe-metrics.ini'
+    [IO.File]::WriteAllLines($probeTheme, @('name = probe-metrics', '[metrics]', 'TimeWidth = 60', 'RowGap = 4'), $Utf8)
+    $script:Theme = 'probe-metrics'
+    Apply-Theme
+    Check 'unit' 'a theme can restyle row metrics' (($script:Metric['TimeWidth'] -eq 60) -and ($script:Metric['RowGap'] -eq 4)) ($script:Metric['TimeWidth'] -as [string])
+    $script:Theme = 'win11-light'
+    Apply-Theme
+    $leaked = @()
+    foreach ($k in @($script:MetricDefault.Keys)) {
+      if ([int]$script:Metric[$k] -ne [int]$script:MetricDefault[$k]) { $leaked += $k }
+    }
+    Check 'unit' 'a theme without metrics restores the built-ins' ($leaked.Count -eq 0) ($leaked -join ', ')
+    Remove-Item -LiteralPath $probeTheme -Force -ErrorAction SilentlyContinue
     $script:Theme = 'nosuch-theme'; Apply-Theme
     Check 'unit' 'unknown theme resolves to default' (($script:Theme -eq 'win11-dark') -and ((Get-UiPalette).Surface.ToArgb() -eq [Drawing.Color]::FromArgb(32, 32, 32).ToArgb())) $script:Theme
 
@@ -733,6 +1039,23 @@ try {
     Apply-Config
     Check 'unit' 'Apply-Config rejects out of range' (($script:Rows -eq 10) -and ($MaxItems -eq 300) -and $script:HighlightOn) ('rows=' + $script:Rows + ' items=' + $MaxItems)
 
+    # Apply-Config walks the schema, so a key with a Ref needs a Default and the variable it
+    # points at has to end up holding that default whenever the file says nothing
+    $noRef = @()
+    $drifting = @()
+    foreach ($k in @($script:IniSchema.Keys)) {
+      $spec = $script:IniSchema[$k]
+      if (-not $spec.Contains('Ref')) { continue }
+      $slot = $spec['Ref']
+      if (-not ($slot -is [System.Management.Automation.PSReference])) { $noRef += $k; continue }
+      $def = $spec['Default']
+      if ([string]$spec['Type'] -eq 'bool') { $def = ([int]$def -ne 0) }
+      elseif ([string]$spec['Type'] -eq 'int' -and [string]$def -ne '') { $def = [int]$def }
+      if ([string]$slot.Value -ne [string]$def) { $drifting += ($k + '=' + $slot.Value + '/' + $def) }
+    }
+    Check 'unit' 'every schema key points at a live variable' ($noRef.Count -eq 0) ($noRef -join ', ')
+    Check 'unit' 'the applied values are the schema defaults' ($drifting.Count -eq 0) (($drifting | Select-Object -First 4) -join '; ')
+
     # ------------------------------------------------------- entry kinds / glyphs
     # the base only separates a file list from text; finer typing is a plugin job
     Check 'unit' 'Get-EntryKind text' ((Get-EntryKind 'plain words') -eq 'text') ''
@@ -750,8 +1073,6 @@ try {
     New-Item -ItemType Directory -Path $pdir -Force | Out-Null
     [IO.File]::WriteAllLines((Join-Path $pdir 'one.ps1'), @(
         "@{ Name = 'one'; Description = 'test'; TypeGlyph = { param(`$p) 'L' };";
-        "   Settings = [ordered]@{ Flag = @{ Kind = 'bool'; Default = 0; Desc = 'test flag' };"
-        "     Tint = @{ Kind = 'color'; Default = '#000000'; Themeable = `$true; Desc = 'themeable tint' } };"
         "   Commands = @{ 'hi' = { param(`$v) Write-Host ('hi ' + `$v) } };"
         "   Transform = { param(`$p) ('T:' + `$p) };"
         "   RowDecor = { param(`$r) if (`$r.Marks -match 's') { @{ Marks = @( @{ Glyph = 'M'; Color = '#112233' } ); TextColor = '#445566' } } } ;"
@@ -762,6 +1083,18 @@ try {
     [IO.File]::WriteAllLines((Join-Path $pdir 'two.ps1'), @("@{ Name = 'two' }"), $Utf8)
     [IO.File]::WriteAllLines((Join-Path $pdir 'nameless.ps1'), @("@{ Description = 'x' }"), $Utf8)
     [IO.File]::WriteAllLines((Join-Path $pdir 'boom.ps1'), @('throw "boom"'), $Utf8)
+    # a plugin's keys live in its own schema file: the sandbox root carries the real schema
+    # folder, so this test plugin only adds one file to schema\plugins
+    [IO.File]::WriteAllLines((Join-Path $unitDir 'schema\plugins\one.ps1'), @(
+        "@{ Name = 'one'; File = 'clipboard.ini'; Description = 'test';",
+        "   Properties = [ordered]@{ Flag = @{ Type = 'bool'; Default = 0; Description = 'test flag' } };",
+        "   ThemeProperties = [ordered]@{ Tint = @{ Type = 'color'; Default = '#000000'; Description = 'themeable tint' } } }"), $Utf8)
+    # a plugin's keys live in its own schema file: the sandbox root carries the real schema
+    # folder, so this test plugin only adds one file to schema\plugins
+    [IO.File]::WriteAllLines((Join-Path $unitDir 'schema\plugins\one.ps1'), @(
+        "@{ Name = 'one'; File = 'clipboard.ini'; Description = 'test';";
+        "   Properties = [ordered]@{ Flag = @{ Type = 'bool'; Default = 0; Description = 'test flag' } };";
+        "   ThemeProperties = [ordered]@{ Tint = @{ Type = 'color'; Default = '#000000'; Description = 'themeable tint' } } }"), $Utf8)
 
     Check 'unit' 'empty Plugins list loads nothing' (@(Load-Plugins $pdir @()).Count -eq 0) ''
     Check 'unit' 'Plugins list loads one' ((@(Load-Plugins $pdir @('one') | ForEach-Object { $_.Name }) -join ',') -eq 'one') ''
@@ -1197,6 +1530,25 @@ try {
     $o = Clip $intDir @('help')
     Check 'int' 'help' ($o -match 'Usage: clipboard') ''
 
+    $o = Clip $intDir @('version')
+    Check 'int' 'version prints the program and data version' ($o -match ('clipboard ' + [regex]::Escape($programVersion) + '\s+data v\d+')) $o.Trim()
+
+    $o = Clip $intDir @('migrate')
+    Check 'int' 'migrate reports a store it does not need to touch' ($o -match 'nothing to migrate|migrated') $o.Trim()
+
+    # xpm reads package.ini and runs the command line it finds there
+    $xpm = Join-Path $repoRoot 'xpm.ps1'
+    if (Test-Path -LiteralPath $xpm) {
+      $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $xpm 2>&1 | Out-String)
+      Check 'int' 'xpm lists the declared commands' (($o -match '\bdev\b') -and ($o -match '\bbuild\b') -and ($o -match '\btest\b') -and ($o -match '\bshot\b')) $o.Trim()
+      $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $xpm 'nosuchcmd' 2>&1 | Out-String)
+      Check 'int' 'xpm reports an unknown command' (($o -match 'unknown command') -and ($o -match '\bdev\b')) $o.Trim()
+      $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $xpm 'dev' 'nosuch' 2>&1 | Out-String)
+      Check 'int' 'xpm runs a script through its command line' ($o -match 'dev always watches') $o.Trim()
+    } else {
+      Check 'int' 'xpm lists the declared commands' $false 'no xpm.ps1'
+    }
+
     $o = Clip $intDir @('config')
     Check 'int' 'config shows ini path' ($o -match 'clipboard\.ini') ''
 
@@ -1270,8 +1622,8 @@ try {
     $cfgRoot = Join-Path $tmpRoot 'cfgroot'
     foreach ($d in @($altDir, $cfgRoot)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
     Copy-Item -LiteralPath $clipPs1 -Destination (Join-Path $cfgRoot 'clipboard.ps1')
-    # the program is entry file + lib\: a lone clipboard.ps1 cannot start any more
-    Copy-Item -LiteralPath (Join-Path $srcRoot 'lib') -Destination $cfgRoot -Recurse -Force
+    # the program is entry file + lib\ + utils\ + schema\: a lone clipboard.ps1 cannot start
+    foreach ($d in @('lib', 'utils', 'schema')) { Copy-Item -LiteralPath (Join-Path $srcRoot $d) -Destination $cfgRoot -Recurse -Force }
     [IO.File]::WriteAllLines((Join-Path $cfgRoot 'clipboard.ini'), @('DataDir=' + $altDir), $Utf8)
     & powershell -NoProfile -ExecutionPolicy Bypass -Sta -File (Join-Path $cfgRoot 'clipboard.ps1') put 'ini-datadir' 2>&1 | Out-Null
     Check 'int' 'DataDir from ini' (Test-Path -LiteralPath (Join-Path $altDir 'history.dat')) $altDir
@@ -1358,9 +1710,25 @@ try {
     $iniTpl = [IO.File]::ReadAllText($roIni)
     $missing = @($schemaKeys | Where-Object { $iniTpl -notmatch ('(?m)^' + $_ + '=') })
     Check 'int' 'template has every schema key' ($schemaKeys.Count -gt 20 -and $missing.Count -eq 0) (($missing -join ','))
+    # the template writes the numbers the schema declares, so the value a user reads in the
+    # comment and the value the program falls back to cannot drift apart (the schema variable
+    # itself is renamed in a package, so a packaged copy skips this comparison)
+    if (($script:IniSchema -is [System.Collections.IDictionary]) -and (@($script:IniSchema.Keys).Count -gt 20)) {
+      $tplDrift = @()
+      foreach ($k in @($script:IniSchema.Keys)) {
+        $spec = $script:IniSchema[$k]
+        if (-not $spec.Contains('Ref')) { continue }
+        $m = [regex]::Match($iniTpl, '(?m)^' + $k + '=(.*)$')
+        if (-not $m.Success) { continue }
+        $want = [string]$spec['Default']
+        $got = $m.Groups[1].Value.Trim()
+        if ($got -ne $want) { $tplDrift += ($k + '=' + $got + '/' + $want) }
+      }
+      Check 'int' 'the template writes the schema defaults' ($tplDrift.Count -eq 0) (($tplDrift | Select-Object -First 4) -join '; ')
+    }
     Check 'int' 'template lists every plugin by name' (($iniTpl -match '(?m)^Plugins=entry-actions,item-marks,retention,transform\r?$') -and (-not ($iniTpl -match 'PluginDisabled'))) ''
-    # every plugin key is documented, and the template enables all of them
-    Check 'int' 'config init documents every plugin key' (($iniTpl -match '(?m)^item-marks\.MaxPins=50') -and ($iniTpl -match '(?m)^item-marks\.StickyPins=1') -and ($iniTpl -match '(?m)^entry-actions\.Reveal=1')) ''
+    # every plugin key is documented in its own [section], and none is written flat
+    Check 'int' 'config init documents every plugin key' (($iniTpl -match '(?m)^\[item-marks\]\r?$') -and ($iniTpl -match '(?m)^MaxPins=50\r?$') -and ($iniTpl -match '(?m)^StickyPins=1\r?$') -and ($iniTpl -match '(?m)^\[entry-actions\]\r?$') -and ($iniTpl -match '(?m)^Reveal=1\r?$') -and (-not ($iniTpl -match '(?m)^item-marks\.')) -and (-not ($iniTpl -match '(?m)^entry-actions\.'))) ''
 
     # init must never overwrite a value the user set - only reset may throw settings away
     [IO.File]::WriteAllText($roIni, ("Theme=win11-light`r`nRows=7`r`nMaxItems=42`r`n"), $Utf8)
@@ -1415,13 +1783,15 @@ try {
     Check 'int' 'plugin setting is visible' ($o -match 'entry-actions\.Browser') $o.Trim()
     $o = Clip $intDir @('config', 'set', 'entry-actions.Reveal', '0')
     $iniPlugin = [IO.File]::ReadAllText($cfg2)
-    Check 'int' 'plugin setting is writable' (($o -match 'entry-actions\.Reveal') -and ($iniPlugin -match '(?m)^entry-actions\.Reveal=0\r?$')) $o.Trim()
+    # a plugin key lands in its own section, which is created when the file has none yet
+    Check 'int' 'plugin setting is writable' (($o -match 'entry-actions\.Reveal') -and ($iniPlugin -match '(?m)^\[entry-actions\]\r?$') -and ($iniPlugin -match '(?m)^Reveal=0\r?$')) $o.Trim()
     $o = Clip $intDir @('config', 'set', 'entry-actions.Reveal', 'maybe')
     Check 'int' 'plugin setting rejects bad value' ($o -match '0 or 1') $o.Trim()
     $o = Clip $intDir @('config', 'init')
     $tplText = [IO.File]::ReadAllText($cfg2)
-    # the missing plugin key is added, the one the user set to 0 keeps its value
-    Check 'int' 'config init fills plugin settings only' (($tplText -match '(?m)^entry-actions\.Browser=\r?$') -and ($tplText -match '(?m)^entry-actions\.Reveal=0\r?$')) ''
+    # the missing plugin key is added inside the existing section, the one the user set to 0
+    # keeps its value, and the section header is not duplicated
+    Check 'int' 'config init fills plugin settings only' (($tplText -match '(?m)^Browser=\r?$') -and ($tplText -match '(?m)^Reveal=0\r?$') -and (([regex]::Matches($tplText, '(?m)^\[entry-actions\]\r?$')).Count -eq 1)) ''
     [IO.File]::WriteAllLines($cfg2, @('Plugins=entry-actions'), $Utf8)
 
     [IO.File]::WriteAllLines($cfg2, @('Plugins=nosuch'), $Utf8)
@@ -1512,23 +1882,46 @@ try {
     Check 'int' 'theme name is still settable' ($o -match 'win11-light') $o.Trim()
     Remove-Item -LiteralPath $cfg2 -Force -ErrorAction SilentlyContinue
 
-    # build.ps1 is driven by a settings file and rewrites the scripts from their syntax
-    # tree, never packing the history
+    # scripts\build.ps1 is driven by a settings file and rewrites the scripts from their
+    # syntax tree, never packing the history
     $pkgOut = Join-Path $tmpRoot 'pkg'
-    $build = Join-Path $repoRoot 'build.ps1'
+    $build = Join-Path $repoRoot 'scripts\build.ps1'
     $buildCfg = Join-Path $tmpRoot 'build-test.ini'
-    Check 'int' 'build.ps1 exists' (Test-Path -LiteralPath $build) ''
-    Check 'int' 'build settings ship with the repo' (Test-Path -LiteralPath (Join-Path $repoRoot 'build.ini')) ''
-    Check 'int' 'minifier ships with the repo' (Test-Path -LiteralPath (Join-Path $repoRoot 'build\minify.ps1')) ''
-    [IO.File]::WriteAllLines($buildCfg, @('Version=0.0.0-test', ('OutDir=' + $pkgOut), 'Verify=0', 'Minify=1', 'Rename=1', 'IncludeDocs=1', 'Overwrite=1'), $Utf8)
+    Check 'int' 'build script ships under scripts\\' (Test-Path -LiteralPath $build) ''
+    Check 'int' 'build options ship with the repo' (Test-Path -LiteralPath (Join-Path $repoRoot 'build.ini')) ''
+    Check 'int' 'minifier ships under scripts\\' (Test-Path -LiteralPath (Join-Path $repoRoot 'scripts\minify.ps1')) ''
+    Check 'int' 'package.ini ships with the repo' (Test-Path -LiteralPath (Join-Path $repoRoot 'package.ini')) ''
+    [IO.File]::WriteAllLines($buildCfg, @(('OutDir=' + $pkgOut), 'Verify=0', 'Minify=1', 'Rename=1', 'IncludeDocs=1', 'Overwrite=1'), $Utf8)
+    # the package folder is named after the version package.ini declares
+    Check 'int' 'package.ini carries the version for the package name' ($programVersion -match '^\d+\.\d+\.\d+$') ([string]$programVersion)
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
-    $pkgDir = Join-Path $pkgOut 'clipboard-0.0.0-test'
-    Check 'int' 'build.ps1 writes a folder from its settings' (Test-Path -LiteralPath $pkgDir) (($bout | Select-Object -Last 1) -as [string])
+    $pkgDir = Join-Path $pkgOut ('clipboard-' + $programVersion)
+    Check 'int' 'build.ps1 writes a folder named after the program version' (Test-Path -LiteralPath $pkgDir) (($bout | Select-Object -Last 1) -as [string])
     if (Test-Path -LiteralPath $pkgDir) {
       $names = @(Get-ChildItem -LiteralPath $pkgDir -Recurse -File | ForEach-Object { $_.FullName.Substring($pkgDir.Length) })
       Check 'int' 'package keeps the program files' ((Test-Path -LiteralPath (Join-Path $pkgDir 'clipboard.ps1')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'clipboard.cmd')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'lib\plugins.ps1'))) ''
+      # a packaged copy is installed from the folder: the two batch files sit next to
+      # clipboard.ps1 and only call commands the program has
+      $installBat = Join-Path $pkgDir 'install.bat'
+      $uninstallBat = Join-Path $pkgDir 'uninstall.bat'
+      $instText = ''
+      $uninstText = ''
+      $instHigh = 0
+      $uninstHigh = 0
+      if (Test-Path -LiteralPath $installBat) {
+        $instText = [IO.File]::ReadAllText($installBat)
+        $instHigh = @([IO.File]::ReadAllBytes($installBat) | Where-Object { $_ -gt 127 }).Count
+      }
+      if (Test-Path -LiteralPath $uninstallBat) {
+        $uninstText = [IO.File]::ReadAllText($uninstallBat)
+        $uninstHigh = @([IO.File]::ReadAllBytes($uninstallBat) | Where-Object { $_ -gt 127 }).Count
+      }
+      Check 'int' 'package ships install and uninstall scripts' ((Test-Path -LiteralPath $installBat) -and (Test-Path -LiteralPath $uninstallBat)) ''
+      Check 'int' 'install script sets up the ini, migrates and installs' (($instText -match 'config init') -and ($instText -match '\bmigrate\b') -and ($instText -match '\binstall\b') -and ($instText -match 'clipboard\.ps1')) ''
+      Check 'int' 'uninstall script purges the data folder' (($uninstText -match 'uninstall purge') -and ($uninstText -match '\bstop\b') -and ($uninstText -match 'clipboard\.ps1')) ''
+      Check 'int' 'the batch scripts stay plain ASCII' (($instHigh -eq 0) -and ($uninstHigh -eq 0)) ([string]$instHigh + '/' + [string]$uninstHigh)
       Check 'int' 'package keeps plugins and themes' ((Test-Path -LiteralPath (Join-Path $pkgDir 'plugins\item-marks.ps1')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'themes\win11-dark.ini'))) ''
-      Check 'int' 'package leaves history and settings out' ((@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|dist)([\\/]|$)' }).Count -eq 0) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir 'build.ini'))) (@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|dist)' }) -join ', ')
+      Check 'int' 'package leaves history, tooling and metadata out' ((@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|scripts)([\\/]|$)' }).Count -eq 0) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir 'build.ini')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir 'package.ini'))) (@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|scripts)' }) -join ', ')
 
       # the point of the build: same scripts, smaller, still parsing
       # (compare against the repository sources, not $srcRoot: with -Source the latter is
@@ -1551,17 +1944,22 @@ try {
       Check 'int' 'minified script keeps cli parameter names' (($outText -match '\[string\]\$Command') -and ($outText -match '\$Library')) ''
       $o2 = & powershell -NoProfile -ExecutionPolicy Bypass -Sta -File (Join-Path $pkgDir 'clipboard.ps1') status 2>&1
       Check 'int' 'packaged copy runs' ((($o2 -join ' ') -match 'plugins\s+:') -and -not (($o2 -join ' ') -match 'not recognized')) ((@($o2) | Select-Object -First 1) -as [string])
+      # the version is a constant in a package: same number, no package.ini to read
+      $pkgBase = [IO.File]::ReadAllText((Join-Path $pkgDir 'lib\base.ps1'))
+      Check 'int' 'a package carries the version as a constant' ((-not ($pkgBase -match 'package\.ini')) -and ($pkgBase -match [regex]::Escape($programVersion))) ''
+      $o3 = & powershell -NoProfile -ExecutionPolicy Bypass -Sta -File (Join-Path $pkgDir 'clipboard.ps1') version 2>&1
+      Check 'int' 'a package reports the package.ini version' (($o3 -join ' ') -match ('clipboard\s+' + [regex]::Escape($programVersion))) (($o3 -join ' ') -as [string]).Trim()
     }
     # Overwrite=0 refuses to replace an existing package
-    [IO.File]::WriteAllLines($buildCfg, @('Version=0.0.0-test', ('OutDir=' + $pkgOut), 'Verify=0', 'Overwrite=0'), $Utf8)
+    [IO.File]::WriteAllLines($buildCfg, @(('OutDir=' + $pkgOut), 'Verify=0', 'Overwrite=0'), $Utf8)
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
     Check 'int' 'Overwrite=0 keeps the existing folder' (($bout -join ' ') -match 'already exists') (($bout | Select-Object -Last 1) -as [string])
 
     # Plugins= / Themes= trim the package; an unknown name stops the build
     $pkgOut2 = Join-Path $tmpRoot 'pkg2'
-    [IO.File]::WriteAllLines($buildCfg, @('Version=0.0.0-test2', ('OutDir=' + $pkgOut2), 'Verify=0', 'IncludeDocs=0', 'Plugins=transform', 'Themes=win11-light'), $Utf8)
+    [IO.File]::WriteAllLines($buildCfg, @(('OutDir=' + $pkgOut2), 'Verify=0', 'IncludeDocs=0', 'Plugins=transform', 'Themes=win11-light'), $Utf8)
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
-    $pkgDir2 = Join-Path $pkgOut2 'clipboard-0.0.0-test2'
+    $pkgDir2 = Join-Path $pkgOut2 ('clipboard-' + $programVersion)
     if (Test-Path -LiteralPath $pkgDir2) {
       Check 'int' 'Plugins= ships only the listed plugin' ((Test-Path -LiteralPath (Join-Path $pkgDir2 'plugins\transform.ps1')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir2 'plugins\item-marks.ps1'))) ''
       Check 'int' 'Themes= ships only the listed theme' ((Test-Path -LiteralPath (Join-Path $pkgDir2 'themes\win11-light.ini')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir2 'themes\win11-dark.ini'))) ''
@@ -1570,7 +1968,7 @@ try {
     } else {
       Check 'int' 'Plugins= ships only the listed plugin' $false (($bout | Select-Object -Last 1) -as [string])
     }
-    [IO.File]::WriteAllLines($buildCfg, @('Version=0.0.0-test3', ('OutDir=' + $pkgOut2), 'Verify=0', 'Plugins=nosuchplugin'), $Utf8)
+    [IO.File]::WriteAllLines($buildCfg, @(('OutDir=' + $pkgOut2), 'Verify=0', 'Plugins=nosuchplugin'), $Utf8)
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
     Check 'int' 'unknown plugin name stops the build' (($bout -join ' ') -match 'nosuchplugin') (($bout | Select-Object -Last 1) -as [string])
     Remove-Item -LiteralPath $pkgOut -Recurse -Force -ErrorAction SilentlyContinue

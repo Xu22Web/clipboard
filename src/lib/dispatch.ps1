@@ -59,6 +59,16 @@ if (Get-Command Get-ConfigProblems -ErrorAction SilentlyContinue) {
 if ($Command -eq '' -or @('help', '-h', '--help') -contains $Command.ToLower()) { Show-Usage; return }
 
 switch ($Command.ToLower()) {
+  'version' {
+    Write-Host ('clipboard ' + $script:Version + '   data v' + $script:DataVersion)
+  }
+  'migrate' {
+    $r = Invoke-DataMigration -Purge:$Purge
+    $line = [string]$r.Message
+    if (-not $line.StartsWith('[!]')) { $line = '[ok] ' + $line }
+    Write-Host $line
+    if ($r.Changed) { Restart-ResidentIfRunning }
+  }
   'serve' { Start-Serve }
   'ui' {
     $sent = $false
@@ -84,7 +94,7 @@ switch ($Command.ToLower()) {
       if (-not $rt) { $rt = '-' }
       $head = ' '
       if ($sortMark -and (Test-Mark $recs[$i] $sortMark)) { $head = '*' }
-      Write-Host ('{0,3}  {1,-5} {2} {3}' -f ($i + 1), $rt, $head, (Format-Item $recs[$i].Payload 100))
+      Write-Host ('{0,3}  {1,-5} {2} {3}' -f ($i + 1), $rt, $head, (Format-Record $recs[$i] 100))
     }
   }
   'put' {
@@ -107,9 +117,9 @@ switch ($Command.ToLower()) {
     if (-not [int]::TryParse($Value, [ref]$i)) { Write-Host 'usage: clipboard pick 3'; break }
     $recs = @(Get-Records)
     if ($i -lt 1 -or $i -gt $recs.Count) { Write-Host 'index out of range'; break }
-    [void](Set-ClipItem $recs[$i - 1].Payload)
+    [void](Set-ClipItem $recs[$i - 1].Payload ([string]$recs[$i - 1].Rich))
     Add-Item $recs[$i - 1].Payload
-    Write-Host ('clipboard set: ' + (Format-Item $recs[$i - 1].Payload 100))
+    Write-Host ('clipboard set: ' + (Format-Record $recs[$i - 1] 100))
   }
   'del' {
     $i = 0
@@ -127,7 +137,7 @@ switch ($Command.ToLower()) {
       else { Write-Host ('[!] entry is protected by the ' + $pm + ' mark; load the plugin that owns it') }
       break
     }
-    if ($res -eq 'removed') { Write-Host ('deleted: ' + (Format-Item $victim.Payload 60) + '   left ' + @(Get-Records).Count) }
+    if ($res -eq 'removed') { Write-Host ('deleted: ' + (Format-Record $victim 60) + '   left ' + @(Get-Records).Count) }
     else { Write-Host 'index out of range' }
   }
   'clear' {
@@ -161,6 +171,7 @@ switch ($Command.ToLower()) {
       if ($m.WaitOne(0)) { $m.ReleaseMutex() } else { $alive = $true }
       $m.Dispose()
     } catch { }
+    Write-Host ('version     : ' + $script:Version)
     Write-Host ('resident    : ' + $(if ($alive) { 'running' } else { 'not running' }))
     $recs = @(Get-Records)
     $markWords = @(Get-MarkCountWords $recs)
@@ -170,7 +181,10 @@ switch ($Command.ToLower()) {
     Write-Host ('capture     : ' + $(if (Test-Path -LiteralPath $Paused) { 'paused' } else { 'active' }))
     Write-Host ('autostart   : ' + $(if (Test-Path -LiteralPath (Get-AutostartPath)) { 'installed' } else { 'not installed' }))
     Write-Host ('desktop     : ' + $(if (Test-Path -LiteralPath (Get-DesktopPath)) { 'installed' } else { 'not installed' }))
-    Write-Host ('store file  : ' + $StoreFile + '   (v2)')
+    Write-Host ('store file  : ' + $StoreFile)
+    $sv = Get-StoreVersion
+    Write-Host ('data        : v' + $script:DataVersion + '   (file: ' + $sv.Label + ')')
+    if (@('old', 'newer', 'unknown') -contains $sv.Kind) { Write-Host ('migration   : [!] ' + $sv.Hint) }
     Write-Host ('panel       : ' + $script:WinWidth + 'x' + (Get-PanelHeight $script:Rows (Get-PanelRowHeight) (Get-PanelChrome)) + '  rows=' + $script:Rows + '  theme=' + $script:Theme + '  dpi=' + $script:UiScale)
     $hkFile = Join-Path $StoreDir 'hotkey.txt'
     $eff = '(daemon never started)'

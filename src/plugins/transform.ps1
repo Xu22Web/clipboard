@@ -4,7 +4,8 @@
 #   text   line breaks and runs of spaces collapse into single spaces
 #   camel / snake / kebab / title   split on space, _ - and lower->upper, then join
 #
-# Settings: transform.Mode / transform.Modes / transform.Trim
+# Settings: transform.Mode / transform.Modes / transform.Trim, described in
+# schema\plugins\transform.ps1 and merged into the settings schema when this file loads.
 # One-off:  clipboard transform 3            entry 3 with the configured mode
 #           clipboard transform "3 snake"    entry 3 as snake_case (quotes required)
 # Right-click  one "Transform as <mode>" entry per mode listed in transform.Modes; the
@@ -19,18 +20,14 @@
   CommandHelp = @{
     'transform' = 'transform entry N and put it on the clipboard (quote "3 snake" for a one-off mode)'
   }
-  Settings    = [ordered]@{
-    Mode  = @{ Kind = 'enum'; Options = @('keep', 'text', 'upper', 'lower', 'camel', 'snake', 'kebab', 'title'); Default = 'keep'; Desc = 'how a pasted entry is rewritten' }
-    Modes = @{ Kind = 'list'; Default = 'text,upper,lower,camel,snake,kebab,title'; Options = @('text', 'upper', 'lower', 'camel', 'snake', 'kebab', 'title'); Desc = 'modes offered in the context menu, comma separated (default: every mode)' }
-    Trim  = @{ Kind = 'bool'; Default = 1; Desc = '1 = trim leading and trailing spaces of the result' }
-  }
   # param($text, $mode) -> rewritten text; the input comes back unchanged when the mode
   # is 'keep', the payload is a file list, or the text holds nothing to split
   Apply       = {
     param([string]$text, [string]$mode)
     if (-not $mode -or $mode -eq 'keep') { return $text }
     if ($text.Length -eq 0) { return $text }
-    if ($text[0] -eq [char]1) { return $text }
+    # a file list and an image descriptor are not words to re-join
+    if ((Test-FilePayload $text) -or (Test-ImagePayload $text)) { return $text }
     $out = $text
     switch ($mode) {
       'text' { $out = ($text -replace '\s+', ' ').Trim() }
@@ -155,8 +152,8 @@
           if ($null -eq $rec) { return $false }
           $p = [string]$rec.Payload
           if ($p.Length -eq 0) { return $false }
-          # a file list has no words to re-join
-          return ($p[0] -ne [char]1)
+          # a file list has no words to re-join, and neither has an image descriptor
+          return (-not (Test-FilePayload $p) -and -not (Test-ImagePayload $p))
         }
         Invoke = {
           param($rec)

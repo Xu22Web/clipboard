@@ -2,30 +2,34 @@
 #
 #   clipboard kind 3    kind, size, target parts, sniffed formats and a preview
 #   clipboard kinds     how many entries of each kind the history holds
-#   clipboard open 3    open the link / path / file list in entry 3
+#   clipboard open 3    open the link / path / file list / picture in entry 3
 #   Ctrl+O, context menu  the same open, on the selected row
 #
-# The base only tells a file list from text (Get-EntryKind); the richer typing used by the
-# commands, the menu item, the Ctrl+O key and the row icon lives here as KindOf / TypeGlyph.
+# The base only tells a file list and a picture apart from text (Get-EntryKind); the richer
+# typing used by the commands, the menu item, the Ctrl+O key and the row icon lives here as
+# KindOf / TypeGlyph.
 #
-# Settings: entry-actions.Browser / Reveal / Detail / PreviewChars / Detect / ShowTargets
+# Settings: entry-actions.Browser / Reveal / Detail / PreviewChars / Detect / ShowTargets,
+# described in schema\plugins\entry-actions.ps1 and merged into the settings schema when
+# this file loads.
 #
 # Scriptblocks must be self-contained: they may call base helpers, but must not read
 # variables created in this file's scope (that scope is gone when they run).
 @{
   Name         = 'entry-actions'
-  Description  = 'Inspect an entry (kind, size, target parts, sniffed format), open links and paths, and give each row its icon'
+  Description  = 'Inspect an entry (kind, size, target parts, sniffed format), open links, paths and pictures, and give each row its icon'
   CommandOrder = @('kind', 'kinds', 'open')
   CommandHelp  = @{
     'kind'  = 'analyse entry N: kind, size, target parts and sniffed formats'
     'kinds' = 'count the entries per kind across the whole history'
-    'open'  = 'open entry N (http link, file path or file list)'
+    'open'  = 'open entry N (http link, file path, file list or picture)'
   }
   # one classifier shared by every scriptblock in this file
   KindOf       = {
     param($payload)
     if ([string]::IsNullOrEmpty($payload)) { return 'empty' }
-    if ($payload[0] -eq [char]1) { return 'files' }
+    if (Test-FilePayload $payload) { return 'files' }
+    if (Test-ImagePayload $payload) { return 'image' }
     $head = $payload
     if ($head.Length -gt 2048) { $head = $head.Substring(0, 2048) }
     $t = $head.Trim()
@@ -47,6 +51,7 @@
       'mail' { $code = 0xE715 }
       'path' { $code = 0xE8B7 }
       'files' { $code = 0xE8B7 }
+      'image' { $code = 0xE8B9 }
       'code' { $code = 0xE943 }
       'multi' { $code = 0xE7C3 }
       'text' { $code = 0xE8A5 }
@@ -63,17 +68,24 @@
     param($rec)
     if ($null -eq $rec) { return $false }
     $k = [string](& (Get-PluginData 'entry-actions' 'KindOf') ([string]$rec.Payload))
-    return ($k -eq 'link' -or $k -eq 'path' -or $k -eq 'files')
+    return ($k -eq 'link' -or $k -eq 'path' -or $k -eq 'files' -or $k -eq 'image')
   }
   OpenPayload  = {
     param($payload)
     $target = [string]$payload
     $kind = [string](& (Get-PluginData 'entry-actions' 'KindOf') $target)
-    if ($target.Length -gt 0 -and $target[0] -eq [char]1) {
+    if (Test-FilePayload $target) {
       $parts = @($target.Substring(1) -split "`n" | Where-Object { $_ })
       if ($parts.Count -eq 0) { throw 'nothing to open' }
       $target = $parts[0]
       $kind = 'files'
+    }
+    if ($kind -eq 'image') {
+      # the pixels live in the media folder; the payload only names them
+      $ref = Get-ImageRef $target
+      if ($null -eq $ref) { throw 'not an image entry' }
+      $target = Get-MediaPath $ref.Sha1 'png'
+      if (-not (Test-Path -LiteralPath $target)) { throw 'the image file is gone' }
     }
     $target = $target.Trim()
     if ($kind -eq 'link') {
@@ -148,14 +160,6 @@
     }
     return $out
   }
-  Settings     = [ordered]@{
-    Detail       = @{ Kind = 'enum'; Options = @('short', 'full'); Default = 'full'; Desc = 'kind: short = one summary line, full = the whole block' }
-    PreviewChars = @{ Kind = 'int'; Min = 20; Max = 400; Default = 100; Desc = 'kind: characters of the entry shown in the preview' }
-    Detect       = @{ Kind = 'list'; Default = 'json,xml,yaml,base64,color,ip,uuid,number,version,date,hash'; Options = @('json', 'xml', 'yaml', 'base64', 'color', 'ip', 'uuid', 'number', 'version', 'date', 'hash'); Desc = 'kind: formats to sniff, comma separated' }
-    ShowTargets  = @{ Kind = 'bool'; Default = 1; Desc = 'kind: 1 = break links, mail, paths and file lists into their parts' }
-    Browser      = @{ Kind = 'string'; Default = ''; Desc = 'open: browser exe for http(s) links, empty = system default' }
-    Reveal       = @{ Kind = 'bool'; Default = 1; Desc = 'open: 1 = reveal a picked file in Explorer instead of running it' }
-  }
   Commands     = @{
     'open' = {
       param($value)
@@ -191,8 +195,10 @@
       if ($prevN -lt 20) { $prevN = 20 }
       $showTargets = ((Get-PluginSetting 'entry-actions' 'ShowTargets') -eq '1')
 
-      # a file-list payload starts with char 1 and keeps one path per line
-      $isFiles = ($raw.Length -gt 0 -and $raw[0] -eq [char]1)
+      # a file-list payload keeps one path per line, an image entry is a descriptor rather
+      # than text: its words and sniffers mean nothing
+      $isFiles = Test-FilePayload $raw
+      $isImage = Test-ImagePayload $raw
       $names = @()
       $body = $raw
       if ($isFiles) {
@@ -204,7 +210,7 @@
       if (-not $isFiles -and $raw.Length -gt 0) { $lines = ([regex]::Matches($raw, "`n")).Count + 1 }
       $trimmed = $body.Trim()
       $words = 0
-      if ($trimmed) { $words = @($trimmed -split '\s+' | Where-Object { $_ }).Count }
+      if ($trimmed -and -not $isImage) { $words = @($trimmed -split '\s+' | Where-Object { $_ }).Count }
 
       # ---------------------------------------------------------------- target parts
       $target = ''
@@ -234,6 +240,13 @@
           $shown = @($names | Select-Object -First 5 | ForEach-Object { [IO.Path]::GetFileName($_) })
           $target = $names.Count.ToString() + ' file(s): ' + ($shown -join ', ')
           if ($names.Count -gt 5) { $target = $target + ' ...' }
+        } elseif ($kind -eq 'image') {
+          $ref = Get-ImageRef $raw
+          if ($null -ne $ref) {
+            $target = [string]$ref.W + 'x' + [string]$ref.H + '   ' + [string]$ref.Fmt + '   ' + (Format-Size $ref.Bytes)
+            $path = Get-MediaPath $ref.Sha1 'png'
+            if (Test-Path -LiteralPath $path) { $target = $target + '   ' + $path } else { $target = $target + '   (file missing)' }
+          }
         } elseif ($kind -eq 'code') {
           $lang = 'unknown syntax'
           if ($trimmed -match '(?m)^#include') { $lang = 'c / c++' }
@@ -249,7 +262,7 @@
 
       # ------------------------------------------------------------- format sniffers
       $flavours = @()
-      if (-not $isFiles) {
+      if (-not $isFiles -and -not $isImage) {
         $sample = $trimmed
         if ($sample.Length -gt 8000) { $sample = $sample.Substring(0, 8000) }
         $flavours = @(& (Get-PluginData 'entry-actions' 'Sniff') $sample)
@@ -283,7 +296,7 @@
       param($value)
       $recs = @(Get-Records)
       if ($recs.Count -eq 0) { Write-Host '(history is empty)'; return }
-      $order = @('link', 'mail', 'path', 'files', 'code', 'multi', 'text', 'empty')
+      $order = @('link', 'mail', 'path', 'files', 'image', 'code', 'multi', 'text', 'empty')
       $counts = @{}
       foreach ($k in $order) { $counts[$k] = 0 }
       $chars = 0

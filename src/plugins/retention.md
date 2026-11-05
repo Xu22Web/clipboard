@@ -15,7 +15,7 @@ retention.MaxAgeDays=30
 
 不加载时不发生任何自动删除；`sweep` 是未知命令。
 
-> 插件默认加载，但 `MaxAgeDays` 默认是 `0`（永不过期），所以开箱不会删任何东西；想启用过期清理把它设成天数即可。
+> 插件默认加载，但 `MaxAgeDays` 默认为 `0`（永不过期），因此默认不删除任何条目；启用过期清理时把它设为天数。
 
 ## 命令
 
@@ -33,6 +33,8 @@ $ clipboard sweep force
 ```
 
 ## 设置项（`clipboard.ini`）
+
+这些键声明在 `schema\plugins\retention.ps1`，加载时合并进设置；文件里写在 `[retention]` 段内，`config set` 用 `<插件名>.<Key>`：
 
 | 键 | 默认 | 说明 |
 |---|---|---|

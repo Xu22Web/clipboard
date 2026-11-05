@@ -1,6 +1,15 @@
 # lib/serve.ps1 - the resident process: capture loop, hotkey, tray icon, and the supervisor
 # that restarts the loop after a crash.
 
+# A write made from inside this process (the panel pasting an entry, or `pick` under a running
+# daemon) must not come back as a brand new capture: remember what went on the clipboard and
+# the sequence number that came with it. Same-process calls are exact; a write from another
+# process still lands here through Add-Item's own deduplication.
+function Set-LastCapture([string]$payload) {
+  $script:LastText = [string]$payload
+  try { $script:LastSeq = [Cb.Win]::GetClipboardSequenceNumber() } catch { }
+}
+
 function Start-Serve {
   $created = $false
   $mutex = New-Object System.Threading.Mutex($true, $MutexName, [ref]$created)
@@ -105,7 +114,6 @@ function Invoke-ServeOnce {
 
   $script:LastSeq = [Cb.Win]::GetClipboardSequenceNumber()
   $script:LastText = Get-ClipItem
-
   $timer = New-Object Windows.Forms.Timer
   $timer.Interval = $Interval
   $timer.Add_Tick({
@@ -127,9 +135,16 @@ function Invoke-ServeOnce {
       $seq = [Cb.Win]::GetClipboardSequenceNumber()
       if ($seq -ne 0 -and $seq -eq $script:LastSeq) { return }
       if (Test-Path -LiteralPath $Paused) { return }
-      $t = Get-ClipItem
-      if ($null -eq $t) { return }
-      if ($t -cne $script:LastText) { $script:LastText = $t; Add-Item $t }
+      $cap = Get-ClipCapture
+      if ($null -eq $cap) { return }
+      # an image payload is its descriptor, so the comparison stays a short string compare
+      $t = [string]$cap.Text
+      if ($null -ne $cap.Image) { $t = New-ImagePayload $cap.Image.Png $cap.Image.W $cap.Image.H $cap.Image.Fmt }
+      if ([string]::IsNullOrEmpty($t)) { return }
+      if ($t -cne $script:LastText) {
+        $script:LastText = $t
+        Add-Item $t $cap
+      }
       $script:LastSeq = [Cb.Win]::GetClipboardSequenceNumber()
     })
   $timer.Start()

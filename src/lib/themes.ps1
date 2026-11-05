@@ -2,10 +2,10 @@
 #
 # A theme is one INI file inside <root>\themes:
 #
-#   name=win11-dark                       # optional, defaults to the file name
-#   description=Windows 11 Fluent, dark
-#   font_family=                          # empty = auto (Segoe UI Variable Text -> Segoe UI)
-#   icon_family=                          # empty = auto (Segoe Fluent Icons -> MDL2)
+#   Name=win11-dark                       # optional, defaults to the file name
+#   Description=Windows 11 Fluent, dark
+#   FontFamily=                           # empty = auto (Segoe UI Variable Text -> Segoe UI)
+#   IconFamily=                           # empty = auto (Segoe Fluent Icons -> MDL2)
 #
 #   [palette]                             # colour tokens, #RRGGBB or #AARRGGBB
 #   Surface=#202020
@@ -81,9 +81,21 @@ function Convert-ThemeColor([string]$spec) {
   } catch { return $null }
 }
 
-# Parse one theme ini: top-level keys, plus [palette] [fonts] [metrics] and one section
-# per plugin. A section is just a bag of strings; the plugin decides what they mean.
+# The theme schema (schema/theme.ps1) says which sections exist and what their values mean;
+# utils/import.ps1 reads the text. Together they replace a parser of its own, so a theme
+# follows exactly the rules of every other .ini - "[palette]" + "Surface=..." arrives here
+# as the flat key "palette.Surface".
+function Get-ThemeSchema {
+  if ($null -ne $script:ThemeSchema) { return $script:ThemeSchema }
+  $script:ThemeSchema = Import-Schema (Join-Path $Root 'schema\theme.ps1')
+  return $script:ThemeSchema
+}
+
+# Parse one theme ini: meta keys, plus every section the schema names (palette, fonts,
+# metrics) and one section per plugin. A section the schema allows is just a bag of values;
+# the plugin decides what they mean.
 function Read-ThemeIni([string]$path) {
+  $schema = Get-ThemeSchema
   $t = @{
     Name        = ''
     Description = ''
@@ -94,36 +106,35 @@ function Read-ThemeIni([string]$path) {
     Metrics     = @{}
     PluginTheme = @{}
   }
-  $section = ''
-  foreach ($line in [IO.File]::ReadAllLines($path, [Text.Encoding]::UTF8)) {
-    $l = $line.Trim()
-    if ($l.Length -eq 0) { continue }
-    if ($l.StartsWith('#') -or $l.StartsWith(';')) { continue }
-    if ($l.StartsWith('[') -and $l.EndsWith(']')) {
-      $section = $l.Substring(1, $l.Length - 2).Trim().ToLowerInvariant()
-      continue
-    }
-    $i = $l.IndexOf('=')
-    if ($i -lt 1) { continue }
-    $k = $l.Substring(0, $i).Trim()
-    $v = $l.Substring($i + 1).Trim()
-    if ($section -eq '') {
-      switch ($k.ToLowerInvariant()) {
+  $doc = Import-Ini $path
+  foreach ($k in @(Select-IniDocKeys $doc)) {
+    $key = [string]$k
+    $v = Get-IniDocValue $doc $key
+    $dot = $key.IndexOf('.')
+    if ($dot -lt 0) {
+      # meta keys are PascalCase (FontFamily); the underscore spelling is still accepted
+      switch ($key.ToLowerInvariant() -replace '_', '') {
         'name' { $t.Name = $v }
         'description' { $t.Description = $v }
-        'font_family' { $t.FontFamily = $v }
-        'icon_family' { $t.IconFamily = $v }
+        'fontfamily' { $t.FontFamily = $v }
+        'iconfamily' { $t.IconFamily = $v }
       }
-    } elseif ($section -eq 'palette') {
-      $t.Palette[$k] = $v
-    } elseif ($section -eq 'fonts') {
-      $t.Fonts[$k] = $v
-    } elseif ($section -eq 'metrics') {
-      $t.Metrics[$k] = $v
-    } else {
-      if (-not $t.PluginTheme.ContainsKey($section)) { $t.PluginTheme[$section] = @{} }
-      $t.PluginTheme[$section][$k] = $v
+      continue
     }
+    $section = $key.Substring(0, $dot).ToLowerInvariant()
+    $leaf = $key.Substring($dot + 1)
+    $spec = Get-SchemaSection $schema $section
+    if ($null -eq $spec) { continue }
+    # a value the schema rejects is dropped, so Apply-Theme keeps the built-in colour or size
+    $r = Convert-SchemaValue @{ Name = 'theme-value'; Properties = @{ Value = $spec } } 'Value' $v
+    if (-not $r.Ok) { continue }
+    $target = ''
+    if ($spec.Contains('Target')) { $target = [string]$spec['Target'] }
+    if ($target -eq 'Palette') { $t.Palette[$leaf] = [string]$r.Value; continue }
+    if ($target -eq 'Fonts') { $t.Fonts[$leaf] = [string]$r.Value; continue }
+    if ($target -eq 'Metrics') { $t.Metrics[$leaf] = [string]$r.Value; continue }
+    if (-not $t.PluginTheme.ContainsKey($section)) { $t.PluginTheme[$section] = @{} }
+    $t.PluginTheme[$section][$leaf] = $v
   }
   if ($t.Name -eq '') { $t.Name = [IO.Path]::GetFileNameWithoutExtension($path) }
   return $t
@@ -186,6 +197,9 @@ function Apply-Theme {
   $script:ThemeFonts = @{}
   $script:ThemeFace = @{ Font = ''; Icon = '' }
   $script:ThemeOverrides = @{}
+  # metrics restart from the built-in table: a theme without a [metrics] section must not
+  # inherit the numbers of the theme applied before it
+  $script:Metric = $script:MetricDefault.Clone()
   $name = Resolve-ThemeName $script:Theme
   $script:Theme = $name
   $pal = $null

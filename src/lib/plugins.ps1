@@ -13,8 +13,7 @@
 #     PanelKeys   = @( @{ Key = 'O'; Ctrl = $true; Label = 'open'; Hint = 'Open'
 #                          Test = { param($rec) ... }; Invoke = { param($rec) ... } } )
 #     TypeGlyph   = { param($payload) [string][char]0xE71B }  # row icon, first plugin wins
-#     Settings    = [ordered]@{ Browser = @{ Kind = 'string'; Default = ''; Desc = '...' } }
-#     ThemeSettings = [ordered]@{ StarColor = @{ Kind = 'color'; Default = '#FFC86E' } }
+
 #     Tick        = @{ Seconds = 60; Action = { param($now) ... } }           # resident loop
 #     Transform   = { param($payload) ... }       # rewrite what gets pasted
 #     RowDecor    = { param($record) @{ Marks = @( @{ Glyph = '..'; Color = '#..' } ) } }
@@ -29,21 +28,22 @@
 # flags and asks this layer for the rules (protected / sorts first / kept on clear) and
 # for the word to print. That is why adding a mark needs no change in clipboard.ps1.
 #
-# Two kinds of knobs, deliberately kept apart:
-#   Settings      -> clipboard.ini keys named <plugin>.<Key>, the user's switches
-#   ThemeSettings -> NOT ini keys at all: look-and-feel defaults a theme may restyle through
-#                    a section named after the plugin in themes\*.ini (e.g. [item-marks])
+# The plugin file declares BEHAVIOUR only. Its keys live in a schema file of their own,
+# schema\plugins\<name>.ps1, and are merged into the settings schema when the plugin loads:
+#   Properties      -> clipboard.ini keys named <plugin>.<Key>, the user's switches
+#   ThemeProperties -> NOT ini keys at all: look-and-feel defaults a theme may restyle
+#                      through a section named after the plugin in themes\*.ini
 # Read them with Get-PluginSetting (user) and Get-PluginTheme (theme-aware).
 #
-# SETTINGS: a plugin may declare zero or more keys. They join the same schema as the base
-# keys, namespaced <plugin>.<Key> (e.g. my-thing.Browser), so `clipboard config`,
-# `config get`, `config set` and `config init` handle them with no extra plumbing.
-# Read one from inside a plugin with:
+# SETTINGS: a plugin schema may declare zero or more keys. They join the same schema as the
+# base keys, namespaced <plugin>.<Key> (e.g. my-thing.Browser), so `clipboard config`,
+# `config get`, `config set` and `config init` handle them with no extra plumbing. Read one
+# from inside a plugin with:
 #
 #   Get-PluginSetting 'my-thing' 'Browser'
 #
-# Kind / Min / Max / Options / Default follow the base schema (bool, int, enum, regex,
-# hotkey, list, string). A duplicate key is ignored and logged.
+# Type / Minimum / Maximum / Enum / Default follow the schema field set documented in
+# src\utils\schema.ps1. A duplicate key is ignored and logged.
 #
 # ON BY DEFAULT: clipboard.ini lists every plugin by name, so Plugins= spells out exactly
 # what runs (and in which order), e.g.
@@ -133,33 +133,6 @@ function Load-Plugins([string]$Dir, [string[]]$Only) {
 # names requested in Plugins= that matched no file (empty when nothing was requested)
 function Get-PluginMissingNames {
   return @($script:PluginMissing)
-}
-
-# Every settings key the plugin files on disk declare, in the same shape Register-PluginSettings
-# produces (<plugin> -> ordered { '<plugin>.<Key>' -> spec }), but WITHOUT loading them: so
-# `config init` can document every key that exists while help, the plugin commands and the
-# panel still follow the resolved Plugins=.
-function Get-AllPluginSettings([string]$Dir) {
-  $out = [ordered]@{}
-  if (-not $Dir) { return $out }
-  try { if (-not (Test-Path -LiteralPath $Dir)) { return $out } } catch { return $out }
-  $files = @()
-  try { $files = @(Get-ChildItem -LiteralPath $Dir -Filter '*.ps1' -File -ErrorAction Stop | Sort-Object Name) } catch { return $out }
-  foreach ($f in $files) {
-    try {
-      $p = & $f.FullName
-      if ($p -isnot [hashtable] -or -not $p.ContainsKey('Name') -or -not $p.ContainsKey('Settings')) { continue }
-      $spec = $p['Settings']
-      if ($spec -isnot [System.Collections.IDictionary]) { continue }
-      $name = [string]$p['Name']
-      $own = [ordered]@{}
-      foreach ($k in @($spec.Keys)) { $own[$name + '.' + [string]$k] = $spec[$k] }
-      if ($own.Count -gt 0) { $out[$name] = $own }
-    } catch {
-      Write-Log ('plugin settings not read: ' + $f.Name + ' - ' + $_.Exception.Message)
-    }
-  }
-  return $out
 }
 
 function Get-PluginNames {

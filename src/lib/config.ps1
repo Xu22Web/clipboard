@@ -1,84 +1,90 @@
 # lib/config.ps1 - the settings surface: apply clipboard.ini to the defaults, print the
 # effective values, validate and write one key at a time.
 #
-# The schema lives in lib/ini.ps1 and no key is invented here: anything not in that table
-# is reported as unknown, which is what keeps `config`, `config get` and `config set`
-# consistent with each other.
+# The keys are described by schema/clipboard.ps1, and three layers under it do the work:
+# utils/ini.ps1 parses text into a document, utils/import.ps1 reads a file once per change
+# and rewrites a single line, utils/schema.ps1 validates a value against the schema. Nothing
+# here invents a key: a key the schema does not describe is reported as unknown, which is
+# what keeps `config`, `config get` and `config set` consistent with each other.
+
+$script:SettingsSchema = Import-Schema (Join-Path $Root 'schema\clipboard.ps1')
+$script:IniSchema = Get-SchemaProperties $script:SettingsSchema
+if ($null -eq $script:IniSchema) { $script:IniSchema = [ordered]@{} }
+
+
+# clipboard.ini, the settings file beside the entry point: one document per file version,
+# imported once and re-read only when the file changes on disk
+function Read-Ini {
+  return (Import-Ini $IniPath).Map
+}
+
+# the raw value of one key, "" when the file does not set it
+function Get-IniKey([string]$key) {
+  return (Import-IniValue $IniPath $key)
+}
+
+# validate one raw value against the settings schema
+function Convert-IniValue([string]$key, [string]$raw) {
+  return (Convert-SchemaValue $script:SettingsSchema $key $raw)
+}
+
+# effective value of one key coming from clipboard.ini (null when unset or invalid)
+function Get-CfgValue([string]$key) {
+  $c = Read-Ini
+  if (-not $c.ContainsKey($key)) { return $null }
+  $raw = [string]$c[$key]
+  if ($raw -eq '') { return $null }
+  $r = Convert-IniValue $key $raw
+  if (-not $r.Ok) { Write-Log ('config ignored: ' + $key + '=' + $raw + ' (' + $r.Error + ')'); return $null }
+  return [string]$r.Value
+}
+
+# write exactly one key: the importer keeps the comments and every other line, and drops
+# its cached parse so the next read sees the new text
+function Set-IniKey([string]$key, [string]$value) {
+  try {
+    [void](Export-IniValue $IniPath $key $value)
+    return $true
+  } catch {
+    Write-Log ('ini write failed: ' + $_.Exception.Message)
+    return $false
+  }
+}
 
 function Apply-Config {
   param([switch]$NoColors)
-  $script:IniCache = $null
-  $script:ExcludePattern = ''
-  $script:ShowBalloon = $true
-  $script:Theme = 'win11-dark'
-  $script:WinWidth = 700
-  $script:Rows = 10
-  $script:WinLeft = ''
-  $script:WinTop = ''
-  $script:SaveWinWidth = $false
-  $script:SaveWinPos = $false
-  $script:ShowTime = $true
-  $script:ShowTypeIcon = $true
-  $script:HighlightOn = $true
-  $script:HighlightMax = 8192
-  $script:ShowNewlineMarker = $true
-  $script:PreviewHover = $true
-  $script:PreviewDelay = 350
-  $script:PreviewChars = 6000
-  $script:BlobChars = 32768
-  $script:UndoOn = $true
-  $script:DpiAware = $true
-  $script:ScrollLines = 0
-  $script:Animations = $true
-  $script:Autostart = $true
-  $script:DesktopShortcut = $true
-  $script:PluginList = @()
-  # settings never come from the command line, so a reload starts from the defaults again
-  $script:Hotkey = 'Ctrl+Alt+V'
-  $script:PasteKeys = '^v'
-  $script:HotkeyFallbacks = ''
-  $script:ModReleaseTimeout = 1200
-  $script:PasteSettle = 80
-  $script:MaxItems = 300
-  $script:MaxBytes = 204800
-  $script:MaxTotal = 4194304
-  $script:Interval = 300
-  $script:NoPaste = $false
-
-  $v = Get-CfgValue 'Hotkey';            if ($null -ne $v) { $script:Hotkey = $v }
-  $v = Get-CfgValue 'PasteKeys';         if ($null -ne $v) { $script:PasteKeys = $v }
-  $v = Get-CfgValue 'HotkeyFallbacks';   if ($null -ne $v) { $script:HotkeyFallbacks = $v }
-  $v = Get-CfgValue 'ModReleaseTimeout'; if ($null -ne $v) { $script:ModReleaseTimeout = [int]$v }
-  $v = Get-CfgValue 'PasteSettle';       if ($null -ne $v) { $script:PasteSettle = [int]$v }
-  $v = Get-CfgValue 'MaxItems';          if ($null -ne $v) { $script:MaxItems = [int]$v }
-  $v = Get-CfgValue 'MaxBytes';          if ($null -ne $v) { $script:MaxBytes = [int]$v }
-  $v = Get-CfgValue 'MaxTotal';          if ($null -ne $v) { $script:MaxTotal = [int]$v }
-  $v = Get-CfgValue 'Interval';          if ($null -ne $v) { $script:Interval = [int]$v }
-  $v = Get-CfgValue 'NoPaste';           if ($v -eq '1') { $script:NoPaste = $true }
-  $v = Get-CfgValue 'Balloon';           if ($v -eq '0') { $script:ShowBalloon = $false }
-  $v = Get-CfgValue 'Theme';             if ($null -ne $v) { $script:Theme = $v }
-  $v = Get-CfgValue 'ExcludePattern';    if ($null -ne $v) { $script:ExcludePattern = $v }
-  $v = Get-CfgValue 'WindowWidth';       if ($null -ne $v) { $script:WinWidth = [int]$v }
-  $v = Get-CfgValue 'Rows';              if ($null -ne $v) { $script:Rows = [int]$v }
-  $v = Get-CfgValue 'WindowLeft';        if ($null -ne $v) { $script:WinLeft = $v }
-  $v = Get-CfgValue 'WindowTop';         if ($null -ne $v) { $script:WinTop = $v }
-  $v = Get-CfgValue 'SaveWindowWidth';   if ($v -eq '1') { $script:SaveWinWidth = $true }
-  $v = Get-CfgValue 'SaveWindowPos';     if ($v -eq '1') { $script:SaveWinPos = $true }
-  $v = Get-CfgValue 'ShowTime';          if ($v -eq '0') { $script:ShowTime = $false }
-  $v = Get-CfgValue 'ShowTypeIcon';      if ($v -eq '0') { $script:ShowTypeIcon = $false }
-  $v = Get-CfgValue 'Highlight';         if ($v -eq '0') { $script:HighlightOn = $false }
-  $v = Get-CfgValue 'HighlightMaxBytes'; if ($null -ne $v) { $script:HighlightMax = [int]$v }
-  $v = Get-CfgValue 'ShowNewlineMarker'; if ($v -eq '0') { $script:ShowNewlineMarker = $false }
-  $v = Get-CfgValue 'PreviewHover';      if ($v -eq '0') { $script:PreviewHover = $false }
-  $v = Get-CfgValue 'PreviewDelay';      if ($null -ne $v) { $script:PreviewDelay = [int]$v }
-  $v = Get-CfgValue 'PreviewChars';      if ($null -ne $v) { $script:PreviewChars = [int]$v }
-  $v = Get-CfgValue 'BlobThreshold';     if ($null -ne $v) { $script:BlobChars = [int]$v }
-  $v = Get-CfgValue 'Undo';              if ($v -eq '0') { $script:UndoOn = $false }
-  $v = Get-CfgValue 'Autostart';         if ($v -eq '0') { $script:Autostart = $false }
-  $v = Get-CfgValue 'DesktopShortcut';   if ($v -eq '0') { $script:DesktopShortcut = $false }
-  $v = Get-CfgValue 'DpiAware';          if ($v -eq '0') { $script:DpiAware = $false }
-  $v = Get-CfgValue 'ScrollLines';       if ($null -ne $v) { $script:ScrollLines = [int]$v }
-  $v = Get-CfgValue 'Animations';        if ($v -eq '0') { $script:Animations = $false }
+  # One pass over the schema: reset every variable it points at to the declared default, then
+  # let clipboard.ini override it. Settings never come from the command line, and a reload
+  # therefore starts from the same numbers the file is documented with.
+  #
+  # The file is imported once for the whole pass: every key is read from that map instead of
+  # running its own cache check, which is what kept this loop from being one page fault per
+  # setting.
+  $map = Read-Ini
+  foreach ($key in @($script:IniSchema.Keys)) {
+    $spec = $script:IniSchema[$key]
+    if (-not $spec.Contains('Ref')) { continue }
+    $slot = $spec['Ref']
+    $type = [string]$spec['Type']
+    # the schema keeps defaults in their file spelling (1/0, plain numbers); the variables
+    # hold the type the code expects
+    $def = $spec['Default']
+    if ($type -eq 'bool') { $def = ([int]$def -ne 0) }
+    elseif ($type -eq 'int' -and [string]$def -ne '') { $def = [int]$def }
+    $slot.Value = $def
+    $raw = ''
+    if ($map.ContainsKey($key)) { $raw = ([string]$map[$key]).Trim() }
+    if ($raw -eq '') { continue }
+    $r = Convert-IniValue $key $raw
+    if (-not $r.Ok) {
+      Write-Log ('config ignored: ' + $key + '=' + $raw + ' (' + $r.Error + ')')
+      continue
+    }
+    if ($type -eq 'bool') { $slot.Value = ($r.Value -eq '1') }
+    elseif ($type -eq 'int') { $slot.Value = [int]$r.Value }
+    else { $slot.Value = $r.Value }
+  }
+  # Plugins= is a list with a fallback: an empty value means every plugin on disk
   $v = Get-CfgValue 'Plugins'
   $script:PluginList = @()
   if ($null -ne $v -and ([string]$v).Trim() -ne '') {
@@ -111,6 +117,12 @@ function Get-ConfigReport {
     MaxItems          = [string]$MaxItems
     MaxBytes          = [string]$MaxBytes
     MaxTotal          = [string]$MaxTotal
+    MaxMediaTotal     = [string]$script:MaxMediaTotal
+    CaptureImages     = [string][int][bool]$script:CaptureImages
+    MaxImageBytes     = [string]$script:MaxImageBytes
+    CaptureRich       = [string][int][bool]$script:CaptureRich
+    MaxRichBytes      = [string]$script:MaxRichBytes
+    PasteRich         = [string][int][bool]$script:PasteRich
     Interval          = [string]$Interval
     NoPaste           = [string][int][bool]$script:NoPaste
     Balloon           = [string][int][bool]$script:ShowBalloon
@@ -160,19 +172,16 @@ function Get-ConfigReport {
 # mistaken for an unknown one, and it covers the three fixed value sets: the base keys, the
 # theme name and the values a list setting allows.
 function Get-ConfigProblems {
+  $cache = Import-Ini $IniPath
+  # the schema checks every key and value it knows; the theme name is the one cross-file
+  # rule it cannot know about, so it stays here
   $out = New-Object System.Collections.Generic.List[string]
-  $cache = $script:IniCache
-  if ($null -eq $cache) { $cache = Read-Ini; $script:IniCache = $cache }
-  $themes = @()
-  if (Get-Command Get-ThemeNames -ErrorAction SilentlyContinue) { try { $themes = @(Get-ThemeNames) } catch { } }
-  foreach ($k in @($cache.Keys)) {
-    $key = [string]$k
-    $raw = [string]$cache[$k]
-    if (-not $script:IniSchema.Contains($key)) { $out.Add('unknown key: ' + $key); continue }
-    if ($raw -eq '') { continue }
-    $r = Convert-IniValue $key $raw
-    if (-not $r.Ok) { $out.Add($key + '=' + $raw + '  (' + $r.Error + ')'); continue }
-    if ($key -eq 'Theme' -and $themes.Count -gt 0 -and ($themes -notcontains [string]$r.Value)) {
+  foreach ($p in @(Test-SchemaDoc $script:SettingsSchema $cache)) { $out.Add($p) }
+  $raw = Get-IniDocValue $cache 'Theme'
+  if ($raw -ne '' -and (Get-Command Get-ThemeNames -ErrorAction SilentlyContinue)) {
+    $themes = @()
+    try { $themes = @(Get-ThemeNames) } catch { }
+    if ($themes.Count -gt 0 -and ($themes -notcontains $raw)) {
       $out.Add('Theme=' + $raw + '  (no such theme file; have: ' + ($themes -join ', ') + ')')
     }
   }
@@ -191,8 +200,7 @@ function Show-Config {
   }
   Write-Host ('data dir    : ' + $StoreDir + $(if ($dataRoot) { '   (from clipboard.ini)' } else { '   (default)' }))
   Write-Host ''
-  $ini = $script:IniCache
-  if ($null -eq $ini) { $ini = Read-Ini }
+  $ini = Read-Ini
   $vals = Get-ConfigReport
 
   # split the report into the base keys and the per-plugin settings, so each plugin's
@@ -372,9 +380,10 @@ function Restart-ResidentIfRunning {
 # only fills gaps) and `config reset` (which replaces the file), so the two can never drift.
 function Get-IniTemplateLines {
   $t = @(
-    '# clipboard.ini - flat key=value list. Restart the daemon after editing (clipboard stop, clipboard serve).',
-    '# CLI switches win over this file. Every key below can also be written with:',
-    '#   clipboard config set <key> <value>',
+    '# clipboard.ini - key=value lines, and one [section] per plugin.',
+    '# Restart the daemon after editing (clipboard stop, clipboard serve), or use config set.',
+    '# Every key below can also be written with:',
+    '#   clipboard config set <key> <value>        (plugin keys: config set <plugin>.<Key> <value>)',
     '# write location, empty = <script dir>\data. relative paths resolve against the script dir.',
     'DataDir=',
     '# Hotkey: key may be A-Z 0-9 F1-F24 Insert Delete Home End PgUp PgDn Space.',
@@ -395,6 +404,19 @@ function Get-IniTemplateLines {
     'MaxBytes=204800',
     '# total store size cap in bytes; oldest entries are dropped beyond it',
     'MaxTotal=4194304',
+    '# size budget for images and the html / rtf sidecars, in bytes (0 = unlimited).',
+    '# it is counted apart from MaxTotal, so a screenshot cannot evict every text row',
+    'MaxMediaTotal=67108864',
+    '# 1 = capture pictures (a Word selection carries text, so it stays a formatted entry)',
+    'CaptureImages=1',
+    '# per image cap in bytes; larger pictures are logged and skipped',
+    'MaxImageBytes=8388608',
+    '# 1 = remember the html / rtf of formatted text so it can be pasted back',
+    'CaptureRich=1',
+    '# html + rtf cap; larger formatted text is kept as plain text only',
+    'MaxRichBytes=524288',
+    '# 1 = paste the formatting back, 0 = always paste plain text',
+    'PasteRich=1',
     '# payloads above this many characters are kept in data\blobs instead of this file,',
     '# 0 = always inline (one self-contained history.dat)',
     'BlobThreshold=32768',
@@ -467,9 +489,11 @@ function Get-IniTemplateLines {
   )
   # Settings declared by every plugin file on disk, loaded or not: the template documents
   # what exists, while help / the plugin commands / the panel follow the resolved Plugins=.
+  # A plugin's keys are written as a section of its own - [item-marks] + MaxPins=50 - which
+  # is the same key as item-marks.MaxPins=50 for every reader.
   $pset = $null
   if (Get-Command Get-AllPluginSettings -ErrorAction SilentlyContinue) {
-    $pset = Get-AllPluginSettings (Join-Path $Root 'plugins')
+    $pset = Get-AllPluginSettings (Join-Path $Root 'schema\plugins')
   }
   if ($null -eq $pset -or $pset.Count -eq 0) { $pset = $script:PluginSettings }
   if ($null -eq $pset) { $pset = @{} }
@@ -477,14 +501,17 @@ function Get-IniTemplateLines {
   foreach ($pname in @($pset.Keys)) {
     $extra.Add('')
     $extra.Add('# ---- plugin: ' + $pname + ' (used when listed in Plugins=) ----')
+    $extra.Add('[' + $pname + ']')
     foreach ($full in @($pset[$pname].Keys)) {
       $spec = $pset[$pname][$full]
       $desc = ''
-      if ($spec.Contains('Desc')) { $desc = [string]$spec['Desc'] }
+      if ($spec.Contains('Description')) { $desc = [string]$spec['Description'] }
       if ($desc) { $extra.Add('# ' + $desc) }
       $dv = ''
       if ($spec.Contains('Default')) { $dv = [string]$spec['Default'] }
-      $extra.Add($full + '=' + $dv)
+      $leaf = [string]$full
+      if ($leaf.StartsWith($pname + '.')) { $leaf = $leaf.Substring($pname.Length + 1) }
+      $extra.Add($leaf + '=' + $dv)
     }
   }
   $all = New-Object System.Collections.Generic.List[string]
@@ -503,36 +530,87 @@ function Merge-IniDefaults {
   Ensure-Dir
   $tpl = @(Get-IniTemplateLines)
   # everything the program can write is "known"; anything else is left over from an older
-  # version or a plugin that is gone
+  # version or a plugin that is gone. A key inside a template section counts under the
+  # section name, so "[item-marks]" + "MaxPins=50" is the key item-marks.MaxPins.
   $known = @{}
+  $tplSection = ''
   foreach ($t in $tpl) {
-    if ($t -match '^\s*([A-Za-z0-9_.-]+)\s*=') { $known[$Matches[1].ToLowerInvariant()] = $true }
+    if ($t -match '^\s*\[(.+)\]\s*$') { $tplSection = $Matches[1].Trim(); continue }
+    if ($t -match '^\s*([A-Za-z0-9_.-]+)\s*=') {
+      $name = $Matches[1]
+      if ($tplSection) { $name = $tplSection + '.' + $name }
+      $known[$name.ToLowerInvariant()] = $true
+    }
   }
   $lines = New-Object System.Collections.Generic.List[string]
   $have = @{}
+  $haveSections = @{}
+  $sectionEnd = @{}
   $pruned = 0
   if (Test-Path -LiteralPath $IniPath) {
+    # a key may be written flat or as a leaf inside [section]; both count as that key, and
+    # the extent of every section is remembered so a late key can join it in place
+    $section = ''
     foreach ($l in [IO.File]::ReadAllLines($IniPath, [Text.Encoding]::UTF8)) {
-      if ($l -match '^\s*([A-Za-z0-9_.-]+)\s*=' -and -not $known.ContainsKey($Matches[1].ToLowerInvariant())) {
-        # keep the value readable, but out of the way: a removed '#' brings it back
-        $lines.Add('# [unknown] ' + $l.Trim())
-        $pruned++
+      if ($l -match '^\s*\[(.+)\]\s*$') {
+        $section = $Matches[1].Trim()
+        $lines.Add($l)
+        $haveSections[$section.ToLowerInvariant()] = $true
+        $sectionEnd[$section.ToLowerInvariant()] = $lines.Count - 1
+        continue
+      }
+      if ($l -match '^\s*([A-Za-z0-9_.-]+)\s*=') {
+        $name = $Matches[1]
+        if ($section) { $name = $section + '.' + $name }
+        $name = $name.ToLowerInvariant()
+        if (-not $known.ContainsKey($name)) {
+          # keep the value readable, but out of the way: a removed '#' brings it back
+          $lines.Add('# [unknown] ' + $l.Trim())
+          $pruned++
+          continue
+        }
+        $lines.Add($l)
+        $have[$name] = $true
+        if ($section) { $sectionEnd[$section.ToLowerInvariant()] = $lines.Count - 1 }
         continue
       }
       $lines.Add($l)
-      if ($l -match '^\s*([A-Za-z0-9_.-]+)\s*=') { $have[$Matches[1].ToLowerInvariant()] = $true }
+      if ($section -and $l.Trim()) { $sectionEnd[$section.ToLowerInvariant()] = $lines.Count - 1 }
     }
   }
-  # comments are buffered so an added key keeps the explanation that introduces it
+  # comments are buffered so an added key keeps the explanation that introduces it; a
+  # section header is buffered with them, so a gap is filled inside its own [section].
+  # A section the file already has gets no second header - the key joins the block it has.
   $pending = New-Object System.Collections.Generic.List[string]
+  $tplSectionName = ''
   $added = 0
   foreach ($raw in $tpl) {
     $s = [string]$raw
     $tl = $s.Trim()
     if ($tl -eq '' -or $tl.StartsWith('#')) { $pending.Add($s); continue }
+    if ($tl -match '^\[(.+)\]$') {
+      $tplSectionName = $Matches[1].Trim().ToLowerInvariant()
+      if ($haveSections.ContainsKey($tplSectionName)) { $pending.Clear(); continue }
+      $pending.Add($s)
+      continue
+    }
     if ($tl -notmatch '^\s*([A-Za-z0-9_.-]+)\s*=') { $pending.Clear(); continue }
     $k = $Matches[1].ToLowerInvariant()
+    if ($tplSectionName) { $k = $tplSectionName + '.' + $k }
     if ($have.ContainsKey($k)) { $pending.Clear(); continue }
+    if ($tplSectionName -and $haveSections.ContainsKey($tplSectionName)) {
+      # the section is already in the file: insert after its last line and keep the indices
+      $at = [int]$sectionEnd[$tplSectionName] + 1
+      $lines.Insert($at, $s)
+      foreach ($sec in @($sectionEnd.Keys)) {
+        if ([int]$sectionEnd[$sec] -ge $at) { $sectionEnd[$sec] = [int]$sectionEnd[$sec] + 1 }
+      }
+      $sectionEnd[$tplSectionName] = $at
+      $pending.Clear()
+      $have[$k] = $true
+      $added++
+      continue
+    }
     if ($lines.Count -gt 0 -and $pending.Count -gt 0) { $lines.Add('') }
     foreach ($p in $pending) { $lines.Add($p) }
     $lines.Add($s)

@@ -13,7 +13,8 @@
 #
 # ThemeSettings -> themes\<name>.ini  [item-marks]  (not ini keys of clipboard.ini)
 # The highlight colours are theme items only: how a row looks belongs to the theme, so
-# there is no clipboard.ini key for them.
+# there is no clipboard.ini key for them. Both sets of keys - the ini switches and the
+# theme styling - are described in schema\plugins\item-marks.ps1.
 #
 # Scriptblocks must be self-contained: they may call base helpers, but must not read
 # variables created in this file's scope (that scope is gone when they run).
@@ -51,19 +52,6 @@
     'highlight'   = 'highlight entry N: text and background take the highlight colours'
     'unhighlight' = 'remove the highlight from entry N'
     'marks'       = 'show the colours and glyph this plugin paints with'
-  }
-  Settings      = [ordered]@{
-    MaxPins          = @{ Kind = 'int'; Min = 0; Max = 1000; Default = 50; Desc = 'pinned entry cap, 0 = unlimited' }
-    ClearKeepsPinned = @{ Kind = 'bool'; Default = 1; Desc = '1 = clear keeps pinned rows, 0 = clear wipes them too' }
-    StickyPins       = @{ Kind = 'bool'; Default = 1; Desc = '1 = pinned rows stay on top while searching, 0 = the search hides them too' }
-    StickyRows       = @{ Kind = 'int'; Min = 0; Max = 50; Default = 3; Desc = 'rows the sticky pins may take while searching, 0 = as many as fit' }
-  }
-  ThemeSettings = [ordered]@{
-    StarGlyph      = @{ Kind = 'string'; Default = [string][char]0xE735; Desc = 'glyph shown for a starred entry' }
-    StarColor      = @{ Kind = 'color'; Default = '#FFC86E'; Desc = 'colour of the star mark' }
-    PinColor       = @{ Kind = 'color'; Default = ''; Desc = 'colour of the pin mark, empty = theme Mark colour' }
-    EmphasisInk    = @{ Kind = 'color'; Default = '#9FDDFF'; Desc = 'ink of a highlighted row' }
-    EmphasisFill   = @{ Kind = 'color'; Default = '#3360CDFF'; Desc = 'fill of a highlighted row' }
   }
   # '' when another pin fits, otherwise the reason it does not: with sticky pins on, the
   # frozen block may never fill the list, or the rows below would be out of reach.

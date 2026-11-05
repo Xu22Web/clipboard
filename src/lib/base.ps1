@@ -7,11 +7,38 @@
 # lib\, so a path built from it would resolve themes\, plugins\ and data\ one level too
 # deep. clipboard.ps1 owns $Root; every module below only reads it.
 
-# --- record format: CBHIST2 + RS-separated records: flags US epoch US payload ----
+# --- record format ------------------------------------------------------------
+# CBHIST RS <data version> RS <flags> US <epoch> US <extra> US <payload> RS ...
+# extra is '' for a record with no formatted-text sidecar. The type char is 't' (text),
+# 'f' (file list) or 'i' (image); everything after it is the mark set.
 $RS      = [string][char]30
 $US      = [string][char]31
 $FILESIG = [string][char]1
-$V2TAG   = 'CBHIST2'
+$IMGSIG  = [string][char]3
+$TAG     = 'CBHIST'
+# Layout version of the store. A release that changes the records bumps this number and adds
+# the matching step to lib/migrate.ps1. Only this version is read: an older file is upgraded
+# by `clipboard migrate`, never by a second code path in the reader.
+$script:DataVersion = 1
+
+# --- version --------------------------------------------------------------------
+# package.ini owns the number. This is the development path: read it from the file above the
+# script folder. scripts\build.ps1 replaces the marked block with a literal assignment, so a
+# package carries the value and reads nothing at run time.
+#@version-begin
+$script:Version = '0.0.0'
+try {
+  # the repository keeps package.ini one level above src\; a standalone copy may keep it
+  # beside the script, which is also how a test sandbox sees the real number
+  foreach ($versionFile in @((Join-Path (Split-Path -Parent $Root) 'package.ini'), (Join-Path $Root 'package.ini'))) {
+    if (-not (Test-Path -LiteralPath $versionFile)) { continue }
+    foreach ($versionLine in [IO.File]::ReadAllLines($versionFile)) {
+      if ($versionLine -match '^\s*version\s*=\s*(\S+)\s*$') { $script:Version = $Matches[1]; break }
+    }
+    if ($script:Version -ne '0.0.0') { break }
+  }
+} catch { }
+#@version-end
 
 # --- runtime identities (stable: shortcuts and a second instance rely on them) ----
 $MutexName = 'Local\clipboard.daemon'
@@ -20,16 +47,20 @@ $StopName  = 'Local\clipboard.stop'
 $StoreLock = 'Local\clipboard.store'
 
 # --- UI metrics: 96 dpi design values, every one of them goes through Px() --------
+# A theme may override any key from its [metrics] section. MetricDefault is the built-in
+# table Apply-Theme restores first, so switching themes never leaves a value behind.
 $script:Metric = @{
-  RowHeight = 40; HeadHeight = 68; FootHeight = 40
-  Margin = 14; FieldHeight = 40
-  RowInset = 6; RowRadius = 4; PanelRadius = 8
-  IconSlot = 20; TextGap = 38
-  MarkSlot = 16; MarkCount = 2; TimeWidth = 52
-  CapWidth = 22; CapHeight = 18; BadgeGap = 12
-  ScrollIdle = 3; ScrollHot = 6
+  RowHeight = 40; HeadHeight = 68; FootHeight = 40; PanelRadius = 8
+  RowInset = 6; RowGap = 2; RowRight = 12; RowRadius = 4; RowMinWidth = 60
+  TextInset = 12; IconX = 10; IconSlot = 20; TextGap = 38
+  TextMarkGap = 8; TextMinWidth = 20
+  MarkSlot = 16; MarkCount = 2; MarkGlyphWidth = 14; MarkGap = 6; MarkGap2 = 2
+  TimeWidth = 52; TimeGap = 12
+  CapWidth = 48; CapHeight = 18; CapGap = 10; CapRadius = 4
+  SelBarX = 3; SelBarWidth = 3; SelBarInset = 11; SelBarRadius = 1
   ChipHeight = 18
 }
+$script:MetricDefault = $script:Metric.Clone()
 
 # --- glyphs: present in both Segoe Fluent Icons (Win11) and MDL2 (Win10) ----------
 $script:Glyphs = @{
@@ -39,9 +70,16 @@ $script:Glyphs = @{
 }
 
 # --- timings (ms) ------------------------------------------------------------------
+# Named by what the message means, not by how long it happens to be.
 $script:Timing = @{
-  Debounce = 150; FootMessage = 3200; Confirm = 5000
-  CloseOnBlur = 450; HotkeyPoll = 30; Tooltip = 700
+  Debounce = 150       # typing in the search box before the list is rebuilt
+  FootBrief = 1200     # the key did nothing, one line is enough
+  FootShort = 1500     # nothing to do
+  FootInfo = 2000      # an action succeeded
+  FootWarn = 2600      # an action was refused, with the way out
+  FootMessage = 3200   # a plugin's note, or a hint worth reading
+  Confirm = 5000       # "press again to clear"
+  CloseOnBlur = 450    # takeover mode: ignore the activation that opens the panel
 }
 
 $script:UiScale = 1.0
@@ -71,6 +109,7 @@ $script:Autostart = $true
 $script:DesktopShortcut = $true
 # Themes live in themes\<name>.ps1 and are picked by name; win11-dark is the default.
 $script:Theme = 'win11-dark'
+$script:ThemeSchema = $null        # schema/theme.ps1, loaded by lib/themes.ps1 on first use
 $script:ThemePalette = $null      # resolved Drawing.Color table, $null = built-in fallback
 $script:ThemeFonts = @{}          # Body / Small / Tiny / Title / Icon / IconSmall / IconBig
 $script:ThemeFace = @{ Font = ''; Icon = '' }   # optional family overrides from the theme
@@ -87,6 +126,14 @@ $script:PasteSettle = 80
 $script:MaxItems = 300
 $script:MaxBytes = 204800
 $script:MaxTotal = 4194304
+# media (image files, html/rtf sidecars) has its own budget: a 4 MB text total would evict
+# every screenshot, so the two are counted apart and trimmed apart
+$script:MaxMediaTotal = 67108864
+$script:CaptureImages = $true
+$script:MaxImageBytes = 8388608
+$script:CaptureRich = $true
+$script:MaxRichBytes = 524288
+$script:PasteRich = $true
 $script:Interval = 300
 $script:NoPaste = $false
 # Plugins load by default: clipboard.ini spells out every plugin name, and the resolved
@@ -112,4 +159,3 @@ $script:PreviewChars = 6000
 # the card only appears after the cursor has rested on a row, and can be switched off
 $script:PreviewHover = $true
 $script:PreviewDelay = 350
-$script:IniCache = $null

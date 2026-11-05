@@ -18,7 +18,7 @@ function Show-Usage {
       @('list [-Count N]', 'list entries, newest first (time + * = pinned)'),
       @('get', 'print the clipboard text'),
       @('put "text"', 'set the clipboard (reads stdin when text is omitted)'),
-      @('pick N', 'put entry N back on the clipboard'),
+      @('pick N', 'put entry N back on the clipboard (pictures and formatting included)'),
       @('del N', 'delete entry N (a row a mark protects must be unprotected first)'),
       @('clear [-All]', 'delete entries (protected rows always stay, marks may keep more)')
     )
@@ -32,16 +32,19 @@ function Show-Usage {
     )
     'setup'   = @(
       @('diag', 'probe the environment (run this first)'),
+      @('migrate [-Purge]', 'upgrade an older history file to the layout this build reads (purge = archive one that cannot be migrated)'),
       @('restore', 'try to restore the native Win+V history'),
       @('install [bypass]', 'create the shortcuts (bypass = -ExecutionPolicy Bypass; Autostart / DesktopShortcut pick which)'),
       @('uninstall [purge]', 'remove the shortcuts (purge also deletes data and config)'),
+      @('version', 'print the program and data format version'),
       @('help', 'show this help')
     )
   }
 
-  Write-Host 'clipboard - lightweight clipboard history for Windows 10 / 11'
+  Write-Host ('clipboard ' + $script:Version + ' - lightweight clipboard history for Windows 10 / 11')
   Write-Host ''
   Write-Host 'Usage: clipboard <command> [args] [options]'
+  Write-Host 'Captures text, file lists, pictures and formatted text (html / rtf).'
   foreach ($g in $groups.Keys) {
     Write-Host ''
     Write-Host ('  [' + $g + ']')

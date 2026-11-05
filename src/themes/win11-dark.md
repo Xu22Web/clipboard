@@ -30,8 +30,8 @@ Theme=win11-dark
 
 叠层色（`SelBg` / `HoverBg` / `Border` / `BadgeBg` / `AccentSoft` / `KeyCapBorder`）都是带 alpha 的半透明白，面板把它们叠在 `Surface` 上做层次。
 
-## 想改它
+## 修改方式
 
-- 只想换一两个颜色：复制 `themes/win11-dark.ini` 为 `themes/<你的名字>.ini`，改 `name=` 与对应 token，再把 `Theme=` 指过去（别直接改默认主题，升级时容易被覆盖）。
-- token 名单、`[fonts]` / `[metrics]` / `[<插件名>]` 段的写法：见 [主说明的主题一节](../../README.md#主题)。
-- 切换后需重启常驻进程生效（`clipboard config set Theme <name>` 会自动重启）。
+- 调整少量颜色：将 `themes\win11-dark.ini` 复制为 `themes\<名称>.ini`，修改 `name=` 与对应 token，再把 `Theme=` 指向新文件；不建议直接修改默认主题，升级时会被覆盖。
+- token 名单与 `[fonts]` / `[metrics]` / `[<插件名>]` 段的写法：见 [主说明的主题一节](../../README.md#主题)。
+- 切换主题后需重启常驻进程生效（`clipboard config set Theme <name>` 会自动重启）。

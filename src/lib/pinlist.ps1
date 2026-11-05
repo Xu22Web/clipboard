@@ -6,7 +6,7 @@
 # frozen block, then the scrolling rows under it, which is why neither the erase gap nor
 # the "pins scroll away" problem exists.
 #
-# The type is compiled with the rest of the Win32 helpers in Add-Native (lib/util.ps1).
+# The type is compiled with the rest of the Win32 helpers in Add-Native (lib/native.ps1).
 # A second Add-Type call would pay for another csc run at every cold start, and the class
 # belongs with the other Cb types anyway. This module keeps the name the picker asks for,
 # so the row surface still has one obvious home.

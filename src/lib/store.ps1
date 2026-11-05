@@ -1,21 +1,23 @@
-# lib/store.ps1 - the history file: CBHIST2 records, locking, marks, trimming and the short
-# labels used by `list` and the panel.
+# lib/store.ps1 - the history file: what is on disk, how it is parsed, locked, marked,
+# trimmed, and the short labels used by `list` and the panel.
 #
 # The base stores one character per mark and asks the plugin layer what those marks mean
 # (protected / sorts first / kept on clear / printed word), so adding a mark needs no
 # change here - see Marks in lib/plugins.ps1.
 
-# One record: <flags> US <epoch seconds> US <payload>
-#   flags = one type char - 't' (text) or 'f' (file list) - followed by mark chars
+# File layout: CBHIST RS <data version> RS <record> RS <record> ...
+#   record = <flags> US <epoch seconds> US <extra> US <payload>
+#   flags  = one type char - 't' (text), 'f' (file list) or 'i' (image) - plus mark chars
+#   extra  = '' or 'R:<sha1>:<bytes>', the formatted-text sidecar of a text entry
 # A mark is one character owned by a plugin. The base stores it, keeps the list order and
 # enforces the rules the plugin declares (protected / sorts first / kept on clear), but it
 # never knows what a mark means. A flag string such as "tps" is therefore read as "text
 # entry, marks p and s".
-# Only this format is read. A file without the CBHIST2 tag is ignored as unknown.
+# Only the current layout version is parsed; an older file is upgraded by lib/migrate.ps1.
 #
 # Key is not stored: it numbers the records of one parse, so caches can key on a small int.
 function New-Record([string]$payload, [long]$time, [string]$marks = '') {
-  return [pscustomobject]@{ Payload = $payload; Time = $time; Marks = $marks; Key = 0; Blob = '' }
+  return [pscustomobject]@{ Payload = $payload; Time = $time; Marks = $marks; Key = 0; Blob = ''; Rich = '' }
 }
 
 # ---- blobs ------------------------------------------------------------------
@@ -152,9 +154,8 @@ function Get-MarkCountWords($records) {
 }
 
 function Get-Records {
-  # Parsing the whole store is the hottest path (panel open, filter, delete, undo all
-  # need it), so the result is cached against the file stamp. Any writer - this process
-  # or another one - changes length or last-write time and invalidates it.
+  # Parsing the whole store is the hottest path (panel open, filter, delete, undo), so the
+  # result is cached against the file stamp: any writer changes size or write time.
   $fi = $null
   try { $fi = Get-Item -LiteralPath $StoreFile -ErrorAction Stop } catch { $script:RecCache = $null; return @() }
   $stamp = [string]$fi.Length + ':' + [string]$fi.LastWriteTimeUtc.Ticks
@@ -165,15 +166,19 @@ function Get-Records {
   $out = New-Object System.Collections.Generic.List[object]
   try {
     $chunks = @($raw -split [regex]::Escape($RS))
-    if ($chunks.Count -eq 0 -or $chunks[0] -cne $V2TAG) {
+    $fileVersion = -1
+    if ($chunks.Count -ge 2 -and $chunks[0] -ceq $TAG) { [void][int]::TryParse($chunks[1], [ref]$fileVersion) }
+    if ($fileVersion -ne $script:DataVersion) {
+      # one line per process: the reader never guesses at another layout
       if (-not $script:StoreFormatWarned) {
         $script:StoreFormatWarned = $true
-        Write-Log ('store ignored: unknown format, only ' + $V2TAG + ' is supported')
+        $sv = Get-StoreVersion
+        Write-Log ('store not read: ' + $sv.Label + '   ' + $sv.Hint)
       }
       $script:RecCache = @{ Stamp = $stamp; Records = @() }
       return @()
     }
-    for ($i = 1; $i -lt $chunks.Count; $i++) {
+    for ($i = 2; $i -lt $chunks.Count; $i++) {
       $rec = $chunks[$i]
       if ($rec.Length -eq 0) { continue }
       $a = $rec.IndexOf($US)
@@ -183,7 +188,10 @@ function Get-Records {
       $flags = $rec.Substring(0, $a)
       $tick = [long]0
       [void][long]::TryParse($rec.Substring($a + 1, $b - $a - 1), [ref]$tick)
-      $payload = $rec.Substring($b + 1)
+      $c = $rec.IndexOf($US, $b + 1)
+      if ($c -lt 0) { continue }
+      $extra = $rec.Substring($b + 1, $c - $b - 1)
+      $payload = $rec.Substring($c + 1)
       if ($payload.Length -eq 0) { continue }
       # a blob reference is STX + 'B:' + 40 hex chars; anything else is the text itself
       if ($payload.Length -eq 43 -and $payload[0] -eq [char]2) {
@@ -194,6 +202,8 @@ function Get-Records {
       } else {
         $one = New-Record $payload $tick $flags.Substring(1)
       }
+      # a reference we cannot parse is dropped rather than carried along
+      if ($extra -and $null -ne (Get-RichRef $extra)) { $one.Rich = $extra }
       $one.Key = [int](++$script:RecKey)
       $out.Add($one)
     }
@@ -202,14 +212,73 @@ function Get-Records {
   return $script:RecCache.Records
 }
 
+# What the file on disk carries, read from its first bytes only (the tag and the version
+# field are the first two RS-separated fields, so this stays cheap on a 4 MB store).
+#   Kind    none (no file) | current | old | newer | unknown
+#   Version the layout version, -1 when the file is unrecognised
+# Only `migrate` acts on Kind; the reader refuses anything but current.
+function Get-StoreVersion {
+  $o = [pscustomobject]@{ Kind = 'none'; Version = -1; Label = 'no history file'; Hint = '' }
+  if (-not (Test-Path -LiteralPath $StoreFile)) { return $o }
+  $head = ''
+  try {
+    $fs = [IO.File]::Open($StoreFile, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    try {
+      $buf = New-Object byte[] 64
+      $n = $fs.Read($buf, 0, $buf.Length)
+      if ($n -gt 0) { $head = [Text.Encoding]::UTF8.GetString($buf, 0, $n) }
+    } finally { $fs.Dispose() }
+  } catch { return $o }
+  # an empty file holds no data, so it is free to write - not an unknown layout
+  if ([string]::IsNullOrEmpty($head)) { $o.Label = 'empty file'; return $o }
+  $ver = -1
+  $cut = $head.IndexOf($RS)
+  if ($cut -gt 0 -and $head.Substring(0, $cut) -ceq $TAG) {
+    # a store with no records ends right after the version, so the field has no closing RS
+    $rest = $head.Substring($cut + 1)
+    $cut2 = $rest.IndexOf($RS)
+    $digits = if ($cut2 -ge 0) { $rest.Substring(0, $cut2) } else { $rest }
+    $parsed = 0
+    if ($digits -match '^\d+$' -and [int]::TryParse($digits, [ref]$parsed)) { $ver = $parsed }
+  }
+  $o.Version = $ver
+  if ($ver -eq $script:DataVersion) {
+    $o.Kind = 'current'
+    $o.Label = 'CBHIST v' + $ver
+  } elseif ($ver -gt $script:DataVersion) {
+    $o.Kind = 'newer'
+    $o.Label = 'CBHIST v' + $ver
+    $o.Hint = 'written by a newer build - update this copy'
+  } elseif ($ver -ge 0) {
+    $o.Kind = 'old'
+    $o.Label = 'CBHIST v' + $ver
+    if (Test-MigrationPath $ver) { $o.Hint = 'run: clipboard migrate' }
+    else { $o.Hint = 'no migration path in this build - clipboard migrate -Purge archives it' }
+  } else {
+    $o.Kind = 'unknown'
+    $o.Label = 'unrecognised layout'
+    $o.Hint = 'clipboard migrate -Purge archives it'
+  }
+  return $o
+}
+
 function Save-Records($records) {
   Ensure-Dir
+  # Never replace a file this build cannot read: the first capture after replacing the
+  # program would otherwise drop the whole history. The upgrade belongs to `migrate`.
+  $sv = Get-StoreVersion
+  if (@('old', 'newer', 'unknown') -contains $sv.Kind) {
+    Write-Log ('store not written: ' + $sv.Label + '   ' + $sv.Hint)
+    return
+  }
+  $script:StoreFormatWarned = $false
   $sb = New-Object System.Text.StringBuilder
-  [void]$sb.Append($V2TAG)
+  [void]$sb.Append($TAG).Append($RS).Append([string]$script:DataVersion)
   if ($records) {
     foreach ($r in $records) {
       $flags = 't'
-      if ($r.Payload.Length -gt 0 -and $r.Payload[0] -eq [char]1) { $flags = 'f' }
+      if (Test-FilePayload ([string]$r.Payload)) { $flags = 'f' }
+      elseif (Test-ImagePayload ([string]$r.Payload)) { $flags = 'i' }
       $body = [string]$r.Payload
       # a big payload lives in its own file, so the rewrite a capture costs is a few KB of
       # history instead of the whole store
@@ -217,7 +286,8 @@ function Save-Records($records) {
         $r.Blob = Save-Blob $body
         $body = [string]$script:BlobMark + [string]$r.Blob
       } elseif ($r.Blob) { $r.Blob = '' }
-      [void]$sb.Append($RS).Append($flags + [string]$r.Marks).Append($US).Append([string][long]$r.Time).Append($US).Append($body)
+      $extra = [string]$r.Rich
+      [void]$sb.Append($RS).Append($flags + [string]$r.Marks).Append($US).Append([string][long]$r.Time).Append($US).Append($extra).Append($US).Append($body)
     }
   }
   $tmp = $StoreFile + '.tmp'
@@ -234,6 +304,7 @@ function Save-Records($records) {
     $script:RecCache = @{ Stamp = ([string]$fi.Length + ':' + [string]$fi.LastWriteTimeUtc.Ticks); Records = $arr }
   } catch { }
   Remove-OrphanBlobs $records
+  Remove-OrphanMedia $records
 }
 
 function Use-StoreLock([scriptblock]$body) {
@@ -330,7 +401,9 @@ function Select-QueryRows($entries, [string[]]$tokens) {
   return $rows.ToArray()
 }
 
-# enforce MaxItems / MaxTotal in place; rows carrying a protected mark are never dropped
+# enforce MaxItems / MaxTotal / MaxMediaTotal in place; rows carrying a protected mark are
+# never dropped. Media sizes travel inside the payload and the reference, so this never
+# touches the disk.
 function Trim-Records($list) {
   $protected = @(Get-ProtectedMarks)
   if ($list.Count -gt $MaxItems) {
@@ -342,6 +415,7 @@ function Trim-Records($list) {
     foreach ($d in $drop) { [void]$list.Remove($d) }
   }
   $total = 0
+  $media = [long]0
   $cut = $false
   $keep = New-Object System.Collections.Generic.List[object]
   foreach ($r in $list) {
@@ -349,13 +423,18 @@ function Trim-Records($list) {
     if ($cut) { if ($prot) { $keep.Add($r) }; continue }
     $total += $Utf8.GetByteCount($r.Payload)
     if ($total -gt $MaxTotal -and -not $prot) { $cut = $true; continue }
+    # images and sidecars have their own budget: a screenshot must not evict every text row
+    $mb = [long]0
+    if (Get-Command Get-RecordMediaBytes -ErrorAction SilentlyContinue) { $mb = [long](Get-RecordMediaBytes $r) }
+    if ($mb -gt 0 -and ($media + $mb) -gt $script:MaxMediaTotal -and -not $prot) { continue }
+    $media += $mb
     $keep.Add($r)
   }
   $list.Clear()
   foreach ($r in $keep) { $list.Add($r) }
 }
 
-function Add-Item([string]$text) {
+function Add-Item([string]$text, $capture = $null) {
   if ([string]::IsNullOrWhiteSpace($text)) { return }
   if ($script:ExcludePattern) {
     try { if ($text -match $script:ExcludePattern) { Write-Log 'skip (exclude pattern)'; return } } catch { }
@@ -366,16 +445,26 @@ function Add-Item([string]$text) {
     $text = $text.Replace([char]30, ' ').Replace([char]31, ' ')
     Write-Log 'sanitized record separators in captured text'
   }
+  # Media goes to disk first: the file is named after its content, so writing it twice is a
+  # no-op and a record that is about to be deduplicated still points at the same bytes.
+  $rich = ''
+  if ($null -ne $capture) {
+    if ($null -ne $capture.Image) { [void](Write-ImageMedia $text $capture.Image.Png) }
+    if ($null -ne $capture.Rich) { $rich = New-RichRef $capture.Rich }
+    if ($rich) { [void](Write-RichMedia $rich $capture.Rich) }
+  }
   Use-StoreLock {
     $recs = @(Get-Records)
-    if ($recs.Count -gt 0 -and $recs[0].Payload -ceq $text) { return }
+    if ($recs.Count -gt 0 -and $recs[0].Payload -ceq $text -and [string]$recs[0].Rich -ceq $rich) { return }
     # a re-captured payload keeps the marks it already had
     $prevMarks = ''
     foreach ($r in $recs) {
       if ($r.Payload -ceq $text) { $prevMarks = [string]$r.Marks; break }
     }
     $list = New-Object System.Collections.Generic.List[object]
-    $list.Add((New-Record $text (Get-Epoch) $prevMarks))
+    $fresh = New-Record $text (Get-Epoch) $prevMarks
+    $fresh.Rich = $rich
+    $list.Add($fresh)
     foreach ($r in $recs) { if ($r.Payload -cne $text) { $list.Add($r) } }
     $list = Sort-Records $list
     Trim-Records $list

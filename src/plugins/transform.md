@@ -2,7 +2,7 @@
 
 [← 回到主说明](../../README.md) · [插件契约](../../README.md#插件)
 
-选中条目按 `Enter` 粘贴时，先把内容按指定模式改写：纯文本、全大写、全小写、驼峰、蛇形、烤肉串、标题式。适合往 IDE / 终端 / 数据库里粘"格式要求不同"的同一段内容。
+选中条目按 `Enter` 粘贴时，先按指定模式改写内容：纯文本、全大写、全小写、驼峰、蛇形、烤肉串、标题式。用于将同一段内容粘贴到格式要求不同的位置（IDE / 终端 / 数据库）。
 
 ## 启用
 
@@ -45,7 +45,7 @@ $ clipboard transform "1 snake"
 
 ## 右键菜单
 
-右键菜单里每个**配置的模式**各占一项：`Transform as snake_case`、`Transform as UPPER`……点哪项就用哪个模式改写这一条，**写进剪贴板后直接把结果粘贴回原来的窗口**（不用再点一次条目），同时记入历史。项目多少由 `transform.Modes` 决定：
+右键菜单中的每个配置模式各占一项：`Transform as snake_case`、`Transform as UPPER`……选择后按该模式改写并写入剪贴板，随后直接粘贴到原窗口，同时记入历史。项数由 `transform.Modes` 决定：
 
 ```ini
 # clipboard.ini：右键给这三个模式各开一项（顺序即菜单顺序）
@@ -59,6 +59,8 @@ transform.Modes=snake,kebab,upper
 - 右键项由插件自己声明（`ContextMenu` 写成脚本块，自己算出要多少项）；基础层按插件分组显示：每组开头一行插件名，组间一条分隔线。
 
 ## 设置项（`clipboard.ini`）
+
+这些键声明在 `schema\plugins\transform.ps1`，加载时合并进设置；文件里写在 `[transform]` 段内，`config set` 用 `<插件名>.<Key>`：
 
 | 键 | 默认 | 说明 |
 |---|---|---|
@@ -74,8 +76,8 @@ clipboard config set transform.Trim 0
 
 ## 说明
 
-- **改写规则只有一份**：粘贴钩子、`transform` 命令与右键项都调用插件里的 `Apply` / `CopyAs` 块，不存在两套容易走偏的实现；命令行只是多了一步「取第 N 条 → 写剪贴板 → 记入历史」。
-- **文件清单条目不会被改写**：粘贴的是一批文件路径，改写会破坏路径。
+- 改写规则只有一份：粘贴钩子、`transform` 命令与右键项都调用插件中的 `Apply` / `CopyAs` 块；命令行多出的步骤是「取第 N 条 → 写剪贴板 → 记入历史」。
+- **文件清单与图片条目不会被改写**：前者是一批路径，后者是一段图片描述，改写都会破坏它们。
 - 改写只发生在**粘贴路径**上；`clipboard get` / `clipboard put` 与历史里存的内容保持原样。
 - 常驻进程在跑时，`config set transform.Mode ...` 会自动重启常驻进程使新值生效。
 - 一次性模式（`clipboard transform "3 upper"`）不改配置，只影响这一次调用。

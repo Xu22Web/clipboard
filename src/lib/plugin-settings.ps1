@@ -1,39 +1,60 @@
 # lib/plugin-settings.ps1 - the plugin settings surface.
 #
-# Two kinds of knobs, deliberately kept apart: Settings become clipboard.ini keys named
-# <plugin>.<Key> (the user's switches), ThemeSettings are not ini keys at all - they are
-# look-and-feel defaults a theme may restyle through a section named after the plugin.
+# A plugin does not describe its keys itself: it has a schema file of its own next to the
+# others, schema\plugins\<name>.ps1, and that file declares both kinds of knobs -
+#
+#   Properties      clipboard.ini keys, merged into the settings schema as <plugin>.<Key>
+#                   (the user's switches, written as a [<plugin>] section in the file)
+#   ThemeProperties look-and-feel a theme may restyle through the same section in
+#                   themes\*.ini; never an ini key of the settings file
+#
+# The merge happens when the plugin loads (Register-PluginSettings), so `config`,
+# `config get`, `config set` and `config init` handle a plugin key with no extra plumbing.
 #
 # Loaded right after lib/plugins.ps1 and only when that file exists: without the plugin
 # runtime there is nothing to configure.
 
+$script:PluginSchemaCache = @{}
 
-# Merge every loaded plugin's Settings block into the shared schema as <plugin>.<Key>.
-# Called once after Load-Plugins; a duplicate key never overwrites a base key.
+# the parsed schema of one plugin, $null when it has none
+function Get-PluginSchema([string]$Name) {
+  if ($script:PluginSchemaCache.ContainsKey($Name)) { return $script:PluginSchemaCache[$Name] }
+  $schema = $null
+  if ($Name -and (Get-Command Import-Schema -ErrorAction SilentlyContinue)) {
+    $schema = Import-Schema (Join-Path $Root (Join-Path 'schema\plugins' ($Name + '.ps1')))
+  }
+  $script:PluginSchemaCache[$Name] = $schema
+  return $schema
+}
+
+
+# Merge every loaded plugin's Properties into the shared schema as <plugin>.<Key>.
+# Called once after Load-Plugins; a duplicate key never overwrites a key that is already
+# there, whether it came from schema\clipboard.ps1 or from another plugin.
 function Register-PluginSettings {
   $map = @{}
   if ($null -eq $script:IniSchema) { $script:PluginSettings = $map; return }
   foreach ($p in @($script:Plugins)) {
-    if (-not $p.ContainsKey('Settings')) { continue }
-    $spec = $p['Settings']
-    if ($spec -isnot [System.Collections.IDictionary]) {
-      Write-Log ('plugin settings ignored (not a dictionary): ' + [string]$p['Name'])
+    $name = [string]$p['Name']
+    $schema = Get-PluginSchema $name
+    if ($null -eq $schema) {
+      Write-Log ('plugin settings ignored (no schema): ' + $name)
       continue
     }
-    $name = [string]$p['Name']
+    $props = Get-SchemaProperties $schema
+    if ($null -eq $props -or $props.Count -eq 0) { continue }
     $own = [ordered]@{}
-    foreach ($k in @($spec.Keys)) {
+    foreach ($k in @($props.Keys)) {
       $full = $name + '.' + [string]$k
-      $s = $spec[$k]
-      if ($s -isnot [System.Collections.IDictionary] -or -not $s.Contains('Kind')) {
-        Write-Log ('plugin setting ignored (needs Kind): ' + $full)
+      $s = $props[$k]
+      if ($s -isnot [System.Collections.IDictionary] -or -not $s.Contains('Type')) {
+        Write-Log ('plugin setting ignored (needs Type): ' + $full)
         continue
       }
-      if ($script:IniSchema.Contains($full)) {
+      if (-not (Add-SchemaProperty $script:SettingsSchema $full $s)) {
         Write-Log ('plugin setting ignored (duplicate key): ' + $full)
         continue
       }
-      $script:IniSchema[$full] = $s
       $own[$full] = $s
     }
     if ($own.Count -gt 0) { $map[$name] = $own }
@@ -42,12 +63,41 @@ function Register-PluginSettings {
 }
 
 
+# Every settings key declared by the plugin schemas on disk, in the same shape
+# Register-PluginSettings produces (<plugin> -> ordered { '<plugin>.<Key>' -> spec }), but
+# WITHOUT loading the plugins: so `config init` can document every key that exists while
+# help, the plugin commands and the panel still follow the resolved Plugins=. Only schema
+# files are read - no plugin code is executed to find out what a plugin offers.
+function Get-AllPluginSettings([string]$SchemaDir) {
+  $out = [ordered]@{}
+  if (-not $SchemaDir) { return $out }
+  try { if (-not (Test-Path -LiteralPath $SchemaDir)) { return $out } } catch { return $out }
+  $files = @()
+  try { $files = @(Get-ChildItem -LiteralPath $SchemaDir -Filter '*.ps1' -File -ErrorAction Stop | Sort-Object Name) } catch { return $out }
+  foreach ($f in $files) {
+    $schema = Import-Schema $f.FullName
+    if ($null -eq $schema) { continue }
+    $props = Get-SchemaProperties $schema
+    if ($null -eq $props -or $props.Count -eq 0) { continue }
+    $name = [string]$schema['Name']
+    if (-not $name) { $name = $f.BaseName }
+    $own = [ordered]@{}
+    foreach ($k in @($props.Keys)) {
+      $spec = $props[$k]
+      if ($spec -isnot [System.Collections.IDictionary] -or -not $spec.Contains('Type')) { continue }
+      $own[$name + '.' + [string]$k] = $spec
+    }
+    if ($own.Count -gt 0) { $out[$name] = $own }
+  }
+  return $out
+}
+
+
 # Resolve plugin settings once, after the config file has been read: ini value when valid,
 # otherwise the declared default. Rejects are logged so a typo is not silent.
 function Apply-PluginSettings {
   $vals = @{}
-  $cache = $script:IniCache
-  if ($null -eq $cache) { $cache = Read-Ini; $script:IniCache = $cache }
+  $cache = Read-Ini
   foreach ($name in @($script:PluginSettings.Keys)) {
     foreach ($full in @($script:PluginSettings[$name].Keys)) {
       $spec = $script:PluginSettings[$name][$full]
@@ -88,54 +138,30 @@ function Get-PluginSetting([string]$Plugin, [string]$Key) {
 #   [item-marks]
 #   StarColor=#FFD700
 #
-# Validation reuses the same Kind vocabulary (color / int / bool / enum / string).
+# Validation reuses the schema validator (utils/schema.ps1) with a one-key schema built
+# from the plugin's spec, so a theme value and an ini value follow the same rules.
 function Convert-ThemeSettingValue($spec, [string]$raw) {
-  $v = ([string]$raw).Trim()
-  $kind = 'string'
-  if ($spec.Contains('Kind')) { $kind = [string]$spec['Kind'] }
-  if ($kind -eq 'color') {
-    if (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue) {
-      if ($null -eq (Convert-ThemeColor $v)) { return $null }
-    }
-    return $v
-  }
-  if ($kind -eq 'int') {
-    $n = 0
-    if (-not [int]::TryParse($v, [ref]$n)) { return $null }
-    if ($spec.Contains('Min') -and $n -lt [int]$spec['Min']) { return $null }
-    if ($spec.Contains('Max') -and $n -gt [int]$spec['Max']) { return $null }
-    return [string]$n
-  }
-  if ($kind -eq 'bool') {
-    $l = $v.ToLowerInvariant()
-    if (@('1', 'true', 'on', 'yes') -contains $l) { return '1' }
-    if (@('0', 'false', 'off', 'no') -contains $l) { return '0' }
-    return $null
-  }
-  if ($kind -eq 'enum') {
-    foreach ($o in @($spec['Options'])) { if ([string]$o -eq $v) { return [string]$o } }
-    return $null
-  }
-  return $v
+  $mini = @{ Name = 'theme-value'; Properties = @{ Value = $spec } }
+  $r = Convert-SchemaValue $mini 'Value' ([string]$raw)
+  if (-not $r.Ok) { return $null }
+  return [string]$r.Value
 }
 
 
-# Collect the ThemeSettings blocks of the loaded plugins.
+# Collect the ThemeProperties of the loaded plugins (same schema file, other table).
 function Register-PluginThemeSettings {
   $map = @{}
   foreach ($p in @($script:Plugins)) {
-    if (-not $p.ContainsKey('ThemeSettings')) { continue }
-    $spec = $p['ThemeSettings']
-    if ($spec -isnot [System.Collections.IDictionary]) {
-      Write-Log ('plugin ThemeSettings ignored (not a dictionary): ' + [string]$p['Name'])
-      continue
-    }
     $name = [string]$p['Name']
+    $schema = Get-PluginSchema $name
+    if ($null -eq $schema) { continue }
+    $spec = Get-SchemaThemeProperties $schema
+    if ($null -eq $spec -or $spec.Count -eq 0) { continue }
     $own = [ordered]@{}
     foreach ($k in @($spec.Keys)) {
       $s = $spec[$k]
-      if ($s -isnot [System.Collections.IDictionary] -or -not $s.Contains('Kind')) {
-        Write-Log ('plugin ThemeSettings ignored (needs Kind): ' + $name + '.' + $k)
+      if ($s -isnot [System.Collections.IDictionary] -or -not $s.Contains('Type')) {
+        Write-Log ('plugin ThemeSettings ignored (needs Type): ' + $name + '.' + $k)
         continue
       }
       $own[[string]$k] = $s

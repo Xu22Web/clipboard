@@ -99,7 +99,7 @@ function Show-Picker {
     # A replaced region has to be disposed by hand: WinForms does not own it, so every open
     # and every resize would otherwise leak one HRGN into the resident process.
     function Set-RoundRegion {
-      try { $old = $form.Region; $form.Region = New-RoundRegion $form.ClientSize.Width $form.ClientSize.Height (Px 8); if ($null -ne $old) { $old.Dispose() } } catch { }
+      try { $old = $form.Region; $form.Region = New-RoundRegion $form.ClientSize.Width $form.ClientSize.Height (Px $script:Metric['PanelRadius']); if ($null -ne $old) { $old.Dispose() } } catch { }
     }
     $form = New-Object Cb.FluentForm
     $form.FormBorderStyle = 'None'
@@ -114,11 +114,11 @@ function Show-Picker {
     # The height comes from the row count, never from a setting of its own, so no row is ever
     # half cut off; the screen caps it and matching Min/Max heights leave the drag to width.
     $screenH = 0; try { $screenH = [Windows.Forms.Screen]::FromPoint([Windows.Forms.Cursor]::Position).WorkingArea.Height } catch { }
-    $rows = Get-RowsForScreen $script:Rows ([int]([double]$screenH / [double]$script:UiScale)) (Get-PanelRowHeight) (Get-PanelChrome) ([int]$script:IniSchema['Rows'].Min)
+    $rows = Get-RowsForScreen $script:Rows ([int]([double]$screenH / [double]$script:UiScale)) (Get-PanelRowHeight) (Get-PanelChrome) ([int]$script:IniSchema['Rows'].Minimum)
     if ($rows -ne $script:Rows) { Write-Log ('picker: rows ' + $script:Rows + ' -> ' + $rows + ' to fit this screen') }
     $form.Height = Px (Get-PanelHeight $rows (Get-PanelRowHeight) (Get-PanelChrome))
-    $form.MinimumSize = New-Object Drawing.Size -ArgumentList @((Px ([int]$script:IniSchema['WindowWidth'].Min)), $form.Height)
-    $form.MaximumSize = New-Object Drawing.Size -ArgumentList @((Px ([int]$script:IniSchema['WindowWidth'].Max)), $form.Height)
+    $form.MinimumSize = New-Object Drawing.Size -ArgumentList @((Px ([int]$script:IniSchema['WindowWidth'].Minimum)), $form.Height)
+    $form.MaximumSize = New-Object Drawing.Size -ArgumentList @((Px ([int]$script:IniSchema['WindowWidth'].Maximum)), $form.Height)
     $form.BackColor = $ui.Surface
     $form.Padding = New-Object Windows.Forms.Padding(1)
 
@@ -335,7 +335,7 @@ function Show-Picker {
         $grip.BringToFront()
       } catch { }
       try {
-        $footR.SetBounds(($foot.ClientSize.Width - (Px 176)), 0, (Px 162), $foot.ClientSize.Height)
+        $footR.SetBounds(($foot.ClientSize.Width - (Px 210)), 0, (Px 196), $foot.ClientSize.Height)
       } catch { }
       $footL.Invalidate()
     }
@@ -397,12 +397,14 @@ function Show-Picker {
         $count = ([string]$script:Filtered.Count) + ' of ' + ([string]$script:Entries.Count)
         if ($script:StickyTop -gt 0) { $count = $count + '   ' + ([string]$script:StickyTop) + ' pinned' }
         if ($script:CapturePaused) { $count = 'Paused: ' + $count }
-        $footR.Text = $count
+        # the version sits at the right end of the same quiet label as the row count
+        $footR.Text = $count + '   v' + $script:Version
       } catch { }
     }
 
-    function Set-Foot([string]$msg, [int]$ms) {
+    function Set-Foot([string]$msg, [int]$ms = 0) {
       if ($script:Confirm) { return }
+      if ($ms -le 0) { $ms = [int]$script:Timing['FootMessage'] }
       $script:FootMode = 'message'
       $script:FootMsg = $msg
       $footL.Invalidate()
@@ -419,13 +421,6 @@ function Show-Picker {
 
     function Get-Rows {
       return (Get-VisibleRowCount $lst.ClientSize.Height $lst.ItemHeight)
-    }
-
-    # one Graphics for text measurement, reused for the lifetime of the panel
-    $script:MeasureG = $null
-    function Get-MeasureGraphics {
-      if ($null -eq $script:MeasureG -or $script:MeasureG.IsDisposed) { $script:MeasureG = $lst.CreateGraphics() }
-      return $script:MeasureG
     }
 
     # the list is wider than its host, so the host clips the strip a native bar would use
@@ -581,7 +576,7 @@ function Show-Picker {
           $lkey = ([int]$rec.Key * 2) + $mk
           $lab = $labelCache[$lkey]
           if ($null -eq $lab) {
-            $lab = Get-ItemLabel $rec.Payload $script:ShowNewlineMarker
+            $lab = Get-RecordLabel $rec $script:ShowNewlineMarker
             if ($labelCache.Count -gt 1200) { $labelCache.Clear() }
             $labelCache[$lkey] = $lab
           }
@@ -653,7 +648,7 @@ function Show-Picker {
       }
       if (-not $ready) {
         Write-Log 'paste skipped: the target window did not take the foreground'
-        Set-Foot 'Copied to the clipboard. The window did not come back to the front - press Ctrl+V there' 2800
+        Set-Foot 'Copied to the clipboard. The window did not come back to the front - press Ctrl+V there' ([int]$script:Timing['FootMessage'])
         return
       }
       $form.Hide()
@@ -664,19 +659,25 @@ function Show-Picker {
 
     function Use-Index([int]$idx, [switch]$NoInject) {
       if ($idx -lt 0 -or $idx -ge $script:Filtered.Count) { return }
-      $payload = $script:Filtered[$idx].Payload
+      $rec = $script:Filtered[$idx]
+      $payload = $rec.Payload
+      # the formatted sidecar only applies to the text that produced it
+      $rich = [string]$rec.Rich
       # a plugin may rewrite what gets pasted (text only, upper case, snake case ...)
       if (Get-Command Invoke-PluginTransform -ErrorAction SilentlyContinue) {
         try {
           $t = Invoke-PluginTransform $payload
           if ($null -ne $t -and [string]$t -ne '' -and [string]$t -cne $payload) {
             $payload = [string]$t
+            $rich = ''
             Write-Log ('pasted via transform (' + $payload.Length + ' chars)')
           }
         } catch { Write-Log ('transform skipped: ' + $_.Exception.Message) }
       }
-      if ($script:NoPaste -or $NoInject.IsPresent) { $form.Hide(); [void](Set-ClipItem $payload); $form.Close(); return }
-      if (-not (Set-ClipItem $payload)) { Write-Log 'set clipboard failed'; $form.Close(); return }
+      if ($script:NoPaste -or $NoInject.IsPresent) { $form.Hide(); [void](Set-ClipItem $payload $rich); Set-LastCapture $payload; $form.Close(); return }
+      if (-not (Set-ClipItem $payload $rich)) { Write-Log 'set clipboard failed'; $form.Close(); return }
+      # our own write must not come back as a new capture
+      Set-LastCapture $payload
       Paste-Clip
     }
 
@@ -691,10 +692,10 @@ function Show-Picker {
         $word = Get-MarkWord $pm
         $word = $word.Substring(0, 1).ToUpper() + $word.Substring(1)
         if ($info -and $info.Unset) {
-          if ($info.Hint) { Set-Foot ($word + ' entry. Press ' + $info.Hint + ' to ' + $info.Unset + ' it first') 2600 }
-          else { Set-Foot ($word + ' entry. ' + $info.Unset + ' it first, then delete') 2600 }
+          if ($info.Hint) { Set-Foot ($word + ' entry. Press ' + $info.Hint + ' to ' + $info.Unset + ' it first') ([int]$script:Timing['FootWarn']) }
+          else { Set-Foot ($word + ' entry. ' + $info.Unset + ' it first, then delete') ([int]$script:Timing['FootWarn']) }
         } else {
-          Set-Foot ($word + ' entry. Load the plugin that owns the ' + $pm + ' mark first') 2600
+          Set-Foot ($word + ' entry. Load the plugin that owns the ' + $pm + ' mark first') ([int]$script:Timing['FootWarn'])
         }
         return
       }
@@ -705,19 +706,19 @@ function Show-Picker {
       if ($removed -eq 'removed') { Write-Log ('deleted entry (' + $victim.Payload.Length + ' chars), left ' + $script:Entries.Count) }
       Update-List $txt.Text
       if ($script:Filtered.Count -gt 0) { $lst.SelectedIndex = [Math]::Min($idx, $script:Filtered.Count - 1) }
-      if ($script:UndoOn -and $removed -eq 'removed') { Set-Foot 'Deleted. Press Ctrl+Z to undo' 4000 }
+      if ($script:UndoOn -and $removed -eq 'removed') { Set-Foot 'Deleted. Press Ctrl+Z to undo' ([int]$script:Timing['FootMessage']) }
     }
 
     function Undo-Delete {
-      if (-not $script:UndoOn) { Set-Foot 'Undo is off. Set Undo=1 in clipboard.ini to enable it' 2200; return }
-      if ($null -eq $script:UndoRec) { Set-Foot 'Nothing to undo' 1500; return }
+      if (-not $script:UndoOn) { Set-Foot 'Undo is off. Set Undo=1 in clipboard.ini to enable it' ([int]$script:Timing['FootWarn']); return }
+      if ($null -eq $script:UndoRec) { Set-Foot 'Nothing to undo' ([int]$script:Timing['FootShort']); return }
       $rec = $script:UndoRec
       $at = $script:UndoIdx
       $script:UndoRec = $null
       Restore-Record $rec $at
       $script:Entries = @(Get-Records)
       Update-List $txt.Text
-      Set-Foot 'Restored to its original position' 2000
+      Set-Foot 'Restored to its original position' ([int]$script:Timing['FootInfo'])
     }
 
     function Cancel-Confirm {
@@ -728,7 +729,7 @@ function Show-Picker {
     }
 
     function Request-Clear {
-      if ($script:Entries.Count -eq 0) { Set-Foot 'Nothing to clear' 1500; return }
+      if ($script:Entries.Count -eq 0) { Set-Foot 'Nothing to clear' ([int]$script:Timing['FootShort']); return }
       $script:Confirm = $true
       $footTimer.Stop()
       $script:FootMode = 'confirm'
@@ -746,8 +747,8 @@ function Show-Picker {
       $script:Entries = @(Get-Records)
       Update-List $txt.Text
       $kept = @(Get-MarkCountWords $script:Entries)
-      if ($kept.Count -gt 0) { Set-Foot ('History cleared, ' + ($kept -join ', ') + ' kept') 2600 }
-      else { Set-Foot 'History cleared' 2000 }
+      if ($kept.Count -gt 0) { Set-Foot ('History cleared, ' + ($kept -join ', ') + ' kept') ([int]$script:Timing['FootWarn']) }
+      else { Set-Foot 'History cleared' ([int]$script:Timing['FootInfo']) }
     }
 
     $cm = New-Object Windows.Forms.ContextMenuStrip
@@ -803,7 +804,7 @@ function Show-Picker {
                   if ($null -eq $a -or $lst.SelectedIndex -lt 0) { return }
                   if ($lst.SelectedIndex -ge $script:Filtered.Count) { return }
                   # a returned string is a note for the footer (a refused pin, for one)
-                  $note = (& $a['Invoke'] $script:Filtered[$lst.SelectedIndex]); if ($note) { Set-Foot ([string]$note) 3200 }
+                  $note = (& $a['Invoke'] $script:Filtered[$lst.SelectedIndex]); if ($note) { Set-Foot ([string]$note) ([int]$script:Timing['FootMessage']) }
                   $script:Entries = @(Get-Records)
                   # After = 'paste': the action put its result on the clipboard and wants
                   # it pasted into the window the picker came from (transform does this)
@@ -915,9 +916,10 @@ function Show-Picker {
         $g.FillRectangle($bgBrush, $e.Bounds)
         $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $b = $e.Bounds
-        $rowW = [Math]::Min($b.Width, $listHost.ClientSize.Width) - (Px 12)
-        if ($rowW -lt (Px 60)) { $rowW = Px 60 }
-        $r = New-Object Drawing.Rectangle -ArgumentList @(($b.X + (Px 6)), ($b.Y + (Px 2)), $rowW, ($b.Height - (Px 4)))
+        $m = $script:Metric
+        $rowW = [Math]::Min($b.Width, $listHost.ClientSize.Width) - (Px $m['RowRight'])
+        if ($rowW -lt (Px $m['RowMinWidth'])) { $rowW = Px $m['RowMinWidth'] }
+        $r = New-Object Drawing.Rectangle -ArgumentList @(($b.X + (Px $m['RowInset'])), ($b.Y + (Px $m['RowGap'])), $rowW, ($b.Height - (Px (2 * $m['RowGap']))))
         $sel = (($e.State -band [Windows.Forms.DrawItemState]::Selected) -ne 0)
         $isData = ($e.Index -lt $script:Filtered.Count)
         $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
@@ -950,24 +952,24 @@ function Show-Picker {
         $selK = $(if ($sel) { 1.0 } else { 0.0 })
         $hovK = 0.0
         if ($e.Index -eq $script:Anim.HoverIndex) { $hovK = [double]$script:Anim.Hover }
-        try { Draw-RowBackdrop $g $r.X $r.Y $r.Width $r.Height (Px 4) $tint $ui.SelBg $ui.HoverBg $selK $hovK } catch { Write-Log ('row backdrop failed: ' + $_.Exception.Message) }
+        try { Draw-RowBackdrop $g $r.X $r.Y $r.Width $r.Height (Px $m['RowRadius']) $tint $ui.SelBg $ui.HoverBg $selK $hovK } catch { Write-Log ('row backdrop failed: ' + $_.Exception.Message) }
         $label = [string]$script:Labels[$e.Index]
         if (-not $isData) {
-          $rr = New-Object Drawing.RectangleF -ArgumentList @([single]($r.X + (Px 10)), [single]$r.Y, [single]($r.Width - (Px 20)), [single]$r.Height)
+          $rr = New-Object Drawing.RectangleF -ArgumentList @([single]($r.X + (Px $m['IconX'])), [single]$r.Y, [single]($r.Width - (Px (2 * $m['IconX']))), [single]$r.Height)
           $g.DrawString($label, $fBody, (Get-Brush $ui.Faint), $rr, $sfEll)
           return
         }
 
-        # Trailing meta columns, fixed for every row so nothing shifts around:
-        #   [mark 14] [2] [mark 14] [6] [time 52] [12] [key cap 48] [10]
-        $capW = Px 48
-        $capH = Px 18
-        $capX = $r.Right - (Px 10) - $capW
+        # Trailing meta columns, right to left: key cap, time, two mark slots. Every width
+        # comes from $script:Metric, so a theme can restyle the row.
+        $capW = Px $m['CapWidth']
+        $capH = Px $m['CapHeight']
+        $capX = $r.Right - (Px $m['CapGap']) - $capW
         $capY = $r.Y + [int](($r.Height - $capH) / 2)
-        $timeW = Px 52
-        $timeX = $capX - (Px 12) - $timeW
-        $markR = $timeX - (Px 6) - (Px $script:Metric.MarkSlot)
-        $markL = $markR - (Px 2) - (Px $script:Metric.MarkSlot)
+        $timeW = Px $m['TimeWidth']
+        $timeX = $capX - (Px $m['TimeGap']) - $timeW
+        $markR = $timeX - (Px $m['MarkGap']) - (Px $m['MarkSlot'])
+        $markL = $markR - (Px $m['MarkGap2']) - (Px $m['MarkSlot'])
         $offset = $e.Index - $lst.TopIndex
         $showCap = ($offset -ge 0 -and $offset -le 9 -and $offset -lt (Get-Rows) -and -not $script:Confirm)
 
@@ -990,12 +992,12 @@ function Show-Picker {
               if ($null -ne $mcc) { $mkColor = $mcc }
             }
             $mkBrush = Get-Brush $mkColor
-            $mkRect = New-Object Drawing.RectangleF -ArgumentList @([single]$slots[$mi], [single]$r.Y, [single](Px 14), [single]$r.Height)
+            $mkRect = New-Object Drawing.RectangleF -ArgumentList @([single]$slots[$mi], [single]$r.Y, [single](Px $m['MarkGlyphWidth']), [single]$r.Height)
             $g.DrawString([string]$mk.Glyph, $fIconSmall, $mkBrush, $mkRect, $sfCenter)
           }
         }
 
-        $textX = $r.X + (Px 12)
+        $textX = $r.X + (Px $m['TextInset'])
         # the icon is drawn only when a plugin supplied one; without a typing plugin the
         # row starts at the text and nothing is reserved for an icon
         $rowGlyph = [string]$row.Glyph
@@ -1006,20 +1008,20 @@ function Show-Picker {
             if ($null -ne $gcc) { $glyphColor = $gcc }
           }
           $glyphBrush = Get-Brush $glyphColor
-          $glyphRect = New-Object Drawing.RectangleF -ArgumentList @([single]($r.X + (Px 10)), [single]$r.Y, [single](Px 20), [single]$r.Height)
+          $glyphRect = New-Object Drawing.RectangleF -ArgumentList @([single]($r.X + (Px $m['IconX'])), [single]$r.Y, [single](Px $m['IconSlot']), [single]$r.Height)
           $g.DrawString($rowGlyph, $fIcon, $glyphBrush, $glyphRect, $sfCenter)
-          $textX = $r.X + (Px 38)
+          $textX = $r.X + (Px $m['TextGap'])
         }
 
-        $textW = $markL - (Px 8) - $textX
-        if ($textW -lt (Px 20)) { $textW = Px 20 }
+        $textW = $markL - (Px $m['TextMarkGap']) - $textX
+        if ($textW -lt (Px $m['TextMinWidth'])) { $textW = Px $m['TextMinWidth'] }
         $tr = New-Object Drawing.RectangleF -ArgumentList @([single]$textX, [single]$r.Y, [single]$textW, [single]$r.Height)
 
         if ($sel) {
           # selection indicator only: a short accent pill on the leading edge. It marks the
           # row the keys act on and never doubles as an entry highlight.
           $barBrush = Get-Brush $ui.Accent
-          $barPath = New-RoundPath ($r.X + (Px 3)) ($r.Y + (Px 11)) (Px 3) ($r.Height - (Px 22)) (Px 1)
+          $barPath = New-RoundPath ($r.X + (Px $m['SelBarX'])) ($r.Y + (Px $m['SelBarInset'])) (Px $m['SelBarWidth']) ($r.Height - (Px (2 * $m['SelBarInset']))) (Px $m['SelBarRadius'])
           $g.FillPath($barBrush, $barPath)
           $barPath.Dispose()
         }
@@ -1045,7 +1047,7 @@ function Show-Picker {
           $capStroke = $ui.KeyCapBorder
           $capInk = $ui.BadgeText
           if ($script:CtrlHeld) { $capFill = $ui.AccentSoft; $capStroke = $ui.Accent; $capInk = $ui.Accent }
-          $capPath = New-RoundPath $capX $capY $capW $capH (Px 4)
+          $capPath = New-RoundPath $capX $capY $capW $capH (Px $m['CapRadius'])
           $g.FillPath((Get-Brush $capFill), $capPath)
           $capPen = New-Object Drawing.Pen $capStroke, 1
           $g.DrawPath($capPen, $capPath)
@@ -1095,15 +1097,15 @@ function Show-Picker {
     $lst.Add_MouseUp({ param($s, $e) if ($e.Button -eq 'Left') { Sync-Sb; Focus-Search } })
 
     $footTimer = New-Object Windows.Forms.Timer
-    $footTimer.Interval = 3200
+    $footTimer.Interval = [int]$script:Timing['FootMessage']
     $footTimer.Add_Tick({ $footTimer.Stop(); Restore-Foot })
 
     $confirmTimer = New-Object Windows.Forms.Timer
-    $confirmTimer.Interval = 5000
+    $confirmTimer.Interval = [int]$script:Timing['Confirm']
     $confirmTimer.Add_Tick({ $confirmTimer.Stop(); $script:Confirm = $false; Restore-Foot })
 
     $deb = New-Object Windows.Forms.Timer
-    $deb.Interval = 150
+    $deb.Interval = [int]$script:Timing['Debounce']
     $deb.Add_Tick({ $deb.Stop(); Update-List $txt.Text })
     function Flush-List { if ($deb.Enabled) { $deb.Stop(); Update-List $txt.Text } }
     $txt.Add_TextChanged({ Sync-Placeholder; $deb.Stop(); $deb.Start() })
@@ -1125,14 +1127,14 @@ function Show-Picker {
         }
         if ($e.Control -and $e.KeyCode -eq 'Enter') {
           Flush-List
-          if ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex -NoInject } else { Set-Foot 'Nothing to copy' 1500 }
+          if ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex -NoInject } else { Set-Foot 'Nothing to copy' ([int]$script:Timing['FootShort']) }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.Control -and (($code -ge 48 -and $code -le 57) -or ($code -ge 96 -and $code -le 105))) {
           $n = $code
           if ($n -ge 96) { $n = $n - 96 } else { $n = $n - 48 }
           Flush-List
           $idx = Get-QuickKeyIndex (Get-QuickKeyOffset $n) $lst.TopIndex $script:Filtered.Count (Get-Rows)
-          if ($idx -ge 0) { Use-Index $idx } else { Set-Foot 'No entry at that number' 1200 }
+          if ($idx -ge 0) { Use-Index $idx } else { Set-Foot 'No entry at that number' ([int]$script:Timing['FootBrief']) }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.Control -and $e.KeyCode -eq 'Z') {
           try { Undo-Delete } catch { Write-Log ('undo failed: ' + $_.Exception.Message) }
@@ -1148,7 +1150,7 @@ function Show-Picker {
             if ($go) {
               $note = $null
               try { $note = & $pluginKey.Invoke $rec } catch { Write-Log ('plugin key failed: ' + $pluginKey.Plugin + ' - ' + $_.Exception.Message) }
-              if ($note) { Set-Foot ([string]$note) 3200 }
+              if ($note) { Set-Foot ([string]$note) ([int]$script:Timing['FootMessage']) }
               $script:Entries = @(Get-Records)
               Update-List $txt.Text
             }
@@ -1174,7 +1176,7 @@ function Show-Picker {
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.KeyCode -eq 'Enter') {
           Flush-List
-          if ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex } else { Set-Foot 'Nothing to paste' 1500 }
+          if ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex } else { Set-Foot 'Nothing to paste' ([int]$script:Timing['FootShort']) }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.KeyCode -eq 'Escape') {
           if ($txt.Text.Length -gt 0) {
@@ -1282,7 +1284,7 @@ function Show-Picker {
       })
     $form.Add_Deactivate({
         $script:CtrlHeld = $false
-        if (((Get-Date) - $script:ShownAt).TotalMilliseconds -gt 450) { $form.Close() }
+        if (((Get-Date) - $script:ShownAt).TotalMilliseconds -gt [int]$script:Timing['CloseOnBlur']) { $form.Close() }
       })
 
     # Two input models: hook - the form never activates and a low-level hook feeds the
@@ -1376,8 +1378,6 @@ function Show-Picker {
     $confirmTimer.Dispose()
     Close-Preview $pv
     try { $pvCfg.InkBrush.Dispose(); $pvCfg.DimBrush.Dispose() } catch { }
-    try { if ($script:MeasureG) { $script:MeasureG.Dispose() } } catch { }
-    $script:MeasureG = $null
     $cm.Dispose()
     # GDI handles this panel owns: the group heading font, and the region the form paints with
     try { if ($null -ne $groupFont) { $groupFont.Dispose() } } catch { }
