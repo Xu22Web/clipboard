@@ -236,13 +236,13 @@ xpm build        # 打包到 dist\clipboard-<version>\
 
 ## 图片与带格式文本
 
-图片与富文本都不写入 `history.dat`：图片存为 `data\media\<sha1>.png`，富文本存为 `data\media\<sha1>.html` 与 `.rtf`，历史文件只保留引用（图片条目为 `image:<sha1>:<宽>x<高>:<字节>:PNG`，富文本记录留 `R:<sha1>:<字节>`）。
+图片与富文本都不写入 `history.dat`：图片存为 `data\media\<sha1>.png`，富文本存为 `data\media\<sha1>.html` 与 `.rtf`，历史文件只保留引用（图片条目为 `image:<sha1>:<宽>x<高>:<字节>:PNG`，富文本记录留 `R:<sha1>:<字节>`）。两者都按剪贴板给的原始字节落盘：`HTML Format` 的头部写着自身缓冲区里的字节偏移，`Rich Text Format` 是 8 位格式，经过一次字符串编解码就会把 UTF-8 变成乱码、偏移全部错位。
 
 - 单次复制只让历史文件增长几十字节；重复复制同一张图按内容哈希去重。
 - 记录被删除、清空或裁剪时，其独占的媒体文件在同一次保存中回收。
 - 媒体有独立预算 `MaxMediaTotal`（默认 64 MB）：超出时由旧到新丢弃带媒体的行，受保护标记的行不动。
 
-`pick N` 与面板中回车均把图片以 `PNG` 和 DIB 两种格式写回剪贴板；带格式文本同时写纯文本、`HTML Format` 与 `Rich Text Format`，粘贴到 Word / WordPad / 邮件客户端保留排版，粘贴到记事本得到纯文本。
+`pick N` 与面板中回车均把图片以 `PNG` 和 DIB 两种格式写回剪贴板；带格式文本同时写纯文本、`HTML Format` 与 `Rich Text Format`（后两者按捕获到的字节原样写回），粘贴到 Word / Excel / WordPad / 邮件客户端保留排版，粘贴到记事本得到纯文本。
 
 分别关闭：`clipboard config set CaptureImages 0` / `clipboard config set CaptureRich 0`；只粘纯文本：`clipboard config set PasteRich 0`。
 

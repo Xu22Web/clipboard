@@ -29,7 +29,7 @@ function Set-Text([string]$t) {
 
 # One clipboard snapshot in one clipboard-open window:
 #   Text  - the payload the store keeps ('' when this snapshot has no payload of its own)
-#   Rich  - @{ Html = [byte[]]; Rtf = [string] } or $null
+#   Rich  - @{ Html = [byte[]]; Rtf = [byte[]] } or $null
 #   Image - @{ Png = [byte[]]; W; H; Fmt } or $null
 # Text wins over a bitmap on purpose: Word puts a picture of the selection on the clipboard
 # together with every copy, and the formatting is what the user wants back - not an image of
@@ -64,43 +64,59 @@ function Get-ClipCapture {
   return $null
 }
 
-# The CF_HTML blob keeps the byte offsets of its own header, so it is stored and written back
-# verbatim; the RTF is a .NET string either way. Anything over MaxRichBytes is skipped: the
-# plain text is still captured by the caller.
+# CF_HTML keeps the byte offsets of its own header and RTF is an 8-bit format, so both are
+# read straight from the clipboard block and stored / written back byte for byte. Going
+# through a .NET string would decode them with the ANSI code page (UTF-8 html turns into
+# mojibake and the StartHTML/EndHTML offsets no longer point at the tags), which is exactly
+# what makes Word and Excel paste garbage. Anything over MaxRichBytes is skipped: the plain
+# text is still captured by the caller.
 function Get-RichCapture {
-  $do = [Windows.Forms.Clipboard]::GetDataObject()
-  if ($null -eq $do) { return $null }
   $html = $null
-  $rtf = ''
+  $rtf = $null
   try {
-    if ($do.GetDataPresent([Windows.Forms.DataFormats]::Html)) {
-      $obj = $do.GetData([Windows.Forms.DataFormats]::Html)
-      if ($obj -is [IO.Stream]) {
-        $obj.Position = 0
-        $ms = New-Object IO.MemoryStream
-        $obj.CopyTo($ms)
-        $html = $ms.ToArray()
-      } elseif ($obj -is [byte[]]) {
-        $html = $obj
-      } elseif ($obj -is [string]) {
-        $html = $Utf8.GetBytes([string]$obj)
+    Load-Forms
+    Add-Native
+    [Cb.Win]::ReadRichFormats([ref]$html, [ref]$rtf)
+  } catch {
+    $html = $null
+    $rtf = $null
+  }
+  if ($null -eq $html -and $null -eq $rtf) {
+    # no native layer (or no such format): fall back to the data object, where a stream is
+    # still exact and a string has to be turned back into the ANSI bytes it came from
+    try {
+      $do = [Windows.Forms.Clipboard]::GetDataObject()
+      if ($null -ne $do -and $do.GetDataPresent([Windows.Forms.DataFormats]::Html)) {
+        $obj = $do.GetData([Windows.Forms.DataFormats]::Html)
+        if ($obj -is [IO.Stream]) {
+          $obj.Position = 0
+          $ms = New-Object IO.MemoryStream
+          $obj.CopyTo($ms)
+          $html = $ms.ToArray()
+        } elseif ($obj -is [byte[]]) {
+          $html = $obj
+        } elseif ($obj -is [string]) {
+          $html = [Text.Encoding]::Default.GetBytes([string]$obj)
+        }
       }
-    }
-  } catch { $html = $null }
-  try {
-    if ($do.GetDataPresent([Windows.Forms.DataFormats]::Rtf)) {
-      $r = $do.GetData([Windows.Forms.DataFormats]::Rtf)
-      if ($r -is [string]) { $rtf = [string]$r }
-    }
-  } catch { $rtf = '' }
-  if ($null -eq $html -and -not $rtf) { return $null }
-  $bytes = 0
-  if ($null -ne $html) { $bytes += $html.Length }
-  if ($rtf) { $bytes += $Utf8.GetByteCount($rtf) }
-  if ($bytes -gt $script:MaxRichBytes) {
-    Write-Log ('formatted text skipped: ' + [string]$bytes + ' bytes')
+      if ($null -ne $do -and $do.GetDataPresent([Windows.Forms.DataFormats]::Rtf)) {
+        $obj2 = $do.GetData([Windows.Forms.DataFormats]::Rtf)
+        if ($obj2 -is [byte[]]) { $rtf = $obj2 }
+        elseif ($obj2 -is [string]) { $rtf = [Text.Encoding]::Default.GetBytes([string]$obj2) }
+      }
+    } catch { }
+  }
+  $htmlLen = 0
+  if ($null -ne $html) { $htmlLen = $html.Length }
+  $rtfLen = 0
+  if ($null -ne $rtf) { $rtfLen = $rtf.Length }
+  if ($htmlLen -eq 0 -and $rtfLen -eq 0) { return $null }
+  if (($htmlLen + $rtfLen) -gt $script:MaxRichBytes) {
+    Write-Log ('formatted text skipped: ' + [string]($htmlLen + $rtfLen) + ' bytes')
     return $null
   }
+  if ($htmlLen -eq 0) { $html = $null }
+  if ($rtfLen -eq 0) { $rtf = $null }
   return @{ Html = $html; Rtf = $rtf }
 }
 
@@ -223,6 +239,8 @@ function Set-RichItem([string]$text, [string]$rich) {
   try {
     $do = New-Object Windows.Forms.DataObject
     $do.SetData([Windows.Forms.DataFormats]::UnicodeText, [string]$text)
+    # both blocks go back as the exact bytes they were captured as: a string would be encoded
+    # again on the way out, and CF_HTML's own byte offsets would stop matching
     $html = Read-RichHtml $rich
     if ($null -ne $html -and $html.Length -gt 0) {
       $ms = New-Object IO.MemoryStream
@@ -230,8 +248,13 @@ function Set-RichItem([string]$text, [string]$rich) {
       $ms.Position = 0
       $do.SetData([Windows.Forms.DataFormats]::Html, $ms)
     }
-    $rtf = Read-RichRtf $rich
-    if ($rtf) { $do.SetData([Windows.Forms.DataFormats]::Rtf, $rtf) }
+    $rtf = Read-RichRtfBytes $rich
+    if ($null -ne $rtf -and $rtf.Length -gt 0) {
+      $ms2 = New-Object IO.MemoryStream
+      $ms2.Write($rtf, 0, $rtf.Length)
+      $ms2.Position = 0
+      $do.SetData([Windows.Forms.DataFormats]::Rtf, $ms2)
+    }
     return (Set-ItemDataObject $do)
   } catch {
     Write-Log ('set formatted text failed: ' + $_.Exception.Message)

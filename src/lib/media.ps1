@@ -126,15 +126,25 @@ function Write-ImageThumb([string]$sha1, $src) {
 
 # ---- formatted text ---------------------------------------------------------
 # The HTML is stored exactly as the clipboard handed it over: CF_HTML carries byte offsets
-# into its own buffer, so rewriting the header would break the paste into Word.
+# into its own buffer, so rewriting the header would break the paste into Word. The RTF is
+# a byte buffer too - it is an 8-bit format, and its high bytes (styles, font tables) do not
+# survive a UTF-8 decode.
+function ConvertTo-RtfBytes($rtf) {
+  if ($null -eq $rtf) { return (New-Object byte[] 0) }
+  if ($rtf -is [byte[]]) { return $rtf }
+  $s = [string]$rtf
+  if (-not $s) { return (New-Object byte[] 0) }
+  return [Text.Encoding]::Default.GetBytes($s)
+}
+
 function New-RichRef($rich) {
   if ($null -eq $rich) { return '' }
   $html = $rich.Html
   if ($null -eq $html) { $html = New-Object byte[] 0 }
-  $rtf = [string]$rich.Rtf
-  if ($html.Length -eq 0 -and -not $rtf) { return '' }
-  $sha = Get-MediaSha1 $html ($Utf8.GetBytes($rtf))
-  return ('R:' + $sha + ':' + [string]($html.Length + $Utf8.GetByteCount($rtf)))
+  $rtf = ConvertTo-RtfBytes $rich.Rtf
+  if ($html.Length -eq 0 -and $rtf.Length -eq 0) { return '' }
+  $sha = Get-MediaSha1 $html $rtf
+  return ('R:' + $sha + ':' + [string]($html.Length + $rtf.Length))
 }
 
 function Get-RichRef([string]$ref) {
@@ -155,9 +165,10 @@ function Write-RichMedia([string]$ref, $rich) {
       $p = Get-MediaPath $r.Sha1 'html'
       if (-not (Test-Path -LiteralPath $p)) { [IO.File]::WriteAllBytes($p, $rich.Html) }
     }
-    if ($rich.Rtf) {
+    $rtf = ConvertTo-RtfBytes $rich.Rtf
+    if ($rtf.Length -gt 0) {
       $p = Get-MediaPath $r.Sha1 'rtf'
-      if (-not (Test-Path -LiteralPath $p)) { [IO.File]::WriteAllText($p, [string]$rich.Rtf, $Utf8) }
+      if (-not (Test-Path -LiteralPath $p)) { [IO.File]::WriteAllBytes($p, $rtf) }
     }
     return $true
   } catch {
@@ -172,10 +183,18 @@ function Read-RichHtml([string]$ref) {
   try { return [IO.File]::ReadAllBytes((Get-MediaPath $r.Sha1 'html')) } catch { return $null }
 }
 
-function Read-RichRtf([string]$ref) {
+# the bytes are what the clipboard gets back; the string form is only for the preview card,
+# which hands the RTF to a RichTextBox
+function Read-RichRtfBytes([string]$ref) {
   $r = Get-RichRef $ref
-  if ($null -eq $r) { return '' }
-  try { return [IO.File]::ReadAllText((Get-MediaPath $r.Sha1 'rtf'), [Text.Encoding]::UTF8) } catch { return '' }
+  if ($null -eq $r) { return (New-Object byte[] 0) }
+  try { return [IO.File]::ReadAllBytes((Get-MediaPath $r.Sha1 'rtf')) } catch { return (New-Object byte[] 0) }
+}
+
+function Read-RichRtf([string]$ref) {
+  $bytes = Read-RichRtfBytes $ref
+  if ($null -eq $bytes -or $bytes.Length -eq 0) { return '' }
+  return [Text.Encoding]::Default.GetString($bytes)
 }
 
 # does the record still have something to paste? (a missing file must not become plain text

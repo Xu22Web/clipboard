@@ -38,6 +38,71 @@ namespace Cb {
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern uint GetDpiForSystem();
+
+    // ---- formatted text, straight out of the clipboard ----
+    // CF_HTML carries byte offsets into its own buffer, and both blocks are 8-bit buffers:
+    // they must never travel through a .NET string. The default DATAOBJECT converter decodes
+    // them with the ANSI code page, so UTF-8 html becomes mojibake and, once re-encoded,
+    // every StartHTML/EndHTML offset points somewhere else - Word and Excel then paste
+    // garbage. Reading the handle gives the bytes Word put there.
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool OpenClipboard(IntPtr owner);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool CloseClipboard();
+    [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr GetClipboardData(uint format);
+    [DllImport("user32.dll", SetLastError = true)] private static extern uint RegisterClipboardFormat(string name);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr GlobalLock(IntPtr block);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GlobalUnlock(IntPtr block);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern UIntPtr GlobalSize(IntPtr block);
+
+    public static void ReadRichFormats(ref byte[] html, ref byte[] rtf) {
+      html = null;
+      rtf = null;
+      if (!OpenClipboard(IntPtr.Zero)) { return; }
+      try {
+        html = ReadBlock(RegisterClipboardFormat("HTML Format"), true);
+        rtf = ReadBlock(RegisterClipboardFormat("Rich Text Format"), false);
+      } finally { CloseClipboard(); }
+    }
+
+    private static byte[] ReadBlock(uint format, bool html) {
+      if (format == 0) { return null; }
+      IntPtr handle = GetClipboardData(format);
+      if (handle == IntPtr.Zero) { return null; }
+      long size = (long)GlobalSize(handle);
+      if (size <= 0) { return null; }
+      IntPtr p = GlobalLock(handle);
+      if (p == IntPtr.Zero) { return null; }
+      try {
+        byte[] raw = new byte[size];
+        Marshal.Copy(p, raw, 0, (int)size);
+        return TrimBlock(raw, html);
+      } finally { GlobalUnlock(handle); }
+    }
+
+    // the block is rounded up to the allocator's step, so the tail is dropped: html stops at
+    // the EndHTML byte offset it declares, rtf at its closing brace (a trailing NUL is padding)
+    private static byte[] TrimBlock(byte[] raw, bool html) {
+      int end = raw.Length;
+      if (html) {
+        string head = System.Text.Encoding.ASCII.GetString(raw, 0, Math.Min(raw.Length, 512));
+        int at = head.IndexOf("EndHTML:", StringComparison.Ordinal);
+        if (at >= 0) {
+          long n = 0;
+          bool digits = false;
+          for (int i = at + 8; i < head.Length; i++) {
+            char c = head[i];
+            if (c < '0' || c > '9') { break; }
+            n = n * 10 + (c - '0');
+            digits = true;
+          }
+          if (digits && n > 0 && n <= raw.Length) { end = (int)n; }
+        }
+      }
+      while (end > 0 && raw[end - 1] == 0) { end--; }
+      if (end == raw.Length) { return raw; }
+      byte[] trimmed = new byte[end];
+      Array.Copy(raw, trimmed, end);
+      return trimmed;
+    }
   }
   // RTF into a bitmap: a RichTextBox lays a document out into a device context through
   // EM_FORMATRANGE, which works while the control is not on screen at all. DrawToBitmap on

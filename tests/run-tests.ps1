@@ -598,6 +598,14 @@ try {
     Check 'unit' 'a rich reference parses back' (($null -ne $rr) -and $rr.Bytes -gt 0) $rref
     [void](Write-RichMedia $rref $richCap)
     Check 'unit' 'formatted text comes back as stored' (((Read-RichRtf $rref) -eq $richRtf) -and ((Read-RichHtml $rref).Length -eq $richCap.Html.Length)) ''
+    # RTF is an 8-bit format: it is stored as bytes, so high bytes (and any style table byte)
+    # survive instead of going through a UTF-8 decode
+    $rtfHigh = New-Object byte[] 5
+    $rtfHigh[0] = 0x7B; $rtfHigh[1] = 0x80; $rtfHigh[2] = 0xFF; $rtfHigh[3] = 0x5C; $rtfHigh[4] = 0x7D
+    $highRef = New-RichRef @{ Html = $null; Rtf = $rtfHigh }
+    [void](Write-RichMedia $highRef @{ Html = $null; Rtf = $rtfHigh })
+    $highBack = Read-RichRtfBytes $highRef
+    Check 'unit' 'rtf keeps its high bytes' (($highBack.Length -eq 5) -and ($highBack[1] -eq 0x80) -and ($highBack[2] -eq 0xFF)) ([string]$highBack.Length + ' bytes')
     # the card draws the document into a bitmap: an empty one would mean the layout never ran
     $renderFont = New-Object Drawing.Font 'Segoe UI', 10.5
     $richBmp = Get-RichPreviewBitmap $rref 380 200 $renderFont ([Drawing.Color]::White)
@@ -656,8 +664,30 @@ try {
     if (Set-ClipItem 'hi there' $rref) {
       $capRich = Get-ClipCapture
       Check 'unit' 'formatted text keeps its formats on the clipboard' (($null -ne $capRich.Rich) -and [string]$capRich.Text -eq 'hi there') ''
+      $htmlSame = ($null -ne $capRich.Rich.Html) -and ([BitConverter]::ToString($capRich.Rich.Html) -eq [BitConverter]::ToString($richCap.Html))
+      Check 'unit' 'the html block comes back byte for byte' $htmlSame ''
+      $rtfSame = ($null -ne $capRich.Rich.Rtf) -and ([Text.Encoding]::Default.GetString($capRich.Rich.Rtf) -ceq $richRtf)
+      Check 'unit' 'the rtf block comes back byte for byte' $rtfSame ''
     } else {
       Check 'unit' 'formatted text keeps its formats on the clipboard' $false 'set formatted text failed'
+    }
+    # A UTF-8 CF_HTML block that goes through a .NET string is decoded with the ANSI code page
+    # and stored re-encoded, which is what made Word and Excel paste mojibake. The bytes the
+    # clipboard hands over have to come back unchanged.
+    $cnChar = [char]0x4E2D
+    $cnHtml = $Utf8.GetBytes('<html><body><p>' + $cnChar + '</p></body></html>')
+    $cnRef = New-RichRef @{ Html = $cnHtml; Rtf = $null }
+    [void](Write-RichMedia $cnRef @{ Html = $cnHtml; Rtf = $null })
+    if (Set-ClipItem ([string]$cnChar) $cnRef) {
+      $cnBack = Get-ClipCapture
+      $cnHtmlBack = $null
+      if ($null -ne $cnBack -and $null -ne $cnBack.Rich) { $cnHtmlBack = $cnBack.Rich.Html }
+      $cnSame = ($null -ne $cnHtmlBack) -and ([BitConverter]::ToString($cnHtmlBack) -eq [BitConverter]::ToString($cnHtml))
+      Check 'unit' 'utf-8 html keeps its bytes on the clipboard' $cnSame ''
+      Check 'unit' 'utf-8 html reads back as its text' (($null -ne $cnHtmlBack) -and ((Get-HtmlText $cnHtmlBack) -eq [string]$cnChar)) ([string]$cnChar)
+    } else {
+      Check 'unit' 'utf-8 html keeps its bytes on the clipboard' $false 'set formatted text failed'
+      Check 'unit' 'utf-8 html reads back as its text' $false 'set formatted text failed'
     }
 
     # a big picture: the card scales it down once and keeps a small copy beside it
