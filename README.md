@@ -645,10 +645,13 @@ xpm test -Source dist\clipboard-0.1.0   # 对打包副本跑 CLI 组
 |---|---|
 | `xpm dev` | 停止残留常驻进程，启动 `src\clipboard.ps1 serve`，被加载的文件变化后重启 |
 | `xpm test` | 运行自测（开关见上一节） |
+| `xpm bench` | 在临时副本里计时捕获、保存、解析与过滤，用于改动前后对比 |
 | `xpm shot` | 重新生成 `docs\screenshot-dark.png` 与 `screenshot-light.png` |
 | `xpm build` | 打包到 `dist\` |
 
 `xpm` / `xpm.cmd` / `xpm.ps1` 三个入口行为一致，均先把工作目录切到仓库根，再把其余参数原样追加到 `package.ini` 里 `[scripts]` 那一行命令。
+
+`xpm bench` 在 `%TEMP%` 下复制一份 `src\` 并把 `DataDir` 指向临时目录，所以在常驻进程运行时也能跑：输出 `cli status` / `cli list` 的冷启动、2 KB 与 200 KB 文本的捕获、保存、解析、单词过滤七项耗时（`-Records` 改库规模，`-Json` / `-Out <文件>` 便于改动前后对比）。面板打开与粘贴注入需要真实桌面，不在其中。
 
 `xpm dev` 只有一种模式：常驻进程一直在跑，文件一变就重启。
 

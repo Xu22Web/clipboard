@@ -48,7 +48,11 @@ if (@($script:PluginList).Count -gt 0 -and (Get-Command Load-Plugins -ErrorActio
 # whichever loader happened to trip over them. `status` shows the count, `config` and `diag`
 # show the detail.
 $script:ConfigProblems = @()
-if (Get-Command Get-ConfigProblems -ErrorAction SilentlyContinue) {
+# Only the commands that report settings print them: `status` counts, `config` and `diag`
+# list. Walking every key against the schema on a capture path (put, get, list, pick, del)
+# would pay for a validation pass nobody reads.
+$showProblems = ($Command -eq '' -or @('status', 'config', 'diag', 'help', '-h', '--help') -contains $Command.ToLower())
+if ($showProblems -and (Get-Command Get-ConfigProblems -ErrorAction SilentlyContinue)) {
   try { $script:ConfigProblems = @(Get-ConfigProblems) } catch { $script:ConfigProblems = @() }
   $stamp = ($script:ConfigProblems -join '|')
   if ($stamp -ne $script:ConfigProblemStamp) {

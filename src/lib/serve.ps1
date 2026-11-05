@@ -114,6 +114,8 @@ function Invoke-ServeOnce {
 
   $script:LastSeq = [Cb.Win]::GetClipboardSequenceNumber()
   $script:LastText = Get-ClipItem
+  # resolved once: asking for the command on every poll costs more than the work it guards
+  $hasTicks = $null -ne (Get-Command Invoke-PluginTicks -ErrorAction SilentlyContinue)
   $timer = New-Object Windows.Forms.Timer
   $timer.Interval = $Interval
   $timer.Add_Tick({
@@ -121,7 +123,7 @@ function Invoke-ServeOnce {
       if ($evt.WaitOne(0)) { Show-Picker; return }
 
       # plugin background work (expiry sweeps and the like); throttled inside
-      if (Get-Command Invoke-PluginTicks -ErrorAction SilentlyContinue) {
+      if ($hasTicks) {
         try { Invoke-PluginTicks } catch { }
       }
 

@@ -20,6 +20,21 @@ function New-Record([string]$payload, [long]$time, [string]$marks = '') {
   return [pscustomobject]@{ Payload = $payload; Time = $time; Marks = $marks; Key = 0; Blob = ''; Rich = '' }
 }
 
+# One stat, shared by the read cache and the write gate: the size and the write time are the
+# whole identity of the file for this process.
+function Get-StoreStamp {
+  try {
+    $fi = Get-Item -LiteralPath $StoreFile -ErrorAction Stop
+    return ([string]$fi.Length + ':' + [string]$fi.LastWriteTimeUtc.Ticks)
+  } catch { return 'none' }
+}
+
+# The UTF-8 size of a payload.
+function Get-RecordBytes($record) {
+  if ($null -eq $record) { return [long]0 }
+  try { return [long]$Utf8.GetByteCount([string]$record.Payload) } catch { return [long]0 }
+}
+
 # ---- blobs ------------------------------------------------------------------
 # One file per big payload, named after its sha1: the same text captured twice reuses it.
 function Get-BlobDir { return (Join-Path $StoreDir 'blobs') }
@@ -156,9 +171,8 @@ function Get-MarkCountWords($records) {
 function Get-Records {
   # Parsing the whole store is the hottest path (panel open, filter, delete, undo), so the
   # result is cached against the file stamp: any writer changes size or write time.
-  $fi = $null
-  try { $fi = Get-Item -LiteralPath $StoreFile -ErrorAction Stop } catch { $script:RecCache = $null; return @() }
-  $stamp = [string]$fi.Length + ':' + [string]$fi.LastWriteTimeUtc.Ticks
+  $stamp = Get-StoreStamp
+  if ($stamp -eq 'none') { $script:RecCache = $null; return @() }
   if ($null -ne $script:RecCache -and $script:RecCache.Stamp -eq $stamp) { return $script:RecCache.Records }
   $raw = $null
   try { $raw = [IO.File]::ReadAllText($StoreFile, [Text.Encoding]::UTF8) } catch { return @() }
@@ -219,7 +233,13 @@ function Get-Records {
 # Only `migrate` acts on Kind; the reader refuses anything but current.
 function Get-StoreVersion {
   $o = [pscustomobject]@{ Kind = 'none'; Version = -1; Label = 'no history file'; Hint = '' }
-  if (-not (Test-Path -LiteralPath $StoreFile)) { return $o }
+  # Every save asks this, and the answer can only change when the file does.
+  $stamp = Get-StoreStamp
+  if ($null -ne $script:GateCache -and $script:GateCache.Stamp -eq $stamp) { return $script:GateCache.Value }
+  if (-not (Test-Path -LiteralPath $StoreFile)) {
+    $script:GateCache = @{ Stamp = $stamp; Value = $o }
+    return $o
+  }
   $head = ''
   try {
     $fs = [IO.File]::Open($StoreFile, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
@@ -259,10 +279,14 @@ function Get-StoreVersion {
     $o.Label = 'unrecognised layout'
     $o.Hint = 'clipboard migrate -Purge archives it'
   }
+  $script:GateCache = @{ Stamp = $stamp; Value = $o }
   return $o
 }
 
-function Save-Records($records) {
+# Removing the blobs and media files no record points at any more walks two directories. It
+# stays the default, because every caller that drops rows wants it; the capture path - which
+# only ever appends - says -SkipReclaim and saves itself the scans.
+function Save-Records($records, [switch]$SkipReclaim) {
   Ensure-Dir
   # Never replace a file this build cannot read: the first capture after replacing the
   # program would otherwise drop the whole history. The upgrade belongs to `migrate`.
@@ -301,8 +325,13 @@ function Save-Records($records) {
     $arr = @($records)
     foreach ($r in $arr) { if ([int]$r.Key -le 0) { $r.Key = [int](++$script:RecKey) } }
     $fi = Get-Item -LiteralPath $StoreFile -ErrorAction Stop
-    $script:RecCache = @{ Stamp = ([string]$fi.Length + ':' + [string]$fi.LastWriteTimeUtc.Ticks); Records = $arr }
+    $stamp = [string]$fi.Length + ':' + [string]$fi.LastWriteTimeUtc.Ticks
+    $script:RecCache = @{ Stamp = $stamp; Records = $arr }
+    # the file just written is the layout this build reads, so the next save can skip the
+    # header read instead of opening the file to learn what it already knows
+    $script:GateCache = @{ Stamp = $stamp; Value = [pscustomobject]@{ Kind = 'current'; Version = $script:DataVersion; Label = ('CBHIST v' + $script:DataVersion); Hint = '' } }
   } catch { }
+  if ($SkipReclaim.IsPresent) { return }
   Remove-OrphanBlobs $records
   Remove-OrphanMedia $records
 }
@@ -403,9 +432,11 @@ function Select-QueryRows($entries, [string[]]$tokens) {
 
 # enforce MaxItems / MaxTotal / MaxMediaTotal in place; rows carrying a protected mark are
 # never dropped. Media sizes travel inside the payload and the reference, so this never
-# touches the disk.
+# touches the disk. TrimDropped tells a caller whether the write that follows has orphaned
+# files worth reclaiming.
 function Trim-Records($list) {
   $protected = @(Get-ProtectedMarks)
+  $before = $list.Count
   if ($list.Count -gt $MaxItems) {
     $over = $list.Count - $MaxItems
     $drop = New-Object System.Collections.Generic.List[object]
@@ -421,17 +452,22 @@ function Trim-Records($list) {
   foreach ($r in $list) {
     $prot = Test-AnyMark $r $protected
     if ($cut) { if ($prot) { $keep.Add($r) }; continue }
-    $total += $Utf8.GetByteCount($r.Payload)
+    $total += (Get-RecordBytes $r)
     if ($total -gt $MaxTotal -and -not $prot) { $cut = $true; continue }
-    # images and sidecars have their own budget: a screenshot must not evict every text row
+    # images and sidecars have their own budget: a screenshot must not evict every text row.
+    # Only a row that can carry media is measured - a plain text row would answer 0 anyway,
+    # and the call is a parse of the payload reference.
     $mb = [long]0
-    if (Get-Command Get-RecordMediaBytes -ErrorAction SilentlyContinue) { $mb = [long](Get-RecordMediaBytes $r) }
+    if ($script:MaxMediaTotal -gt 0 -and ((Test-ImagePayload ([string]$r.Payload)) -or [string]$r.Rich)) {
+      if (Get-Command Get-RecordMediaBytes -ErrorAction SilentlyContinue) { $mb = [long](Get-RecordMediaBytes $r) }
+    }
     if ($mb -gt 0 -and ($media + $mb) -gt $script:MaxMediaTotal -and -not $prot) { continue }
     $media += $mb
     $keep.Add($r)
   }
   $list.Clear()
   foreach ($r in $keep) { $list.Add($r) }
+  $script:TrimDropped = [int]($before - $keep.Count)
 }
 
 function Add-Item([string]$text, $capture = $null) {
@@ -439,7 +475,9 @@ function Add-Item([string]$text, $capture = $null) {
   if ($script:ExcludePattern) {
     try { if ($text -match $script:ExcludePattern) { Write-Log 'skip (exclude pattern)'; return } } catch { }
   }
-  if ($Utf8.GetByteCount($text) -gt $MaxBytes) { Write-Log ('skip oversize ' + $text.Length); return }
+  $size = [long]0
+  try { $size = [long]$Utf8.GetByteCount($text) } catch { $size = 0 }
+  if ($size -gt $MaxBytes) { Write-Log ('skip oversize ' + $text.Length); return }
   # RS / US are the record delimiters: a payload carrying them would corrupt the store
   if (($text.IndexOf([char]30) -ge 0) -or ($text.IndexOf([char]31) -ge 0)) {
     $text = $text.Replace([char]30, ' ').Replace([char]31, ' ')
@@ -456,19 +494,28 @@ function Add-Item([string]$text, $capture = $null) {
   Use-StoreLock {
     $recs = @(Get-Records)
     if ($recs.Count -gt 0 -and $recs[0].Payload -ceq $text -and [string]$recs[0].Rich -ceq $rich) { return }
-    # a re-captured payload keeps the marks it already had
+    # One pass keeps the marks of a payload that is already in the store and drops the older
+    # copies of it. Comparing the payload is cheaper than hashing it: two strings that differ
+    # answer on length or on the first character, and a long one is never copied.
     $prevMarks = ''
-    foreach ($r in $recs) {
-      if ($r.Payload -ceq $text) { $prevMarks = [string]$r.Marks; break }
-    }
+    $seen = $false
     $list = New-Object System.Collections.Generic.List[object]
-    $fresh = New-Record $text (Get-Epoch) $prevMarks
+    $fresh = New-Record $text (Get-Epoch) ''
     $fresh.Rich = $rich
     $list.Add($fresh)
-    foreach ($r in $recs) { if ($r.Payload -cne $text) { $list.Add($r) } }
+    foreach ($r in $recs) {
+      if ($r.Payload -ceq $text) {
+        if (-not $seen) { $prevMarks = [string]$r.Marks; $seen = $true }
+        continue
+      }
+      $list.Add($r)
+    }
+    $fresh.Marks = $prevMarks
     $list = Sort-Records $list
     Trim-Records $list
-    Save-Records $list.ToArray()
+    # only a trim that dropped rows, or a payload that was already there, can have left media
+    # or blobs behind: the two directory scans are for those cases
+    Save-Records $list.ToArray() -SkipReclaim:([int]$script:TrimDropped -eq 0 -and -not $seen)
   }
 }
 

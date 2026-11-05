@@ -80,10 +80,10 @@ function Show-Picker {
     $panelKeys = @()
     if (Get-Command Get-PluginPanelKeys -ErrorAction SilentlyContinue) { $panelKeys = @(Get-PluginPanelKeys) }
     $ctrlHints = @($panelKeys | Where-Object { $_.Ctrl -and -not $_.Alt -and -not $_.Shift -and ([string]$_.Key).Length -eq 1 })
-    # Both caches survive a refresh: a keystroke changes which rows match, not how a row looks.
-    # They are keyed by the record's number - keying by the payload hashed 200 KB per paint.
-    $rowCache = @{}
-    $labelCache = @{}
+    # Both caches survive a refresh and a reopen: the record numbers keep growing, so an
+    # entry carried over can never be mistaken for a different row.
+    if ($null -eq $script:RowCache -or $null -eq $script:LabelCache) { $script:RowCache = @{}; $script:LabelCache = @{} }
+    $rowCache = $script:RowCache; $labelCache = $script:LabelCache
     function Find-PanelKey([string]$keyName, [bool]$ctrl, [bool]$alt, [bool]$shift) {
       $name = ([string]$keyName).ToUpperInvariant()
       foreach ($k in $panelKeys) {
@@ -948,7 +948,7 @@ function Show-Picker {
         }
         if ($null -eq $script:Anim) { $script:Anim = New-AnimState }
         $tint = $null
-        if ($decor -and $decor.BackColor -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) { $tint = Convert-ThemeColor $decor.BackColor }
+        if ($decor -and $decor.BackColor -and (Get-Command Get-UiColor -ErrorAction SilentlyContinue)) { $tint = Get-UiColor $decor.BackColor }
         $selK = $(if ($sel) { 1.0 } else { 0.0 })
         $hovK = 0.0
         if ($e.Index -eq $script:Anim.HoverIndex) { $hovK = [double]$script:Anim.Hover }
@@ -987,8 +987,8 @@ function Show-Picker {
             $mk = $marks[$mi]
             if (-not $mk -or -not $mk.Glyph) { continue }
             $mkColor = $ui.Mark
-            if ($mk.Color -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) {
-              $mcc = Convert-ThemeColor ([string]$mk.Color)
+            if ($mk.Color -and (Get-Command Get-UiColor -ErrorAction SilentlyContinue)) {
+              $mcc = Get-UiColor ([string]$mk.Color)
               if ($null -ne $mcc) { $mkColor = $mcc }
             }
             $mkBrush = Get-Brush $mkColor
@@ -1003,8 +1003,8 @@ function Show-Picker {
         $rowGlyph = [string]$row.Glyph
         if ($script:ShowTypeIcon -and $script:IconFamily -and $rowGlyph) {
           $glyphColor = $(if ($sel) { $ui.Text } else { $ui.Dim })
-          if ($decor -and $decor.GlyphColor -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) {
-            $gcc = Convert-ThemeColor $decor.GlyphColor
+          if ($decor -and $decor.GlyphColor -and (Get-Command Get-UiColor -ErrorAction SilentlyContinue)) {
+            $gcc = Get-UiColor $decor.GlyphColor
             if ($null -ne $gcc) { $glyphColor = $gcc }
           }
           $glyphBrush = Get-Brush $glyphColor
@@ -1028,8 +1028,8 @@ function Show-Picker {
 
         # highlight ink: a plugin sets the text colour, the row keeps its own background
         $ink = $ui.Text
-        if ($decor -and $decor.TextColor -and (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue)) {
-          $tcc = Convert-ThemeColor $decor.TextColor
+        if ($decor -and $decor.TextColor -and (Get-Command Get-UiColor -ErrorAction SilentlyContinue)) {
+          $tcc = Get-UiColor $decor.TextColor
           if ($null -ne $tcc) { $ink = $tcc }
         }
         $tb = Get-Brush $ink

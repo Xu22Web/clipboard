@@ -21,6 +21,8 @@ function Resolve-ThemeName([string]$name) {
 }
 function Read-Theme([string]$name) { return $null }
 function Apply-Theme { param([switch]$SkipColors) }
+# without lib\themes.ps1 there is no colour parser, so a theme colour cannot be resolved
+function Get-UiColor([string]$spec) { return $null }
 
 # built-in palette = the last known-good Win11 dark look, used when no theme file exists
 function Get-BasePalette {

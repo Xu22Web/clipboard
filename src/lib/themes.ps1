@@ -81,6 +81,19 @@ function Convert-ThemeColor([string]$spec) {
   } catch { return $null }
 }
 
+# A plugin hands row colours back as strings and the row painter asks for them on every
+# scroll tick, so the parse is remembered by spec. Callers must still tolerate $null.
+function Get-UiColor([string]$spec) {
+  if (-not $spec) { return $null }
+  if ($null -eq $script:UiColorCache) { $script:UiColorCache = @{} }
+  $k = $spec.Trim().ToUpperInvariant()
+  if ($script:UiColorCache.ContainsKey($k)) { return $script:UiColorCache[$k] }
+  $c = Convert-ThemeColor $k
+  if ($script:UiColorCache.Count -gt 256) { $script:UiColorCache.Clear() }
+  $script:UiColorCache[$k] = $c
+  return $c
+}
+
 # The theme schema (schema/theme.ps1) says which sections exist and what their values mean;
 # utils/import.ps1 reads the text. Together they replace a parser of its own, so a theme
 # follows exactly the rules of every other .ini - "[palette]" + "Surface=..." arrives here

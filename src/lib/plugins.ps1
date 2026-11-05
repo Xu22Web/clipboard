@@ -306,6 +306,11 @@ function Test-PluginAction($action, $record) {
 # and may be a scriptblock, so a plugin can derive it from its own setting without keeping
 # state; the base timer checks every poll and remembers the last run per plugin.
 function Get-PluginTicks {
+  # Read once per loaded plugin set: Seconds may be a scriptblock, so evaluating it on every
+  # poll would ask the ini layer for a setting several times a second, for nothing.
+  if ($null -ne $script:PluginTickSpec -and [object]::ReferenceEquals($script:PluginTickSpec.Owner, $script:Plugins)) {
+    return $script:PluginTickSpec.List
+  }
   $out = New-Object System.Collections.Generic.List[object]
   foreach ($p in @($script:Plugins)) {
     if (-not $p.ContainsKey('Tick')) { continue }
@@ -321,7 +326,9 @@ function Get-PluginTicks {
     if ($sec -lt 1) { $sec = 1 }
     $out.Add(@{ Name = [string]$p['Name']; Seconds = $sec; Action = $t['Action'] })
   }
-  return $out.ToArray()
+  $spec = $out.ToArray()
+  $script:PluginTickSpec = @{ Owner = $script:Plugins; List = $spec }
+  return $spec
 }
 
 # Called from the resident timer. Never throws: a failing plugin is logged and throttled.
