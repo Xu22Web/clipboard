@@ -280,6 +280,14 @@ namespace Cb {
     public event EventHandler SelectedIndexChanged;
     // raised whenever the top row moves, so the host can move its scrollbar thumb too
     public event EventHandler ScrollChanged;
+    // raised on a left click, together with what else was held: the host owns the rules for
+    // Ctrl / Shift, this control only reports what happened and paints what it is told
+    public event EventHandler RowClicked;
+    public readonly System.Collections.Generic.HashSet<int> MultiSelect = new System.Collections.Generic.HashSet<int>();
+    public int AnchorIndex = -1;
+    public bool ClickHadControl = false;
+    public bool ClickHadShift = false;
+    public int ClickRow = -1;
 
     public PinList() {
       SetStyle(System.Windows.Forms.ControlStyles.UserPaint |
@@ -372,12 +380,19 @@ namespace Cb {
       return (i >= 0 && i < ItemCount) ? i : -1;
     }
 
+    public bool IsMulti(int index) { return MultiSelect.Contains(index); }
+
     // Clicking a row selects it. A plain Control has no built-in hit testing the way a
     // ListBox does, so the host would otherwise have to wire this per panel.
     protected override void OnMouseDown(System.Windows.Forms.MouseEventArgs e) {
       if (e.Button == System.Windows.Forms.MouseButtons.Left) {
+        ClickHadControl = (System.Windows.Forms.Control.ModifierKeys & System.Windows.Forms.Keys.Control) != 0;
+        ClickHadShift = (System.Windows.Forms.Control.ModifierKeys & System.Windows.Forms.Keys.Shift) != 0;
         int i = IndexFromPoint(e.Location);
+        ClickRow = i;
         if (i >= 0) SelectedIndex = i;
+        EventHandler h = RowClicked;
+        if (h != null && i >= 0) h(this, EventArgs.Empty);
       }
       base.OnMouseDown(e);
     }

@@ -542,6 +542,30 @@ function Restore-Record($record, [int]$index) {
   }
 }
 
+# Drop several payloads in one write. A batch delete would otherwise rewrite the whole store
+# once per row. Protected rows stay and are reported, so the caller can say what was kept.
+#   -> @{ Removed = n; Blocked = @(mark, ...) }
+function Remove-Records([string[]]$payloads, [switch]$Force) {
+  $r = Use-StoreLock {
+    $drop = @{}
+    foreach ($p in @($payloads)) { $drop[[string]$p] = 1 }
+    $keep = New-Object System.Collections.Generic.List[object]
+    $gone = 0
+    $blocked = New-Object System.Collections.Generic.List[string]
+    foreach ($rec in @(Get-Records)) {
+      if (-not $drop.ContainsKey([string]$rec.Payload)) { $keep.Add($rec); continue }
+      if (-not $Force.IsPresent) {
+        $pm = Get-ProtectorMark $rec
+        if ($pm) { $blocked.Add($pm); $keep.Add($rec); continue }
+      }
+      $gone++
+    }
+    if ($gone -gt 0) { Save-Records $keep.ToArray() }
+    return @{ Removed = $gone; Blocked = $blocked.ToArray() }
+  }
+  return $r
+}
+
 # toggle one mark on the entry that carries this payload; the record list is re-sorted so
 # a mark that sorts first takes effect immediately
 function Set-Mark([string]$payload, [string]$mark, [bool]$on) {

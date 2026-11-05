@@ -72,6 +72,8 @@ function Show-Picker {
     $script:UndoRec = $null
     $script:UndoIdx = 0
     $script:Filtered = @()
+    # rows marked for a batch action (lib/select.ps1): positions in the filtered list
+    $script:Sel = New-Selection
     $script:Labels = @()
     $script:Tokens = @()
     # rows frozen at the top of the list: the pinned block that never scrolls
@@ -340,27 +342,7 @@ function Show-Picker {
       $footL.Invalidate()
     }
 
-    # shortcut hints as Fluent key chips: [key] action
-    function Get-FootHints {
-      if ($script:Filtered.Count -eq 0) {
-        # the comma keeps the pair nested: a one-element array would be unrolled by the
-        # function return and each string would then be read as a list of characters
-        return ,@(@('Esc', 'Close'))
-      }
-      if ($script:CtrlHeld) {
-        # Ctrl is held while these show; each chip spells the whole combination out, core
-        # ones first, because the footer truncates and the plugin keys are the optional ones.
-        $pairs = @(@('Ctrl+1-9,0', 'Pick'))
-        $pairs += ,@('Ctrl+Enter', 'Copy only')
-        $pairs += ,@('Ctrl+Z', 'Undo')
-        foreach ($pk in @($ctrlHints)) { $pairs += ,@('Ctrl+' + [string]$pk.Key, [string]$pk.Hint) }
-        return $pairs
-      }
-      return @(@('Enter', 'Paste'), @('Ctrl+Enter', 'Copy only'), @('Del', 'Delete'), @('Esc', 'Close'))
-    }
-
-    # key caps are drawn by lib/picker-draw.ps1; the footer only decides where they stop
-
+    # shortcut hints as Fluent key chips: [key] action, built in lib/picker-draw.ps1
     $footL.Add_Paint({
         param($s, $e)
         try {
@@ -384,7 +366,7 @@ function Show-Picker {
           }
           $chipLimit = $footR.Left - (Px 8)
           if ($chipLimit -lt (Px 60)) { $chipLimit = $footL.ClientSize.Width - (Px 8) }
-          Draw-KeyChips $g (Px 14) $cy (Get-FootHints) $ui.Dim $ui.Faint $chipLimit
+          Draw-KeyChips $g (Px 14) $cy (Get-FootHints $script:Filtered.Count $script:CtrlHeld $ctrlHints) $ui.Dim $ui.Faint $chipLimit
         } catch { }
       })
 
@@ -592,6 +574,9 @@ function Show-Picker {
         $lst.PinnedCount = $script:StickyTop
         if ($script:Labels.Count -gt 0) { $lst.SelectedIndex = 0 } else { $lst.SelectedIndex = -1 }
         $lst.TopIndex = $script:StickyTop
+        # a filter that hides part of the list invalidates the positions behind it
+        Trim-Selection $script:Sel ($script:Labels.Count)
+        Sync-Selection $script:Sel $lst
       } catch {
         Write-Log ('update list failed: ' + $_.Exception.Message)
       } finally {
@@ -881,15 +866,8 @@ function Show-Picker {
     # one StringFormat set per process, shared with the drawing helpers in lib/picker-draw.ps1
     $sfSet = New-PickerStringFormats
     $bgBrush = New-Object Drawing.SolidBrush $ui.Surface
-    # One brush per colour, reused while the panel lives: the row painter runs on every
-    # scroll tick, so allocating a SolidBrush per glyph would churn GDI+ handles for nothing.
-    $brushCache = @{}
-    function Get-Brush($color) {
-      $k = $color.ToArgb()
-      $b = $brushCache[$k]
-      if ($null -eq $b) { $b = New-Object Drawing.SolidBrush $color; $brushCache[$k] = $b }
-      return $b
-    }
+    # One brush per colour now lives in lib/picker-draw.ps1: it outlives the panel, so
+    # reopening does not have to build the palette again.
     $sfEll = $sfSet.Ellipsis
     $sfNone = $sfSet.None
     $sfRight = $sfSet.Right
@@ -914,7 +892,7 @@ function Show-Picker {
         $rowW = [Math]::Min($b.Width, $listHost.ClientSize.Width) - (Px $m['RowRight'])
         if ($rowW -lt (Px $m['RowMinWidth'])) { $rowW = Px $m['RowMinWidth'] }
         $r = New-Object Drawing.Rectangle -ArgumentList @(($b.X + (Px $m['RowInset'])), ($b.Y + (Px $m['RowGap'])), $rowW, ($b.Height - (Px (2 * $m['RowGap']))))
-        $sel = (($e.State -band [Windows.Forms.DrawItemState]::Selected) -ne 0)
+        $sel = ((($e.State -band [Windows.Forms.DrawItemState]::Selected) -ne 0) -or $lst.IsMulti($e.Index))
         $isData = ($e.Index -lt $script:Filtered.Count)
         $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
         # decoration / glyph / byte size are cached per entry: DrawItem runs on every hover
@@ -1094,6 +1072,9 @@ function Show-Picker {
         Hide-Preview $pv
       })
     $lst.Add_DoubleClick({ if ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex } })
+    # Ctrl toggles a row, Shift takes a run, a plain click starts over - the rules live in
+    # lib/select.ps1 so they can be tested without a window
+    $lst.Add_RowClicked({ param($sn, $ev) Update-Selection $script:Sel $lst ([int]$lst.ClickRow) ([bool]$lst.ClickHadControl) ([bool]$lst.ClickHadShift) })
     $lst.Add_MouseUp({ param($s, $e) if ($e.Button -eq 'Left') { Sync-Sb; Focus-Search } })
 
     $footTimer = New-Object Windows.Forms.Timer
@@ -1125,9 +1106,15 @@ function Show-Picker {
           $e.Handled = $true; $e.SuppressKeyPress = $true
           return
         }
-        if ($e.Control -and $e.KeyCode -eq 'Enter') {
+        if ($e.Control -and $e.KeyCode -eq 'A') {
+          Select-AllRows $script:Sel $lst $script:Filtered.Count
+          $e.Handled = $true; $e.SuppressKeyPress = $true
+        } elseif ($e.Control -and $e.KeyCode -eq 'Enter') {
           Flush-List
-          if ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex -NoInject } else { Set-Foot 'Nothing to copy' ([int]$script:Timing['FootShort']) }
+          # a batch is copied as one text block; a single row keeps the original behaviour
+          $batch = $(if ((Get-SelectionCount $script:Sel) -gt 1) { Invoke-SelectionCopy $script:Sel $script:Filtered } else { $null })
+          if ($null -ne $batch) { Clear-Selection $script:Sel; Sync-Selection $script:Sel $lst; Set-Foot $batch.Note ([int]$script:Timing['FootInfo']) }
+          elseif ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex -NoInject } else { Set-Foot 'Nothing to copy' ([int]$script:Timing['FootShort']) }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.Control -and (($code -ge 48 -and $code -le 57) -or ($code -ge 96 -and $code -le 105))) {
           $n = $code
@@ -1187,7 +1174,14 @@ function Show-Picker {
           }
         } elseif ($e.KeyCode -eq 'Delete') {
           Flush-List
-          try { Del-Index $lst.SelectedIndex } catch { Write-Log ('delete failed: ' + $_.Exception.Message) }
+          if ((Get-SelectionCount $script:Sel) -gt 1) {
+            # one write for the whole set, then the list rebuilds from the store
+            $note = Invoke-SelectionDelete $script:Sel $script:Filtered
+            Sync-Selection $script:Sel $lst
+            $script:Entries = @(Get-Records)
+            Update-List $txt.Text
+            if ($note) { Set-Foot $note ([int]$script:Timing['FootInfo']) }
+          } else { try { Del-Index $lst.SelectedIndex } catch { Write-Log ('delete failed: ' + $_.Exception.Message) } }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         }
       })

@@ -168,7 +168,7 @@ try {
 
   # the entry file names these by relative path; a package must carry all of them
   $requiredLib = @('lib\base', 'lib\native', 'lib\keyhook', 'lib\theme-stub',
-    'lib\media', 'lib\clip', 'lib\store', 'lib\hotkey', 'lib\entry', 'lib\query', 'lib\picker-geom', 'lib\anim',
+    'lib\media', 'lib\clip', 'lib\store', 'lib\hotkey', 'lib\entry', 'lib\query', 'lib\select', 'lib\picker-geom', 'lib\anim',
     'lib\picker-draw', 'lib\pinlist', 'lib\preview', 'lib\picker', 'lib\serve', 'lib\diag', 'lib\shortcut',
     'lib\config', 'lib\usage', 'lib\dispatch',
     'utils\ini', 'utils\import', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\draw',
@@ -1102,6 +1102,44 @@ try {
     Check 'unit' 'a search with no results says so' ($es.Title -like 'No results*') $es.Title
     $es = Get-EmptyState $qRows (New-Query -Line 'type:nonsense') 'type:nonsense' @{ History = 'H'; Search = 'S' }
     Check 'unit' 'a filter nobody understands explains itself' ($es.Title -eq 'The search was not understood') $es.Title
+
+    # ---- batch selection (lib/select.ps1): positions in the filtered list, nothing else
+    $sel = New-Selection
+    Check 'unit' 'a new selection holds nothing' ((Get-SelectionCount $sel) -eq 0) ''
+    Update-Selection $sel $null 2 $false $false
+    Check 'unit' 'a plain click selects one row' (((Get-SelectionCount $sel) -eq 1) -and (Test-RowSelected $sel 2)) ''
+    Update-Selection $sel $null 5 $false $true
+    Check 'unit' 'shift takes the run from the anchor' (((Get-SelectionCount $sel) -eq 4) -and (Test-RowSelected $sel 5)) ((Get-SelectionCount $sel) -as [string])
+    Update-Selection $sel $null 3 $true $false
+    Check 'unit' 'ctrl toggles a selected row off' (-not (Test-RowSelected $sel 3)) ''
+    Update-Selection $sel $null 3 $true $false
+    Check 'unit' 'ctrl toggles it back on' (Test-RowSelected $sel 3) ''
+    Update-Selection $sel $null 9 $false $false
+    Check 'unit' 'a plain click starts over' ((Get-SelectionCount $sel) -eq 1) ((Get-SelectionCount $sel) -as [string])
+    $pickRows = @(@{ Payload = 'a' }, @{ Payload = 'b' }, @{ Payload = 'c' })
+    Update-Selection $sel $null 0 $false $false
+    Update-Selection $sel $null 2 $true $false
+    $picked = @(Get-SelectedRecords $sel $pickRows)
+    $pickedText = (@($picked | ForEach-Object { [string]$_.Payload }) -join '')
+    Check 'unit' 'a batch keeps list order, not click order' ($pickedText -eq 'ac') $pickedText
+    Trim-Selection $sel 2
+    Check 'unit' 'a shorter list drops the stale positions' (((Get-SelectionCount $sel) -eq 1) -and (Test-RowSelected $sel 0)) ''
+    Select-AllRows $sel $null 3
+    Check 'unit' 'select all marks every row' ((Get-SelectionCount $sel) -eq 3) ''
+    Clear-Selection $sel
+    Check 'unit' 'clearing drops the whole set' (((Get-SelectionCount $sel) -eq 0) -and ($sel.Anchor -eq -1)) ''
+    # a batch of rows that carry no text has nothing to copy, and says so by returning nothing
+    $mixSel = New-Selection
+    Select-AllRows $mixSel $null 2
+    $noText = @(@{ Payload = ([char]1 + 'C:\a.txt') }, @{ Payload = ([char]3 + 'image:x:1x1:1:PNG') })
+    Check 'unit' 'a batch with no text copies nothing' ($null -eq (Invoke-SelectionCopy $mixSel $noText)) ''
+    # one write for the whole set: the store is rewritten once, not once per row
+    Save-Records @((New-Record 'batch one' $now ''), (New-Record 'batch two' $now ''))
+    $batchRows = @(Get-Records)
+    $delSel = New-Selection
+    Select-AllRows $delSel $null $batchRows.Count
+    $delNote = Invoke-SelectionDelete $delSel $batchRows
+    Check 'unit' 'a batch delete removes the whole set' ((@(Get-Records).Count -eq 0) -and ($delNote -like 'deleted 2*')) $delNote
     # freezing is a scrolling behaviour: the leading run of pins is what stays put
     Check 'unit' 'sticky top counts the leading pins' ((Get-StickyTopRows $stickyRows 'p' 5) -eq 3) ((Get-StickyTopRows $stickyRows 'p' 5) -as [string])
     Check 'unit' 'sticky top obeys the declared cap' ((Get-StickyTopRows $stickyRows 'p' 2) -eq 2) ((Get-StickyTopRows $stickyRows 'p' 2) -as [string])

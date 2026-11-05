@@ -105,6 +105,9 @@ xpm build        # 打包到 dist\clipboard-<version>\
 | `Ctrl+Enter` | 只写入剪贴板，不自动粘贴 |
 | `Ctrl+1..9` / `Ctrl+0` | 选取**当前可见**的第 1~9 / 10 行；每行行尾有 `Ctrl+1` … `Ctrl+0` 键帽提示（按住 `Ctrl` 时高亮），与小键盘位置一致（第 10 行是 `0`），滚动后从 `1` 重新编号 |
 | `Del` / `Ctrl+Z` | 删除选中项 / 撤销上一次删除 |
+| `Ctrl+点击` / `Shift+点击` / `Ctrl+A` | 多选：`Ctrl` 逐个加或减，`Shift` 取一段，`Ctrl+A` 全选当前结果 |
+| `Del`（多选时） | 一次删除所有选中项；带受保护标记的行会保留，并说明是哪个标记挡住的 |
+| `Ctrl+Enter`（多选时） | 按列表顺序用换行拼接后复制（图片与文件条目没有文本，会统计在提示里） |
 | `Esc` | 有搜索词时清空搜索，空搜索时关闭面板 |
 | 拖动标题区 / 右下角手柄 | 移动面板 / 缩放面板（手柄悬停时才显示） |
 
@@ -538,6 +541,7 @@ src/                    程序本体（打包只读这个目录）
   lib/hotkey.ps1          热键解析与修饰键状态
   lib/entry.ps1           条目分类（text / files / image / empty）、图标兜底与条目文案
   lib/query.ps1           搜索语法：字段含义、正则编译、类型判定、逐条匹配与执行
+  lib/select.ps1          批量选择：位置集合、Ctrl/Shift 规则、批量复制与批量删除
   lib/picker-geom.ps1     面板纯计算：行数、数字快选、窗口位置、命中高亮
   lib/anim.ps1            过渡动画的数值层（缓动 / 插值，不碰窗口）
   lib/picker-draw.ps1     可复用绘制：按键胶囊、搜索命中着色（只要 Graphics + 参数）
@@ -651,7 +655,7 @@ xpm test -Source dist\clipboard-0.1.0   # 对打包副本跑 CLI 组
 
 | 组 | 开关 | 覆盖内容 |
 |---|---|---|
-| 结构 | 无（总是执行） | 分层契约：31 个必需模块（`lib\` 23 + `utils\` 9）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
+| 结构 | 无（总是执行） | 分层契约：33 个必需模块（`lib\` 24 + `utils\` 9）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
 | 单元 | `-Unit` | 纯函数与存储层：热键解析、条目文案、ini 读写与单值校验、`Apply-Config` 与配置诊断、记录读写与版本识别、迁移引擎（拒绝无步骤 / 备份 / `-Purge` 归档）、图片与富文本的编解码与媒体回收、CF_HTML 片段解析、真实剪贴板的图片与格式往返、标记与保护规则、面板几何与命中计算、条目分类与行图标、主题发现与 `[metrics]` 重置、插件白名单。通过 `-Library` dot-source 主脚本，不触发命令分发 |
 | 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put` / `get` / `list` / `pick` / `del` / `clear` / `pause` / `resume` / `status` / `version` / `migrate` / `themes` / `config get` / `config set` / `config init` / `diag`、主题切换与非法主题名拒绝、插件白名单与各插件命令、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝、`xpm` 命令列表；以及打包（进包内容、`install.bat`、包内版本为常量且与 `package.ini` 一致、`Plugins=` / `Themes=` 裁剪、`Overwrite=0` 拒绝覆盖、未知插件名报错） |
 | 端到端 | `-E2E` | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启循环 |
@@ -744,7 +748,7 @@ Themes=win11-dark
 | 进包（来自 `src\`） | 不进包 |
 |---|---|
 | `clipboard.ps1`、`clipboard.cmd`、`clipboard`（Git Bash 壳） | `src\data\`（历史与日志） |
-| `lib\`（27 个模块：23 必需 + `themes.ps1` 与插件三件套共 4 个可选加载层）、`utils\`（9 个纯工具）、`schema\`（2 个文件 schema + 所选插件的 `schema\plugins\*.ps1`）、所选 `plugins\`（含 `.md`）、所选 `themes\`（ini 与 `.md`） | `src\clipboard.ini`（用户设置） |
+| `lib\`（28 个模块：24 必需 + `themes.ps1` 与插件三件套共 4 个可选加载层）、`utils\`（9 个纯工具）、`schema\`（2 个文件 schema + 所选插件的 `schema\plugins\*.ps1`）、所选 `plugins\`（含 `.md`）、所选 `themes\`（ini 与 `.md`） | `src\clipboard.ini`（用户设置） |
 | `README.md`、`LICENSE`、`docs\`（截图，`IncludeDocs=1` 时） | `tests\`、`scripts\`、`build.ini`、`package.ini`、`dist\`、`.git` |
 
 > `Plugins=` / `Themes=` 里写了不存在的名字会直接失败并指出是哪个；被选中的插件/主题会连同自己的 `.md` 一起进包（`lib\` 是基础层，永远随包走）。

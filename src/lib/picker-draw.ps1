@@ -10,6 +10,37 @@
 
 # One StringFormat set for the whole process. Idempotent: Show-Picker calls it every time
 # the panel opens and gets the same objects back.
+# Shortcut hints as Fluent key chips: [key] action. Plain data, so the footer can be checked
+# without a window and the panel only has to say what state it is in.
+function Get-FootHints([int]$rows, [bool]$ctrlHeld, $ctrlKeys) {
+  if ($rows -le 0) {
+    # the comma keeps the pair nested: a one-element array would be unrolled by the function
+    # return and each string would then be read as a list of characters
+    return ,@(@('Esc', 'Close'))
+  }
+  if ($ctrlHeld) {
+    # Ctrl is held while these show; each chip spells the whole combination out, core ones
+    # first, because the footer truncates and the plugin keys are the optional ones
+    $pairs = @(@('Ctrl+1-9,0', 'Pick'))
+    $pairs += ,@('Ctrl+Enter', 'Copy')
+    $pairs += ,@('Ctrl+Z', 'Undo')
+    foreach ($pk in @($ctrlKeys)) { $pairs += ,@('Ctrl+' + [string]$pk.Key, [string]$pk.Hint) }
+    return $pairs
+  }
+  return @(@('Enter', 'Paste'), @('Ctrl+Enter', 'Copy'), @('Del', 'Delete'), @('Esc', 'Close'))
+}
+
+# One brush per colour, kept for the process: the row painter runs on every scroll tick, so
+# a SolidBrush per glyph would churn GDI+ handles for nothing. A palette has a few dozen
+# colours at most, so this stays bounded; the brushes die with the process.
+function Get-Brush($color) {
+  if ($null -eq $script:UiBrushCache) { $script:UiBrushCache = @{} }
+  $k = $color.ToArgb()
+  $b = $script:UiBrushCache[$k]
+  if ($null -eq $b) { $b = New-Object Drawing.SolidBrush $color; $script:UiBrushCache[$k] = $b }
+  return $b
+}
+
 # A row thumbnail fills a square slot, keeping its aspect ratio. The bitmap belongs to the
 # media cache, so it is drawn here and never disposed here.
 function Draw-RowThumb($g, $bmp, [int]$x, [int]$y, [int]$side) {
