@@ -1275,6 +1275,22 @@ try {
     Check 'unit' 'Get-EntryKind files' ((Get-EntryKind (([string][char]1) + 'C:\a.txt')) -eq 'files') ''
     Check 'unit' 'Get-EntryKind empty' ((Get-EntryKind '') -eq 'empty') ''
 
+    # a file list carries paths, one per line, and pasting it may also put them on as text
+    $fpay = ([string][char]1) + 'C:\one.txt' + "`n" + 'C:\two words.txt'
+    $fpaths = @(Get-FilePayloadPaths $fpay)
+    Check 'unit' 'a file payload yields its paths' (($fpaths.Count -eq 2) -and ($fpaths[1] -eq 'C:\two words.txt')) ($fpaths -join '|')
+    Check 'unit' 'a text payload yields no paths' (@(Get-FilePayloadPaths 'hello').Count -eq 0) ''
+    Load-Forms
+    $pasteBoth = $false
+    try { [void](Set-ClipItem $fpay ''); $pasteBoth = ([Windows.Forms.Clipboard]::ContainsFileDropList()) -and ([Windows.Forms.Clipboard]::ContainsText()) } catch { }
+    Check 'unit' 'a pasted file list also carries text' $pasteBoth ''
+    $savedFilesAsText = $script:PasteFilesAsText
+    $script:PasteFilesAsText = $false
+    $dropOnly = $false
+    try { [void](Set-ClipItem $fpay ''); $dropOnly = ([Windows.Forms.Clipboard]::ContainsFileDropList()) -and (-not [Windows.Forms.Clipboard]::ContainsText()) } catch { }
+    $script:PasteFilesAsText = $savedFilesAsText
+    Check 'unit' 'PasteFilesAsText=0 leaves the list alone' $dropOnly ''
+
     # no plugin means no row icon at all: typing an entry is a plugin's job
     $script:Plugins = @()
     Check 'unit' 'no plugin means no row icon' ((Get-RowGlyph 'https://a.b/c') -eq '') (Get-RowGlyph 'https://a.b/c')

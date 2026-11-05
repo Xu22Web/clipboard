@@ -123,6 +123,7 @@ function Get-ConfigReport {
     CaptureRich       = [string][int][bool]$script:CaptureRich
     MaxRichBytes      = [string]$script:MaxRichBytes
     PasteRich         = [string][int][bool]$script:PasteRich
+    PasteFilesAsText  = [string][int][bool]$script:PasteFilesAsText
     Interval          = [string]$Interval
     NoPaste           = [string][int][bool]$script:NoPaste
     Balloon           = [string][int][bool]$script:ShowBalloon
@@ -420,6 +421,8 @@ function Get-IniTemplateLines {
     'MaxRichImages=2097152',
     '# 1 = paste the formatting back, 0 = always paste plain text',
     'PasteRich=1',
+    '# 1 = a file list also carries its paths as text, so a text box gets something',
+    'PasteFilesAsText=1',
     '# payloads above this many characters are kept in data\blobs instead of this file,',
     '# 0 = always inline (one self-contained history.dat)',
     'BlobThreshold=32768',

@@ -139,6 +139,8 @@ $script:MaxRichBytes = 4194304
 # a picture the html points at is inlined only when it is at most this large, 0 = never
 $script:MaxRichImages = 2097152
 $script:PasteRich = $true
+# a file list also goes on the clipboard as text, so an address bar or a terminal gets the paths
+$script:PasteFilesAsText = $true
 $script:Interval = 300
 $script:NoPaste = $false
 # Plugins load by default: clipboard.ini spells out every plugin name, and the resolved

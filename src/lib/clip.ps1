@@ -290,12 +290,18 @@ function Set-RichBlockData($do, [string]$rich, [string]$tag, [string]$format) {
 function Set-ClipItem([string]$entry, [string]$rich = '') {
   if (Test-FilePayload $entry) {
     Load-Forms
+    $paths = @(Get-FilePayloadPaths $entry)
     $sc = New-Object System.Collections.Specialized.StringCollection
-    foreach ($p in @($entry.Substring(1) -split "`n" | Where-Object { $_ })) { [void]$sc.Add($p) }
-    for ($i = 0; $i -lt 10; $i++) {
-      try { [Windows.Forms.Clipboard]::SetFileDropList($sc); return $true } catch { Start-Sleep -Milliseconds 50 }
+    foreach ($p in $paths) { [void]$sc.Add($p) }
+    # A file list alone is useless in a text box: Explorer's address bar, a terminal and an
+    # editor all paste nothing. The text rides along unless PasteFilesAsText=0, while
+    # Explorer itself still prefers the CF_HDROP the drop list puts there.
+    $do = New-Object Windows.Forms.DataObject
+    $do.SetFileDropList($sc)
+    if ($script:PasteFilesAsText -and $paths.Count -gt 0) {
+      $do.SetData([Windows.Forms.DataFormats]::UnicodeText, ($paths -join [Environment]::NewLine))
     }
-    return $false
+    return (Set-ItemDataObject $do)
   }
   Load-Forms
   if (Test-ImagePayload $entry) { return (Set-ImageItem $entry) }

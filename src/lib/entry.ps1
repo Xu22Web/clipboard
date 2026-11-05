@@ -11,6 +11,18 @@ function Test-FilePayload([string]$payload) {
   return ($null -ne $payload -and $payload.Length -gt 0 -and $payload[0] -eq [char]1)
 }
 
+# The paths a file list carries, one per line after the marker. A path may itself contain a
+# newline only in theory, so the split is enough here.
+function Get-FilePayloadPaths([string]$payload) {
+  $out = New-Object System.Collections.Generic.List[string]
+  if (-not (Test-FilePayload $payload)) { return $out.ToArray() }
+  foreach ($p in @($payload.Substring(1) -split "`n")) {
+    $one = $p.Trim()
+    if ($one) { $out.Add($one) }
+  }
+  return $out.ToArray()
+}
+
 # The base only needs to tell a file list, an image descriptor and text apart: that is all
 # storage, the row glyph and the clipboard round trip care about. Richer typing lives in the
 # entry-actions plugin.
