@@ -86,6 +86,9 @@ xpm build        # 打包到 dist\clipboard-<version>\
 | | `config reset` | 用默认值**重写整个 ini**（唯一会丢配置的路径） |
 | **theme** | `themes` | 列出可用主题（`*` = 当前生效） |
 | **setup** | `diag` | 检查运行环境与数据版本 |
+| | `export FILE` | 导出历史：`.json` 全量、`.csv` / `.txt` 仅文本；`-Media` 把图片写进 json |
+| | `import FILE` | 导入导出文件；`-Replace` 整库替换（替换前自动备份） |
+| | `backup [name]` / `restore-data [name]` | 把 `data\` 打成 zip 放到 `data\backup\` / 把某个快照放回去（当前历史先备份） |
 | | `migrate [-Purge]` | 把旧格式的 `history.dat` 升级到当前版本；`-Purge` 把无法升级的文件归档到 `data\backup\` |
 | | `restore` | 尝试恢复系统原生剪贴板历史的相关设置 |
 | | `install [bypass]` / `uninstall [purge]` | 增删快捷方式（`purge` 连数据一起删） |
@@ -93,6 +96,19 @@ xpm build        # 打包到 dist\clipboard-<version>\
 | | `help` | 帮助（插件命令按插件名分组列在后面） |
 
 `clipboard help` 的分组与之对应：`[daemon]` `[history]` `[config]` `[theme]` `[setup]`，加上每个已加载插件的 `[plugin: <name>]`；没有设置类的命令行开关，所有取值都在 `clipboard.ini`。
+
+### 导出、导入与备份
+
+| 文件 | 带什么 | 用于 |
+|---|---|---|
+| `.json` | 文本、时间、标记；`-Media` 时还有每张图片与每个富文本块的 base64 | 搬到另一台机器、长期归档 |
+| `.csv` | 三列 `text,time,marks` | 丢进表格里筛、统计 |
+| `.txt` | 每条一段，中间用 `---` 分隔 | 只读，不能再导回来 |
+
+- **导入只认本程序的格式**：JSON 必须带 `format: clipboard-history` 与同名 `version`，CSV 必须是那三列的表头；否则直接报错，不会把别的文件当成历史读进来。
+- **合并语义**：默认 `-Merge`，库里已有的条目（按文本比对）**原封不动**，标记也以库里为准，只补充缺失的；`-Replace` 换掉整个库，换之前先做一次快照，选错了还能用 `backup` 列表里的前一个恢复。
+- **媒体还原不信任文件里的名字**：导入时按字节重算 sha1 再落盘，一份手改过的导出文件无法让记录指向 `data\media` 里的别的文件。
+- **备份是整张 `data\` 的 zip**：历史、媒体、blob 一起走，否则图片条目恢复后只剩描述。`restore-data` 不带名字时取最新的一份；带名字时精确匹配，否则按子串匹配。
 
 ### 面板快捷键
 

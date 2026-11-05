@@ -168,11 +168,11 @@ try {
 
   # the entry file names these by relative path; a package must carry all of them
   $requiredLib = @('lib\base', 'lib\native', 'lib\keyhook', 'lib\theme-stub',
-    'lib\media', 'lib\clip', 'lib\store', 'lib\hotkey', 'lib\entry', 'lib\query', 'lib\select', 'lib\picker-geom', 'lib\anim',
+    'lib\media', 'lib\clip', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\hotkey', 'lib\entry', 'lib\query', 'lib\select', 'lib\picker-geom', 'lib\anim',
     'lib\picker-draw', 'lib\pinlist', 'lib\preview', 'lib\picker', 'lib\serve', 'lib\diag', 'lib\shortcut',
     'lib\config', 'lib\usage', 'lib\dispatch',
     'utils\ini', 'utils\import', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\draw',
-    'utils\query', 'utils\pinyin',
+    'utils\query', 'utils\pinyin', 'utils\transfer',
     'schema\clipboard', 'schema\theme')
   $missingLib = @()
   foreach ($m in $requiredLib) {
@@ -570,6 +570,41 @@ try {
     $sch = $script:IniSchema
     Check 'unit' 'preview and blob settings carry defaults' (($sch['PreviewHover'].Default -eq 1) -and ($sch['PreviewDelay'].Default -eq 350) -and ($sch['PreviewChars'].Default -eq 6000) -and ($sch['BlobThreshold'].Default -eq 32768)) ''
     Check 'unit' 'media settings carry defaults' (($sch['CaptureImages'].Default -eq 1) -and ($sch['MaxImageBytes'].Default -eq 8388608) -and ($sch['CaptureRich'].Default -eq 1) -and ($sch['MaxRichBytes'].Default -eq 4194304) -and ($sch['MaxRichImages'].Default -eq 2097152) -and ($sch['PasteRich'].Default -eq 1) -and ($sch['MaxMediaTotal'].Default -eq 67108864)) ''
+
+    # ------------------------------------------------------- export and import
+    # the shapes first: a document this build writes has to be one it reads
+    $xRows = @(
+      @{ Text = 'one'; Time = 100; Marks = ''; Media = $null },
+      @{ Text = ('two' + [Environment]::NewLine + 'lines'); Time = 200; Marks = 'p'; Media = $null }
+    )
+    $backDoc = ConvertFrom-TransferJson (ConvertTo-TransferJson $xRows)
+    Check 'unit' 'a json export reads back' (($null -ne $backDoc) -and (@($backDoc.Rows).Count -eq 2) -and (@($backDoc.Rows)[1].Marks -eq 'p')) ''
+    Check 'unit' 'a json export keeps a line break in the payload' ((@($backDoc.Rows)[1].Text) -like ('two' + [Environment]::NewLine + 'lines')) (@($backDoc.Rows)[1].Text)
+    Check 'unit' 'a foreign json is refused' ($null -eq (ConvertFrom-TransferJson '{"format":"something-else"}')) ''
+    $csvBack = ConvertFrom-TransferCsv (ConvertTo-TransferCsv $xRows)
+    Check 'unit' 'a csv export reads back' (($null -ne $csvBack) -and (@($csvBack.Rows).Count -eq 2) -and ((@($csvBack.Rows)[1].Text) -like 'two*')) ''
+    Check 'unit' 'csv with another header is refused' ($null -eq (ConvertFrom-TransferCsv "a,b`r`n1,2")) ''
+    # then the round trip through the store: export, empty, import, and the marks come back
+    Save-Records @((New-Record 'export me' $now ''), (New-Record 'and me' ($now - 10) 's'))
+    $xfile = Join-Path $unitDir 'history-export.json'
+    $ex = Invoke-Export $xfile
+    Check 'unit' 'export writes the history' (($ex.Ok) -and (Test-Path -LiteralPath $xfile)) $ex.Message
+    Save-Records @()
+    $im = Invoke-Import $xfile
+    Check 'unit' 'import brings the entries back' (($im.Ok) -and (@(Get-Records).Count -eq 2)) $im.Message
+    Check 'unit' 'an imported mark survives' (@(Get-Records | Where-Object { Test-Mark $_ 's' }).Count -eq 1) ''
+    $im2 = Invoke-Import $xfile
+    Check 'unit' 'a second import keeps what is already there' ((@(Get-Records).Count -eq 2) -and ($im2.Kept -eq 2)) $im2.Message
+    Check 'unit' 'an unreadable file is refused' (-not (Invoke-Import (Join-Path $unitDir 'nope.json')).Ok) ''
+    # a snapshot is a zip of the data folder, so pictures travel with the history
+    $bk = Save-Snapshot 'unit'
+    Check 'unit' 'a snapshot is a zip in data\backup' (($bk.Ok) -and ($bk.Path -like '*.zip')) $bk.Path
+    $bkName = [IO.Path]::GetFileNameWithoutExtension($bk.Path)
+    Save-Records @()
+    # not $rs: that is case-insensitively the same variable as the store's record separator
+    $restored = Invoke-RestoreData $bkName
+    Check 'unit' 'a snapshot restores the history' (($restored.Ok) -and (@(Get-Records).Count -eq 2)) $restored.Message
+    Save-Records @()
 
     # ------------------------------------------------------- images and rich text
     # 1x1 transparent PNG: the bytes are what makes the identity, so any picture works
@@ -1763,6 +1798,23 @@ try {
 
     $o = Clip $intDir @('migrate')
     Check 'int' 'migrate reports a store it does not need to touch' ($o -match 'nothing to migrate|migrated') $o.Trim()
+
+    # export / import / backup, through the command line the user actually types
+    $jsonOut = Join-Path $intDir 'history-export.json'
+    [void](Clip $intDir @('put', 'export round trip'))
+    $o = Clip $intDir @('export', $jsonOut)
+    Check 'int' 'export writes a json file' ((Test-Path -LiteralPath $jsonOut) -and ($o -match 'exported')) $o.Trim()
+    $o = Clip $intDir @('export', (Join-Path $intDir 'history-export.csv'))
+    Check 'int' 'export writes a csv file' ($o -match 'exported') $o.Trim()
+    $notes = Join-Path $intDir 'note.txt'
+    $o = Clip $intDir @('export', $notes, '-Media')
+    Check 'int' 'export refuses -Media for a format that cannot carry pictures' ($o -match 'needs a .json') $o.Trim()
+    $o = Clip $intDir @('import', $jsonOut)
+    Check 'int' 'import reports what it did' ($o -match 'imported|already there') $o.Trim()
+    $o = Clip $intDir @('backup', 'unit')
+    Check 'int' 'backup writes a snapshot' ($o -match 'backup written') $o.Trim()
+    $o = Clip $intDir @('restore-data', 'nosuchsnapshot')
+    Check 'int' 'restore-data refuses an unknown snapshot' ($o -match 'no snapshot matches') $o.Trim()
 
     # xpm reads package.ini and runs the command line it finds there
     $xpm = Join-Path $repoRoot 'xpm.ps1'

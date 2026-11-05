@@ -13,7 +13,9 @@ function Invoke-Main {
     [string]$Arg,
     [int]$Count = 0,
     [switch]$Purge,
-    [switch]$All
+    [switch]$All,
+    [switch]$Media,
+    [switch]$Replace
   )
 # Only the two that put a panel on screen need the palette. Everything else - put, get,
 # list, del, status, config, help - would pay ~250 ms to load System.Drawing for colours it
@@ -259,6 +261,22 @@ switch ($Command.ToLower()) {
     Write-Host ('active: ' + $script:Theme + '   change with: clipboard config set Theme <name>')
   }
   'restore' { Invoke-Restore }
+  'export' {
+    $r = Invoke-Export $Value -Media:$Media
+    if ($r.Ok) { Write-Host ('[ok] ' + $r.Message) } else { Write-Host ('[!] ' + $r.Message) }
+  }
+  'import' {
+    $r = Invoke-Import $Value -Replace:$Replace
+    if ($r.Ok) { Write-Host ('[ok] ' + $r.Message) } else { Write-Host ('[!] ' + $r.Message) }
+  }
+  'backup' {
+    $r = Save-Snapshot $Value
+    if ($r.Ok) { Write-Host ('[ok] ' + $r.Message) } else { Write-Host ('[!] ' + $r.Message) }
+  }
+  'restore-data' {
+    $r = Invoke-RestoreData $Value
+    if ($r.Ok) { Write-Host ('[ok] ' + $r.Message) } else { Write-Host ('[!] ' + $r.Message) }
+  }
   'install' {
     $pol = 'RemoteSigned'
     if ($Value -and $Value.ToLower() -eq 'bypass') { $pol = 'Bypass' }

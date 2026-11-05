@@ -34,6 +34,10 @@ function Show-Usage {
     )
     'setup'   = @(
       @('diag', 'probe the environment (run this first)'),
+      @('export FILE', 'write the history to .json (all), .csv or .txt (text only); -Media embeds pictures in the json'),
+      @('import FILE', 'add the entries of an export; -Replace swaps the whole history after a backup'),
+      @('backup [name]', 'zip history, media and blobs into data\backup'),
+      @('restore-data [name]', 'put a snapshot back (the current history is backed up first)'),
       @('migrate [-Purge]', 'upgrade an older history file to the layout this build reads (purge = archive one that cannot be migrated)'),
       @('restore', 'try to restore the native Win+V history'),
       @('install [bypass]', 'create the shortcuts (bypass = -ExecutionPolicy Bypass; Autostart / DesktopShortcut pick which)'),

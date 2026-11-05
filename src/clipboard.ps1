@@ -31,6 +31,8 @@ param(
   [int]$Count = 0,
   [switch]$Purge,
   [switch]$All,
+  [switch]$Media,
+  [switch]$Replace,
   [switch]$Library
 )
 
@@ -52,8 +54,8 @@ $libDir = Join-Path $Root 'lib'
 $coreModules = @(
   'lib\base',
   'utils\ini', 'utils\import', 'utils\schema',
-  'utils\log', 'utils\time', 'utils\format', 'utils\draw', 'utils\query', 'utils\pinyin',
-  'lib\native', 'lib\theme-stub', 'lib\media', 'lib\clip', 'lib\store', 'lib\migrate', 'lib\hotkey',
+  'utils\log', 'utils\time', 'utils\format', 'utils\draw', 'utils\query', 'utils\pinyin', 'utils\transfer',
+  'lib\native', 'lib\theme-stub', 'lib\media', 'lib\clip', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\hotkey',
   'lib\entry', 'lib\query', 'lib\select', 'lib\picker-geom', 'lib\diag', 'lib\shortcut', 'lib\config', 'lib\usage', 'lib\dispatch'
 )
 # The panel stack is only needed when something is about to draw: `ui`, `serve`, and the
@@ -133,4 +135,4 @@ try { [Console]::OutputEncoding = $Utf8 } catch { }
 # Dot-source mode (the test suite uses it): every function is defined, nothing runs. The
 # plugins are loaded by Invoke-Main, so this mode stays a base-tool view.
 if ($Library) { return }
-Invoke-Main -Command $Command -Value $Value -Sub $Sub -Arg $Arg -Count $Count -Purge:$Purge -All:$All
+Invoke-Main -Command $Command -Value $Value -Sub $Sub -Arg $Arg -Count $Count -Purge:$Purge -All:$All -Media:$Media -Replace:$Replace

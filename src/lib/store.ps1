@@ -244,8 +244,15 @@ function Get-StoreVersion {
   try {
     $fs = [IO.File]::Open($StoreFile, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
     try {
+      # fill the buffer: a single Read is allowed to come back short, and half a tag would be
+      # read as "unrecognised layout" - which makes every later save refuse to write
       $buf = New-Object byte[] 64
-      $n = $fs.Read($buf, 0, $buf.Length)
+      $n = 0
+      while ($n -lt $buf.Length) {
+        $got = $fs.Read($buf, $n, $buf.Length - $n)
+        if ($got -le 0) { break }
+        $n += $got
+      }
       if ($n -gt 0) { $head = [Text.Encoding]::UTF8.GetString($buf, 0, $n) }
     } finally { $fs.Dispose() }
   } catch { return $o }
