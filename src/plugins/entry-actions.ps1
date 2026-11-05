@@ -40,6 +40,15 @@
     if ($payload.IndexOf([char]10) -ge 0) { return 'multi' }
     return 'text'
   }
+  # The type names a query may ask for beyond text / files / image / rich. Each one is the
+  # shared classifier narrowed to that kind, so `type:code` can never drift from the row icon.
+  QueryKinds   = @{
+    link  = { param($payload) ([string](& (Get-PluginData 'entry-actions' 'KindOf') $payload)) -ceq 'link' }
+    mail  = { param($payload) ([string](& (Get-PluginData 'entry-actions' 'KindOf') $payload)) -ceq 'mail' }
+    path  = { param($payload) ([string](& (Get-PluginData 'entry-actions' 'KindOf') $payload)) -ceq 'path' }
+    code  = { param($payload) ([string](& (Get-PluginData 'entry-actions' 'KindOf') $payload)) -ceq 'code' }
+    multi = { param($payload) ([string](& (Get-PluginData 'entry-actions' 'KindOf') $payload)) -ceq 'multi' }
+  }
   # the row icon this plugin paints for each kind; without the icon font there is none
   # (Get-IconGlyph turns the code point into either the glyph or the empty fallback)
   TypeGlyph    = {

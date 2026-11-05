@@ -10,6 +10,28 @@
 
 # One StringFormat set for the whole process. Idempotent: Show-Picker calls it every time
 # the panel opens and gets the same objects back.
+# The words an empty list shows: why it is empty and what the user can do about it. Plain
+# text only, so the panel keeps the drawing and this stays measurable without a window.
+function Get-EmptyState($entries, $query, [string]$q, $glyphs) {
+  $s = @{ Glyph = ''; Title = ''; Sub = '' }
+  if (@($entries).Count -eq 0) {
+    $s.Glyph = [string]$glyphs.History
+    $s.Title = 'Clipboard history is empty'
+    $s.Sub = 'Copy something and it will appear here'
+    return $s
+  }
+  if ($null -eq $query -or $query.Count -eq 0) { return $s }
+  $s.Glyph = [string]$glyphs.Search
+  if ($query.Bad.Count -gt 0) {
+    $s.Title = 'The search was not understood'
+    $s.Sub = [string]$query.Bad[0]
+    return $s
+  }
+  $s.Title = 'No results for "' + ([string]$q).Trim() + '"'
+  $s.Sub = 'Try another keyword, or press Esc to clear the search'
+  return $s
+}
+
 function New-PickerStringFormats {  if ($script:PickerSf) { return $script:PickerSf }
   $none = New-Object Drawing.StringFormat
   $none.Trimming = [Drawing.StringTrimming]::None

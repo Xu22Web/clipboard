@@ -282,6 +282,23 @@ function Get-PluginActions {
   return $out.ToArray()
 }
 
+# Query kinds: the type names a plugin can tell apart beyond text / files / image / rich.
+# A name is answered by the first plugin that declares it, so `type:code` is its owner's rule.
+function Get-PluginQueryKinds {
+  $out = @{}
+  foreach ($p in @($script:Plugins)) {
+    if (-not $p.ContainsKey('QueryKinds')) { continue }
+    $map = $p['QueryKinds']
+    if ($map -isnot [System.Collections.IDictionary]) { continue }
+    foreach ($k in @($map.Keys)) {
+      $name = ([string]$k).ToLowerInvariant()
+      if (-not $name -or $out.ContainsKey($name)) { continue }
+      $out[$name] = $map[$k]
+    }
+  }
+  return $out
+}
+
 # Row icon: only a plugin paints one. TypeGlyph receives the payload and returns a glyph
 # (or nothing), so the typing rule stays inside the plugin that owns it.
 function Get-EntryGlyph([string]$payload) {

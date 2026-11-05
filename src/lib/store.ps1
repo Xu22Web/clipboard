@@ -406,28 +406,10 @@ function Get-StickyTopRows($rows, [string]$stickyMark, [int]$stickyMax) {
   return $n
 }
 
-# The rows the panel shows for one query: every token has to appear in the payload. A row
-# carrying a sticky mark is no exception - freezing is a scrolling behaviour now, so a
-# search that does not match it hides it like any other row.
+# The rows the panel shows for one query. The meaning of the words lives in lib/query.ps1;
+# this name stays for the callers that already hand in a plain token list.
 function Select-QueryRows($entries, [string[]]$tokens) {
-  $rows = New-Object System.Collections.Generic.List[object]
-  # A row only ever shows the head of a big payload, so the search looks at that head too:
-  # IndexOf over a 200 KB entry on every keystroke is what made typing stutter.
-  $head = 4096
-  foreach ($rec in @($entries)) {
-    $matched = $true
-    if (@($tokens).Count -gt 0) {
-      $text = [string]$rec.Payload
-      $len = [Math]::Min($text.Length, $head)
-      foreach ($t in @($tokens)) {
-        if (-not $t) { continue }
-        if ($t.Length -gt $len) { $matched = $false; break }
-        if ($text.IndexOf($t, 0, $len, [StringComparison]::OrdinalIgnoreCase) -lt 0) { $matched = $false; break }
-      }
-    }
-    if ($matched) { $rows.Add($rec) }
-  }
-  return $rows.ToArray()
+  return (Invoke-Query $entries (New-Query -Tokens @($tokens)))
 }
 
 # enforce MaxItems / MaxTotal / MaxMediaTotal in place; rows carrying a protected mark are

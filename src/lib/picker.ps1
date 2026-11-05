@@ -560,12 +560,15 @@ function Show-Picker {
     function Update-List([string]$q) {
       $lst.BeginUpdate()
       try {
-        $tokens = @($q -split '\s+' | Where-Object { $_ })
+        # the words are compiled once: fields, patterns and the pinyin switch live in lib/query.ps1
+        $query = New-Query -Line $q
+        # highlight still works on plain words, so a field never tints a row
+        $tokens = @($query.Terms)
         $script:Tokens = $tokens
         # sticky pins: the plugin names the mark and the cap, the base decides how many rows
         # actually fit - see Get-StickyPlan / Get-StickyTopRows in lib/store.ps1
         $plan = Get-StickyPlan (Get-Rows)
-        $rows = @(Select-QueryRows $script:Entries $tokens)
+        $rows = @(Invoke-Query $script:Entries $query)
         # the pins sort first, so the run of sticky rows at the top is what gets frozen
         $script:StickyTop = Get-StickyTopRows $rows $plan.Mark $plan.Max
         $res = New-Object System.Collections.Generic.List[object]
@@ -597,18 +600,10 @@ function Show-Picker {
         $lst.EndUpdate()
       }
       if ($script:Labels.Count -eq 0) {
-        if ($script:Entries.Count -eq 0) {
-          $script:EmptyGlyph = $script:Glyphs.History
-          $script:EmptyTitle = 'Clipboard history is empty'
-          $script:EmptySub = 'Copy something and it will appear here'
-        } elseif ($tokens.Count -gt 0) {
-          $script:EmptyGlyph = $script:Glyphs.Search
-          $script:EmptyTitle = 'No results for "' + $q.Trim() + '"'
-          $script:EmptySub = 'Try another keyword, or press Esc to clear the search'
-        } else {
-          $script:EmptyTitle = ''
-          $script:EmptySub = ''
-        }
+        $es = Get-EmptyState $script:Entries $query $q $script:Glyphs
+        $script:EmptyGlyph = $es.Glyph
+        $script:EmptyTitle = $es.Title
+        $script:EmptySub = $es.Sub
         $empty.Visible = $true
         $empty.BringToFront()
         $empty.Invalidate()

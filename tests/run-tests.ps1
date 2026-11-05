@@ -168,10 +168,11 @@ try {
 
   # the entry file names these by relative path; a package must carry all of them
   $requiredLib = @('lib\base', 'lib\native', 'lib\keyhook', 'lib\theme-stub',
-    'lib\media', 'lib\clip', 'lib\store', 'lib\hotkey', 'lib\entry', 'lib\picker-geom', 'lib\anim',
+    'lib\media', 'lib\clip', 'lib\store', 'lib\hotkey', 'lib\entry', 'lib\query', 'lib\picker-geom', 'lib\anim',
     'lib\picker-draw', 'lib\pinlist', 'lib\preview', 'lib\picker', 'lib\serve', 'lib\diag', 'lib\shortcut',
     'lib\config', 'lib\usage', 'lib\dispatch',
     'utils\ini', 'utils\import', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\draw',
+    'utils\query', 'utils\pinyin',
     'schema\clipboard', 'schema\theme')
   $missingLib = @()
   foreach ($m in $requiredLib) {
@@ -1045,6 +1046,50 @@ try {
     Check 'unit' 'the search hides an unmatched pin' (((@($rows) | ForEach-Object { $_.Payload }) -join '|') -eq 'alpha') ((@($rows) | ForEach-Object { $_.Payload }) -join '|')
     $rows = @(Select-QueryRows $stickyRows @())
     Check 'unit' 'no query shows every row' (@($rows).Count -eq 5) (@($rows).Count -as [string])
+
+    # ---- query line: the words are cut up by utils/query.ps1 and given meaning here
+    Check 'unit' 'a quoted phrase keeps its space' (((Split-QueryText 'a "b c" d') -join '|') -eq 'a|b c|d') ((Split-QueryText 'a "b c" d') -join '|')
+    Check 'unit' 'an unclosed quote runs to the end of the line' (((Split-QueryText 'a "b c') -join '|') -eq 'a|b c') ((Split-QueryText 'a "b c') -join '|')
+    $qp = Get-QueryPart '-type:image'
+    Check 'unit' 'a leading minus negates and a colon names a field' (($qp.Negated) -and ($qp.Field -eq 'type') -and ($qp.Value -eq 'image')) ($qp.Field + '/' + $qp.Value)
+    # 'https' looks like a field name to the lexer, so the compiler is what keeps a url whole
+    Check 'unit' 'a url stays a plain word' ((@(Invoke-Query @(New-Record 'see https://example.com/x now' 1 '') (New-Query -Line 'https://example.com/x')).Count) -eq 1) ''
+    $qRows = @(
+      (New-Record 'alpha one' 100 ''),
+      (New-Record 'alpha two' 90 'p'),
+      (New-Record 'beta three' 80 '')
+    )
+    Check 'unit' 'a word matches whatever its case' ((@(Invoke-Query $qRows (New-Query -Line 'ALPHA')).Count) -eq 2) ''
+    Check 'unit' 'a negated word is dropped' ((@(Invoke-Query $qRows (New-Query -Line 'alpha -two')).Count) -eq 1) ''
+    Check 'unit' 'a quoted phrase matches as one word' ((@(Invoke-Query $qRows (New-Query -Line '"alpha t"')).Count) -eq 1) ''
+    Check 'unit' 'type:text keeps every text row' ((@(Invoke-Query $qRows (New-Query -Line 'type:text')).Count) -eq 3) ''
+    $fileRow = New-Record ([char]1 + 'C:\a.txt') 10 ''
+    Check 'unit' 'type:files picks the file list out' ((@(Invoke-Query @($qRows + $fileRow) (New-Query -Line 'type:files')).Count) -eq 1) ''
+    Check 'unit' 'mark:p keeps the marked row' ((@(Invoke-Query $qRows (New-Query -Line 'mark:p')).Count) -eq 1) ''
+    Check 'unit' 'a negated mark drops the marked row' ((@(Invoke-Query $qRows (New-Query -Line '-mark:p')).Count) -eq 2) ''
+    Check 'unit' 're: matches a pattern' ((@(Invoke-Query $qRows (New-Query -Line 're:^alpha t')).Count) -eq 1) ''
+    $badRegex = New-Query -Line 're:('
+    Check 'unit' 'a broken pattern is reported and matches nothing' (($badRegex.Bad.Count -eq 1) -and (@(Invoke-Query $qRows $badRegex).Count -eq 0)) ''
+    $badType = New-Query -Line 'type:nonsense'
+    Check 'unit' 'an unknown type is reported' ($badType.Bad.Count -eq 1) ([string]$badType.Bad[0])
+    $nowSec = Get-Epoch
+    $ageRows = @((New-Record 'fresh row' ($nowSec - 60) ''), (New-Record 'stale row' ($nowSec - 172800) ''))
+    $aged = @(Invoke-Query $ageRows (New-Query -Line 'age:1d'))
+    Check 'unit' 'age:1d keeps only the old row' ((@($aged).Count -eq 1) -and (@($aged)[0].Payload -eq 'stale row')) ''
+    $today = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
+    Check 'unit' 'newer: keeps what arrived today' ((@(Invoke-Query $ageRows (New-Query -Line ('newer:' + $today))).Count) -eq 1) ''
+    # pinyin initials: level-1 hanzi are ordered by pinyin in GB2312, so this is a range lookup
+    $han = ([char]0x4E2D).ToString() + ([char]0x56FD).ToString()
+    Check 'unit' 'a hanzi gives its initial' ((Get-PinyinInitial ([char]0x4E2D)) -eq 'Z') (Get-PinyinInitial ([char]0x4E2D))
+    Check 'unit' 'a latin letter carries no initial' (((Get-PinyinInitial ([char]'a')) -eq '')) (Get-PinyinInitial ([char]'a'))
+    Check 'unit' 'py: matches the initials of a phrase' ((@(Invoke-Query @(New-Record $han 1 '') (New-Query -Line 'py:zg')).Count) -eq 1) ''
+    # the empty list explains itself, and a filter nobody understands says so
+    $es = Get-EmptyState @() (New-Query -Line 'x') 'x' @{ History = 'H'; Search = 'S' }
+    Check 'unit' 'an empty store gets its own hint' (($es.Title -eq 'Clipboard history is empty') -and ($es.Glyph -eq 'H')) $es.Title
+    $es = Get-EmptyState $qRows (New-Query -Line 'zzz') 'zzz' @{ History = 'H'; Search = 'S' }
+    Check 'unit' 'a search with no results says so' ($es.Title -like 'No results*') $es.Title
+    $es = Get-EmptyState $qRows (New-Query -Line 'type:nonsense') 'type:nonsense' @{ History = 'H'; Search = 'S' }
+    Check 'unit' 'a filter nobody understands explains itself' ($es.Title -eq 'The search was not understood') $es.Title
     # freezing is a scrolling behaviour: the leading run of pins is what stays put
     Check 'unit' 'sticky top counts the leading pins' ((Get-StickyTopRows $stickyRows 'p' 5) -eq 3) ((Get-StickyTopRows $stickyRows 'p' 5) -as [string])
     Check 'unit' 'sticky top obeys the declared cap' ((Get-StickyTopRows $stickyRows 'p' 2) -eq 2) ((Get-StickyTopRows $stickyRows 'p' 2) -as [string])

@@ -52,9 +52,9 @@ $libDir = Join-Path $Root 'lib'
 $coreModules = @(
   'lib\base',
   'utils\ini', 'utils\import', 'utils\schema',
-  'utils\log', 'utils\time', 'utils\format', 'utils\draw',
+  'utils\log', 'utils\time', 'utils\format', 'utils\draw', 'utils\query', 'utils\pinyin',
   'lib\native', 'lib\theme-stub', 'lib\media', 'lib\clip', 'lib\store', 'lib\migrate', 'lib\hotkey',
-  'lib\entry', 'lib\picker-geom', 'lib\diag', 'lib\shortcut', 'lib\config', 'lib\usage', 'lib\dispatch'
+  'lib\entry', 'lib\query', 'lib\picker-geom', 'lib\diag', 'lib\shortcut', 'lib\config', 'lib\usage', 'lib\dispatch'
 )
 # The panel stack is only needed when something is about to draw: `ui`, `serve`, and the
 # bare command that opens the panel. Every other command - put, get, list, del, clear,
