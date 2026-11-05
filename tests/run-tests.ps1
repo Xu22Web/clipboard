@@ -168,11 +168,11 @@ try {
 
   # the entry file names these by relative path; a package must carry all of them
   $requiredLib = @('lib\base', 'lib\native', 'lib\keyhook', 'lib\theme-stub',
-    'lib\media', 'lib\clip', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\hotkey', 'lib\entry', 'lib\query', 'lib\select', 'lib\picker-geom', 'lib\anim',
+    'lib\media', 'lib\clip', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\hotkey', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\picker-geom', 'lib\anim',
     'lib\picker-draw', 'lib\pinlist', 'lib\preview', 'lib\picker', 'lib\serve', 'lib\diag', 'lib\shortcut',
     'lib\config', 'lib\usage', 'lib\dispatch',
     'utils\ini', 'utils\import', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\draw',
-    'utils\query', 'utils\pinyin', 'utils\transfer',
+    'utils\query', 'utils\pinyin', 'utils\transfer', 'utils\apprules',
     'schema\clipboard', 'schema\theme')
   $missingLib = @()
   foreach ($m in $requiredLib) {
@@ -605,6 +605,29 @@ try {
     $restored = Invoke-RestoreData $bkName
     Check 'unit' 'a snapshot restores the history' (($restored.Ok) -and (@(Get-Records).Count -eq 2)) $restored.Message
     Save-Records @()
+
+    # ------------------------------------------------------- per program paste rules
+    # the text form first: separated by ';' or ',', names lowercased, '.exe' filled in
+    $ruleMap = ConvertFrom-AppRuleText 'WindowsTerminal:plain, Code.EXE:rich; *:no-paste'
+    Check 'unit' 'a rule list parses into program keys' (($ruleMap.Contains('windowsterminal.exe')) -and ($ruleMap.Contains('code.exe')) -and ($ruleMap.Contains('*'))) ([string]$ruleMap.Count + ' rule(s)')
+    Check 'unit' 'a rule keeps its action' (($ruleMap['windowsterminal.exe'] -eq 'plain') -and ($ruleMap['*'] -eq 'no-paste')) $ruleMap['windowsterminal.exe']
+    Check 'unit' 'an empty rule list is empty' ((ConvertFrom-AppRuleText '').Count -eq 0) ''
+    $okRule = Test-AppRuleText 'notepad:plain;*:no-paste'
+    Check 'unit' 'a good rule list is accepted' (($okRule.Ok) -and ($okRule.Value -eq 'notepad.exe:plain;*:no-paste')) $okRule.Value
+    Check 'unit' 'an unknown action is refused' (-not (Test-AppRuleText 'notepad:cursive').Ok) (Test-AppRuleText 'notepad:cursive').Error
+    Check 'unit' 'a rule without an action is refused' (-not (Test-AppRuleText 'notepad').Ok) ''
+    Check 'unit' 'a name that is not a program is refused' (-not (Test-AppRuleText '..\evil:plain').Ok) ''
+    # then the lookup: an exact name beats the '*' fallback, and no rule means ''
+    $savedRules = $script:AppRules
+    $script:AppRules = 'windowsterminal.exe:plain;*:no-paste'
+    Check 'unit' 'an exact rule wins over the fallback' ((Get-AppRuleAction 'windowsterminal') -eq 'plain') (Get-AppRuleAction 'windowsterminal')
+    Check 'unit' 'anything else takes the fallback' ((Get-AppRuleAction 'notepad') -eq 'no-paste') (Get-AppRuleAction 'notepad')
+    $script:AppRules = 'windowsterminal.exe:plain'
+    Check 'unit' 'a program without a rule is left alone' ((Get-AppRuleAction 'notepad') -eq '') ''
+    $script:AppRules = ''
+    Check 'unit' 'no rules means no answer' ((Get-AppRuleAction 'notepad') -eq '') ''
+    $script:AppRules = $savedRules
+    Check 'unit' 'the rule setting carries a default' ($null -ne $sch['AppRules'] -and $sch['AppRules'].Default -eq '') ''
 
     # ------------------------------------------------------- images and rich text
     # 1x1 transparent PNG: the bytes are what makes the identity, so any picture works

@@ -124,6 +124,7 @@ function Get-ConfigReport {
     MaxRichBytes      = [string]$script:MaxRichBytes
     PasteRich         = [string][int][bool]$script:PasteRich
     PasteFilesAsText  = [string][int][bool]$script:PasteFilesAsText
+    AppRules          = [string]$script:AppRules
     Interval          = [string]$Interval
     NoPaste           = [string][int][bool]$script:NoPaste
     Balloon           = [string][int][bool]$script:ShowBalloon
@@ -238,6 +239,7 @@ function Show-Config {
     if ($k -eq 'HotkeyFallbacks' -and $show -eq '') { $show = '(built-in chain)' }
     if ($k -eq 'ExcludePattern' -and $show -eq '') { $show = '(none)' }
     if ($k -eq 'Plugins' -and $show -eq '') { $show = '(none)' }
+    if ($k -eq 'AppRules' -and $show -eq '') { $show = '(every program alike)' }
     Write-Host ('    ' + $name + ' = ' + $show + (& $srcOf $k))
   }
 
@@ -423,6 +425,9 @@ function Get-IniTemplateLines {
     'PasteRich=1',
     '# 1 = a file list also carries its paths as text, so a text box gets something',
     'PasteFilesAsText=1',
+    '# per program paste behaviour, e.g. windowsterminal.exe:plain;code.exe:rich;*',
+    '# actions: plain / rich / no-paste; one rule per ; separated item',
+    'AppRules=',
     '# payloads above this many characters are kept in data\blobs instead of this file,',
     '# 0 = always inline (one self-contained history.dat)',
     'BlobThreshold=32768',

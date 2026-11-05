@@ -141,6 +141,8 @@ $script:MaxRichImages = 2097152
 $script:PasteRich = $true
 # a file list also goes on the clipboard as text, so an address bar or a terminal gets the paths
 $script:PasteFilesAsText = $true
+# per program paste behaviour, empty = every program behaves the same (see utils/apprules.ps1)
+$script:AppRules = ''
 $script:Interval = 300
 $script:NoPaste = $false
 # Plugins load by default: clipboard.ini spells out every plugin name, and the resolved

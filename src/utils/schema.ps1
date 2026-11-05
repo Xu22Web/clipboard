@@ -71,7 +71,7 @@ function Test-SchemaFormat($schema) {
         if ($spec -isnot [System.Collections.IDictionary]) { $bad.Add($k + ': not a dictionary'); continue }
         if (-not $spec.Contains('Type')) { $bad.Add($k + ': missing Type'); continue }
         $t = [string]$spec['Type']
-        if (@('string', 'int', 'number', 'bool', 'list', 'enum', 'regex', 'color', 'hotkey', 'theme', 'any') -notcontains $t) {
+        if (@('string', 'int', 'number', 'bool', 'list', 'enum', 'regex', 'color', 'hotkey', 'theme', 'apprule', 'any') -notcontains $t) {
           $bad.Add($k + ': unknown Type ' + $t)
         }
         if ($t -eq 'enum' -and -not $spec.Contains('Enum')) { $bad.Add($k + ': enum needs Enum') }
@@ -207,6 +207,10 @@ function Convert-SchemaValue($schema, [string]$key, [string]$raw) {
   }
   if ($type -eq 'hotkey') {
     if ((Parse-Hotkey $v).Vk -eq 0) { return @{ Ok = $false; Value = ''; Error = 'unknown key name' } }
+    return @{ Ok = $true; Value = $v; Error = '' }
+  }
+  if ($type -eq 'apprule') {
+    if (Get-Command Test-AppRuleText -ErrorAction SilentlyContinue) { return (Test-AppRuleText $v) }
     return @{ Ok = $true; Value = $v; Error = '' }
   }
   return @{ Ok = $true; Value = $v; Error = '' }

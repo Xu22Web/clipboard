@@ -653,7 +653,10 @@ function Show-Picker {
           }
         } catch { Write-Log ('transform skipped: ' + $_.Exception.Message) }
       }
-      if ($script:NoPaste -or $NoInject.IsPresent) { $form.Hide(); [void](Set-ClipItem $payload $rich); Set-LastCapture $payload; $form.Close(); return }
+      if ($script:NoPaste -or $NoInject.IsPresent -or (Test-AppRuleNoPaste)) { $form.Hide(); [void](Set-ClipItem $payload $rich); Set-LastCapture $payload; $form.Close(); return }
+      # the program in front decides whether the formatting travels with the paste:
+      # a terminal wants the text, an editor wants the layout
+      if ($rich -and -not (Test-AppRuleKeepsRich)) { $rich = '' }
       if (-not (Set-ClipItem $payload $rich)) { Write-Log 'set clipboard failed'; $form.Close(); return }
       # our own write must not come back as a new capture
       Set-LastCapture $payload

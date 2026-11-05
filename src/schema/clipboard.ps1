@@ -30,6 +30,7 @@
     MaxRichImages     = @{ Type = 'int'; Ref = [ref]$script:MaxRichImages; Default = 2097152; Minimum = 0; Maximum = 10485760; Description = 'inline a temp-file picture in the html when it is at most this large, 0 = never' }
     PasteRich         = @{ Type = 'bool'; Ref = [ref]$script:PasteRich; Default = 1; Description = '1 = paste the formatting back, 0 = always paste plain text' }
     PasteFilesAsText  = @{ Type = 'bool'; Ref = [ref]$script:PasteFilesAsText; Default = 1; Description = '1 = a file list also goes on the clipboard as text (paths), 0 = file list only' }
+    AppRules          = @{ Type = 'apprule'; Ref = [ref]$script:AppRules; Default = ''; Description = 'per program paste behaviour: name:plain|rich|no-paste, separated by ; (a name is a process, * is the rest)' }
     BlobThreshold     = @{ Type = 'int'; Ref = [ref]$script:BlobChars; Default = 32768; Minimum = 0; Maximum = 1048576; Description = 'payloads above this many chars live in data\blobs, 0 = never' }
     Interval          = @{ Type = 'int'; Ref = [ref]$script:Interval; Default = 300; Minimum = 50; Maximum = 60000; Description = 'clipboard poll interval in ms' }
     NoPaste           = @{ Type = 'bool'; Ref = [ref]$script:NoPaste; Default = 0; Description = '1 = clipboard only, never inject a paste' }

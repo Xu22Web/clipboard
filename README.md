@@ -186,6 +186,7 @@ xpm build        # 打包到 dist\clipboard-<version>\
 | `MaxRichImages` | `2097152` | HTML 里引用本机临时文件的图片，单张不超这个字节数就内联进 HTML（`data:` URI）；`0` = 不内联 |
 | `PasteRich` | `1` | `1` = `pick` / 回车粘贴时把格式一起写回剪贴板，`0` = 只粘纯文本 |
 | `PasteFilesAsText` | `1` | `1` = 文件条目粘贴时同时写入路径文本（地址栏、终端、编辑器才有内容），`0` = 只写文件列表 |
+| `AppRules` | 空 | 按应用改粘贴行为：`程序名:动作`，`;` 分隔，如 `windowsterminal.exe:plain;code.exe:rich;*`；动作见[按应用规则](#按应用规则) |
 | `Interval` | `300` | 剪贴板轮询间隔（毫秒） |
 | `NoPaste` | `0` | `1` = 只写剪贴板，不自动粘贴 |
 | `Balloon` | `1` | `1` = 启动时弹托盘气泡 |
@@ -284,6 +285,27 @@ xpm build        # 打包到 dist\clipboard-<version>\
 分别关闭：`clipboard config set CaptureImages 0` / `clipboard config set CaptureRich 0`；只粘纯文本：`clipboard config set PasteRich 0`。
 
 在 Word 等程序中选中文字时，剪贴板同时包含一张位图，因此捕获以文本 / 富文本优先，所选内容不会被存成图片。
+
+## 按应用规则
+
+同一份历史粘到不同程序里，想要的结果不一样：终端要纯文本，Word 要排版。`AppRules` 按"粘到哪里"改行为。规则只管**粘贴**，捕获一律照旧。
+
+```ini
+AppRules=windowsterminal.exe:plain;code.exe:rich;*:no-paste
+```
+
+| 动作 | 含义 |
+|---|---|
+| `plain` | 即使这条记录带格式也只粘纯文本 |
+| `rich` | 按 `PasteRich` 走（默认就带格式），写出来是为了让规则表自己说明意图 |
+| `no-paste` | 只把内容写回剪贴板，不发 `PasteKeys`，省得终端里的 `Ctrl+V` 被当成别的意思 |
+| `*` | 兜底：没被上面任何一条命中的程序用它 |
+
+- 程序名写进程名，`.exe` 可省，大小写不敏感；`;` 或 `,` 分隔，空格随意。
+- 看的是**粘贴时**的前台窗口；面板不抢焦点，所以它就是用户来的那个程序。
+- `PasteRich` 仍是总开关：`PasteRich=0` 时 `rich` 规则也不会粘格式。
+- 写错的规则会被拦下：`clipboard config set AppRules "notepad:cursive"` 报 `unknown action`。
+- `clipboard config` 会显示当前生效的规则表；空表示所有程序一样。
 
 ## 主题
 
@@ -672,7 +694,7 @@ xpm test -Source dist\clipboard-0.1.0   # 对打包副本跑 CLI 组
 
 | 组 | 开关 | 覆盖内容 |
 |---|---|---|
-| 结构 | 无（总是执行） | 分层契约：33 个必需模块（`lib\` 24 + `utils\` 9）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
+| 结构 | 无（总是执行） | 分层契约：39 个必需模块（`lib\` 26 + `utils\` 11）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
 | 单元 | `-Unit` | 纯函数与存储层：热键解析、条目文案、ini 读写与单值校验、`Apply-Config` 与配置诊断、记录读写与版本识别、迁移引擎（拒绝无步骤 / 备份 / `-Purge` 归档）、图片与富文本的编解码与媒体回收、CF_HTML 片段解析、真实剪贴板的图片与格式往返、标记与保护规则、面板几何与命中计算、条目分类与行图标、主题发现与 `[metrics]` 重置、插件白名单。通过 `-Library` dot-source 主脚本，不触发命令分发 |
 | 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put` / `get` / `list` / `pick` / `del` / `clear` / `pause` / `resume` / `status` / `version` / `migrate` / `themes` / `config get` / `config set` / `config init` / `diag`、主题切换与非法主题名拒绝、插件白名单与各插件命令、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝、`xpm` 命令列表；以及打包（进包内容、`install.bat`、包内版本为常量且与 `package.ini` 一致、`Plugins=` / `Themes=` 裁剪、`Overwrite=0` 拒绝覆盖、未知插件名报错） |
 | 端到端 | `-E2E` | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启循环 |
