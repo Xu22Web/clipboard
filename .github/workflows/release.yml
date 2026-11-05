@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # 允许手动触发，便于补发 / 重跑某个版本
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the version and check the tag
+        shell: pwsh
+        # 版本只有一处来源：package.ini。tag 与它对不上就在第一步失败，别发一个版本号
+        # 和产物内部不一致的包。手动触发时不需要 tag，直接按 package.ini 发。
+        run: |
+          $ini = Get-Content -LiteralPath package.ini -Raw
+          if ($ini -notmatch '(?m)^\s*(?:package\.)?Version\s*=\s*(\S+)') { throw 'package.ini 里没有 Version=' }
+          $version = $Matches[1]
+          "CLIP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "package.ini Version=$version"
+          if ('${{ github.ref_type }}' -eq 'tag') {
+            $tag = '${{ github.ref_name }}'
+            if ($tag -ne "v$version") { throw "tag $tag 与 package.ini 的 $version 不一致" }
+          }
+
+      - name: Self tests
+        shell: pwsh
+        run: .\xpm.ps1 test -Unit -Integration
+
+      - name: Package
+        shell: pwsh
+        # 发版要 zip：build.ini 默认 Zip=0，这里写一份只覆盖需要那几个键的配置，其余键
+        # 用 scripts\build.ps1 的内置默认（Minify/Rename/IncludeDocs 都是 1）。
+        run: |
+          @('OutDir=dist', 'Zip=1', 'Overwrite=1', 'Verify=1') |
+            Set-Content -LiteralPath build-release.ini -Encoding ascii
+          .\xpm.ps1 build -Config build-release.ini
+          Remove-Item -LiteralPath build-release.ini -Force
+          $zip = @(Get-ChildItem -Path dist -Filter '*.zip')
+          if ($zip.Count -ne 1) { throw ('dist\ 下应当正好一个 zip，实际 ' + $zip.Count + ' 个') }
+          Write-Host ('package: ' + $zip[0].Name)
+
+      - name: Checksums
+        shell: pwsh
+        # 发布 SHA256SUMS.txt：拿到 zip 的人可以核对完整性。
+        run: |
+          Get-ChildItem -Path dist -Filter '*.zip' | ForEach-Object {
+            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)"
+          } | Set-Content -LiteralPath dist/SHA256SUMS.txt -Encoding ascii
+          Get-Content -LiteralPath dist/SHA256SUMS.txt
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # 已存在同名 Release（补发 / 重跑）就覆盖上传，否则新建。资产用管道收集：
+        # 只有一个文件时 @(...).FullName 会退化成 [string]，后面拼路径就成了字符串拼接。
+        run: |
+          $tag = 'v' + $env:CLIP_VERSION
+          $files = @(
+            Get-ChildItem -Path dist -Filter '*.zip'
+            Get-Item -LiteralPath 'dist/SHA256SUMS.txt'
+          ) | ForEach-Object { $_.FullName }
+          Write-Host 'assets:'
+          $files | ForEach-Object { Write-Host "  $_" }
+          $null = gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $files --clobber
+          } else {
+            gh release create $tag $files --title $tag --generate-notes
+          }
+          if ($LASTEXITCODE -ne 0) { throw "gh release 失败（exit code $LASTEXITCODE）" }

@@ -724,6 +724,19 @@ Themes=win11-dark
 
 插件不用打包器操心：它就是 `plugins\` 目录 + `Plugins=` 白名单，目录跟着包走就能用；想分发自己写的插件，把 `.ps1` 放进产物里的 `plugins\` 也生效。
 
+## 持续集成与发布
+
+`.github\workflows\` 下两个 workflow，都跑在 `windows-latest`：工具依赖 WinForms 面板、剪贴板 API 与 `RegisterHotKey`，只有 Windows 上的 PowerShell 5.1 才是目标环境，换平台验证不了任何东西。
+
+| workflow | 触发 | 步骤 |
+|---|---|---|
+| `ci.yml` | 推到 `master`、PR、手动 | 打印 PowerShell 版本 → `xpm test -Unit -Integration` → `xpm build`（`Verify=1`，产物复测） |
+| `release.yml` | 推 `v*` tag、手动 | 校验 tag 与 `package.ini` 的版本一致 → 跑测试 → 打包成 `clipboard-<version>.zip` → 生成 `SHA256SUMS.txt` → 发布 Release |
+
+- 结构组校验文件布局与纯 ASCII（PowerShell 5.1 按 GBK 解码无 BOM 的 UTF-8，脚本里有中文就会炸），单元组按名字调用内部函数，集成组起子进程跑每一条 CLI 能力——三者都在 `ci.yml` 里，每次推送都会跑。
+- 端到端组（常驻进程 / 全局热键 / 剪贴板接管）需要真实桌面，托管 runner 不保证有交互式会话，所以在 `ci.yml` 里单独一个 job 且不阻塞合并，只作参考信号；要确认这一层请在本机跑 `xpm test -E2E`。
+- 发版只改 `package.ini` 的 `Version=`，然后 `git tag v<version>` 并推送 tag；版本号与 tag 对不上时 workflow 在第一步就失败，不会发出一个版本号对不上的包。手动触发 `release.yml` 时按 `package.ini` 发同名 Release，已存在就覆盖资产。
+
 ## 常见问题
 
 ### 安全软件把快捷方式判为 `Trojan/LNK.Runner`
