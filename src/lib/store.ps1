@@ -591,6 +591,37 @@ function Set-Mark([string]$payload, [string]$mark, [bool]$on) {
   return [bool]$r
 }
 
+# Replace the text of one entry: a typo fix, a trimmed path, a rewritten command. The row
+# keeps its place, its time and its marks, because editing is not a new capture. Two things
+# do change: the formatted sidecar goes (it described the old text, and pasting the old
+# formatting over new words is worse than pasting none), and the key is bumped so the row
+# and label caches redraw instead of serving the text they remember.
+#   @{ Ok; Payload; Text; Error }
+function Update-RecordText([string]$payload, [string]$text) {
+  $res = @{ Ok = $false; Payload = $payload; Text = $text; Error = '' }
+  if ([string]::IsNullOrWhiteSpace($text)) { $res.Error = 'the text is empty'; return $res }
+  if ([string]$text -ceq $payload) { $res.Ok = $true; return $res }
+  $verdict = Use-StoreLock {
+    $recs = @(Get-Records)
+    $target = $null
+    foreach ($rec in $recs) { if ($rec.Payload -ceq $payload) { $target = $rec; break } }
+    if ($null -eq $target) { return 'that entry is gone' }
+    # payload is identity: a second row with the same text could never be told apart
+    foreach ($rec in $recs) { if ($rec.Payload -ceq $text) { return 'another entry already says that' } }
+    $target.Payload = [string]$text
+    $target.Rich = ''
+    $target.Blob = ''          # the save path decides again, by the new length
+    $target.Key = [int](++$script:RecKey)
+    $list = New-Object System.Collections.Generic.List[object]
+    foreach ($rec in $recs) { $list.Add($rec) }
+    Save-Records $list.ToArray() | Out-Null
+    return ''
+  }
+  if ($verdict) { $res.Error = [string]$verdict; return $res }
+  $res.Ok = $true
+  return $res
+}
+
 # mutate the record list under the store lock. A plugin needs this when one change spans
 # several rows (a cap on its own mark, for example) and must stay a single write.
 # The parameter is deliberately not called $body: Use-StoreLock uses that name, and a

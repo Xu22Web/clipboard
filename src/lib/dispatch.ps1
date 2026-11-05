@@ -127,6 +127,28 @@ switch ($Command.ToLower()) {
     Add-Item $recs[$i - 1].Payload
     Write-Host ('clipboard set: ' + (Format-Record $recs[$i - 1] 100))
   }
+  'edit' {
+    $i = 0
+    if (-not [int]::TryParse($Value, [ref]$i)) { Write-Host 'usage: clipboard edit 3'; break }
+    $recs = @(Get-Records)
+    if ($i -lt 1 -or $i -gt $recs.Count) { Write-Host 'index out of range'; break }
+    $rec = $recs[$i - 1]
+    $file = Join-Path ([IO.Path]::GetTempPath()) ('clipboard-edit-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.txt')
+    try {
+      [IO.File]::WriteAllText($file, [string]$rec.Payload, $Utf8)
+      [void](Start-Process -FilePath 'notepad.exe' -ArgumentList ('"' + $file + '"') -PassThru -Wait)
+      $new = ''
+      try { $new = [IO.File]::ReadAllText($file, [Text.Encoding]::UTF8) } catch { }
+      # an editor ends the file with a line break the entry did not have
+      if ($new.EndsWith("`r`n")) { $new = $new.Substring(0, $new.Length - 2) }
+      elseif ($new.EndsWith("`n")) { $new = $new.Substring(0, $new.Length - 1) }
+      $res = Update-RecordText ([string]$rec.Payload) $new
+      if ($res.Ok) { Write-Host ('clipboard edit: ' + (Format-Record $rec 100)) }
+      else { Write-Host ('not saved: ' + [string]$res.Error) }
+    } finally {
+      Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
+    }
+  }
   'del' {
     $i = 0
     if (-not [int]::TryParse($Value, [ref]$i)) { Write-Host 'usage: clipboard del 3'; break }

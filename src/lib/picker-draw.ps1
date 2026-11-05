@@ -1,12 +1,23 @@
 # lib/picker-draw.ps1 - the panel's reusable drawing pieces.
 #
-# Everything here takes a Graphics plus plain values: no form, no list, no per-open state.
-# That is what makes these callable from anywhere (and testable) instead of only from the
-# one function that happens to own the window.
+# Everything here takes a Graphics (or a window, for the one region helper) plus plain
+# values: no list, no per-open state. That is what makes these callable from anywhere (and
+# testable) instead of only from the one function that happens to own the window.
 #
 # Shared GDI objects live on $script:PickerSf / $script:FBody and are created once, because
 # measuring every highlighted segment with a freshly built StringFormat would allocate on
 # every paint.
+
+# The panel and its header field are rounded by a window region. A replaced region has to be
+# disposed by hand - WinForms does not own it - so every open and every resize would
+# otherwise leak one HRGN into the resident process.
+function Update-PanelRegion($form) {
+  try {
+    $old = $form.Region
+    $form.Region = New-RoundRegion ([int]$form.ClientSize.Width) ([int]$form.ClientSize.Height) (Px $script:Metric['PanelRadius'])
+    if ($null -ne $old) { $old.Dispose() }
+  } catch { }
+}
 
 # One StringFormat set for the whole process. Idempotent: Show-Picker calls it every time
 # the panel opens and gets the same objects back.

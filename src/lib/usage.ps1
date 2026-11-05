@@ -19,6 +19,7 @@ function Show-Usage {
       @('get', 'print the clipboard text'),
       @('put "text"', 'set the clipboard (reads stdin when text is omitted)'),
       @('pick N', 'put entry N back on the clipboard (pictures and formatting included)'),
+      @('edit N', 'rewrite the text of entry N in notepad (place, time and marks stay)'),
       @('del N', 'delete entry N (a row a mark protects must be unprotected first)'),
       @('clear [-All]', 'delete entries (protected rows always stay, marks may keep more)')
     )
@@ -81,6 +82,7 @@ function Show-Usage {
   Write-Host '  [list]'
   Write-Host '    Enter                paste the selected entry'
   Write-Host '    Ctrl+Enter           copy only, do not inject a paste'
+  Write-Host '    F2                   edit the text of the selected entry in place'
   Write-Host '    Ctrl+1-9 / Ctrl+0    pick one of the visible rows'
   Write-Host '    Del                  delete'
   Write-Host '    Ctrl+Z               undo the last delete'

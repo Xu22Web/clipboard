@@ -98,11 +98,6 @@ function Show-Picker {
       return $null
     }
 
-    # A replaced region has to be disposed by hand: WinForms does not own it, so every open
-    # and every resize would otherwise leak one HRGN into the resident process.
-    function Set-RoundRegion {
-      try { $old = $form.Region; $form.Region = New-RoundRegion $form.ClientSize.Width $form.ClientSize.Height (Px $script:Metric['PanelRadius']); if ($null -ne $old) { $old.Dispose() } } catch { }
-    }
     $form = New-Object Cb.FluentForm
     $form.FormBorderStyle = 'None'
     $form.StartPosition = 'Manual'
@@ -530,7 +525,7 @@ function Show-Picker {
       })
     $form.Add_Resize({
         if ($form.WindowState -ne [Windows.Forms.FormWindowState]::Normal) { return }
-        Set-RoundRegion
+        Update-PanelRegion $form
         Layout-Chrome
         Size-List
         Sync-Sb
@@ -1091,6 +1086,8 @@ function Show-Picker {
     $deb = New-Object Windows.Forms.Timer
     $deb.Interval = [int]$script:Timing['Debounce']
     $deb.Add_Tick({ $deb.Stop(); Update-List $txt.Text })
+    # F2 edits the selected entry in place; the editor lives in lib/picker-edit.ps1
+    Set-PickerEditHost $form $lst $txt $ui $fBody { param($q) Update-List $q } { param($m) Set-Foot $m ([int]$script:Timing['FootInfo']) }
     function Flush-List { if ($deb.Enabled) { $deb.Stop(); Update-List $txt.Text } }
     $txt.Add_TextChanged({ Sync-Placeholder; $deb.Stop(); $deb.Start() })
     $txt.Add_GotFocus({ $script:SearchFocus = $true; Set-AnimTarget $script:Anim 'Field' 1.0 })
@@ -1230,9 +1227,10 @@ function Show-Picker {
         $isText = $ch -ne [char]0 -and (-not [char]::IsControl($ch) -or $ch -eq [char]8)
         # Esc closes the panel, so the handle is read once and the delivery is guarded
         try {
-          if ($isText -and $plain) { [void][Cb.Win]::SendMessage($txt.Handle, 0x0102, [IntPtr][int]$ch, [IntPtr]1) }
+          $tg = $(if ($null -ne $script:HookTargetBox) { $script:HookTargetBox } else { $txt })
+          if ($isText -and $plain) { [void][Cb.Win]::SendMessage($tg.Handle, 0x0102, [IntPtr][int]$ch, [IntPtr]1) }
           else {
-            $wh = $form.Handle
+            $wh = $tg.Handle
             [void][Cb.Win]::SendMessage($wh, 0x0100, [IntPtr]$vk, [IntPtr]1); [void][Cb.Win]::SendMessage($wh, 0x0101, [IntPtr]$vk, [IntPtr]1)
           }
         } catch { return }
@@ -1251,7 +1249,7 @@ function Show-Picker {
         $pen.Dispose()
       })
     $form.Add_Shown({
-        Set-RoundRegion
+        Update-PanelRegion $form
         Layout-Chrome
         Size-List
         Sync-Sb
@@ -1296,7 +1294,7 @@ function Show-Picker {
     $script:PrevMouseDown = ([Cb.Win]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
     # Non-modal on purpose: ShowDialog would block this message pump. The rounded region is
     # set before the first paint, or one square frame shows through first.
-    Set-RoundRegion
+    Update-PanelRegion $form
     $form.Show()
     # The hook keeps the foreground window untouched. An input method can only be driven
     # through a real focus, so the panel hands itself the keyboard as soon as one is active

@@ -169,7 +169,7 @@ try {
   # the entry file names these by relative path; a package must carry all of them
   $requiredLib = @('lib\base', 'lib\native', 'lib\keyhook', 'lib\theme-stub',
     'lib\media', 'lib\clip', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\hotkey', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\picker-geom', 'lib\anim',
-    'lib\picker-draw', 'lib\pinlist', 'lib\preview', 'lib\picker', 'lib\serve', 'lib\diag', 'lib\shortcut',
+    'lib\picker-draw', 'lib\picker-edit', 'lib\pinlist', 'lib\preview', 'lib\picker', 'lib\serve', 'lib\diag', 'lib\shortcut',
     'lib\config', 'lib\usage', 'lib\dispatch',
     'utils\ini', 'utils\import', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\draw',
     'utils\query', 'utils\pinyin', 'utils\transfer', 'utils\apprules',
@@ -331,7 +331,8 @@ try {
     Check 'struct' 'panel closes the menu before it closes itself' ($pickerText -match '(?s)Add_FormClosing\(\{.{0,600}\$cm\.Close\(\)') 'menu not closed in FormClosing'
     Check 'struct' 'an open menu never counts as a click outside' ($pickerText -match '\$cm\.Visible[^\r\n]*-and -not \$form\.Bounds') 'outside-click check ignores the menu'
     # per-open GDI handles: the group heading font and the rounded region the form paints with
-    Check 'struct' 'panel releases its menu font and form region' (($pickerText -match 'groupFont\.Dispose\(\)') -and ($pickerText -match 'function Set-RoundRegion')) 'GDI handles released nowhere'
+    $drawText = [IO.File]::ReadAllText((Join-Path $libPath 'picker-draw.ps1'))
+    Check 'struct' 'panel releases its menu font and form region' (($pickerText -match 'groupFont\.Dispose\(\)') -and ($drawText -match 'function Update-PanelRegion')) 'GDI handles released nowhere'
     # hover is a card that waits and is prepared once, not a tooltip rebuilt on every move
     Check 'struct' 'hover shows a card, not a tooltip' (-not ($pickerText -match 'Windows\.Forms\.ToolTip')) 'ToolTip found in the picker'
     # an activating popup deactivates the window the user came from; Explorer's address bar and
@@ -628,6 +629,21 @@ try {
     Check 'unit' 'no rules means no answer' ((Get-AppRuleAction 'notepad') -eq '') ''
     $script:AppRules = $savedRules
     Check 'unit' 'the rule setting carries a default' ($null -ne $sch['AppRules'] -and $sch['AppRules'].Default -eq '') ''
+
+    # ------------------------------------------------------- editing an entry
+    Save-Records @((New-Record 'typo herr' $now 'p'), (New-Record 'other text' ($now - 5) ''))
+    $beforeEdit = @(Get-Records)
+    $editKey = [int]$beforeEdit[0].Key
+    $editRes = Update-RecordText 'typo herr' 'typo here'
+    $afterEdit = @(Get-Records)
+    Check 'unit' 'an edit replaces the text' (($editRes.Ok) -and ($afterEdit[0].Payload -eq 'typo here')) ([string]$editRes.Error)
+    Check 'unit' 'an edit keeps the time, the marks and the row count' (($afterEdit.Count -eq 2) -and ($afterEdit[0].Time -eq $now) -and ($afterEdit[0].Marks -eq 'p')) ''
+    Check 'unit' 'an edit bumps the key so the caches redraw' ($afterEdit[0].Key -ne $editKey) ([string]$afterEdit[0].Key)
+    Check 'unit' 'an edit that changes nothing is accepted' ((Update-RecordText 'typo here' 'typo here').Ok) ''
+    Check 'unit' 'an edit onto another entry is refused' (-not (Update-RecordText 'typo here' 'other text').Ok) ''
+    Check 'unit' 'an edit to nothing is refused' (-not (Update-RecordText 'typo here' '   ').Ok) ''
+    Check 'unit' 'an edit of a missing entry is refused' (-not (Update-RecordText 'not here' 'x').Ok) ''
+    Save-Records @()
 
     # ------------------------------------------------------- images and rich text
     # 1x1 transparent PNG: the bytes are what makes the identity, so any picture works
