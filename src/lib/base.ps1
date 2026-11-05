@@ -132,7 +132,10 @@ $script:MaxMediaTotal = 67108864
 $script:CaptureImages = $true
 $script:MaxImageBytes = 8388608
 $script:CaptureRich = $true
-$script:MaxRichBytes = 524288
+# per block cap: the html and the rtf are measured apart, so a large rtf cannot cost the html
+$script:MaxRichBytes = 4194304
+# a picture the html points at is inlined only when it is at most this large, 0 = never
+$script:MaxRichImages = 2097152
 $script:PasteRich = $true
 $script:Interval = 300
 $script:NoPaste = $false

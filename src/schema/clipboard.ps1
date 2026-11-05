@@ -26,7 +26,8 @@
     CaptureImages     = @{ Type = 'bool'; Ref = [ref]$script:CaptureImages; Default = 1; Description = '1 = capture pictures from the clipboard' }
     MaxImageBytes     = @{ Type = 'int'; Ref = [ref]$script:MaxImageBytes; Default = 8388608; Minimum = 1024; Maximum = 104857600; Description = 'per image cap in bytes; larger pictures are not captured' }
     CaptureRich       = @{ Type = 'bool'; Ref = [ref]$script:CaptureRich; Default = 1; Description = '1 = remember the html / rtf of formatted text' }
-    MaxRichBytes      = @{ Type = 'int'; Ref = [ref]$script:MaxRichBytes; Default = 524288; Minimum = 1024; Maximum = 10485760; Description = 'html + rtf cap; larger formatted text is captured as plain text' }
+    MaxRichBytes      = @{ Type = 'int'; Ref = [ref]$script:MaxRichBytes; Default = 4194304; Minimum = 1024; Maximum = 67108864; Description = 'cap per block (html and rtf counted apart); a block over it is dropped on its own' }
+    MaxRichImages     = @{ Type = 'int'; Ref = [ref]$script:MaxRichImages; Default = 2097152; Minimum = 0; Maximum = 10485760; Description = 'inline a temp-file picture in the html when it is at most this large, 0 = never' }
     PasteRich         = @{ Type = 'bool'; Ref = [ref]$script:PasteRich; Default = 1; Description = '1 = paste the formatting back, 0 = always paste plain text' }
     BlobThreshold     = @{ Type = 'int'; Ref = [ref]$script:BlobChars; Default = 32768; Minimum = 0; Maximum = 1048576; Description = 'payloads above this many chars live in data\blobs, 0 = never' }
     Interval          = @{ Type = 'int'; Ref = [ref]$script:Interval; Default = 300; Minimum = 50; Maximum = 60000; Description = 'clipboard poll interval in ms' }

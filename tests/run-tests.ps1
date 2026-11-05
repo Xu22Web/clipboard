@@ -568,7 +568,7 @@ try {
     # the four new settings are real schema entries with the shipped defaults
     $sch = $script:IniSchema
     Check 'unit' 'preview and blob settings carry defaults' (($sch['PreviewHover'].Default -eq 1) -and ($sch['PreviewDelay'].Default -eq 350) -and ($sch['PreviewChars'].Default -eq 6000) -and ($sch['BlobThreshold'].Default -eq 32768)) ''
-    Check 'unit' 'media settings carry defaults' (($sch['CaptureImages'].Default -eq 1) -and ($sch['MaxImageBytes'].Default -eq 8388608) -and ($sch['CaptureRich'].Default -eq 1) -and ($sch['MaxRichBytes'].Default -eq 524288) -and ($sch['PasteRich'].Default -eq 1) -and ($sch['MaxMediaTotal'].Default -eq 67108864)) ''
+    Check 'unit' 'media settings carry defaults' (($sch['CaptureImages'].Default -eq 1) -and ($sch['MaxImageBytes'].Default -eq 8388608) -and ($sch['CaptureRich'].Default -eq 1) -and ($sch['MaxRichBytes'].Default -eq 4194304) -and ($sch['MaxRichImages'].Default -eq 2097152) -and ($sch['PasteRich'].Default -eq 1) -and ($sch['MaxMediaTotal'].Default -eq 67108864)) ''
 
     # ------------------------------------------------------- images and rich text
     # 1x1 transparent PNG: the bytes are what makes the identity, so any picture works
@@ -593,7 +593,7 @@ try {
     $richRtf = '{\rtf1\ansi\deff0{\fonttbl{\f0\fswiss Segoe UI;}}\f0\fs24\b bold title\b0\par second line\par third line\par}'
     $richCap = @{ Html = $Utf8.GetBytes('<html><body><p>hi</p></body></html>'); Rtf = $richRtf }
     $rref = New-RichRef $richCap
-    Check 'unit' 'a rich reference is stable' (($rref -ceq (New-RichRef $richCap)) -and $rref.StartsWith('R:')) $rref
+    Check 'unit' 'a rich reference is stable' (($rref -ceq (New-RichRef $richCap)) -and $rref.StartsWith('H:')) $rref
     $rr = Get-RichRef $rref
     Check 'unit' 'a rich reference parses back' (($null -ne $rr) -and $rr.Bytes -gt 0) $rref
     [void](Write-RichMedia $rref $richCap)
@@ -637,16 +637,87 @@ try {
     Check 'unit' 'cf_html offsets select the fragment' ((Get-HtmlText ($Utf8.GetBytes($cfHtml))) -eq 'inside') (Get-HtmlText ($Utf8.GetBytes($cfHtml)))
     Check 'unit' 'html is read as words when there is no rtf' ((Get-HtmlText ($Utf8.GetBytes('<p>a &amp; b</p><p>c</p>'))) -eq ("a & b`nc")) (Get-HtmlText ($Utf8.GetBytes('<p>a &amp; b</p><p>c</p>')))
 
+    # a formatted entry owns one file per block, each named by the hash of its own bytes
+    function New-DibFixture([int]$w, [int]$h) {
+      # [int] rounds in PowerShell, so the stride is floored explicitly
+      $stride = [int][Math]::Floor((($w * 32) + 31) / 32) * 4
+      $size = $stride * $h
+      $dib = New-Object byte[] (40 + $size)
+      [Array]::Copy([BitConverter]::GetBytes([int]40), 0, $dib, 0, 4)
+      [Array]::Copy([BitConverter]::GetBytes([int]$w), 0, $dib, 4, 4)
+      [Array]::Copy([BitConverter]::GetBytes([int]$h), 0, $dib, 8, 4)
+      [Array]::Copy([BitConverter]::GetBytes([int16]1), 0, $dib, 12, 2)
+      [Array]::Copy([BitConverter]::GetBytes([int16]32), 0, $dib, 14, 2)
+      [Array]::Copy([BitConverter]::GetBytes([int]$size), 0, $dib, 20, 4)
+      for ($i = 40; $i -lt $dib.Length; $i += 4) {
+        $dib[$i] = 0x40; $dib[$i + 1] = 0x80; $dib[$i + 2] = 0xC0; $dib[$i + 3] = 0xFF
+      }
+      return , $dib
+    }
+
+    function New-CfHtmlFixture([string]$frag) {
+      $pre = '<html><body><!--StartFragment-->'
+      $post = '<!--EndFragment--></body></html>'
+      $stub = 'Version:0.9' + "`r`n" + 'StartHTML:0000000000' + "`r`n" + 'EndHTML:0000000000' + "`r`n" + 'StartFragment:0000000000' + "`r`n" + 'EndFragment:0000000000' + "`r`n"
+      $startHtml = $Utf8.GetByteCount($stub)
+      $startFrag = $startHtml + $Utf8.GetByteCount($pre)
+      $endFrag = $startFrag + $Utf8.GetByteCount($frag)
+      $endHtml = $startHtml + $Utf8.GetByteCount($pre + $frag + $post)
+      return ('Version:0.9' + "`r`n" +
+        ('StartHTML:' + $startHtml.ToString('0000000000')) + "`r`n" +
+        ('EndHTML:' + $endHtml.ToString('0000000000')) + "`r`n" +
+        ('StartFragment:' + $startFrag.ToString('0000000000')) + "`r`n" +
+        ('EndFragment:' + $endFrag.ToString('0000000000')) + "`r`n" + $pre + $frag + $post)
+    }
+
+    $dibPixels = New-DibFixture 2 2
+    $blockCap = @{ Html = $richCap.Html; Rtf = $richCap.Rtf; Blocks = @(@{ Tag = 'D'; Data = $dibPixels }) }
+    $bRef = New-RichRef $blockCap
+    [void](Write-RichMedia $bRef $blockCap)
+    $bParsed = Get-RichRef $bRef
+    Check 'unit' 'a reference names every block' (($null -ne $bParsed) -and ($bParsed.Blocks.Count -eq 3) -and ($bParsed.Blocks[2].Tag -eq 'D')) ([string]$bRef)
+    Check 'unit' 'the block bytes come back' ((Read-RichBlock $bRef 'D').Length -eq $dibPixels.Length) ''
+    Check 'unit' 'a v1 reference is not a reference' ($null -eq (Get-RichRef 'R:0123456789012345678901234567890123456789:120')) ''
+    Check 'unit' 'unknown block tags are rejected' ($null -eq (Get-RichRef 'X:0123456789012345678901234567890123456789:1')) ''
+    Check 'unit' 'a reference counts every block' ($bParsed.Bytes -eq ($richCap.Html.Length + $Utf8.GetByteCount($richRtf) + $dibPixels.Length)) ([string]$bParsed.Bytes)
+    $dibBitmap = ConvertFrom-MediaBytes $dibPixels 'D'
+    Check 'unit' 'a bitmap block decodes' (($null -ne $dibBitmap) -and ($dibBitmap.Width -eq 2) -and ($dibBitmap.Height -eq 2)) ''
+    if ($null -ne $dibBitmap) { $dibBitmap.Dispose() }
+    $picBmp = Get-RichImageBitmap $bRef 120 120
+    Check 'unit' 'the card falls back to the first picture' (($null -ne $picBmp) -and ($picBmp.Width -le 120)) ''
+    Clear-MediaCache
+
+    # html that points at a temp picture: the file is read once and inlined as a data uri, then
+    # the four offsets are recomputed for the longer buffer
+    $tmpPic = Join-Path $tmpRoot 'inline-fixture.png'
+    [IO.File]::WriteAllBytes($tmpPic, $png)
+    $picUrl = 'file:///' + ($tmpPic -replace '\\', '/')
+    $inHtml = New-CfHtmlFixture ('<p>pic</p><img src="' + $picUrl + '">')
+    $inlined = Get-CfHtmlInlined ($Utf8.GetBytes($inHtml)) 2097152 0
+    $inText = $Utf8.GetString($inlined)
+    Check 'unit' 'a temp picture is inlined' (($inText -match 'src="data:image/png;base64,') -and ($inText.Length -gt $inHtml.Length)) ''
+    Check 'unit' 'the inlined offsets still select the fragment' ((Get-HtmlText $inlined) -eq 'pic') (Get-HtmlText $inlined)
+    $kept = Get-CfHtmlInlined ($Utf8.GetBytes($inHtml)) 1 0
+    Check 'unit' 'a picture over the cap is left alone' (([BitConverter]::ToString($kept)) -eq ([BitConverter]::ToString($Utf8.GetBytes($inHtml)))) ''
+    $noInline = Get-CfHtmlInlined ($Utf8.GetBytes($inHtml)) 0 0
+    Check 'unit' 'inlining can be switched off' (([BitConverter]::ToString($noInline)) -eq ([BitConverter]::ToString($Utf8.GetBytes($inHtml)))) ''
+    Remove-Item -LiteralPath $tmpPic -Force
+
     # store round trip: the extra field carries the reference, the bytes stay out of the file
+    $blockRec = New-Record 'with a picture' $now ''
+    $blockRec.Rich = $bRef
     $mixList = New-Object System.Collections.Generic.List[object]
     $mixList.Add($imgRec)
     $mixList.Add($richRec)
+    $mixList.Add($blockRec)
     $mixList.Add((New-Record 'plain' $now ''))
     Save-Records $mixList.ToArray()
     $mixBack = @(Get-Records)
-    Check 'unit' 'an image record survives a save' (($mixBack.Count -eq 3) -and ([string]$mixBack[0].Payload -ceq $p1)) ([string]$mixBack.Count)
+    Check 'unit' 'an image record survives a save' (($mixBack.Count -eq 4) -and ([string]$mixBack[0].Payload -ceq $p1)) ([string]$mixBack.Count)
     Check 'unit' 'a rich reference survives a save' ([string]$mixBack[1].Rich -ceq $rref) ([string]$mixBack[1].Rich)
-    Check 'unit' 'a plain record has no rich reference' (-not [string]$mixBack[2].Rich) ([string]$mixBack[2].Rich)
+    Check 'unit' 'a block reference survives a save' ([string]$mixBack[2].Rich -ceq $bRef) ([string]$mixBack[2].Rich)
+    Check 'unit' 'the blocks of a saved record stay on disk' ((Test-Path -LiteralPath (Get-MediaPath (Get-RichPictureBlock $bRef).Sha1 'dib'))) ''
+    Check 'unit' 'a plain record has no rich reference' (-not [string]$mixBack[3].Rich) ([string]$mixBack[3].Rich)
     Check 'unit' 'the image type letter is written' (([IO.File]::ReadAllText($StoreFile)).Contains($RS + 'i')) ''
     Check 'unit' 'pixels never enter the history file' (-not ([IO.File]::ReadAllText($StoreFile)).Contains('PNG' + [string][char]1)) ''
 
@@ -688,6 +759,22 @@ try {
     } else {
       Check 'unit' 'utf-8 html keeps its bytes on the clipboard' $false 'set formatted text failed'
       Check 'unit' 'utf-8 html reads back as its text' $false 'set formatted text failed'
+    }
+
+    # the picture blocks travel with the text: a target that prefers a bitmap over html (a
+    # chart, a shape, PowerPoint) still gets one
+    if (Set-RichItem 'hi there' $bRef) {
+      $bh = $null
+      $br = $null
+      $bp = $null
+      $bd = $null
+      $be = $null
+      [Cb.Win]::ReadRichFormats([ref]$bh, [ref]$br, [ref]$bp, [ref]$bd, [ref]$be)
+      Check 'unit' 'the bitmap block goes back' (($null -ne $bd) -and ([BitConverter]::ToString($bd) -eq [BitConverter]::ToString($dibPixels))) ([string]$(if ($null -ne $bd) { $bd.Length } else { -1 }) + ' vs ' + [string]$dibPixels.Length)
+      Check 'unit' 'the html goes back with its blocks' (($null -ne $bh) -and ($bh.Length -eq $richCap.Html.Length)) ''
+    } else {
+      Check 'unit' 'the bitmap block goes back' $false 'set formatted text failed'
+      Check 'unit' 'the html goes back with its blocks' $false 'set formatted text failed'
     }
 
     # a big picture: the card scales it down once and keeps a small copy beside it

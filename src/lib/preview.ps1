@@ -190,7 +190,14 @@ function Update-Preview($ps, $record, $anchorTop, $cfg, $panel) {
     $maxH = $cfg.ImgH
     $bmp = $null
     if ($ps.Kind -eq 'image') { $bmp = Get-ImagePreviewBitmap $ps.Ref $maxW $maxH }
-    else { $bmp = Get-RichPreviewBitmap $ps.Ref $maxW $maxH $cfg.Font $cfg.Paper }
+    else {
+      $bmp = Get-RichPreviewBitmap $ps.Ref $maxW $maxH $cfg.Font $cfg.Paper
+      # an entry that carries a picture but no layout to render (an Excel copy brings a
+      # metafile, never RTF) still has something to show
+      if ($null -eq $bmp) { $bmp = Get-RichImageBitmap $ps.Ref $maxW $maxH }
+      # the first picture stands in for the document, so the card hugs it like an image card
+      if ($null -ne $bmp) { $ps.Kind = 'image' }
+    }
     if ($null -ne $bmp) {
       $ps.Bmp = $bmp
     } else {

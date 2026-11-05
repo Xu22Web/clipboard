@@ -52,20 +52,82 @@ namespace Cb {
     [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr GlobalLock(IntPtr block);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GlobalUnlock(IntPtr block);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern UIntPtr GlobalSize(IntPtr block);
+    [DllImport("gdi32.dll", SetLastError = true)] private static extern uint GetEnhMetaFileBits(IntPtr metafile, uint size, byte[] data);
 
     public static void ReadRichFormats(ref byte[] html, ref byte[] rtf) {
+      byte[] png = null;
+      byte[] dib = null;
+      byte[] emf = null;
+      ReadRichFormats(ref html, ref rtf, ref png, ref dib, ref emf);
+    }
+
+    // one clipboard open for the whole snapshot: the two text blocks plus the picture blocks a
+    // target may ask for instead (an Excel chart arrives as a metafile, a Word shape as a
+    // bitmap). Reading them apart would let a second copy slip in between.
+    public static void ReadRichFormats(ref byte[] html, ref byte[] rtf, ref byte[] png, ref byte[] dib, ref byte[] emf) {
       html = null;
       rtf = null;
+      png = null;
+      dib = null;
+      emf = null;
       if (!OpenClipboard(IntPtr.Zero)) { return; }
       try {
         html = ReadBlock(RegisterClipboardFormat("HTML Format"), true);
         rtf = ReadBlock(RegisterClipboardFormat("Rich Text Format"), false);
+        png = ReadBlock(RegisterClipboardFormat("PNG"), false);
+        dib = ReadDib();
+        emf = ReadEmf();
       } finally { CloseClipboard(); }
     }
 
     private static byte[] ReadBlock(uint format, bool html) {
       if (format == 0) { return null; }
-      IntPtr handle = GetClipboardData(format);
+      return ReadHandle(GetClipboardData(format), html);
+    }
+
+    // CF_DIB is a global memory block too, but it is allocated in whole pages: the block is cut
+    // back to the size its own header describes, so a paste and a decode see only the bitmap
+    private static byte[] ReadDib() {
+      byte[] raw = ReadHandle(GetClipboardData(8), false);
+      if (raw == null) { return null; }
+      long size = DibSize(raw);
+      if (size <= 0 || size >= raw.Length) { return raw; }
+      byte[] trimmed = new byte[size];
+      Array.Copy(raw, trimmed, size);
+      return trimmed;
+    }
+
+    private static long DibSize(byte[] data) {
+      if (data.Length < 40) { return data.Length; }
+      uint header = BitConverter.ToUInt32(data, 0);
+      uint compression = BitConverter.ToUInt32(data, 16);
+      if (compression == 4 || compression == 5) { return data.Length; }   // embedded jpeg / png
+      int width = BitConverter.ToInt32(data, 4);
+      int height = Math.Abs(BitConverter.ToInt32(data, 8));
+      int bitCount = BitConverter.ToUInt16(data, 14);
+      uint clrUsed = BitConverter.ToUInt32(data, 32);
+      long extra = (compression == 3 || compression == 6) ? 12 : 0;
+      long palette = 0;
+      if (clrUsed > 0) { palette = (long)clrUsed * 4; }
+      else if (bitCount > 0 && bitCount <= 8) { palette = (long)(1 << bitCount) * 4; }
+      long stride = ((long)width * bitCount + 31) / 32 * 4;
+      long total = header + extra + palette + stride * height;
+      if (total <= 0 || total > data.Length) { return data.Length; }
+      return total;
+    }
+
+    // CF_ENHMETAFILE is a GDI handle, not a memory block: its bits have to be copied out
+    private static byte[] ReadEmf() {
+      IntPtr handle = GetClipboardData(RegisterClipboardFormat("EnhancedMetafile"));
+      if (handle == IntPtr.Zero) { return null; }
+      uint size = GetEnhMetaFileBits(handle, 0, null);
+      if (size == 0) { return null; }
+      byte[] bits = new byte[size];
+      if (GetEnhMetaFileBits(handle, size, bits) == 0) { return null; }
+      return bits;
+    }
+
+    private static byte[] ReadHandle(IntPtr handle, bool html) {
       if (handle == IntPtr.Zero) { return null; }
       long size = (long)GlobalSize(handle);
       if (size <= 0) { return null; }

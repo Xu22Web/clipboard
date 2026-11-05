@@ -29,7 +29,9 @@ function Set-Text([string]$t) {
 
 # One clipboard snapshot in one clipboard-open window:
 #   Text  - the payload the store keeps ('' when this snapshot has no payload of its own)
-#   Rich  - @{ Html = [byte[]]; Rtf = [byte[]] } or $null
+#   Rich  - @{ Html = [byte[]]; Rtf = [byte[]]; Blocks = @(@{ Tag; Data }) } or $null
+#           Tag is P (png) / D (bitmap) / E (metafile): the picture flavors a target may
+#           pick instead of the html, an Excel chart or a Word shape being the two cases
 #   Image - @{ Png = [byte[]]; W; H; Fmt } or $null
 # Text wins over a bitmap on purpose: Word puts a picture of the selection on the clipboard
 # together with every copy, and the formatting is what the user wants back - not an image of
@@ -64,19 +66,22 @@ function Get-ClipCapture {
   return $null
 }
 
-# CF_HTML keeps the byte offsets of its own header and RTF is an 8-bit format, so both are
-# read straight from the clipboard block and stored / written back byte for byte. Going
-# through a .NET string would decode them with the ANSI code page (UTF-8 html turns into
-# mojibake and the StartHTML/EndHTML offsets no longer point at the tags), which is exactly
-# what makes Word and Excel paste garbage. Anything over MaxRichBytes is skipped: the plain
-# text is still captured by the caller.
+# The whole formatted snapshot: the html, the rtf and the picture blocks a target may prefer.
+# CF_HTML keeps byte offsets into its own buffer and RTF is an 8-bit format, so every block is
+# read raw and stored byte for byte - a .NET string decodes with the ANSI code page (UTF-8 html
+# becomes mojibake and the offsets stop pointing at the tags), which is what made Word and
+# Excel paste garbage. The html gets its temp-file pictures inlined first (see
+# Get-CfHtmlInlined). Each part has its own cap, so an oversized rtf no longer costs the html.
 function Get-RichCapture {
   $html = $null
   $rtf = $null
+  $png = $null
+  $dib = $null
+  $emf = $null
   try {
     Load-Forms
     Add-Native
-    [Cb.Win]::ReadRichFormats([ref]$html, [ref]$rtf)
+    [Cb.Win]::ReadRichFormats([ref]$html, [ref]$rtf, [ref]$png, [ref]$dib, [ref]$emf)
   } catch {
     $html = $null
     $rtf = $null
@@ -106,18 +111,29 @@ function Get-RichCapture {
       }
     } catch { }
   }
-  $htmlLen = 0
-  if ($null -ne $html) { $htmlLen = $html.Length }
-  $rtfLen = 0
-  if ($null -ne $rtf) { $rtfLen = $rtf.Length }
-  if ($htmlLen -eq 0 -and $rtfLen -eq 0) { return $null }
-  if (($htmlLen + $rtfLen) -gt $script:MaxRichBytes) {
-    Write-Log ('formatted text skipped: ' + [string]($htmlLen + $rtfLen) + ' bytes')
-    return $null
+  if ($null -ne $html -and $html.Length -gt 0) {
+    $html = Get-CfHtmlInlined $html $script:MaxRichImages $script:MaxRichBytes
+    if ($html.Length -gt $script:MaxRichBytes) {
+      Write-Log ('formatted text html skipped: ' + [string]$html.Length + ' bytes')
+      $html = $null
+    }
+  } else { $html = $null }
+  if ($null -ne $rtf -and $rtf.Length -eq 0) { $rtf = $null }
+  if ($null -ne $rtf -and $rtf.Length -gt $script:MaxRichBytes) {
+    Write-Log ('formatted text rtf skipped: ' + [string]$rtf.Length + ' bytes')
+    $rtf = $null
   }
-  if ($htmlLen -eq 0) { $html = $null }
-  if ($rtfLen -eq 0) { $rtf = $null }
-  return @{ Html = $html; Rtf = $rtf }
+  $blocks = New-Object System.Collections.Generic.List[object]
+  foreach ($one in @(@{ Tag = 'P'; Data = $png }, @{ Tag = 'D'; Data = $dib }, @{ Tag = 'E'; Data = $emf })) {
+    if ($null -eq $one.Data -or $one.Data.Length -lt 8) { continue }
+    if ($one.Data.Length -gt $script:MaxImageBytes) {
+      Write-Log ('formatted text block skipped: ' + (Format-Size ([long]$one.Data.Length)))
+      continue
+    }
+    $blocks.Add($one)
+  }
+  if ($null -eq $html -and $null -eq $rtf -and $blocks.Count -eq 0) { return $null }
+  return @{ Html = $html; Rtf = $rtf; Blocks = $blocks.ToArray() }
 }
 
 function New-ImageCaptureResult([byte[]]$png, [int]$w, [int]$h) {
@@ -239,27 +255,36 @@ function Set-RichItem([string]$text, [string]$rich) {
   try {
     $do = New-Object Windows.Forms.DataObject
     $do.SetData([Windows.Forms.DataFormats]::UnicodeText, [string]$text)
-    # both blocks go back as the exact bytes they were captured as: a string would be encoded
+    # every block goes back as the exact bytes it was captured as: a string would be encoded
     # again on the way out, and CF_HTML's own byte offsets would stop matching
-    $html = Read-RichHtml $rich
-    if ($null -ne $html -and $html.Length -gt 0) {
-      $ms = New-Object IO.MemoryStream
-      $ms.Write($html, 0, $html.Length)
-      $ms.Position = 0
-      $do.SetData([Windows.Forms.DataFormats]::Html, $ms)
-    }
-    $rtf = Read-RichRtfBytes $rich
-    if ($null -ne $rtf -and $rtf.Length -gt 0) {
-      $ms2 = New-Object IO.MemoryStream
-      $ms2.Write($rtf, 0, $rtf.Length)
-      $ms2.Position = 0
-      $do.SetData([Windows.Forms.DataFormats]::Rtf, $ms2)
-    }
+    Set-RichBlockData $do $rich 'H' ([Windows.Forms.DataFormats]::Html)
+    Set-RichBlockData $do $rich 'T' ([Windows.Forms.DataFormats]::Rtf)
+    Set-RichBlockData $do $rich 'P' 'PNG'
+    Set-RichBlockData $do $rich 'D' ([Windows.Forms.DataFormats]::Dib)
+    Set-RichBlockData $do $rich 'E' ([Windows.Forms.DataFormats]::EnhancedMetafile)
     return (Set-ItemDataObject $do)
   } catch {
     Write-Log ('set formatted text failed: ' + $_.Exception.Message)
     return $false
   }
+}
+
+# one block onto the data object. A png and a bitmap are byte buffers; a metafile has to be
+# rebuilt as an object first. A block that cannot be restored is logged and skipped, so the
+# text and the other blocks still go back.
+function Set-RichBlockData($do, [string]$rich, [string]$tag, [string]$format) {
+  $bytes = Read-RichBlock $rich $tag
+  if ($null -eq $bytes -or $bytes.Length -eq 0) { return }
+  if ($tag -ceq 'E') {
+    $mf = ConvertFrom-MediaBytes $bytes 'E'
+    if ($null -eq $mf) { Write-Log 'emf block skipped: it does not decode'; return }
+    try { $do.SetData($format, $mf) } catch { Write-Log ('emf block skipped: ' + $_.Exception.Message) }
+    return
+  }
+  $ms = New-Object IO.MemoryStream
+  $ms.Write($bytes, 0, $bytes.Length)
+  $ms.Position = 0
+  $do.SetData($format, $ms)
 }
 
 function Set-ClipItem([string]$entry, [string]$rich = '') {

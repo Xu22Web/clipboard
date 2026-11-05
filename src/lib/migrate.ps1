@@ -18,7 +18,7 @@
 # engine re-reads the header after each migration, so a step that forgets the version field
 # fails loudly instead of leaving a file the reader refuses.
 #
-# The table holds one step per version transition. Only one layout has shipped, so it is
+# The table holds one step per version transition. No layout has been released yet, so it is
 # empty: a file that cannot be upgraded is archived by `migrate -Purge`, never guessed at.
 $script:MigrationSteps = [ordered]@{
 }

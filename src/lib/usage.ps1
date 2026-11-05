@@ -27,7 +27,9 @@ function Show-Usage {
       @('config get KEY', 'show one key (effective + raw value from clipboard.ini)'),
       @('config set KEY VAL', 'validate and write one key, then reload the resident'),
       @('config edit', 'open clipboard.ini in notepad'),
-      @('config init', 'write a full template with all defaults'),
+      @('config init', 'write a full template with all defaults')
+    )
+    'theme'   = @(
       @('themes', 'list the themes in themes\ and the active one')
     )
     'setup'   = @(

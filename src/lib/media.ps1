@@ -125,10 +125,18 @@ function Write-ImageThumb([string]$sha1, $src) {
 }
 
 # ---- formatted text ---------------------------------------------------------
-# The HTML is stored exactly as the clipboard handed it over: CF_HTML carries byte offsets
-# into its own buffer, so rewriting the header would break the paste into Word. The RTF is
-# a byte buffer too - it is an 8-bit format, and its high bytes (styles, font tables) do not
-# survive a UTF-8 decode.
+# ---- formatted text ---------------------------------------------------------
+# A formatted entry owns one file per block, each named by the hash of its own bytes:
+#
+#   'H:<sha1>:<bytes>|T:<sha1>:<bytes>|P:<sha1>:<bytes>'
+#
+# H = CF_HTML, T = RTF, P = PNG, D = CF_DIB, E = CF_ENHMETAFILE. The record keeps only this
+# reference, so an entry still adds a few hundred bytes to the history file and two entries
+# that share a block share the file. Every block is stored byte for byte: CF_HTML carries
+# byte offsets into its own buffer and RTF is an 8-bit format, so a decode / re-encode step
+# would break the paste (lib/clip.ps1 reads them raw for the same reason).
+$script:RichTags = [ordered]@{ H = 'html'; T = 'rtf'; P = 'png'; D = 'dib'; E = 'emf' }
+
 function ConvertTo-RtfBytes($rtf) {
   if ($null -eq $rtf) { return (New-Object byte[] 0) }
   if ($rtf -is [byte[]]) { return $rtf }
@@ -137,23 +145,54 @@ function ConvertTo-RtfBytes($rtf) {
   return [Text.Encoding]::Default.GetBytes($s)
 }
 
-function New-RichRef($rich) {
-  if ($null -eq $rich) { return '' }
-  $html = $rich.Html
-  if ($null -eq $html) { $html = New-Object byte[] 0 }
-  $rtf = ConvertTo-RtfBytes $rich.Rtf
-  if ($html.Length -eq 0 -and $rtf.Length -eq 0) { return '' }
-  $sha = Get-MediaSha1 $html $rtf
-  return ('R:' + $sha + ':' + [string]($html.Length + $rtf.Length))
+# the bytes one block gets from a capture: html and rtf sit under their own keys, the picture
+# blocks in a list, so a caller builds a capture without knowing the reference grammar
+function Get-RichBlockData($rich, [string]$tag) {
+  $empty = New-Object byte[] 0
+  if ($null -eq $rich) { return $empty }
+  if ($tag -ceq 'H') {
+    if ($null -ne $rich.Html) { return $rich.Html }
+    return $empty
+  }
+  if ($tag -ceq 'T') { return (ConvertTo-RtfBytes $rich.Rtf) }
+  foreach ($b in @($rich.Blocks)) {
+    if ($null -eq $b -or [string]$b.Tag -cne $tag) { continue }
+    if ($null -ne $b.Data) { return $b.Data }
+  }
+  return $empty
 }
 
+function New-RichRef($rich) {
+  if ($null -eq $rich) { return '' }
+  $parts = New-Object System.Collections.Generic.List[string]
+  foreach ($tag in @($script:RichTags.Keys)) {
+    $data = Get-RichBlockData $rich $tag
+    if ($null -eq $data -or $data.Length -eq 0) { continue }
+    $parts.Add($tag + ':' + (Get-MediaSha1 $data $null) + ':' + [string]$data.Length)
+  }
+  if ($parts.Count -eq 0) { return '' }
+  return ($parts -join '|')
+}
+
+# the blocks a reference names; $null when the string is not a reference, which is how the
+# store tells a formatted entry from a plain one
 function Get-RichRef([string]$ref) {
-  if ([string]::IsNullOrEmpty($ref) -or -not $ref.StartsWith('R:')) { return $null }
-  $p = $ref.Substring(2) -split ':'
-  if ($p.Count -ne 2 -or $p[0].Length -ne 40) { return $null }
-  $bytes = [long]0
-  if (-not [long]::TryParse($p[1], [ref]$bytes)) { return $null }
-  return @{ Sha1 = $p[0]; Bytes = $bytes }
+  if ([string]::IsNullOrEmpty($ref)) { return $null }
+  $blocks = New-Object System.Collections.Generic.List[object]
+  $total = [long]0
+  foreach ($item in ($ref -split '\|')) {
+    $p = $item -split ':'
+    if ($p.Count -ne 3) { return $null }
+    $tag = $p[0]
+    if (-not $script:RichTags.Contains($tag)) { return $null }
+    if ($p[1].Length -ne 40) { return $null }
+    $bytes = [long]0
+    if (-not [long]::TryParse($p[2], [ref]$bytes)) { return $null }
+    $blocks.Add(@{ Tag = $tag; Ext = [string]$script:RichTags[$tag]; Sha1 = $p[1]; Bytes = $bytes })
+    $total += $bytes
+  }
+  if ($blocks.Count -eq 0) { return $null }
+  return @{ Blocks = $blocks.ToArray(); Bytes = $total }
 }
 
 function Write-RichMedia([string]$ref, $rich) {
@@ -161,14 +200,12 @@ function Write-RichMedia([string]$ref, $rich) {
   if ($null -eq $r -or $null -eq $rich) { return $false }
   try {
     [void](Ensure-MediaDir)
-    if ($null -ne $rich.Html -and $rich.Html.Length -gt 0) {
-      $p = Get-MediaPath $r.Sha1 'html'
-      if (-not (Test-Path -LiteralPath $p)) { [IO.File]::WriteAllBytes($p, $rich.Html) }
-    }
-    $rtf = ConvertTo-RtfBytes $rich.Rtf
-    if ($rtf.Length -gt 0) {
-      $p = Get-MediaPath $r.Sha1 'rtf'
-      if (-not (Test-Path -LiteralPath $p)) { [IO.File]::WriteAllBytes($p, $rtf) }
+    foreach ($b in $r.Blocks) {
+      $path = Get-MediaPath $b.Sha1 $b.Ext
+      if (Test-Path -LiteralPath $path) { continue }
+      $data = Get-RichBlockData $rich $b.Tag
+      if ($null -eq $data -or $data.Length -eq 0) { continue }
+      [IO.File]::WriteAllBytes($path, $data)
     }
     return $true
   } catch {
@@ -177,18 +214,26 @@ function Write-RichMedia([string]$ref, $rich) {
   }
 }
 
-function Read-RichHtml([string]$ref) {
+# one block back; Read-RichHtml / Read-RichRtfBytes are the two the rest of the tool asks
+# for, a picture block is only read on the way back to the clipboard
+function Read-RichBlock([string]$ref, [string]$tag) {
   $r = Get-RichRef $ref
   if ($null -eq $r) { return $null }
-  try { return [IO.File]::ReadAllBytes((Get-MediaPath $r.Sha1 'html')) } catch { return $null }
+  foreach ($b in $r.Blocks) {
+    if ($b.Tag -cne $tag) { continue }
+    try { return [IO.File]::ReadAllBytes((Get-MediaPath $b.Sha1 $b.Ext)) } catch { return $null }
+  }
+  return $null
 }
+
+function Read-RichHtml([string]$ref) { return (Read-RichBlock $ref 'H') }
 
 # the bytes are what the clipboard gets back; the string form is only for the preview card,
 # which hands the RTF to a RichTextBox
 function Read-RichRtfBytes([string]$ref) {
-  $r = Get-RichRef $ref
-  if ($null -eq $r) { return (New-Object byte[] 0) }
-  try { return [IO.File]::ReadAllBytes((Get-MediaPath $r.Sha1 'rtf')) } catch { return (New-Object byte[] 0) }
+  $bytes = Read-RichBlock $ref 'T'
+  if ($null -eq $bytes) { return (New-Object byte[] 0) }
+  return $bytes
 }
 
 function Read-RichRtf([string]$ref) {
@@ -202,7 +247,120 @@ function Read-RichRtf([string]$ref) {
 function Test-RichMedia([string]$ref) {
   $r = Get-RichRef $ref
   if ($null -eq $r) { return $false }
-  return ((Test-Path -LiteralPath (Get-MediaPath $r.Sha1 'html')) -or (Test-Path -LiteralPath (Get-MediaPath $r.Sha1 'rtf')))
+  foreach ($b in $r.Blocks) {
+    if (Test-Path -LiteralPath (Get-MediaPath $b.Sha1 $b.Ext)) { return $true }
+  }
+  return $false
+}
+
+# the first picture an entry carries, or $null. The card falls back to it when there is html
+# but no layout to render: an Excel copy brings a metafile or a bitmap and never RTF.
+function Get-RichPictureBlock([string]$ref) {
+  $r = Get-RichRef $ref
+  if ($null -eq $r) { return $null }
+  foreach ($tag in @('P', 'D', 'E')) {
+    foreach ($b in $r.Blocks) {
+      if ($b.Tag -cne $tag) { continue }
+      return $b
+    }
+  }
+  return $null
+}
+
+# ---- inlining the pictures an html block points at --------------------------
+# Word, Excel and browsers leave the copied pictures in a temp folder and reference them by
+# path ('file:///.../msohtmlclip1/01/clip_image001.png'). That folder does not outlive the
+# copy, so the entry would paste back with empty frames. Each referenced picture is read once
+# and put into the buffer itself as a data: uri; the four header offsets are then recomputed,
+# because they are byte positions in this very buffer.
+#
+# Only raster formats are inlined (a data: uri carrying a metafile is not something targets
+# understand), and a buffer that is not valid UTF-8 is left alone: rewriting it would have to
+# guess its code page.
+$script:RichImageMime = @{
+  '.png' = 'image/png'; '.jpg' = 'image/jpeg'; '.jpeg' = 'image/jpeg'
+  '.gif' = 'image/gif'; '.bmp' = 'image/bmp'
+}
+
+function Get-CfHtmlInlined([byte[]]$html, [int]$maxImageBytes, [int]$maxTotalBytes) {
+  if ($null -eq $html -or $html.Length -lt 32 -or $maxImageBytes -le 0) { return $html }
+  $strict = New-Object Text.UTF8Encoding $false, $true
+  $text = ''
+  try { $text = $strict.GetString($html) } catch { return $html }
+  $headAt = Get-CfHtmlHeadLength $text
+  if ($headAt -le 0) { return $html }
+  $body = $text.Substring($headAt)
+  $inlined = 0
+  foreach ($hit in [regex]::Matches($body, 'src\s*=\s*["'']?(file:[^"''\s>]+)')) {
+    $url = $hit.Groups[1].Value
+    $path = ''
+    try { $path = ([uri]$url).LocalPath } catch { $path = '' }
+    if (-not $path -or -not (Test-Path -LiteralPath $path)) { continue }
+    $ext = [IO.Path]::GetExtension($path).ToLowerInvariant()
+    if (-not $script:RichImageMime.ContainsKey($ext)) { continue }
+    $size = [long]0
+    try { $size = (Get-Item -LiteralPath $path).Length } catch { continue }
+    if ($size -le 0 -or $size -gt $maxImageBytes) {
+      Write-Log ('html image not inlined: ' + (Format-Size $size) + ' ' + (Split-Path -Leaf $path))
+      continue
+    }
+    $data = ''
+    try { $data = [Convert]::ToBase64String([IO.File]::ReadAllBytes($path)) } catch { continue }
+    $body = $body.Replace($url, ('data:' + [string]$script:RichImageMime[$ext] + ';base64,' + $data))
+    $inlined++
+  }
+  if ($inlined -eq 0) { return $html }
+  $bytes = $strict.GetBytes($text.Substring(0, $headAt) + $body)
+  if ($maxTotalBytes -gt 0 -and $bytes.Length -gt $maxTotalBytes) {
+    Write-Log ('html inlining skipped: ' + [string]$bytes.Length + ' bytes over MaxRichBytes')
+    return $html
+  }
+  return (Set-CfHtmlOffsets $bytes)
+}
+
+# the byte position where the html starts, taken from the header the block carries
+function Get-CfHtmlHeadLength([string]$text) {
+  $m = [regex]::Match($text, 'StartHTML:\s*(\d+)')
+  if (-not $m.Success) { return 0 }
+  $at = 0
+  if (-not [int]::TryParse($m.Groups[1].Value, [ref]$at)) { return 0 }
+  if ($at -le 0 -or $at -ge $text.Length) { return 0 }
+  return $at
+}
+
+# the four offsets in the CF_HTML header are byte positions in the buffer itself, so they are
+# recomputed after the buffer changed. The fragment is delimited by the marker comments the
+# spec defines; without them the whole document is the fragment.
+function Set-CfHtmlOffsets([byte[]]$bytes) {
+  $strict = New-Object Text.UTF8Encoding $false, $true
+  $text = ''
+  try { $text = $strict.GetString($bytes) } catch { return $bytes }
+  $headAt = Get-CfHtmlHeadLength $text
+  if ($headAt -le 0) { return $bytes }
+  $body = $text.Substring($headAt)
+  # every offset is written with ten digits, so the header keeps its length whatever the
+  # values are and can be measured once
+  $head = $text.Substring(0, $headAt)
+  $head = $head -replace 'StartHTML:\s*\d+', 'StartHTML:0000000000'
+  $head = $head -replace 'EndHTML:\s*\d+', 'EndHTML:0000000000'
+  $head = $head -replace 'StartFragment:\s*\d+', 'StartFragment:0000000000'
+  $head = $head -replace 'EndFragment:\s*\d+', 'EndFragment:0000000000'
+  $startHtml = $strict.GetByteCount($head)
+  $startFrag = $startHtml
+  $endFrag = $startHtml + $strict.GetByteCount($body)
+  $sm = [regex]::Match($body, '<!--\s*StartFragment\s*-->')
+  if ($sm.Success) {
+    $after = $sm.Index + $sm.Length
+    $startFrag = $startHtml + $strict.GetByteCount($body.Substring(0, $after))
+    $em = [regex]::Match($body.Substring($after), '<!--\s*EndFragment\s*-->')
+    if ($em.Success) { $endFrag = $startFrag + $strict.GetByteCount($body.Substring($after, $em.Index)) }
+  }
+  $endHtml = $startHtml + $strict.GetByteCount($body)
+  $head = $head.Replace('StartHTML:0000000000', ('StartHTML:' + $startHtml.ToString('0000000000')))
+  $head = $head.Replace('EndHTML:0000000000', ('EndHTML:' + $endHtml.ToString('0000000000')))
+  $head = $head.Replace('StartFragment:0000000000', ('StartFragment:' + $startFrag.ToString('0000000000')))
+  $head = $head.Replace('EndFragment:0000000000', ('EndFragment:' + $endFrag.ToString('0000000000')))
+  return $strict.GetBytes($head + $body)
 }
 
 # ---- media accounting -------------------------------------------------------
@@ -225,7 +383,7 @@ function Remove-OrphanMedia($records) {
     $img = Get-ImageRef ([string]$r.Payload)
     if ($null -ne $img) { $keep[$img.Sha1] = 1 }
     $rich = Get-RichRef ([string]$r.Rich)
-    if ($null -ne $rich) { $keep[$rich.Sha1] = 1 }
+    if ($null -ne $rich) { foreach ($b in $rich.Blocks) { $keep[$b.Sha1] = 1 } }
   }
   foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue)) {
     # <sha1>.thumb is derived from <sha1>.png and travels with it
@@ -344,8 +502,107 @@ function Get-InkBottom($bmp, $paper) {
   return 0
 }
 
-# A bounded bitmap for the card: the source is decoded once and scaled down, never up, so a
-# 4K screenshot costs one decode and a few MB, not a temporary full-size copy on the window.
+# one decode, scaled down and never up: a 4K screenshot costs one decode and a few MB, not a
+# temporary full size copy on the window. Shared by the picture entry and the formatted entry.
+function New-MediaScaledBitmap($src, [int]$maxW, [int]$maxH) {
+  if ($null -eq $src -or $maxW -lt 16 -or $maxH -lt 16) { return $null }
+  $g = $null
+  $out = $null
+  try {
+    if ($src.Width -lt 1 -or $src.Height -lt 1) { return $null }
+    $scale = [Math]::Min([double]$maxW / [double]$src.Width, [double]$maxH / [double]$src.Height)
+    if ($scale -gt 1.0) { $scale = 1.0 }
+    $w = [Math]::Max(1, [int][Math]::Floor([double]$src.Width * $scale))
+    $h = [Math]::Max(1, [int][Math]::Floor([double]$src.Height * $scale))
+    $out = New-Object Drawing.Bitmap $w, $h, ([Drawing.Imaging.PixelFormat]::Format32bppPArgb)
+    $g = [Drawing.Graphics]::FromImage($out)
+    $g.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $g.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+    $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $g.DrawImage($src, (New-Object Drawing.Rectangle 0, 0, $w, $h))
+    return $out
+  } catch {
+    Write-Log ('media scale failed: ' + $_.Exception.Message)
+    if ($null -ne $out) { try { $out.Dispose() } catch { } }
+    return $null
+  } finally {
+    if ($null -ne $g) { $g.Dispose() }
+  }
+}
+
+# bytes -> something drawable: a png goes straight in, a CF_DIB block needs the file header the
+# clipboard leaves out, a metafile is rebuilt from its bits
+function ConvertFrom-MediaBytes([byte[]]$bytes, [string]$tag) {
+  if ($null -eq $bytes -or $bytes.Length -eq 0) { return $null }
+  $ms = New-Object IO.MemoryStream
+  try {
+    if ($tag -ceq 'E') {
+      $ms.Write($bytes, 0, $bytes.Length)
+      $ms.Position = 0
+      return (New-Object Drawing.Imaging.Metafile $ms)
+    }
+    $all = $bytes
+    if ($tag -ceq 'D') { $all = Get-BmpBytes $bytes }
+    if ($null -eq $all) { return $null }
+    $ms.Write($all, 0, $all.Length)
+    $ms.Position = 0
+    return [Drawing.Image]::FromStream($ms)
+  } catch {
+    Write-Log ('media block decode failed (' + $tag + '): ' + $_.Exception.Message)
+    return $null
+  }
+}
+
+# a CF_DIB block is the bitmap info header plus the pixels, without the 14 byte file header a
+# decoder expects in front of it
+function Get-BmpBytes([byte[]]$dib) {
+  if ($null -eq $dib -or $dib.Length -lt 40) { return $null }
+  $header = [long][BitConverter]::ToUInt32($dib, 0)
+  if ($header -lt 12 -or $header -gt $dib.Length) { return $null }
+  $bits = [int][BitConverter]::ToUInt16($dib, 14)
+  $comp = [int][BitConverter]::ToUInt32($dib, 16)
+  $used = [long][BitConverter]::ToUInt32($dib, 32)
+  $extra = 0
+  if ($comp -eq 3 -or $comp -eq 6) { $extra = 12 }
+  $palette = [long]0
+  if ($used -gt 0) { $palette = $used * 4 }
+  elseif ($bits -gt 0 -and $bits -le 8) { $palette = [long](1 -shl $bits) * 4 }
+  $offset = [int](14 + $header + $extra + $palette)
+  $out = New-Object byte[] (14 + $dib.Length)
+  $out[0] = 0x42
+  $out[1] = 0x4D
+  [Array]::Copy([BitConverter]::GetBytes([int]$out.Length), 0, $out, 2, 4)
+  [Array]::Copy([BitConverter]::GetBytes($offset), 0, $out, 10, 4)
+  [Array]::Copy($dib, 0, $out, 14, $dib.Length)
+  return $out
+}
+
+# the card's picture for a formatted entry: the first block that decodes wins, so a png is
+# preferred over a bitmap and a bitmap over a metafile
+function Get-RichImageBitmap([string]$ref, [int]$maxW, [int]$maxH) {
+  $r = Get-RichRef $ref
+  if ($null -eq $r -or $maxW -lt 16 -or $maxH -lt 16) { return $null }
+  Load-Forms
+  foreach ($tag in @('P', 'D', 'E')) {
+    foreach ($b in $r.Blocks) {
+      if ($b.Tag -cne $tag) { continue }
+      $key = 'r:' + $b.Sha1 + ':' + [string]$maxW + 'x' + [string]$maxH
+      $hit = Get-MediaCache $key
+      if ($null -ne $hit) { return $hit }
+      $bytes = $null
+      try { $bytes = [IO.File]::ReadAllBytes((Get-MediaPath $b.Sha1 $b.Ext)) } catch { $bytes = $null }
+      if ($null -eq $bytes) { continue }
+      $src = ConvertFrom-MediaBytes $bytes $tag
+      if ($null -eq $src) { continue }
+      $bmp = $null
+      try { $bmp = New-MediaScaledBitmap $src $maxW $maxH } finally { $src.Dispose() }
+      if ($null -eq $bmp) { continue }
+      return (Set-MediaCache $key $bmp)
+    }
+  }
+  return $null
+}
+
 function Get-ImagePreviewBitmap([string]$sha1, [int]$maxW, [int]$maxH) {
   if (-not $sha1 -or $maxW -lt 16 -or $maxH -lt 16) { return $null }
   $key = 'i:' + $sha1 + ':' + [string]$maxW + 'x' + [string]$maxH
@@ -365,32 +622,18 @@ function Get-ImagePreviewBitmap([string]$sha1, [int]$maxW, [int]$maxH) {
   if ($null -eq $bytes) { return $null }
   Load-Forms
   $src = $null
-  $g = $null
   $out = $null
   try {
     $ms = New-Object IO.MemoryStream
     $ms.Write($bytes, 0, $bytes.Length)
     $ms.Position = 0
     $src = [Drawing.Image]::FromStream($ms)
-    if ($src.Width -lt 1 -or $src.Height -lt 1) { return $null }
-    $scale = [Math]::Min([double]$maxW / [double]$src.Width, [double]$maxH / [double]$src.Height)
-    if ($scale -gt 1.0) { $scale = 1.0 }
-    $w = [int][Math]::Floor([double]$src.Width * $scale)
-    $h = [int][Math]::Floor([double]$src.Height * $scale)
-    if ($w -lt 1) { $w = 1 }
-    if ($h -lt 1) { $h = 1 }
-    $out = New-Object Drawing.Bitmap $w, $h, ([Drawing.Imaging.PixelFormat]::Format32bppPArgb)
-    $g = [Drawing.Graphics]::FromImage($out)
-    $g.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-    $g.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-    $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
-    $g.DrawImage($src, (New-Object Drawing.Rectangle 0, 0, $w, $h))
+    $out = New-MediaScaledBitmap $src $maxW $maxH
   } catch {
     Write-Log ('image preview failed: ' + $_.Exception.Message)
     if ($null -ne $out) { try { $out.Dispose() } catch { } }
     $out = $null
   } finally {
-    if ($null -ne $g) { $g.Dispose() }
     if ($null -eq $out -and $null -ne $src) { $src.Dispose() }
   }
   if ($null -eq $out) { return $null }
