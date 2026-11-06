@@ -151,7 +151,9 @@ function Set-Clip([string]$value) {
 
 $tmpRoot = Join-Path $env:TEMP ('clipboard-tests-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 $unitDir = New-Sandbox 'unit'
-$intDir = New-Sandbox 'integration'
+# the CLI sandboxes carry their own clipboard: the commands still run for real, but two of them
+# can run at the same time and the machine clipboard is left alone
+$intDir = New-FakeSandbox 'integration'
 $e2eDir = New-Sandbox 'e2e'
 # -Integration and -E2E run without dot-sourcing the tool, so the encoding the fixtures
 # write with has to exist here instead of coming from the main script
@@ -2344,7 +2346,7 @@ try {
     Check 'int' 'a preview setting is restorable' ($o -match '900 -> 350') $o.Trim()
 
     # ------------------------------------------- settings are never created silently
-    $roDir = New-Sandbox 'readonly'
+    $roDir = New-FakeSandbox 'readonly'
     $roIni = Join-Path $roDir 'clipboard.ini'
     foreach ($args in @(@('status'), @('config'), @('config', 'get', 'Theme'), @('list'), @('themes'))) {
       [void](Clip $roDir $args)
