@@ -777,20 +777,25 @@ Themes=win11-dark
 
 产物目录名取自 `package.ini` 的 `Version=`（见[版本号](#版本号)）；`Overwrite=1` 会替换同版本目录，需要同时保留两份时改 `OutDir`。
 
-压缩（`scripts\minify.ps1`）按语法树处理，分三步：
+压缩（`scripts\minify.ps1`）按语法树处理，分五步：
 
+- 内部函数名与局部变量名换成短名，全项目一套函数映射、每文件一套局部变量映射；`param()` 名、`$script:` / `$env:` 变量、自动变量、成员名与哈希键不改；
+- here-string 里的 C# 块去掉 `//` 与 `/* */` 注释、把空白折成一个空格（只在两个标识符或两个运算符之间留空格），`"..."`、`'...'`、`@"..."` 字面量原样复制——这是产物里最大的一块可压缩文本；
+- `-ErrorAction SilentlyContinue` 变成 `-ea 0`，已知的枚举名换成数字（`Stop`=1、`Continue`=2、`Inquire`=3、`Ignore`=4）；
 - 同一语句块内相邻语句之间的换行合成 `;`，边界由解析器给出，`if` / `else` / `try` / `catch` / `param()` 等跨行位置不受影响；
-- 删除注释（`#Requires` 保留）与缩进，token 之间只在标点旁去掉空格，其余保留一个空格；
-- 内部函数名与局部变量名换成短名，全项目一套函数映射、每文件一套局部变量映射；`param()` 名、`$script:` / `$env:` 变量、自动变量、成员名与哈希键不改。
+- 删除注释（`#Requires` 保留）与缩进，token 之间只在标点旁去掉空格，其余保留一个空格。
 
-改名后、合并后、压缩后各解析一次，出现语法错误即中止；`Verify=1` 再对产物跑一遍真实 CLI 测试。
+改名后、C# 段与偏好名改写后、合并后、压缩后各解析一次，出现语法错误即中止；
+`Verify=1` 再对产物跑一遍真实 CLI 测试。
 
 压缩器依赖两个 PowerShell AST 事实：
 
 - 变量名需从 `VariablePath.UserPath` 读取。`VariablePath.UnqualifiedPath` 在本机运行时对 `$x` 与 `$script:x` 均返回空串，据此做映射会导致部分变量未改名，`$MaxItems` 与 `$script:MaxItems` 成为两个变量。
 - 函数返回空集合（如 `HashSet`）时会被 PowerShell 展开为 `$null`，调用方 `.Contains()` 会报错；需 `return , $set` 包一层或在调用处用 `@()`。
 
-实测（本仓库）：脚本总量 `384629 → 222895` 字节，约 `42%` 更小；`clipboard.ps1` −60%、`lib\picker.ps1` −44%、`lib\plugins.ps1` −54%、`lib\theme-stub.ps1` −59%。
+实测（本仓库）：脚本总量 `480947 → 261330` 字节，约 `46%` 更小；`lib\base.ps1` −74%、
+`clipboard.ps1` −57%、`lib\picker.ps1` −44%、`lib\plugins.ps1` −54%，C# 段收益最大的两个
+是 `lib\native.ps1` −39% 与 `lib\keyhook.ps1` −47%（压缩前后都能通过 `Add-Type`）。
 
 > `Verify=1` 用于验证重命名后的产物：包内函数名与变量名均已改变，只有运行真实 CLI 测试才能确认行为不变。`-Source` 指向产物时单元组跳过（它按名字调用内部函数），集成与端到端照常运行。
 

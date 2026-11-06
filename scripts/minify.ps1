@@ -8,6 +8,11 @@
     2. syntax pass    rename internal functions (one map shared by every file) and local
                       variables (one map per file), replacing the extents the parser
                       reports instead of doing text substitution
+    3. C# pass        the C# in an Add-Type here-string is opaque to the other passes, but the
+                      compiler does not care about its layout: comments out, one space only
+                      where two word characters would merge
+    4. call pass      -ErrorAction <name> becomes -ea <number>, the same documented interface
+                      in fewer characters
 
   Never renamed: parameters (they are passed by name: -Library, -Count, -NoInject), any
   variable with a scope/drive qualifier ($script:, $env:, $using:), PowerShell automatic
@@ -384,6 +389,139 @@ function Compress-Whitespace([string]$text) {
   return $sb.ToString()
 }
 
+# ---- C# handed to Add-Type ------------------------------------------------
+# A here-string is opaque to the lexical pass: its body is not PowerShell, so it travels
+# untouched. But the body is C# and the compiler does not care about layout, so it gets what a
+# JavaScript bundle gives a dependency - comments out, and one space only where two word
+# characters (or two operators) would otherwise merge into a different token. A literal is
+# copied through as it is, which is what keeps 'http://x' from losing half of itself.
+$script:CSharpWordChars = '[A-Za-z0-9_]'
+$script:CSharpOperatorChars = '[+\-*/%&|^<>=!?:]'
+
+function Compress-CSharp([string]$code) {
+  if ([string]::IsNullOrEmpty($code)) { return $code }
+  $sb = New-Object System.Text.StringBuilder
+  $i = 0
+  $n = $code.Length
+  $pendingSpace = $false
+  while ($i -lt $n) {
+    $c = $code[$i]
+    if ($c -eq '/' -and ($i + 1) -lt $n) {
+      $c2 = $code[$i + 1]
+      if ($c2 -eq '/') {
+        while ($i -lt $n -and $code[$i] -ne "`n" -and $code[$i] -ne "`r") { $i++ }
+        $pendingSpace = $true
+        continue
+      }
+      if ($c2 -eq '*') {
+        $i = $i + 2
+        while ($i -lt $n) {
+          if ($code[$i] -eq '*' -and ($i + 1) -lt $n -and $code[$i + 1] -eq '/') { $i = $i + 2; break }
+          $i++
+        }
+        $pendingSpace = $true
+        continue
+      }
+    }
+    if ($c -eq '@' -and ($i + 1) -lt $n -and $code[$i + 1] -eq '"') {
+      $start = $i
+      $i = $i + 2
+      while ($i -lt $n) {
+        if ($code[$i] -eq '"') {
+          if (($i + 1) -lt $n -and $code[$i + 1] -eq '"') { $i = $i + 2; continue }
+          $i++
+          break
+        }
+        $i++
+      }
+      [void]$sb.Append($code.Substring($start, $i - $start))
+      $pendingSpace = $false
+      continue
+    }
+    if ($c -eq '"' -or $c -eq "'") {
+      $quote = $c
+      $start = $i
+      $i++
+      while ($i -lt $n) {
+        if ($code[$i] -eq '\') { $i = $i + 2; continue }
+        if ($code[$i] -eq $quote) { $i++; break }
+        $i++
+      }
+      [void]$sb.Append($code.Substring($start, $i - $start))
+      $pendingSpace = $false
+      continue
+    }
+    if ([char]::IsWhiteSpace($c)) { $pendingSpace = $true; $i++; continue }
+    if ($pendingSpace -and $sb.Length -gt 0) {
+      $last = [string]$sb[$sb.Length - 1]
+      $cur = [string]$c
+      # two word characters would become one token ('int x' -> 'intx'), and two operators a
+      # different operator ('a - -b' -> 'a--b')
+      $needSpace = (($last -match $script:CSharpWordChars) -and ($cur -match $script:CSharpWordChars))
+      if (-not $needSpace) { $needSpace = (($last -match $script:CSharpOperatorChars) -and ($cur -match $script:CSharpOperatorChars)) }
+      if ($needSpace) { [void]$sb.Append(' ') }
+    }
+    $pendingSpace = $false
+    [void]$sb.Append($c)
+    $i++
+  }
+  return $sb.ToString()
+}
+
+# Every single quoted here-string whose body is C# gets squeezed; a "@..."@ body belongs to
+# PowerShell (it interpolates), so it is left alone.
+function Compress-CSharpBlocks([string]$text) {
+  $parsed = Get-ParsedScript $text
+  if ($parsed.Errors.Count -gt 0) { return $text }
+  $edits = New-Object System.Collections.Generic.List[object]
+  foreach ($t in $parsed.Tokens) {
+    if ([string]$t.Kind -ne 'HereStringLiteral') { continue }
+    $lines = ([string]$t.Text) -split "\r?\n"
+    if ($lines.Count -lt 3) { continue }
+    if (([string]$lines[0]).Trim() -ne "@'") { continue }
+    if (([string]$lines[$lines.Count - 1]).Trim() -ne "'@") { continue }
+    $body = ($lines[1..($lines.Count - 2)] -join "`n")
+    # only a body that looks like C# is touched: a here-string full of help text stays
+    if ($body -notmatch '(?m)^\s*(using |namespace |public |private |internal |protected |\[)') { continue }
+    $squeezed = Compress-CSharp $body
+    if ($squeezed.Length -ge $body.Length) { continue }
+    $edits.Add(@{
+        Offset = $t.Extent.StartOffset
+        Length = $t.Extent.EndOffset - $t.Extent.StartOffset
+        Text = ("@'" + "`n" + $squeezed + "`n" + "'@")
+      })
+  }
+  if ($edits.Count -eq 0) { return $text }
+  return (Apply-Edits $text $edits)
+}
+
+# ---- how a call spells its preference --------------------------------------
+# -ErrorAction takes the name of an enum value, and every one of them also has a number. Both
+# are the documented interface, so the call reads differently rather than acting differently.
+$script:PreferenceNumbers = @{
+  'SilentlyContinue' = '0'; 'Stop' = '1'; 'Continue' = '2'; 'Inquire' = '3'; 'Ignore' = '4'
+}
+
+function Compress-ErrorAction([string]$text) {
+  $parsed = Get-ParsedScript $text
+  if ($parsed.Errors.Count -gt 0) { return $text }
+  $tokens = @($parsed.Tokens)
+  $edits = New-Object System.Collections.Generic.List[object]
+  for ($i = 0; $i -lt ($tokens.Count - 1); $i++) {
+    if ([string]$tokens[$i].Kind -ne 'Parameter') { continue }
+    if ([string]$tokens[$i].Text -ine '-ErrorAction') { continue }
+    $j = $i + 1
+    while ($j -lt $tokens.Count -and [string]$tokens[$j].Kind -eq 'NewLine') { $j++ }
+    if ($j -ge $tokens.Count) { continue }
+    $val = [string]$tokens[$j].Text
+    if (-not $script:PreferenceNumbers.ContainsKey($val)) { continue }
+    $edits.Add(@{ Offset = $tokens[$i].Extent.StartOffset; Length = $tokens[$i].Extent.EndOffset - $tokens[$i].Extent.StartOffset; Text = '-ea' })
+    $edits.Add(@{ Offset = $tokens[$j].Extent.StartOffset; Length = $tokens[$j].Extent.EndOffset - $tokens[$j].Extent.StartOffset; Text = [string]$script:PreferenceNumbers[$val] })
+  }
+  if ($edits.Count -eq 0) { return $text }
+  return (Apply-Edits $text $edits)
+}
+
 # Minify one file. $FunctionMap comes from New-FunctionMap, so all files agree.
 function Invoke-MinifyFile {
   param(
@@ -484,8 +622,12 @@ function Invoke-MinifyFile {
     if ($check.Errors.Count -gt 0) { throw ($Path + ': rename broke the syntax (' + $check.Errors[0].Message + ')') }
   }
 
+  # the C# body and the shortened preference first: both change the text the later passes
+  # parse, and both are their own token level rewrite
+  $squeezed = Compress-CSharpBlocks $renamed
+  $squeezed = Compress-ErrorAction $squeezed
   # statement pass, then the lexical pass on what is left
-  $merged = Merge-Statements $renamed
+  $merged = Merge-Statements $squeezed
   $minified = Compress-Whitespace $merged
   $final = Get-ParsedScript $minified
   if ($final.Errors.Count -gt 0) {
