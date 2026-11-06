@@ -3,7 +3,7 @@
 #
 # The base stores one character per mark and asks the plugin layer what those marks mean
 # (protected / sorts first / kept on clear / printed word), so adding a mark needs no
-# change here - see Marks in lib/plugins.ps1.
+# change here - see Marks in lib/plugin/plugins.ps1.
 
 # File layout: CBHIST RS <data version> RS <record> RS <record> ...
 #   record = <flags> US <epoch seconds> US <extra> US <payload>
@@ -374,7 +374,7 @@ function Use-StoreLock([scriptblock]$body) {
   }
 }
 
-# rows carrying the sort mark float to the top, and how many stay frozen: lib/layout.ps1
+# rows carrying the sort mark float to the top, and how many stay frozen: lib/ordering.ps1
 # owns both rules, because the panel and a plugin ask the same questions.
 
 # The rows the panel shows for one query. The meaning of the words lives in lib/query.ps1;

@@ -1,4 +1,4 @@
-# lib/picker.ps1 - the history panel. One function owns the whole window lifecycle (create,
+# lib/panel/picker.ps1 - the history panel. One function owns the whole window lifecycle (create,
 # filter, draw, keys, paste); the standalone pieces live in picker-geom / entry / plugins.
 
 function Show-Picker {
@@ -337,7 +337,7 @@ function Show-Picker {
       $footL.Invalidate()
     }
 
-    # shortcut hints as Fluent key chips: [key] action, built in lib/picker-draw.ps1
+    # shortcut hints as Fluent key chips: [key] action, built in lib/panel/picker-draw.ps1
     $footL.Add_Paint({
         param($s, $e)
         try {
@@ -542,7 +542,7 @@ function Show-Picker {
         $tokens = @($query.Terms)
         $script:Tokens = $tokens
         # sticky pins: the plugin names the mark and the cap, the base decides how many rows
-        # actually fit - see Get-StickyPlan / Get-StickyTopRows in lib/layout.ps1
+        # actually fit - see Get-StickyPlan / Get-StickyTopRows in lib/ordering.ps1
         $plan = $null
         if (Get-Command Get-PluginStickyPlan -ErrorAction SilentlyContinue) { $plan = Get-PluginStickyPlan (Get-Rows) }
         if ($null -eq $plan) { $plan = @{ Mark = ''; Max = 0 } }
@@ -865,21 +865,21 @@ function Show-Picker {
     # the loop below does not dismiss the panel on the very click that chose the item.
     $cm.Add_Closed({ $script:MenuClosedAt = Get-Date })
 
-    # one StringFormat set per process, shared with the drawing helpers in lib/picker-draw.ps1
+    # one StringFormat set per process, shared with the drawing helpers in lib/panel/picker-draw.ps1
     $sfSet = New-PickerStringFormats
     $bgBrush = New-Object Drawing.SolidBrush $ui.Surface
-    # One brush per colour now lives in lib/picker-draw.ps1: it outlives the panel, so
+    # One brush per colour now lives in lib/panel/picker-draw.ps1: it outlives the panel, so
     # reopening does not have to build the palette again.
     $sfEll = $sfSet.Ellipsis
     $sfNone = $sfSet.None
     $sfRight = $sfSet.Right
     $sfCenter = $sfSet.Center
     $sfSeg = $sfSet.Seg
-    # the hover card (lib/preview.ps1): geometry and brushes once per panel, never per hover
+    # the hover card (lib/panel/preview.ps1): geometry and brushes once per panel, never per hover
     $pvCfg = New-PreviewConfig $ui $sfNone $fBody $fSmall
 
     # draw one label in pieces so the matched tokens can be tinted; the tail is trimmed
-    # with an ellipsis once the available width is exhausted (lib/picker-draw.ps1)
+    # with an ellipsis once the available width is exhausted (lib/panel/picker-draw.ps1)
 
     $lst.Add_DrawItem({
         param($s, $e)
@@ -1037,7 +1037,7 @@ function Show-Picker {
           $g.DrawString(('Ctrl+' + (Get-QuickKeyLabel $offset)), $fSmall, (Get-Brush $capInk), $capRect, $sfCenter)
         }
       })
-    # Hover preview (lib/preview.ps1): it waits for the cursor to rest and prepares a record's
+    # Hover preview (lib/panel/preview.ps1): it waits for the cursor to rest and prepares a record's
     # text once, so sweeping the list costs a timestamp per row and nothing else.
     $pv = New-PreviewState
     $script:PvAt = Get-Date; $script:PvIdx = -1
@@ -1090,7 +1090,7 @@ function Show-Picker {
     $deb = New-Object Windows.Forms.Timer
     $deb.Interval = [int]$script:Timing['Debounce']
     $deb.Add_Tick({ $deb.Stop(); Update-List $txt.Text })
-    # F2 edits the selected entry in place; the editor lives in lib/picker-edit.ps1
+    # F2 edits the selected entry in place; the editor lives in lib/panel/picker-edit.ps1
     Set-PickerEditHost $form $lst $txt $ui $fBody { param($q) Update-List $q } { param($m) Set-Foot $m ([int]$script:Timing['FootInfo']) }
     function Flush-List { if ($deb.Enabled) { $deb.Stop(); Update-List $txt.Text } }
     $txt.Add_TextChanged({ Sync-Placeholder; $deb.Stop(); $deb.Start() })

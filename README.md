@@ -231,7 +231,7 @@ cli build        # 打包到 dist\clipboard-<version>\
 
 ### INI 约定
 
-仓库内的 ini 使用同一套语法（`package.ini`、`build.ini`、`clipboard.ini`、`themes\*.ini`），并共用同一份实现：`utils\ini.ps1` 负责文本与数据结构，`utils\import.ps1` 负责读文件与缓存，`utils\schema.ps1` 负责校验——程序、`cli` 与 `cli build` 都调它们，规则不会两边跑偏。
+仓库内的 ini 使用同一套语法（`package.ini`、`build.ini`、`clipboard.ini`、`themes\*.ini`），并共用同一份实现：`utils\ini.ps1` 负责文本与数据结构，`utils\inifile.ps1` 负责读文件与缓存，`utils\schema.ps1` 负责校验——程序、`cli` 与 `cli build` 都调它们，规则不会两边跑偏。
 
 - 一行一个 `Key=Value`；`#` 或 `;` 开头**整行**为注释，行尾没有注释（值里的 `#` 属于值本身，如 `Accent=#5AC8FA`）；值不加引号，两端空白会被去掉；同一个键写两次以最后一次为准。
 - `[section]` 把后续键归入该段：`[scripts]` 下的 `Dev=...` 与顶层的 `scripts.Dev=...` 是同一个键，`[item-marks]` 下的 `MaxPins=50` 与 `item-marks.MaxPins=50` 同理。段头必须整行只有 `[名字]`，后面不能跟注释。
@@ -420,14 +420,14 @@ Plugins=item-marks,entry-actions
 |---|---|---|
 | 入口 | `clipboard.ps1` | 参数绑定、`$Root`、必需模块清单、运行时路径（ini / store / log 位置）、`Invoke-Main` |
 | 装配 | `lib/dispatch.ps1` | `Invoke-Main`：先 `Apply-Config`，再按 `Plugins=` 装配插件，最后执行一个命令 |
-| 场景 | `lib/picker.ps1`、`lib/pinlist.ps1`、`lib/picker-draw.ps1`、`lib/picker-edit.ps1`、`lib/preview.ps1`、`lib/anim.ps1`、`lib/keyhook.ps1`、`lib/serve.ps1`、`lib/config.ps1`、`lib/config-template.ps1`、`lib/diag.ps1`、`lib/shortcut.ps1`、`lib/usage.ps1` | 面板窗与交互、自绘列表、可复用的绘制件、就地编辑条目、悬停预览卡片、过渡动画、键盘钩子、常驻进程、设置命令面与写出的模板、诊断恢复、快捷方式、帮助 |
-| 领域 | `lib/clip.ps1`、`lib/store.ps1`、`lib/marks.ps1`、`lib/layout.ps1`、`lib/media.ps1`、`lib/migrate.ps1`、`lib/entry.ps1`、`lib/hotkey.ps1`、`lib/picker-geom.ps1` | 剪贴板读写、历史记录存储、标记语义、行序与冻结行数、图片与富文本附件、数据格式迁移、条目分类与文案、修饰键状态、面板纯计算 |
+| 场景 | `lib/panel/picker.ps1`、`lib/panel/pinlist.ps1`、`lib/panel/picker-draw.ps1`、`lib/panel/picker-edit.ps1`、`lib/panel/preview.ps1`、`lib/panel/anim.ps1`、`lib/panel/keyhook.ps1`、`lib/serve.ps1`、`lib/config.ps1`、`lib/config-template.ps1`、`lib/diag.ps1`、`lib/shortcut.ps1`、`lib/usage.ps1` | 面板窗与交互、自绘列表、可复用的绘制件、就地编辑条目、悬停预览卡片、过渡动画、键盘钩子、常驻进程、设置命令面与写出的模板、诊断恢复、快捷方式、帮助 |
+| 领域 | `lib/clip.ps1`、`lib/store.ps1`、`lib/marks.ps1`、`lib/ordering.ps1`、`lib/media.ps1`、`lib/cfhtml.ps1`、`lib/migrate.ps1`、`lib/entry.ps1`、`lib/modifiers.ps1`、`lib/panel/picker-geom.ps1` | 剪贴板读写、历史记录存储、标记语义、行序与冻结行数、图片与富文本附件、CF_HTML 往返、数据格式迁移、条目分类与文案、修饰键状态、面板纯计算 |
 | 基础 | `lib/native.ps1` | 平台层（P/Invoke、WinForms 类型、程序集、字体探测、DPI） |
-| 工具 | `utils/log.ps1`、`utils/time.ps1`、`utils/format.ps1`、`utils/draw.ps1` | 纯函数：日志写入、epoch 与相对时间、字节计数、像素缩放与圆角路径（不碰剪贴板、不碰历史） |
-| ini | `utils/ini.ps1`、`utils/import.ps1`、`utils/schema.ps1` | 文本→文档、按 key 增删改查、文件导入与缓存、schema 加载/校验/单值转换（不知道任何一个具体的键） |
+| 工具 | `utils/log.ps1`、`utils/time.ps1`、`utils/format.ps1`、`utils/dpi.ps1` | 纯函数：日志写入、epoch 与相对时间、字节计数、像素缩放与圆角路径（不碰剪贴板、不碰历史） |
+| ini | `utils/ini.ps1`、`utils/inifile.ps1`、`utils/schema.ps1` | 文本→文档、按 key 增删改查、文件导入与缓存、schema 加载/校验/单值转换（不知道任何一个具体的键） |
 | 描述 | `schema/clipboard.ps1`、`schema/theme.ps1`、`schema/plugins/*.ps1` | 每个 ini 文件、每个插件的键表：类型、范围、默认值、说明、驱动变量 |
 | 底 | `lib/base.ps1`、`lib/theme-stub.ps1` | 常量与全部默认值；内置配色与主题空实现（`lib/themes.ps1` 覆盖它们） |
-| 加载层 | `lib/plugins.ps1`、`lib/plugin-settings.ps1`、`lib/plugin-marks.ps1` | 插件运行时（白名单 / 命令 / 右键项 / 按键 / 行图标 / 钩子）、插件设置面、标记含义（保护 / 置顶 / `clear` 保留 / 打印用词） |
+| 加载层 | `lib/plugin/plugins.ps1`、`lib/plugin/plugin-settings.ps1`、`lib/plugin/plugin-marks.ps1` | 插件运行时（白名单 / 命令 / 右键项 / 按键 / 行图标 / 钩子）、插件设置面、标记含义（保护 / 置顶 / `clear` 保留 / 打印用词） |
 | 加载层 | `lib/themes.ps1` | 主题发现 / 校验 / 颜色解析 / `Apply-Theme`（缺失时 `theme-stub` 的内置配色接管） |
 | 扩展 | `plugins/*.ps1` + `schema/plugins/*.ps1` | 插件文件只声明行为（命令、右键项、面板按键、行图标、标记）；它的键表在自带的 schema 文件里 |
 
@@ -586,28 +586,22 @@ src/                    程序本体（打包只读这个目录）
   lib/base.ps1            常量、版本读取、记录格式、运行时标识、度量/字形/时序与全部默认值
   lib/native.ps1          平台层：P/Invoke、WinForms 类型、程序集加载、字体探测、DPI
   lib/theme-stub.ps1      内置配色与主题空实现（lib/themes.ps1 会覆盖它们）
-  lib/media.ps1           图片与富文本的媒体文件：块存储、图片内联、载荷编解码、孤儿回收
-  lib/media-render.ps1    图片与富文本的位图：缩略图文件、两级位图缓存、缩放与三种预览图
+  lib/themes.ps1          主题加载层（发现 / 校验 / 颜色解析 / Apply-Theme）
+  lib/settings.ps1        设置文件层：schema 装配、读全量 / 读单键 / 写单键（config 与插件设置共用）
+  lib/media.ps1           图片与富文本的媒体文件：块存储、载荷编解码、孤儿回收
+  lib/cfhtml.ps1          CF_HTML 往返：把引用的图片内联进缓冲、粘贴时写回文件、偏移重算与占位图
   lib/clip.ps1            剪贴板读写（文本 / 文件清单 / 图片 / HTML+RTF）
   lib/blobs.ps1           大正文块：超过 BlobChars 的条目落成 data\blobs\<sha1>.txt，行内只留引用，回收孤儿
   lib/store.ps1           历史文件：CBHIST 格式、版本字段、加锁、追加 / 墓碑 / 折叠、记录增删与裁剪
   lib/transfer.ps1        导入导出：记录 ↔ 文本行，媒体按自身内容哈希落盘
   lib/apprules.ps1        前台程序 → 这次粘贴怎么处理（进程名短暂缓存，面板不抢前台）
   lib/marks.ps1           标记的读写与含义查询（保护 / 置顶 / clear 保留 / 打印用词，不碰文件）
-  lib/layout.ps1          行序规则：排序标记置顶、粘性置顶的可冻结行数（纯计算）
+  lib/ordering.ps1        行序规则：排序标记置顶、粘性置顶的可冻结行数（纯计算）
   lib/migrate.ps1         数据格式迁移：检测版本、备份、逐级升级
-  lib/settings.ps1        设置文件层：schema 装配、读全量 / 读单键 / 写单键（config 与插件设置共用）
-  lib/hotkey.ps1          修饰键状态（解析在 utils/hotkey.ps1）
+  lib/modifiers.ps1       修饰键状态（解析在 utils/hotkey.ps1）
   lib/entry.ps1           条目分类（text / files / image / empty）、图标兜底与条目文案
   lib/query.ps1           搜索语法：字段含义、正则编译、类型判定、逐条匹配与执行
   lib/select.ps1          批量选择：位置集合、Ctrl/Shift 规则、批量复制与批量删除
-  lib/picker-geom.ps1     面板纯计算：行数、数字快选、窗口位置、命中高亮
-  lib/anim.ps1            过渡动画的数值层（缓动 / 插值，不碰窗口）
-  lib/picker-draw.ps1     可复用绘制：按键胶囊、搜索命中着色（只要 Graphics + 参数）
-  lib/pinlist.ps1         自绘列表控件 Cb.PinList：只画可见行，置顶行不随滚动
-  lib/preview.ps1         悬停预览卡片：复用窗口，渲染文本 / 图片 / 富文本
-  lib/keyhook.ps1         低级键盘钩子：面板拿按键但不抢前台窗口
-  lib/picker.ps1          历史面板：窗体、过滤、列表、按键、右键菜单、粘贴
   lib/serve.ps1           常驻进程：捕获循环、热键、托盘、崩溃重启
   lib/diag.ps1            diag 报告与 restore
   lib/shortcut.ps1        开机自启 / 桌面快捷方式的安装与卸载
@@ -615,35 +609,47 @@ src/                    程序本体（打包只读这个目录）
   lib/config-template.ps1 写进文件的 clipboard.ini：注释模板、config init 的补键合并、config reset
   lib/usage.ps1           help 输出（基础命令分组 + 每个插件的分组）
   lib/dispatch.ps1        Invoke-Main：先 Apply-Config，再装配插件，最后执行一个命令
-  lib/plugins.ps1         插件运行时（Load-Plugins / 命令 / 右键项 / 按键 / 行图标 / 钩子）
-  lib/plugin-settings.ps1 插件设置面（schema\plugins 的 Properties → ini 段，ThemeProperties → 主题段）
-  lib/plugin-marks.ps1    标记含义（保护 / 置顶 / clear 保留 / 打印用词）
-  lib/themes.ps1          主题加载层（发现 / 校验 / 颜色解析 / Apply-Theme）
+
+  lib/panel/              面板栈：只在要画东西时加载（ui / serve / 无参数），其余命令不解析它
+  lib/panel/picker.ps1      历史面板：窗体、过滤、列表、按键、右键菜单、粘贴
+  lib/panel/picker-geom.ps1 面板纯计算：行数、数字快选、窗口位置、命中高亮
+  lib/panel/picker-draw.ps1 可复用绘制：按键胶囊、搜索命中着色（只要 Graphics + 参数）
+  lib/panel/picker-edit.ps1 就地编辑：F2 把选中行换成输入框，回车保存 / Esc 取消
+  lib/panel/pinlist.ps1     自绘列表控件 Cb.PinList：只画可见行，置顶行不随滚动
+  lib/panel/preview.ps1     悬停预览卡片：复用窗口，渲染文本 / 图片 / 富文本
+  lib/panel/anim.ps1        过渡动画的数值层（缓动 / 插值，不碰窗口）
+  lib/panel/keyhook.ps1     低级键盘钩子：面板拿按键但不抢前台窗口
+  lib/panel/media-render.ps1 图片与富文本的位图：缩略图文件、两级位图缓存、缩放与三种预览图
+
+  lib/plugin/             插件层：三个文件要么全有要么全无，缺一个就当没有插件
+  lib/plugin/plugins.ps1         插件运行时（Load-Plugins / 命令 / 右键项 / 按键 / 行图标 / 钩子）
+  lib/plugin/plugin-settings.ps1 插件设置面（schema\plugins 的 Properties → ini 段，ThemeProperties → 主题段）
+  lib/plugin/plugin-marks.ps1    标记含义（保护 / 置顶 / clear 保留 / 打印用词）
   plugins/*.ps1           插件（item-marks / entry-actions / transform / retention；默认全部加载）
   plugins/*.md            每个插件的说明页
   themes/*.ini            主题（win11-dark 默认 / win11-light）
   themes/*.md             每个主题的说明页
 
   utils/ini.ps1           文本 → 文档（Read-IniDoc）与文档上的按 key 增删改查（纯函数）
-  utils/import.ps1        导入一个 ini 文件（按路径缓存，文件大小 + 写入时间失效）与写回单个键
+  utils/inifile.ps1       导入一个 ini 文件（按路径缓存，文件大小 + 写入时间失效）与写回单个键
   utils/schema.ps1        schema 的加载 / 形状校验 / 单值校验转换（不认识的键一律报错）
   utils/hotkey.ps1        热键字符串 → 修饰键 + 虚拟键码（纯查表，不碰窗口）
-  utils/storefile.ps1     单个文件的读写原语：指纹、读、追加、整体替换（不认识记录是什么）
+  utils/fileio.ps1        单个文件的读写原语：指纹、读、追加、整体替换（不认识记录是什么）
   utils/transfer.ps1      导出文本的形状：行 ↔ 文本，媒体可选 base64（不碰磁盘与剪贴板）
   utils/apprules.ps1      AppRules 的文本形式：程序名 → 粘贴方式的解析（纯查表）
   utils/log.ps1           日志文件写入（Ensure-Dir / Write-Log，永不抛异常）
   utils/time.ps1          epoch 与相对时间（now / 5m / 3h / 2d / MM-dd）
-  utils/query.ps1         把一行搜索切成词：引号短语、-排除、name:value 拆分（不理解含义）
+  utils/query-words.ps1   把一行搜索切成词：引号短语、-排除、name:value 拆分（不理解含义）
   utils/pinyin.ps1        汉字首字母（GB2312 一级字按拼音排序，范围查表，无码表）
   utils/format.ps1        字节计数（812 B / 12 KB / 2.3 MB）
-  utils/draw.ps1          DPI 缩放（Px）与圆角路径/区域（纯计算，返回对象由调用方释放）
+  utils/dpi.ps1           DPI 缩放（Px）与圆角路径/区域（纯计算，返回对象由调用方释放）
 
   schema/clipboard.ps1    clipboard.ini 的 schema（键 / 类型 / 范围 / 默认 / 说明 / 驱动变量）
   schema/theme.ps1        themes\*.ini 的 schema（元键、palette/fonts/metrics 段、插件段）
   schema/plugins/*.ps1    每个插件自己的键表（Properties / ThemeProperties），加载时合并进设置
 ```
 
-分层顺序即依赖方向：`clipboard.ps1`（入口）→ `dispatch`（装配命令）→ `picker` / `preview` / `media-render` / `serve` / `config` / `diag` / `shortcut` / `usage`（场景）→ `store` / `migrate` / `clip` / `media` / `entry` / `hotkey` / `picker-geom`（领域）→ `native`（基础）→ `utils`（ini / import / schema、log / time / format / draw、storefile）→ `schema` / `base` / `theme-stub`（描述、常量与兜底配色）。只允许上层调用下层；`utils` 里的函数只接受值、返回值，不读剪贴板也不读写历史，也不认识任何一个具体的键。
+分层顺序即依赖方向：`clipboard.ps1`（入口）→ `dispatch`（装配命令）→ `panel\picker` / `panel\preview` / `panel\media-render` / `serve` / `config` / `diag` / `shortcut` / `usage`（场景）→ `store` / `migrate` / `clip` / `media` / `entry` / `modifiers` / `panel\picker-geom`（领域）→ `native`（基础）→ `utils`（ini / inifile / schema、log / time / format / dpi、fileio）→ `schema` / `base` / `theme-stub`（描述、常量与兜底配色）。只允许上层调用下层；`utils` 里的函数只接受值、返回值，不读剪贴板也不读写历史，也不认识任何一个具体的键。
 
 两条结构约束由 `struct` 组校验：
 
@@ -724,7 +730,7 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑 CLI 组
 
 | 组 | 开关 | 覆盖内容 |
 |---|---|---|
-| 结构 | 无（总是执行） | 分层契约：48 个必需模块（`lib\` 33 + `utils\` 13）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
+| 结构 | 无（总是执行） | 分层契约：49 个必需模块（`lib\` 34 + `utils\` 13）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
 | 单元 | `-Unit` | 纯函数与存储层：热键解析、条目文案、ini 读写与单值校验、`Apply-Config` 与配置诊断、记录读写与版本识别、迁移引擎（拒绝无步骤 / 备份 / `-Purge` 归档）、图片与富文本的编解码与媒体回收、CF_HTML 片段解析、真实剪贴板的图片与格式往返、标记与保护规则、面板几何与命中计算、条目分类与行图标、主题发现与 `[metrics]` 重置、插件白名单。通过 `-Library` dot-source 主脚本，不触发命令分发 |
 | 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put` / `get` / `list` / `pick` / `del` / `clear` / `pause` / `resume` / `status` / `version` / `migrate` / `themes` / `config get` / `config set` / `config init` / `diag`、主题切换与非法主题名拒绝、插件白名单与各插件命令、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝、`cli` 命令列表；以及打包（进包内容、`install.bat`、包内版本为常量且与 `package.ini` 一致、`Plugins=` / `Themes=` 裁剪、`Overwrite=0` 拒绝覆盖、未知插件名报错） |
 | 端到端 | `-E2E` | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启循环 |

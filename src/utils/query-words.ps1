@@ -1,4 +1,4 @@
-# utils/query.ps1 - cut a query line into tokens. No meaning lives here: what a field means,
+# utils/query-words.ps1 - cut a query line into tokens. No meaning lives here: what a field means,
 # which types exist and what counts as a match is the caller's business (lib/query.ps1).
 #
 # Double quotes hold a phrase together, including its spaces; an unclosed quote simply runs

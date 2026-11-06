@@ -1,4 +1,4 @@
-# lib/picker-geom.ps1 - pure geometry and text helpers of the panel: visible row count, the
+# lib/panel/picker-geom.ps1 - pure geometry and text helpers of the panel: visible row count, the
 # numeric quick-pick mapping, where the window goes on screen, and which characters of a
 # label match the search.
 #

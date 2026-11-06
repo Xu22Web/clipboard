@@ -1,4 +1,4 @@
-# utils/draw.ps1 - pixel and shape helpers: one design value scaled to the current DPI, one
+# utils/dpi.ps1 - pixel and shape helpers: one design value scaled to the current DPI, one
 # rounded rectangle as a path or as a region.
 #
 # No panel state is read here: the DPI factor comes from $script:UiScale, which

@@ -2,7 +2,7 @@
 # calls that read or write one value from the file.
 #
 # This is the layer anything that touches a setting goes through: lib/config.ps1 builds the
-# `config` command surface on top of it, and lib/plugin-settings.ps1 registers plugin keys
+# `config` command surface on top of it, and lib/plugin/plugin-settings.ps1 registers plugin keys
 # into the same schema. Neither has to know how the file is parsed or cached, and neither has
 # to call the other - which is why this file exists at all.
 #

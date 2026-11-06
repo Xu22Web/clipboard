@@ -1,4 +1,4 @@
-# lib/plugin-settings.ps1 - the plugin settings surface.
+# lib/plugin/plugin-settings.ps1 - the plugin settings surface.
 #
 # A plugin does not describe its keys itself: it has a schema file of its own next to the
 # others, schema\plugins\<name>.ps1, and that file declares both kinds of knobs -
@@ -11,7 +11,7 @@
 # The merge happens when the plugin loads (Register-PluginSettings), so `config`,
 # `config get`, `config set` and `config init` handle a plugin key with no extra plumbing.
 #
-# Loaded right after lib/plugins.ps1 and only when that file exists: without the plugin
+# Loaded right after lib/plugin/plugins.ps1 and only when that file exists: without the plugin
 # runtime there is nothing to configure.
 
 $script:PluginSchemaCache = @{}

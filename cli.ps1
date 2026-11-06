@@ -25,17 +25,17 @@ if (-not (Test-Path -LiteralPath $pkgPath)) {
   Write-Host ('[x] missing: ' + $pkgPath)
   exit 1
 }
-foreach ($tool in @('ini', 'import')) {
+foreach ($tool in @('ini', 'inifile')) {
   $toolPath = Join-Path $iniTools ($tool + '.ps1')
   if (-not (Test-Path -LiteralPath $toolPath)) {
     Write-Host ('[x] missing: ' + $toolPath)
     exit 1
   }
 }
-# the repository has one ini layer (src\utils\ini.ps1 + import.ps1); the tooling uses it
+# the repository has one ini layer (src\utils\ini.ps1 + inifile.ps1); the tooling uses it
 # too, so a rule cannot hold for clipboard.ini and not for package.ini
 . (Join-Path $iniTools 'ini.ps1')
-. (Join-Path $iniTools 'import.ps1')
+. (Join-Path $iniTools 'inifile.ps1')
 $pkgDoc = Import-Ini $pkgPath
 $pkg = $pkgDoc.Map
 $order = New-Object System.Collections.Generic.List[string]

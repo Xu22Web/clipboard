@@ -1,6 +1,6 @@
 # utils/ini.ps1 - the ini document and the operations on it. Pure: text in, values out.
 #
-# No file is opened here (utils/import.ps1 does that), no cache lives here, and no key is
+# No file is opened here (utils/inifile.ps1 does that), no cache lives here, and no key is
 # known here: what a key means is a schema's business (src/schema/*.ps1).
 #
 # A document - a "doc" - is @{ Map = <key -> value, case-insensitive>; Keys = <file order> }.
@@ -101,7 +101,7 @@ function Select-IniDocKeys($doc, [string]$prefix = '') {
 
 # the doc as lines, in file order. Sections are not rebuilt - a grouped key is written in its
 # flat form - so this is for inspecting or rebuilding a file, not for editing one in place
-# (utils/import.ps1 rewrites a single line and keeps the original text).
+# (utils/inifile.ps1 rewrites a single line and keeps the original text).
 function ConvertTo-IniText($doc) {
   $out = New-Object System.Collections.Generic.List[string]
   if ($null -eq $doc) { return $out.ToArray() }

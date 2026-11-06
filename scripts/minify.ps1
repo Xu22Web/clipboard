@@ -88,7 +88,7 @@ function Get-ParameterNames($ast) {
   return , $keep
 }
 
-# Build one function map for the whole project so lib/plugins.ps1, clipboard.ps1 and the
+# Build one function map for the whole project so lib/plugin/plugins.ps1, clipboard.ps1 and the
 # plugins agree on the new names.
 function New-FunctionMap([string[]]$paths) {
   $protected = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)

@@ -1,4 +1,4 @@
-# utils/import.ps1 - getting a file in and out, with the parse cache.
+# utils/inifile.ps1 - getting a file in and out, with the parse cache.
 #
 # This is the module system of the ini layer: a path is parsed once and the same doc is
 # handed out until the file changes on disk, so a second reader never pays for a second

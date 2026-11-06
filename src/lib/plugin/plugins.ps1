@@ -1,4 +1,4 @@
-# lib/plugins.ps1 - optional extension layer for clipboard.
+# lib/plugin/plugins.ps1 - optional extension layer for clipboard.
 #
 # A plugin is one .ps1 file inside <root>\plugins that returns a hashtable:
 #

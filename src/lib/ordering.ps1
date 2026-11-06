@@ -1,4 +1,4 @@
-# lib/layout.ps1 - where a row goes: which rows float to the top, and how many of them the
+# lib/ordering.ps1 - where a row goes: which rows float to the top, and how many of them the
 # panel may freeze while everything else scrolls.
 #
 # Pure arithmetic over a record list: nothing here opens the store, and nothing draws. The
@@ -6,7 +6,7 @@
 # how many pins it may still take - three callers, one rule, so the numbers cannot disagree.
 #
 # What "sticky" and "sorts first" mean is declared by a plugin and read through
-# lib/plugin-marks.ps1; this file only applies it.
+# lib/plugin/plugin-marks.ps1; this file only applies it.
 
 # rows carrying the sort mark float to the top, each block keeps its own order
 function Sort-Records($list) {

@@ -1,7 +1,7 @@
 # utils/hotkey.ps1 - turn a hotkey spec ("Ctrl+Alt+V") into modifiers plus a virtual key code.
 #
 # Pure table lookup: no Windows call, no keyboard state, no window. The runtime half - asking
-# whether the modifiers are released - needs a WinForms type and lives in lib/hotkey.ps1.
+# whether the modifiers are released - needs a WinForms type and lives in lib/modifiers.ps1.
 # Splitting them here keeps the value check in utils/schema.ps1 from depending on the module
 # that talks to the window station.
 

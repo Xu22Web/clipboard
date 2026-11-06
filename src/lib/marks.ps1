@@ -2,7 +2,7 @@
 #
 # A record stores its marks as one string of characters ("tps" = text row, pinned, starred)
 # and the base never knows what any of them mean: the plugin that declares a mark owns its
-# meaning, and lib/plugin-marks.ps1 answers the questions about it. This file is the thin
+# meaning, and lib/plugin/plugin-marks.ps1 answers the questions about it. This file is the thin
 # layer in between - is the mark set, set it, which marks protect a row, what does a row call
 # them - and it touches no file. Writing the result back is lib/store.ps1's job, so a mark
 # can be inspected, tested and reasoned about without a history file.

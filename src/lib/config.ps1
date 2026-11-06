@@ -2,7 +2,7 @@
 # the effective values, validate and write one key at a time, keep the template in sync.
 #
 # The keys are described by schema/clipboard.ps1, and three layers under it do the work:
-# utils/ini.ps1 parses text into a document, utils/import.ps1 reads a file once per change
+# utils/ini.ps1 parses text into a document, utils/inifile.ps1 reads a file once per change
 # and rewrites a single line, utils/schema.ps1 validates a value against the schema. The
 # schema itself, and reading or writing one key, belong to lib/settings.ps1 - plugin settings
 # use the same entry points, so neither file has to call the other. Nothing here invents a

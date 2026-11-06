@@ -1,8 +1,8 @@
-# lib/media-render.ps1 - turning stored media into bitmaps: the hover card's picture, the
+# lib/panel/media-render.ps1 - turning stored media into bitmaps: the hover card's picture, the
 # small copy a row shows in its icon slot, and the thumb file both of them decode from.
 #
 # lib/media.ps1 owns the files and knows nothing about drawing; this module reads them and
-# only the panel (`lib/picker.ps1`) and the card (`lib/preview.ps1`) call it. Keeping the two
+# only the panel (`lib/panel/picker.ps1`) and the card (`lib/panel/preview.ps1`) call it. Keeping the two
 # apart means the capture path never loads GDI+ code it does not use.
 #
 # Everything returned here belongs to a cache: a caller draws the bitmap and never disposes it.

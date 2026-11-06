@@ -48,21 +48,23 @@ $libDir = Join-Path $Root 'lib'
 # anything while loading (the defaults and the settings schema); the order below matters for
 # those two and is otherwise for readers.
 #
-# Paths are relative to the tool root, so a module can sit in lib\ or in utils\. The utils\
-# files are the pure helpers: utils\ini parses text into a document, utils\import reads a
-# file once and writes a key back, utils\schema validates a value against src\schema\.
+# Paths are relative to the tool root, so a module can sit in lib\, in lib\panel\ or in
+# utils\. The utils\ files are the pure helpers: utils\ini parses text into a document,
+# utils\inifile reads a file once and writes a key back, utils\schema validates a value
+# against src\schema\.
 $coreModules = @(
   'lib\base',
-  'utils\ini', 'utils\import', 'utils\schema',
-  'utils\log', 'utils\time', 'utils\format', 'utils\draw', 'utils\hotkey', 'utils\query', 'utils\pinyin', 'utils\transfer', 'utils\apprules', 'utils\storefile',
-  'lib\native', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\layout', 'lib\media', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\hotkey', 'lib\apprules',
-  'lib\entry', 'lib\query', 'lib\select', 'lib\picker-geom', 'lib\diag', 'lib\shortcut', 'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch'
+  'utils\ini', 'utils\inifile', 'utils\schema',
+  'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey', 'utils\query-words', 'utils\pinyin', 'utils\transfer', 'utils\apprules', 'utils\fileio',
+  'lib\native', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering', 'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules',
+  'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\diag', 'lib\shortcut', 'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch'
 )
 # The panel stack is only needed when something is about to draw: `ui`, `serve`, and the
 # bare command that opens the panel. Every other command - put, get, list, del, clear,
 # status, config, help, diag - skips parsing it entirely. -Library loads everything,
-# because the tests call those functions by name.
-$panelModules = @('lib\media-render', 'lib\anim', 'lib\picker-draw', 'lib\picker-edit', 'lib\pinlist', 'lib\preview', 'lib\keyhook', 'lib\picker', 'lib\serve')
+# because the tests call those functions by name. The files live in lib\panel\, except
+# serve: that is the resident process, which is a scene of its own and only opens a panel.
+$panelModules = @('lib\panel\media-render', 'lib\panel\anim', 'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\keyhook', 'lib\panel\picker', 'lib\serve')
 $needPanel = ($Library -or $Command -eq '' -or $Command -eq 'ui' -or $Command -eq 'serve')
 $requiredModules = $coreModules
 if ($needPanel) { $requiredModules = $coreModules + $panelModules }
@@ -79,11 +81,12 @@ foreach ($module in $requiredModules) {
 $themeModule = Join-Path $libDir 'themes.ps1'
 if (Test-Path -LiteralPath $themeModule) { . $themeModule }
 # the plugin layer is three files: the runtime, what a mark means, and the settings surface
-$pluginModule = Join-Path $libDir 'plugins.ps1'
+$pluginDir = Join-Path $libDir 'plugin'
+$pluginModule = Join-Path $pluginDir 'plugins.ps1'
 if (Test-Path -LiteralPath $pluginModule) {
   . $pluginModule
   foreach ($extra in @('plugin-settings', 'plugin-marks')) {
-    $extraPath = Join-Path $libDir ($extra + '.ps1')
+    $extraPath = Join-Path $pluginDir ($extra + '.ps1')
     if (Test-Path -LiteralPath $extraPath) { . $extraPath }
   }
 }

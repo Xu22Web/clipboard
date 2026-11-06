@@ -1,4 +1,4 @@
-# lib/query.ps1 - what a search line means. The text is cut up by utils/query.ps1; this file
+# lib/query.ps1 - what a search line means. The text is cut up by utils/query-words.ps1; this file
 # decides which fields exist, compiles the patterns, and answers one record at a time.
 #
 # The vocabulary is deliberately small, and every field is a filter that can only narrow:

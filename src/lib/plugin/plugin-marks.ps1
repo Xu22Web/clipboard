@@ -1,10 +1,10 @@
-# lib/plugin-marks.ps1 - what the marks a plugin declares actually mean.
+# lib/plugin/plugin-marks.ps1 - what the marks a plugin declares actually mean.
 #
 # The base stores one character per mark and asks this file for the rules: is the row
 # protected, does it sort first, which marks survive `clear`, and what word is printed.
 # That is why adding a mark never needs a change in lib/store.ps1.
 #
-# Loaded right after lib/plugins.ps1 and only when that file exists.
+# Loaded right after lib/plugin/plugins.ps1 and only when that file exists.
 
 
 # Mark registry. A mark is one character in the record flags; the plugin that declares it
@@ -136,7 +136,7 @@ function Get-PluginStickyMark {
 
 # Everything the panel needs about the sticky mark in one call: the mark itself, and how many
 # rows it may freeze for a visible area of that size. This is the direction that keeps
-# lib/layout.ps1 free of the plugin layer - the plugin layer asks it, not the other way round.
+# lib/ordering.ps1 free of the plugin layer - the plugin layer asks it, not the other way round.
 function Get-PluginStickyPlan([int]$rows) {
   $mark = Get-PluginStickyMark
   if (-not $mark) { return @{ Mark = ''; Max = 0 } }

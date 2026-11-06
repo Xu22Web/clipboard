@@ -1,4 +1,4 @@
-# lib/anim.ps1 - the panel's few transitions, as plain numbers.
+# lib/panel/anim.ps1 - the panel's few transitions, as plain numbers.
 #
 # Every animated value eases toward a target and the panel only reads them while drawing,
 # so switching animations off costs exactly one frame (the step becomes 1.0 and everything

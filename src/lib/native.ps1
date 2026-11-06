@@ -232,7 +232,7 @@ namespace Cb {
   }
   public class FluentForm : System.Windows.Forms.Form {
     public FluentForm() { DoubleBuffered = true; }
-    // The panel never activates on its own: a low-level keyboard hook (lib/keyhook.ps1) feeds
+    // The panel never activates on its own: a low-level keyboard hook (lib/panel/keyhook.ps1) feeds
     // the controls instead, so the window the user was typing in keeps the foreground, the
     // focus and the caret. When the hook is unavailable, or an IME needs a real focus, the
     // picker escalates to a normal activating panel.
@@ -244,7 +244,7 @@ namespace Cb {
         // A panel that never activates is also never asked to redraw by the shell, so its
         // controls can sit half-painted until something else forces a frame. Compositing
         // makes the DWM assemble each frame off-screen. It is not what fixes the row
-        // flicker (Cb.PinList buffers its own paint, lib/pinlist.ps1), but the panel needs
+        // flicker (Cb.PinList buffers its own paint, lib/panel/pinlist.ps1), but the panel needs
         // it for its child controls.
         cp.ExStyle |= 0x02000000;   // WS_EX_COMPOSITED
         cp.ClassStyle |= 0x00020000;
@@ -256,7 +256,7 @@ namespace Cb {
     public FluentList() { DoubleBuffered = true; }
   }
 
-  // ---- the row surface (see lib/pinlist.ps1 for why it exists) -------------------
+  // ---- the row surface (see lib/panel/pinlist.ps1 for why it exists) -------------------
   public class PinDrawEventArgs : EventArgs {
     public int Index;
     public System.Drawing.Rectangle Bounds;

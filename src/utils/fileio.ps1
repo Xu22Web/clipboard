@@ -1,4 +1,4 @@
-# utils/storefile.ps1 - one file on disk, handled as a file: stamp it, read it, append to it,
+# utils/fileio.ps1 - one file on disk, handled as a file: stamp it, read it, append to it,
 # replace it. Nothing here knows what a record is.
 #
 # lib/store.ps1 owns the format (the RS / US delimiters, the flags byte, blobs, de-duplication,

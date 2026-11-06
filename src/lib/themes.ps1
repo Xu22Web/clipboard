@@ -89,7 +89,7 @@ function Get-UiColor([string]$spec) {
 }
 
 # The theme schema (schema/theme.ps1) says which sections exist and what their values mean;
-# utils/import.ps1 reads the text. Together they replace a parser of its own, so a theme
+# utils/inifile.ps1 reads the text. Together they replace a parser of its own, so a theme
 # follows exactly the rules of every other .ini - "[palette]" + "Surface=..." arrives here
 # as the flat key "palette.Surface".
 function Get-ThemeSchema {

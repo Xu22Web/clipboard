@@ -1,4 +1,4 @@
-# lib/keyhook.ps1 - the low-level keyboard hook that lets the panel take typing without
+# lib/panel/keyhook.ps1 - the low-level keyboard hook that lets the panel take typing without
 # taking the foreground window.
 #
 # Why this exists: SetFocus always activates the window that receives it (documented), and a

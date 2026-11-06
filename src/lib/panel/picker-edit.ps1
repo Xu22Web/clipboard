@@ -1,4 +1,4 @@
-# lib/picker-edit.ps1 - fix an entry without pasting it first.
+# lib/panel/picker-edit.ps1 - fix an entry without pasting it first.
 #
 # The panel never takes the foreground, so the editor is a TextBox laid over the list inside
 # the panel itself. Two input models, two ways in: under the hook every keystroke is posted

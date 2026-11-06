@@ -1,4 +1,4 @@
-# lib/pinlist.ps1 - why the panel paints its own rows instead of using a ListBox.
+# lib/panel/pinlist.ps1 - why the panel paints its own rows instead of using a ListBox.
 #
 # A native ListBox paints each owner-drawn row straight into the window DC through
 # WM_DRAWITEM, so it can never be double buffered and it cannot hold a row still while the

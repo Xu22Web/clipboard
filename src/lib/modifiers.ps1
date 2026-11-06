@@ -1,4 +1,4 @@
-# lib/hotkey.ps1 - the runtime half of the hotkey: is every modifier released right now?
+# lib/modifiers.ps1 - the runtime half of the hotkey: is every modifier released right now?
 #
 # Parsing the spec ("Ctrl+Alt+V" -> modifiers + virtual key) is pure table work and lives in
 # utils/hotkey.ps1, so a value check can use it without loading anything that talks to

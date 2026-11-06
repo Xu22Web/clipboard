@@ -160,19 +160,19 @@ try {
   $utilsPath = Join-Path $srcRoot 'utils'
   $schemaPath = Join-Path $srcRoot 'schema'
   $libFiles = @()
-  if (Test-Path -LiteralPath $libPath) { $libFiles = @(Get-ChildItem -LiteralPath $libPath -Filter '*.ps1' -File | Sort-Object -Property Name) }
+  if (Test-Path -LiteralPath $libPath) { $libFiles = @(Get-ChildItem -LiteralPath $libPath -Filter '*.ps1' -File -Recurse | Sort-Object -Property Name) }
   # the pure helpers and the schema files follow the same rules (no param block, no path
   # from their own file, no duplicate name, a line budget), so they are walked as well
-  if (Test-Path -LiteralPath $utilsPath) { $libFiles += @(Get-ChildItem -LiteralPath $utilsPath -Filter '*.ps1' -File | Sort-Object -Property Name) }
+  if (Test-Path -LiteralPath $utilsPath) { $libFiles += @(Get-ChildItem -LiteralPath $utilsPath -Filter '*.ps1' -File -Recurse | Sort-Object -Property Name) }
   if (Test-Path -LiteralPath $schemaPath) { $libFiles += @(Get-ChildItem -LiteralPath $schemaPath -Filter '*.ps1' -File | Sort-Object -Property Name) }
 
   # the entry file names these by relative path; a package must carry all of them
-  $requiredLib = @('lib\base', 'lib\native', 'lib\keyhook', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\layout',
-    'lib\media', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\hotkey', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\picker-geom', 'lib\anim',
-    'lib\picker-draw', 'lib\picker-edit', 'lib\media-render', 'lib\pinlist', 'lib\preview', 'lib\picker', 'lib\serve', 'lib\diag', 'lib\shortcut',
+  $requiredLib = @('lib\base', 'lib\native', 'lib\panel\keyhook', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
+    'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\panel\anim',
+    'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\serve', 'lib\diag', 'lib\shortcut',
     'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch',
-    'utils\ini', 'utils\import', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\draw', 'utils\hotkey',
-    'utils\query', 'utils\pinyin', 'utils\transfer', 'utils\apprules', 'utils\storefile',
+    'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey',
+    'utils\query-words', 'utils\pinyin', 'utils\transfer', 'utils\apprules', 'utils\fileio',
     'schema\clipboard', 'schema\theme')
   $missingLib = @()
   foreach ($m in $requiredLib) {
@@ -228,7 +228,7 @@ try {
   # A WH_KEYBOARD_LL hook outlives the panel's own teardown and swallows every key in the
   # system, so it has to be released from a finally block: releasing it after the message
   # loop means one exception on the way out leaves the keyboard dead.
-  $pickerText = [IO.File]::ReadAllText((Join-Path $srcRoot 'lib\picker.ps1'))
+  $pickerText = [IO.File]::ReadAllText((Join-Path $srcRoot 'lib\panel\picker.ps1'))
   Check 'struct' 'no whole-window opacity transition' (-not ($pickerText -match '\$form\.Opacity\s*=')) ''
 
   # A payload kind is a leading character. Every module asks base.ps1's predicates instead of
@@ -253,7 +253,7 @@ try {
   }
   if (-not $isPackaged) {
     # the packaged copy has its function names minified, so only the source can be checked
-    $pickerAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $srcRoot 'lib\picker.ps1'), [ref]$null, [ref]$null)
+    $pickerAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $srcRoot 'lib\panel\picker.ps1'), [ref]$null, [ref]$null)
     $finallyText = (@($pickerAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.TryStatementAst] }, $true) |
         ForEach-Object { $_.Finally.Extent.Text }) -join "`n")
     Check 'struct' 'the key hook is released in a finally' ($finallyText -match 'Disable-KeyHook') ''
@@ -309,9 +309,9 @@ try {
     Check 'struct' 'tool root is computed once, in the entry' ($rootHits -eq 1) ([string]$rootHits + ' occurrence(s)')
 
     # The panel must never take the foreground: a low-level keyboard hook feeds its controls
-    # instead (lib/keyhook.ps1), so the user's window keeps the focus and the caret. The
+    # instead (lib/panel/keyhook.ps1), so the user's window keeps the focus and the caret. The
     # takeover fallback (no hook, or an IME) still hands the foreground back on close.
-    $pickerText = [IO.File]::ReadAllText((Join-Path $libPath 'picker.ps1'))
+    $pickerText = [IO.File]::ReadAllText((Join-Path $libPath 'panel\picker.ps1'))
     Check 'struct' 'panel is shown without ShowDialog' (-not ($pickerText -match '\$form\.ShowDialog\(')) 'form.ShowDialog found'
     $topHits = ([regex]::Matches($pickerText, '(?m)^\s*\$form\.TopMost\s*=')).Count
     Check 'struct' 'panel is raised without the TopMost property' ($topHits -eq 0) ([string]$topHits + ' assignment(s)')
@@ -331,7 +331,7 @@ try {
     Check 'struct' 'panel closes the menu before it closes itself' ($pickerText -match '(?s)Add_FormClosing\(\{.{0,600}\$cm\.Close\(\)') 'menu not closed in FormClosing'
     Check 'struct' 'an open menu never counts as a click outside' ($pickerText -match '\$cm\.Visible[^\r\n]*-and -not \$form\.Bounds') 'outside-click check ignores the menu'
     # per-open GDI handles: the group heading font and the rounded region the form paints with
-    $drawText = [IO.File]::ReadAllText((Join-Path $libPath 'picker-draw.ps1'))
+    $drawText = [IO.File]::ReadAllText((Join-Path $libPath 'panel\picker-draw.ps1'))
     Check 'struct' 'panel releases its menu font and form region' (($pickerText -match 'groupFont\.Dispose\(\)') -and ($drawText -match 'function Update-PanelRegion')) 'GDI handles released nowhere'
     # hover is a card that waits and is prepared once, not a tooltip rebuilt on every move
     Check 'struct' 'hover shows a card, not a tooltip' (-not ($pickerText -match 'Windows\.Forms\.ToolTip')) 'ToolTip found in the picker'
@@ -344,7 +344,7 @@ try {
     # activate the panel and defeat the hook model
     $tk = $null
     $pe = $null
-    $pickerAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $libPath 'picker.ps1'), [ref]$tk, [ref]$pe)
+    $pickerAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $libPath 'panel\picker.ps1'), [ref]$tk, [ref]$pe)
     $shownBlocks = @($pickerAst.FindAll({
           param($node)
           $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
@@ -1348,7 +1348,7 @@ try {
     $rows = @(Select-QueryRows $stickyRows @())
     Check 'unit' 'no query shows every row' (@($rows).Count -eq 5) (@($rows).Count -as [string])
 
-    # ---- query line: the words are cut up by utils/query.ps1 and given meaning here
+    # ---- query line: the words are cut up by utils/query-words.ps1 and given meaning here
     Check 'unit' 'a quoted phrase keeps its space' (((Split-QueryText 'a "b c" d') -join '|') -eq 'a|b c|d') ((Split-QueryText 'a "b c" d') -join '|')
     Check 'unit' 'an unclosed quote runs to the end of the line' (((Split-QueryText 'a "b c') -join '|') -eq 'a|b c') ((Split-QueryText 'a "b c') -join '|')
     $qp = Get-QueryPart '-type:image'
@@ -1993,7 +1993,7 @@ try {
     Save-Records @()
   }
 
-    # the drawing helpers live in lib/picker-draw.ps1 and take a Graphics plus plain values,
+    # the drawing helpers live in lib/panel/picker-draw.ps1 and take a Graphics plus plain values,
     # so they can be exercised without a window - that is what "no form state" buys.
     # Unit only (the helpers come from the -Library load) and source only: a packaged copy
     # has renamed internals, so the names do not exist there.
@@ -2495,7 +2495,7 @@ try {
     Check 'int' 'build.ps1 writes a folder named after the program version' (Test-Path -LiteralPath $pkgDir) (($bout | Select-Object -Last 1) -as [string])
     if (Test-Path -LiteralPath $pkgDir) {
       $names = @(Get-ChildItem -LiteralPath $pkgDir -Recurse -File | ForEach-Object { $_.FullName.Substring($pkgDir.Length) })
-      Check 'int' 'package keeps the program files' ((Test-Path -LiteralPath (Join-Path $pkgDir 'clipboard.ps1')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'clipboard.cmd')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'lib\plugins.ps1'))) ''
+      Check 'int' 'package keeps the program files' ((Test-Path -LiteralPath (Join-Path $pkgDir 'clipboard.ps1')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'clipboard.cmd')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'lib\plugin\plugins.ps1')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'lib\panel\picker.ps1'))) ''
       # a packaged copy is installed from the folder: the two batch files sit next to
       # clipboard.ps1 and only call commands the program has
       $installBat = Join-Path $pkgDir 'install.bat'

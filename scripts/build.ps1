@@ -40,11 +40,11 @@ function Fail([string]$text) { Write-Host ('[x] ' + $text); exit 1 }
 
 # ---------------------------------------------------------------- settings
 # build.ini and package.ini are read by the layer the program itself uses
-# (src\utils\ini.ps1 + import.ps1): "Key=Value" per line, "#" or ";" comments, and a
+# (src\utils\ini.ps1 + inifile.ps1): "Key=Value" per line, "#" or ";" comments, and a
 # "[section]" line grouping the keys that follow - so "[build]" + "OutDir=dist" is the same
 # key as "build.OutDir=dist".
 $iniTools = Join-Path $srcRoot 'utils'
-foreach ($tool in @('ini', 'import')) {
+foreach ($tool in @('ini', 'inifile')) {
   $toolPath = Join-Path $iniTools ($tool + '.ps1')
   if (-not (Test-Path -LiteralPath $toolPath)) { Fail ('missing: ' + $toolPath) }
   . $toolPath
@@ -178,7 +178,7 @@ try {
   # the scripts that go through the minifier, in a stable order
   $scriptFiles = @()
   $scriptFiles += Join-Path $srcRoot 'clipboard.ps1'
-  $scriptFiles += @(Get-ChildItem -LiteralPath (Join-Path $srcRoot 'lib') -Filter '*.ps1' -File | ForEach-Object { $_.FullName })
+  $scriptFiles += @(Get-ChildItem -LiteralPath (Join-Path $srcRoot 'lib') -Filter '*.ps1' -File -Recurse | ForEach-Object { $_.FullName })
   $scriptFiles += @(Get-ChildItem -LiteralPath (Join-Path $srcRoot 'utils') -Filter '*.ps1' -File | ForEach-Object { $_.FullName })
   # the schema files are data, but they name the variables Apply-Config writes through, so
   # they are renamed with the rest of the shared scope instead of being copied verbatim
