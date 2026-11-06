@@ -583,7 +583,10 @@ src/                    程序本体（打包只读这个目录）
   lib/media.ps1           图片与富文本的媒体文件：块存储、图片内联、载荷编解码、孤儿回收
   lib/media-render.ps1    图片与富文本的位图：缩略图文件、两级位图缓存、缩放与三种预览图
   lib/clip.ps1            剪贴板读写（文本 / 文件清单 / 图片 / HTML+RTF）
-  lib/store.ps1           历史文件：CBHIST 读写、版本字段、加锁、记录增删与裁剪
+  lib/blobs.ps1           大正文块：超过 BlobChars 的条目落成 data\blobs\<sha1>.txt，行内只留引用，回收孤儿
+  lib/store.ps1           历史文件：CBHIST 格式、版本字段、加锁、追加 / 墓碑 / 折叠、记录增删与裁剪
+  lib/transfer.ps1        导入导出：记录 ↔ 文本行，媒体按自身内容哈希落盘
+  lib/apprules.ps1        前台程序 → 这次粘贴怎么处理（进程名短暂缓存，面板不抢前台）
   lib/marks.ps1           标记的读写与含义查询（保护 / 置顶 / clear 保留 / 打印用词，不碰文件）
   lib/layout.ps1          行序规则：排序标记置顶、粘性置顶的可冻结行数（纯计算）
   lib/migrate.ps1         数据格式迁移：检测版本、备份、逐级升级
@@ -619,6 +622,9 @@ src/                    程序本体（打包只读这个目录）
   utils/import.ps1        导入一个 ini 文件（按路径缓存，文件大小 + 写入时间失效）与写回单个键
   utils/schema.ps1        schema 的加载 / 形状校验 / 单值校验转换（不认识的键一律报错）
   utils/hotkey.ps1        热键字符串 → 修饰键 + 虚拟键码（纯查表，不碰窗口）
+  utils/storefile.ps1     单个文件的读写原语：指纹、读、追加、整体替换（不认识记录是什么）
+  utils/transfer.ps1      导出文本的形状：行 ↔ 文本，媒体可选 base64（不碰磁盘与剪贴板）
+  utils/apprules.ps1      AppRules 的文本形式：程序名 → 粘贴方式的解析（纯查表）
   utils/log.ps1           日志文件写入（Ensure-Dir / Write-Log，永不抛异常）
   utils/time.ps1          epoch 与相对时间（now / 5m / 3h / 2d / MM-dd）
   utils/query.ps1         把一行搜索切成词：引号短语、-排除、name:value 拆分（不理解含义）
@@ -631,7 +637,7 @@ src/                    程序本体（打包只读这个目录）
   schema/plugins/*.ps1    每个插件自己的键表（Properties / ThemeProperties），加载时合并进设置
 ```
 
-分层顺序即依赖方向：`clipboard.ps1`（入口）→ `dispatch`（装配命令）→ `picker` / `preview` / `media-render` / `serve` / `config` / `diag` / `shortcut` / `usage`（场景）→ `store` / `migrate` / `clip` / `media` / `entry` / `hotkey` / `picker-geom`（领域）→ `native`（基础）→ `utils`（ini / import / schema、log / time / format / draw）→ `schema` / `base` / `theme-stub`（描述、常量与兜底配色）。只允许上层调用下层；`utils` 里的函数只接受值、返回值，不读剪贴板也不读写历史，也不认识任何一个具体的键。
+分层顺序即依赖方向：`clipboard.ps1`（入口）→ `dispatch`（装配命令）→ `picker` / `preview` / `media-render` / `serve` / `config` / `diag` / `shortcut` / `usage`（场景）→ `store` / `migrate` / `clip` / `media` / `entry` / `hotkey` / `picker-geom`（领域）→ `native`（基础）→ `utils`（ini / import / schema、log / time / format / draw、storefile）→ `schema` / `base` / `theme-stub`（描述、常量与兜底配色）。只允许上层调用下层；`utils` 里的函数只接受值、返回值，不读剪贴板也不读写历史，也不认识任何一个具体的键。
 
 两条结构约束由 `struct` 组校验：
 
@@ -651,8 +657,11 @@ CBHIST RS <数据版本> RS <flags> US <epoch 秒> US <extra> US <payload> RS <f
 ```
 
 - 头部两项：固定标记 `CBHIST` 与数据格式版本（当前为 `1`）
-- **记录按时间从旧到新排列**，因此一次捕获只是在文件末尾追加一行（实测 365 条的库从整份重写 109 ms 降到 7 ms）；读取时把列表反转，并按 payload 去重——同一段文本被再次捕获时，**最后写下的那一行胜出**，旧行随之可见地消失
-- 行数超过 `MaxItems` 的两倍时折叠一次：把去重后的列表（含 `MaxItems` / `MaxTotal` / `MaxMediaTotal` 裁剪与孤儿媒体回收）重写回文件，所以长会话不会让文件无限变大；删除、移动、编辑本身也走整份重写
+- **记录按时间从旧到新排列**，因此一次捕获只是在文件末尾追加一行。读取时按时间倒序取值，并按 payload 去重——同一段文本被再次捕获时，**最后写下的那一行胜出**，旧行随之可见地消失
+- 删除也只是一行：类型字符为 `x` 的记录是**墓碑**（`x US <epoch> US US <payload>`），读取时同一 payload 的墓碑出现在更新的位置，这一行以及它更旧的所有副本一并消失。因此删除不必整份重写，也剪断了「删掉又被旧副本复活」的路径
+- 改标记（置顶 / 收藏 / 插件的任何标记）同样是追加：带新标记的同一 payload、同一时间戳再写一行，行序不变，成本是一行而不是一次全文替换
+- 行数超过 `MaxItems` 的两倍、墓碑占到三分之一、或文件超过 `MaxTotal` 两倍时**折叠**一次：把去重后的列表（含 `MaxItems` / `MaxTotal` / `MaxMediaTotal` 裁剪与孤儿媒体 / 块回收）重写回文件，所以长会话不会让文件无限变大。改正文、批量删除后的重排仍走整份重写
+- 实测（365 条 / 611 KB，`MaxItems` 300）：捕获 3 KB 文本 9.5 ms、置顶 2.4 ms、取消置顶 2.5 ms、删除 11.5 ms；同样的写操作在改造前是整份重写 36.9 ms。冷读（解析 + 排序）49.8 ms，单词过滤约 5 ms
 - `flags` = 一个类型字符（`t` 文本 / `f` 文件列表 / `i` 图片）后跟若干单字符标记；标记含义由插件声明，基础层只存不改，例如 `tps` 为文本条目加 `p`、`s` 两个标记
 - `extra` 为空，或写富文本附件的块清单：`H:<sha1>:<字节>`、`T:`（RTF）、`P:`（PNG）、`D:`（设备无关位图）、`E:`（图元文件），用 `|` 连接；`payload` 为条目本体
 - 分隔符：`RS` = `0x1E`，`US` = `0x1F`；类型签名字符为 `0x01`（文件列表）与 `0x03`（图片）
@@ -709,7 +718,7 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑 CLI 组
 
 | 组 | 开关 | 覆盖内容 |
 |---|---|---|
-| 结构 | 无（总是执行） | 分层契约：46 个必需模块（`lib\` 32 + `utils\` 12）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
+| 结构 | 无（总是执行） | 分层契约：48 个必需模块（`lib\` 33 + `utils\` 13）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
 | 单元 | `-Unit` | 纯函数与存储层：热键解析、条目文案、ini 读写与单值校验、`Apply-Config` 与配置诊断、记录读写与版本识别、迁移引擎（拒绝无步骤 / 备份 / `-Purge` 归档）、图片与富文本的编解码与媒体回收、CF_HTML 片段解析、真实剪贴板的图片与格式往返、标记与保护规则、面板几何与命中计算、条目分类与行图标、主题发现与 `[metrics]` 重置、插件白名单。通过 `-Library` dot-source 主脚本，不触发命令分发 |
 | 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put` / `get` / `list` / `pick` / `del` / `clear` / `pause` / `resume` / `status` / `version` / `migrate` / `themes` / `config get` / `config set` / `config init` / `diag`、主题切换与非法主题名拒绝、插件白名单与各插件命令、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝、`cli` 命令列表；以及打包（进包内容、`install.bat`、包内版本为常量且与 `package.ini` 一致、`Plugins=` / `Themes=` 裁剪、`Overwrite=0` 拒绝覆盖、未知插件名报错） |
 | 端到端 | `-E2E` | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启循环 |

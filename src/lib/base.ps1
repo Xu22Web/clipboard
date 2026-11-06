@@ -162,6 +162,9 @@ $script:RecKey = 0
 # appends, and the file is folded back into a clean list once it carries twice what the
 # history may show
 $script:RecLines = 0
+# how many of those rows are tombstones a delete appended: a third of the file being
+# tombstones is the other reason to fold
+$script:RecGone = 0
 # a payload above this many characters is kept in data\blobs instead of the history file:
 # rewriting a 4 MB history on every capture is what hitched the panel
 $script:BlobChars = 32768

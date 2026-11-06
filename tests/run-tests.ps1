@@ -168,11 +168,11 @@ try {
 
   # the entry file names these by relative path; a package must carry all of them
   $requiredLib = @('lib\base', 'lib\native', 'lib\keyhook', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\layout',
-    'lib\media', 'lib\clip', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\hotkey', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\picker-geom', 'lib\anim',
+    'lib\media', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\hotkey', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\picker-geom', 'lib\anim',
     'lib\picker-draw', 'lib\picker-edit', 'lib\media-render', 'lib\pinlist', 'lib\preview', 'lib\picker', 'lib\serve', 'lib\diag', 'lib\shortcut',
     'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch',
     'utils\ini', 'utils\import', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\draw', 'utils\hotkey',
-    'utils\query', 'utils\pinyin', 'utils\transfer', 'utils\apprules',
+    'utils\query', 'utils\pinyin', 'utils\transfer', 'utils\apprules', 'utils\storefile',
     'schema\clipboard', 'schema\theme')
   $missingLib = @()
   foreach ($m in $requiredLib) {
@@ -568,6 +568,46 @@ try {
     Check 'unit' 'mark word lookup' ((Get-MarkWord 's') -eq 'starred') (Get-MarkWord 's')
     Check 'unit' 'undeclared mark falls back to its character' ((Get-MarkWord 'z') -eq 'z') (Get-MarkWord 'z')
     Check 'unit' 'protected marks come from the declaration' ((@(Get-ProtectedMarks) -join ',') -eq 's') (@(Get-ProtectedMarks) -join ',')
+
+    # A mark change is an append too: the row comes back with the same payload and time and its
+    # new marks, so pinning costs one line instead of a rewrite of the whole history.
+    Save-Records @()
+    Add-Item 'm-one'; Add-Item 'm-two'; Add-Item 'm-three'
+    $beforePin = (@(Get-Records) | ForEach-Object { [string]$_.Payload }) -join ','
+    $linesBeforePin = [int]$script:RecLines
+    [void](Set-Mark 'm-two' 'p' $true)
+    $linesAfterPin = [int]$script:RecLines
+    $afterPin = @(Get-Records)
+    $afterPinText = ($afterPin | ForEach-Object { [string]$_.Payload }) -join ','
+    Check 'unit' 'a mark change appends a line' ($linesAfterPin -eq ($linesBeforePin + 1)) ([string]$linesBeforePin + ' -> ' + [string]$linesAfterPin)
+    Check 'unit' 'a marked row keeps its place' ($afterPinText -ceq $beforePin) ($afterPinText + ' vs ' + $beforePin)
+    $markedRow = @($afterPin | Where-Object { [string]$_.Payload -ceq 'm-two' })
+    Check 'unit' 'the appended version carries the mark' (($markedRow.Count -eq 1) -and (Test-Mark $markedRow[0] 'p')) ''
+    # the older line holds a copy of the row, so the two must not become two rows
+    Check 'unit' 'the older version of a row is not a second row' ($afterPin.Count -eq 3) ([string]$afterPin.Count)
+
+    # A delete is a tombstone: one line naming the payload, and the read side drops every line
+    # for it, so the row goes without the file being rewritten.
+    $linesBeforeDel = [int]$script:RecLines
+    $delResult = Remove-Record 'm-two'
+    $rowsAfterDel = @(Get-Records)
+    $delText = ($rowsAfterDel | ForEach-Object { [string]$_.Payload }) -join ','
+    Check 'unit' 'a delete appends a tombstone' (($delResult -eq 'removed') -and ([int]$script:RecLines -eq ($linesBeforeDel + 1)) -and ([int]$script:RecGone -ge 1)) ([string]$delResult + ' lines=' + [string]$script:RecLines + ' gone=' + [string]$script:RecGone)
+    Check 'unit' 'the tombstoned row is gone' (-not ($delText.Contains('m-two'))) $delText
+
+    # a payload captured twice and then deleted must not come back through its older line
+    Add-Item 'dup'; Add-Item 'dup'
+    [void](Remove-Record 'dup')
+    $dupRows = @(Get-Records | Where-Object { [string]$_.Payload -ceq 'dup' })
+    Check 'unit' 'a tombstone also hides the older copies' ($dupRows.Count -eq 0) ([string]$dupRows.Count)
+
+    # folding drops the tombstones and the stale lines in one rewrite
+    $savedFoldMax = $script:MaxItems
+    $script:MaxItems = 4
+    for ($k = 0; $k -lt 10; $k++) { Add-Item ('fold ' + [string]$k) }
+    $script:MaxItems = $savedFoldMax
+    $rawFolded = [IO.File]::ReadAllText($StoreFile)
+    Check 'unit' 'folding leaves no tombstones behind' ((-not ($rawFolded.Contains($RS + 'x'))) -and ([int]$script:RecGone -eq 0)) ([string]$script:RecGone + ' gone, ' + [string]$script:RecLines + ' lines')
     Check 'unit' 'sort mark comes from the declaration' ((Get-SortMark) -eq 'p') (Get-SortMark)
     Check 'unit' 'clear keeps the declared marks' ((@(Get-ClearKeepMarks) -join ',') -eq 'p,s') (@(Get-ClearKeepMarks) -join ',')
     Check 'unit' 'clear -All keeps only protected marks' ((@(Get-ClearKeepMarks -All) -join ',') -eq 's') (@(Get-ClearKeepMarks -All) -join ',')
