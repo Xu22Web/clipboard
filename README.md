@@ -133,18 +133,22 @@ cli build        # 打包到 dist\clipboard-<version>\
 
 输入按空格切分，每个词都要命中（默认只看每条记录的前 4096 个字符）。除普通词外还有几种写法：
 
-| 写法 | 含义 |
-|---|---|
-| `word` | 包含该词（不区分大小写） |
-| `"two words"` | 短语，空格算在内 |
-| `-word` | 不包含该词 |
-| `type:text` `type:files` `type:image` `type:rich` | 只看某一类；逗号表示「或」（`type:image,rich`），多个 `type:` 之间是「且」 |
-| `type:link` `type:mail` `type:path` `type:code` `type:multi` | 由 `entry-actions` 插件提供的细分类型，未启用该插件时不可用 |
-| `mark:p` / `-mark:p` | 带 / 不带某个标记（标记字符见[标记](#标记mark)） |
-| `age:7d` | 早于 7 天（单位 `d` `h` `m` `s`，只写数字按天算） |
-| `newer:2026-11-01` / `older:2026-11-01` | 时间范围 |
-| `re:^alpha\s` | 正则表达式（忽略大小写，250 ms 超时） |
-| `py:zg` | 拼音首字母，例如 `zg` 命中「中国」（GB2312 一级字） |
+| 写法 | 含义 | 示例 |
+|---|---|---|
+| `word` | 包含该词（不区分大小写） | `docker` |
+| `"two words"` | 短语，空格算在内 | `"build failed"` |
+| `-word` | 不包含该词 | `docker -compose` |
+| `type:text` `type:files` `type:image` `type:rich` | 只看某一类；逗号表示「或」（`type:image,rich`），多个 `type:` 之间是「且」 | `type:files .ps1`、`type:image,rich`、`type:rich 方案` |
+| `type:link` `type:mail` `type:path` `type:code` `type:multi` | 由 `entry-actions` 插件提供的细分类型，未启用该插件时不可用 | `type:code parser` |
+| `mark:p` / `-mark:p` | 带 / 不带某个标记（标记字符见[标记](#标记mark)） | `mark:p type:image`、`type:rich 方案 -mark:p` |
+| `age:7d` | 早于 7 天（单位 `d` `h` `m` `s`，只写数字按天算） | `age:7d type:text` |
+| `newer:2026-11-01` / `older:2026-11-01` | 时间范围 | `newer:2026-11-01 older:2026-11-06 周报`（11 月 1 日至 5 日之间、含「周报」） |
+| `re:^alpha\s` | 正则表达式（忽略大小写，250 ms 超时） | `re:^https?://`（以链接开头） |
+| `py:zg` | 拼音首字母，例如 `zg` 命中「中国」（GB2312 一级字） | `py:zg -草稿` |
+
+几种写法可以任意组合，顺序无关，结果只会更窄，例如 `type:files .ps1 newer:2026-11-01 -mark:p` 要求三条规则同时成立。
+
+`-` 只能否定普通词与 `mark:` 字段；`type:` `age:` `newer:` `older:` `re:` `py:` 没有否定写法，需要「排除某类」时用 `-word` 或 `mark:` 组合。`mark:` 后面的字符由插件声明（`p` / `s` / `h` 来自 `item-marks`，见[标记](#标记mark)），插件未启用时这些写法没有结果。
 
 写错字段时面板会直接说明「搜索无法理解」，而不是当作普通词搜：未知的 `type:`、编译失败的正则、非法的时间都会让这一次搜索无结果。拼音只在前 128 个字符内取首字母，并且只在显式写 `py:` 时才计算——每次按键都对整库算一遍会让输入变卡。
 
