@@ -378,23 +378,60 @@ function Get-PasteImageExt([string]$mime) {
   return ''
 }
 
-# every data:image/... in the buffer becomes a file next to the entry, and the four offsets are
-# recomputed because the buffer changed length. A buffer with nothing inlined comes back as it
-# was: this runs on the paste path, so it must cost nothing for plain formatted text.
+# the src a tag names, quoted or bare, '' when it names none
+function Get-CfHtmlImgSrc([string]$tag) {
+  $m = [regex]::Match($tag, '(?is)\bsrc\s*=\s*(?:"([^"]*)"|''([^'']*)''|([^\s>]+))')
+  if (-not $m.Success) { return '' }
+  if ($m.Groups[1].Success) { return [string]$m.Groups[1].Value }
+  if ($m.Groups[2].Success) { return [string]$m.Groups[2].Value }
+  return [string]$m.Groups[3].Value
+}
+
+# What a picture that is not there any more leaves behind. A picture over MaxRichImages is not
+# inlined, and an html block stored with file: paths points at the temp folder the source app
+# owned - both are gone by paste time, and the target would draw an empty frame, which reads as
+# a broken paste. A dashed frame of the picture's footprint says what happened instead, so the
+# sentence around it still makes sense and the reader knows something was cut.
+function Get-CfHtmlPlaceholder([string]$tag) {
+  $w = 0
+  $h = 0
+  $m = [regex]::Match($tag, '(?i)\bwidth\s*[=:]\s*["'']?(\d+)')
+  if ($m.Success) { [void][int]::TryParse($m.Groups[1].Value, [ref]$w) }
+  $m = [regex]::Match($tag, '(?i)\bheight\s*[=:]\s*["'']?(\d+)')
+  if ($m.Success) { [void][int]::TryParse($m.Groups[1].Value, [ref]$h) }
+  # keep the footprint, but never let one missing picture own the page
+  if ($w -le 0) { $w = 160 }
+  if ($h -le 0) { $h = [int][Math]::Round($w * 9 / 16) }
+  if ($w -lt 96) { $h = [int][Math]::Round($h * 96 / $w); $w = 96 }
+  if ($w -gt 360) { $h = [int][Math]::Round($h * 360 / $w); $w = 360 }
+  if ($h -lt 32) { $h = 32 }
+  if ($h -gt 240) { $h = 240 }
+  $style = 'display:inline-block;width:' + [string]$w + 'px;height:' + [string]$h + 'px;' +
+    'border:1px dashed #a6a6a6;border-radius:6px;color:#8c8c8c;' +
+    'font-size:12px;line-height:' + [string]$h + 'px;text-align:center;vertical-align:middle;overflow:hidden'
+  return ('<span style="' + $style + '">[ image not saved ]</span>')
+}
+
+# every picture in the buffer becomes a file next to the entry, and the four offsets are
+# recomputed because the buffer changed length. Two kinds come through here: the data: uris the
+# entry kept, and the file: paths it had to leave alone - a file that still exists is copied out
+# of the temp folder, one that does not becomes a placeholder frame (Get-CfHtmlPlaceholder).
+# A buffer with no <img> at all comes back as it was: this runs on the paste path, so plain
+# formatted text must not pay for it.
 function Get-CfHtmlOnDisk([byte[]]$html) {
   if ($null -eq $html -or $html.Length -lt 32) { return $html }
   $strict = New-Object Text.UTF8Encoding $false, $true
   $text = ''
   try { $text = $strict.GetString($html) } catch { return $html }
-  if ($text.IndexOf('data:image', [StringComparison]::OrdinalIgnoreCase) -lt 0) { return $html }
+  if ($text.IndexOf('<img', [StringComparison]::OrdinalIgnoreCase) -lt 0) { return $html }
   $headAt = Get-CfHtmlHeadLength $text
   if ($headAt -le 0) { return $html }
   $head = $text.Substring(0, $headAt)
   $body = $text.Substring($headAt)
-  $hits = @([regex]::Matches($body, 'data:image/([a-zA-Z+]+);base64,([A-Za-z0-9+/=]+)'))
-  if ($hits.Count -eq 0) { return $html }
   $dir = Get-PasteImageDir
   $sb = New-Object Text.StringBuilder $body
+  # inlined pictures first, because that rewrite changes the length the tags are measured against
+  $hits = @([regex]::Matches($body, 'data:image/([a-zA-Z+]+);base64,([A-Za-z0-9+/=]+)'))
   # back to front: an earlier replacement would move every later index
   for ($i = $hits.Count - 1; $i -ge 0; $i--) {
     $hit = $hits[$i]
@@ -413,8 +450,37 @@ function Get-CfHtmlOnDisk([byte[]]$html) {
     }
   }
   $newBody = $sb.ToString()
-  if ($newBody -ceq $body) { return $html }
-  return (Set-CfHtmlOffsets ($strict.GetBytes($head + $newBody)))
+  $tags = @([regex]::Matches($newBody, '(?is)<img\b[^>]*>'))
+  $frame = New-Object Text.StringBuilder $newBody
+  for ($i = $tags.Count - 1; $i -ge 0; $i--) {
+    $tag = $tags[$i]
+    $src = Get-CfHtmlImgSrc $tag.Value
+    # a uri the target can fetch on its own, and a picture already written out above
+    if ($src -match '^(?i)(data:|https?:|cid:)') { continue }
+    $done = $false
+    if ($src -match '^(?i)file:') {
+      $path = ''
+      try { $path = ([uri]$src).LocalPath } catch { $path = '' }
+      if ($path -and (Test-Path -LiteralPath $path)) {
+        try {
+          $bytes = [IO.File]::ReadAllBytes($path)
+          $copy = Join-Path $dir ((Get-MediaSha1 $bytes $null) + [IO.Path]::GetExtension($path).ToLowerInvariant())
+          if (-not (Test-Path -LiteralPath $copy)) { [IO.File]::WriteAllBytes($copy, $bytes) }
+          [void]$frame.Remove($tag.Index, $tag.Length)
+          [void]$frame.Insert($tag.Index, $tag.Value.Replace($src, ([uri]$copy).AbsoluteUri))
+          $done = $true
+        } catch {
+          Write-Log ('paste picture not copied: ' + $_.Exception.Message)
+        }
+      }
+    }
+    if ($done) { continue }
+    [void]$frame.Remove($tag.Index, $tag.Length)
+    [void]$frame.Insert($tag.Index, (Get-CfHtmlPlaceholder $tag.Value))
+  }
+  $finalBody = $frame.ToString()
+  if ($finalBody -ceq $body) { return $html }
+  return (Set-CfHtmlOffsets ($strict.GetBytes($head + $finalBody)))
 }
 
 # ---- media accounting -------------------------------------------------------

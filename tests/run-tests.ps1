@@ -570,7 +570,7 @@ try {
     # the four new settings are real schema entries with the shipped defaults
     $sch = $script:IniSchema
     Check 'unit' 'preview and blob settings carry defaults' (($sch['PreviewHover'].Default -eq 1) -and ($sch['PreviewDelay'].Default -eq 350) -and ($sch['PreviewChars'].Default -eq 6000) -and ($sch['BlobThreshold'].Default -eq 32768)) ''
-    Check 'unit' 'media settings carry defaults' (($sch['CaptureImages'].Default -eq 1) -and ($sch['MaxImageBytes'].Default -eq 8388608) -and ($sch['CaptureRich'].Default -eq 1) -and ($sch['MaxRichBytes'].Default -eq 4194304) -and ($sch['MaxRichImages'].Default -eq 2097152) -and ($sch['PasteRich'].Default -eq 1) -and ($sch['MaxMediaTotal'].Default -eq 67108864)) ''
+    Check 'unit' 'media settings carry defaults' (($sch['CaptureImages'].Default -eq 1) -and ($sch['MaxImageBytes'].Default -eq 16777216) -and ($sch['CaptureRich'].Default -eq 1) -and ($sch['MaxRichBytes'].Default -eq 8388608) -and ($sch['MaxRichImages'].Default -eq 4194304) -and ($sch['PasteRich'].Default -eq 1) -and ($sch['MaxMediaTotal'].Default -eq 134217728)) ''
 
     # ------------------------------------------------------- export and import
     # the shapes first: a document this build writes has to be one it reads
@@ -910,6 +910,39 @@ try {
     $plainBytes = New-CfHtmlSample '<html><body><!--StartFragment--><p>plain</p><!--EndFragment--></body></html>'
     $plainBack = Get-CfHtmlOnDisk $plainBytes
     Check 'unit' 'html without pictures is left alone' (([BitConverter]::ToString($plainBack)) -eq ([BitConverter]::ToString($plainBytes))) ''
+
+    # a picture the entry could not keep: the html still names the temp file, and that file is
+    # gone by paste time. Every such tag becomes a dashed frame of the same footprint, so a
+    # reader sees that a picture belonged there instead of an empty frame.
+    $goneUrl = 'file:///' + ((Join-Path $tmpRoot 'gone-picture.png') -replace '\\', '/')
+    $goneFrag = '<html><body><!--StartFragment--><p>before <img src="' + $goneUrl + '" width="240" height="180"> after</p><!--EndFragment--></body></html>'
+    $goneText = $Utf8.GetString((Get-CfHtmlOnDisk (New-CfHtmlSample $goneFrag)))
+    Check 'unit' 'a picture that is gone becomes a placeholder' ((-not ($goneText -match '<img')) -and ($goneText -match 'image not saved') -and ($goneText -match 'width:240px')) ([regex]::Match($goneText, 'width:\d+px').Value)
+    $goneAt = [int](Get-CfHtmlHeadLength $goneText)
+    Check 'unit' 'the placeholder keeps the fragment offsets' (($goneAt -gt 0) -and ($goneText.Substring($goneAt, 5) -eq '<html')) ([string]$goneAt)
+
+    # a picture whose file is still there is copied next to the paste, so the target keeps a
+    # readable file even after the source application deletes its temp folder
+    $livePath = Join-Path $tmpRoot 'live-picture.png'
+    [IO.File]::WriteAllBytes($livePath, $png)
+    $liveFrag = '<html><body><!--StartFragment--><p><img src="file:///' + ($livePath -replace '\\', '/') + '"></p><!--EndFragment--></body></html>'
+    $liveText = $Utf8.GetString((Get-CfHtmlOnDisk (New-CfHtmlSample $liveFrag)))
+    $live = [regex]::Match($liveText, 'src="(file:[^"]+)"')
+    $liveCopy = ''
+    $liveOk = $false
+    if ($live.Success) {
+      try { $liveCopy = ([uri]$live.Groups[1].Value).LocalPath } catch { $liveCopy = '' }
+      if ($liveCopy -and (Test-Path -LiteralPath $liveCopy)) {
+        $liveOk = ([BitConverter]::ToString([IO.File]::ReadAllBytes($liveCopy)) -eq [BitConverter]::ToString($png))
+      }
+    }
+    Check 'unit' 'a picture whose file survives is copied out' ($liveOk -and (-not ($liveText -match 'image not saved'))) $liveCopy
+    Remove-Item -LiteralPath $livePath -Force
+
+    # a remote picture is fetched by the target itself, so the tag stays as it is
+    $webBytes = New-CfHtmlSample '<html><body><!--StartFragment--><p><img src="https://example.invalid/x.png"></p><!--EndFragment--></body></html>'
+    $webBack = Get-CfHtmlOnDisk $webBytes
+    Check 'unit' 'a web picture is left alone' (([BitConverter]::ToString($webBack)) -eq ([BitConverter]::ToString($webBytes))) ''
     # a header whose StartHTML was left at zero still gets its offsets repaired
     $zeroHead = "Version:0.9`r`nStartHTML:0000000000`r`nEndHTML:0000000000`r`nStartFragment:0000000000`r`nEndFragment:0000000000`r`n"
     $zeroBytes = $Utf8.GetBytes($zeroHead + '<html><body><!--StartFragment--><p>x</p><!--EndFragment--></body></html>')

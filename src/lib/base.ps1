@@ -130,14 +130,15 @@ $script:MaxBytes = 204800
 $script:MaxTotal = 4194304
 # media (image files, html/rtf sidecars) has its own budget: a 4 MB text total would evict
 # every screenshot, so the two are counted apart and trimmed apart
-$script:MaxMediaTotal = 67108864
+$script:MaxMediaTotal = 134217728
 $script:CaptureImages = $true
-$script:MaxImageBytes = 8388608
+$script:MaxImageBytes = 16777216
 $script:CaptureRich = $true
-# per block cap: the html and the rtf are measured apart, so a large rtf cannot cost the html
-$script:MaxRichBytes = 4194304
+# per block cap: the html and the rtf are measured apart, so a large rtf cannot cost the html.
+# 8 MB of rtf carries about 4 MB of picture (the hex spelling doubles every byte)
+$script:MaxRichBytes = 8388608
 # a picture the html points at is inlined only when it is at most this large, 0 = never
-$script:MaxRichImages = 2097152
+$script:MaxRichImages = 4194304
 $script:PasteRich = $true
 # a file list also goes on the clipboard as text, so an address bar or a terminal gets the paths
 $script:PasteFilesAsText = $true

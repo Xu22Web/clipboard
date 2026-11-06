@@ -180,12 +180,12 @@ cli build        # 打包到 dist\clipboard-<version>\
 | `MaxBytes` | `204800` | 单条**文本**上限，超出不入库（图片用 `MaxImageBytes`） |
 | `MaxTotal` | `4194304` | 文本条目的总容量上限，超出丢最旧的（置顶条目保留） |
 | `BlobThreshold` | `32768` | 超过该字符数的条目正文存到 `data/blobs/`，历史文件只留引用；`0` = 始终内联（单个 `history.dat` 自包含） |
-| `MaxMediaTotal` | `67108864` | 图片与富文本附件（`data/media/`）的总容量上限，`0` = 不限；与 `MaxTotal` 分开计算，所以截图不会把文本条目挤掉 |
+| `MaxMediaTotal` | `134217728` | 图片与富文本附件（`data/media/`）的总容量上限，`0` = 不限；与 `MaxTotal` 分开计算，所以截图不会把文本条目挤掉 |
 | `CaptureImages` | `1` | `1` = 捕获剪贴板里的图片 |
-| `MaxImageBytes` | `8388608` | 单张图片上限；更大的图片记日志后跳过（不缩放，避免粘回去不是原图） |
+| `MaxImageBytes` | `16777216` | 单张图片上限；更大的图片记日志后跳过（不缩放，避免粘回去不是原图） |
 | `CaptureRich` | `1` | `1` = 记住带格式文本的 HTML / RTF（含随复制一起来的图片块） |
-| `MaxRichBytes` | `4194304` | 富文本**每个块**的上限（HTML 与 RTF 分开计数）；超出的那一块单独丢弃，不会连带丢另一块 |
-| `MaxRichImages` | `2097152` | HTML 里引用本机临时文件的图片，单张不超这个字节数就内联进 HTML（`data:` URI）；`0` = 不内联 |
+| `MaxRichBytes` | `8388608` | 富文本**每个块**的上限（HTML 与 RTF 分开计数）；超出的那一块单独丢弃，不会连带丢另一块。RTF 里的图是十六进制，8 MB 的 RTF 约装得下 4 MB 的图 |
+| `MaxRichImages` | `4194304` | HTML 里引用本机临时文件的图片，单张不超这个字节数就内联进 HTML（`data:` URI）；`0` = 不内联 |
 | `PasteRich` | `1` | `1` = `pick` / 回车粘贴时把格式一起写回剪贴板，`0` = 只粘纯文本 |
 | `PasteFilesAsText` | `1` | `1` = 文件条目粘贴时同时写入路径文本（地址栏、终端、编辑器才有内容），`0` = 只写文件列表 |
 | `AppRules` | 空 | 按应用改粘贴行为：`程序名:动作`，`;` 分隔，如 `windowsterminal.exe:plain;code.exe:rich;*`；动作见[按应用规则](#按应用规则) |
@@ -283,10 +283,11 @@ cli build        # 打包到 dist\clipboard-<version>\
 
 - **图片内联**：Word / Excel / 浏览器把图片放在临时目录（`msohtmlclip1/clip_image001.png`）里、HTML 里只写路径，那个目录活不过这次复制。不超 `MaxRichImages` 的图片在捕获时被读进来、换成 `data:` URI，四个头部偏移跟着重算。
 - **粘贴时再落回文件**：Word / Excel / PowerPoint **不认 CF_HTML 里的 `data:` URI**，它们只按照 `<img>` 指向的文件取图（这也是它们自己写剪贴板的方式）。因此粘贴前会把 `data:` 图片解出来写成 `%TEMP%\clipboard-paste\<sha1>.<ext>`，HTML 里的 `src` 换回 `file:///` 并重算偏移 —— 否则文字能贴上，而每个图位都是空白框（预览卡片看着正常，因为它直接用存下的位图块画，不走 HTML）。同一张图只写一份；超过 24 小时的残留文件在下次粘贴时清掉。
+- **留不住的图给个占位**：`<img>` 指向的临时文件若届时还在，就先拷进 `%TEMP%\clipboard-paste\` 再改写（源目录被删也不影响）；**文件已经不在**（超过 `MaxRichImages` 没被内联、或整块 HTML 以 `file:` 路径存下）时，这个图位换成一个虚线框占位：宽高沿用原图 `width` / `height`（夹在 96–360 px 宽之间），灰色虚线框里写着 `[ image not saved ]`。这样粘出去的文字与版式仍然完整，接收方能看出"这里原本有张图，只是没保存"，而不是一个空洞的裂图框。远程 `http(s):` 图片原样保留，目标自己去取。
 - **图片块随行**：同一次复制里源应用额外提供的位图 / 图元文件也一起存下，粘贴时一并还原；目标程序自己会挑它偏好的那种。卡片渲染不出排版时（如 Excel 只给 HTML 与图元文件），就用第一张图片当缩略图。
 - **卡片里的图片**：悬停卡片用离屏 `RichTextBox` 排版 RTF，而这个排版引擎**不画 `\pngblip`（PNG 图片）**——偏偏 Word / Excel 复制时的图片就是这种写法，所以卡片只能显示文字。因此排版前会把 `\pngblip` 就地改写成 `\dibitmap0`（`ConvertTo-CardRtf`，只影响显示，不动存储与剪贴板字节）；单张超过 4 MB、或一次排版累计超过 24 MB 的图片不改写，以免卡片卡住面板。
 
-超过 `MaxRichImages`（默认 2 MB）的图不会被内联，日志里记一行 `html image not inlined`。这类图仍然能被预览（它存在源临时目录时就已拷进 `data\media`），但**源目录消失后粘贴时无法还原**：想要图文混排长期可粘，把这个值调大，例如 `clipboard config set MaxRichImages 16777216`。
+超过 `MaxRichImages`（默认 4 MB）的图不会被内联，日志里记一行 `html image not inlined`。这类图仍然能被预览（它存在源临时目录时就已拷进 `data\media`），但**源目录消失后只能粘出占位框**：想要图文混排长期可粘，把这个值调大，例如 `clipboard config set MaxRichImages 16777216`。
 
 分别关闭：`clipboard config set CaptureImages 0` / `clipboard config set CaptureRich 0`；只粘纯文本：`clipboard config set PasteRich 0`。
 
