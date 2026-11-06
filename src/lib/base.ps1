@@ -158,6 +158,10 @@ $script:RecCache = $null
 # records get a number when the store is parsed; the panel keys its caches by it instead of
 # by the payload, because hashing a 200 KB text on every paint is what made it stutter
 $script:RecKey = 0
+# how many rows the file on disk holds, dropped duplicates and stale rows included: a capture
+# appends, and the file is folded back into a clean list once it carries twice what the
+# history may show
+$script:RecLines = 0
 # a payload above this many characters is kept in data\blobs instead of the history file:
 # rewriting a 4 MB history on every capture is what hitched the panel
 $script:BlobChars = 32768

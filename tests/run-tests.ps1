@@ -525,6 +525,30 @@ try {
     Check 'unit' 'a moved row keeps its marks and its rich sidecar' ((([string]$afterTouch[0].Marks) -ceq 'p') -and (([string]$afterTouch[0].Rich) -ceq $touchRichRef)) ([string]$afterTouch[0].Marks + ' / ' + [string]$afterTouch[0].Rich)
     Check 'unit' 'a row already on top is left alone' (-not (Touch-Record 'rich row')) ''
 
+    # A capture appends one line instead of rewriting the file; the read side reverses it and
+    # hides the duplicate, so a payload captured twice is one row carrying the newer time and
+    # the marks it already had.
+    Save-Records @()
+    Add-Item 'first'; Add-Item 'second'
+    $linesAfterTwo = [int]$script:RecLines
+    $rawTwo = [IO.File]::ReadAllText($StoreFile)
+    Add-Item 'first'
+    $linesAfterRepeat = [int]$script:RecLines
+    $rawRepeat = [IO.File]::ReadAllText($StoreFile)
+    Check 'unit' 'a capture appends a line instead of rewriting' (($linesAfterTwo -eq 2) -and ($linesAfterRepeat -eq 3) -and ($rawRepeat.Length -gt $rawTwo.Length)) ([string]$linesAfterTwo + ' -> ' + [string]$linesAfterRepeat)
+    $repeated = @(Get-Records)
+    Check 'unit' 'the repeated capture is one row on top' (($repeated.Count -eq 2) -and ([string]$repeated[0].Payload -ceq 'first')) ([string]$repeated.Count + ' / ' + [string]$repeated[0].Payload)
+
+    # The file may carry rows the history already hides; twice MaxItems is where it is folded
+    # back into a clean list, so a long session cannot grow the file without bound.
+    $savedAppendMax = $script:MaxItems
+    $script:MaxItems = 3
+    for ($k = 0; $k -lt 6; $k++) { Add-Item ('grow ' + [string]$k) }
+    $script:MaxItems = $savedAppendMax
+    Check 'unit' 'the append log is folded back at twice MaxItems' ([int]$script:RecLines -le 6) ([string]$script:RecLines + ' lines')
+    $grown = @(Get-Records)
+    Check 'unit' 'the folded list keeps the newest rows' (($grown.Count -le 6) -and ($grown.Count -gt 0)) ([string]$grown.Count)
+
     # ------------------------------------------------------------- record store
     $rawHead = [IO.File]::ReadAllText($StoreFile)
     Check 'unit' 'the store starts with the tag and its layout version' ($rawHead.StartsWith($TAG + $RS + [string]$script:DataVersion)) ($rawHead.Substring(0, [Math]::Min(9, $rawHead.Length)) -replace [string][char]30, '<RS>')

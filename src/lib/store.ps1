@@ -128,7 +128,33 @@ function Get-Records {
       $out.Add($one)
     }
   } catch { return @() }
-  $script:RecCache = @{ Stamp = $stamp; Records = $out.ToArray() }
+  # The file is written oldest first, so a capture can be one appended line instead of a
+  # rewrite of the whole history. Callers want the newest row first and one row per payload -
+  # when the same text was captured again its newer line wins - so the list is reversed and
+  # de-duplicated here, once per file change, and then cached like before.
+  $script:RecLines = $out.Count
+  $out.Reverse()
+  $seen = New-Object System.Collections.Generic.HashSet[string] ([StringComparer]::Ordinal)
+  $rows = New-Object System.Collections.Generic.List[object]
+  foreach ($r in $out) {
+    # the same payload captured again leaves earlier lines behind: the newest one wins
+    if ($seen.Add([string]$r.Payload)) { $rows.Add($r) }
+  }
+  $rows = Sort-Records $rows
+  # the file may carry rows the history no longer shows (an older copy of a payload, a row the
+  # append log has not folded away yet). The list is cut here too, from the tail, and a row a
+  # plugin protects stays - the same rule Trim-Records applies when it rewrites the file
+  if ($rows.Count -gt $script:MaxItems) {
+    $over = $rows.Count - $script:MaxItems
+    for ($i = $rows.Count - 1; $i -ge 0 -and $over -gt 0; $i--) {
+      $proto = ''
+      try { $proto = [string](Get-ProtectorMark $rows[$i]) } catch { $proto = '' }
+      if ($proto) { continue }
+      $rows.RemoveAt($i)
+      $over--
+    }
+  }
+  $script:RecCache = @{ Stamp = $stamp; Records = $rows.ToArray() }
   return $script:RecCache.Records
 }
 
@@ -195,6 +221,65 @@ function Get-StoreVersion {
   return $o
 }
 
+# One line of the store: flags US tick US extra US body, with a big payload swapped for its
+# blob. Shared by the full rewrite and by the append a capture does, so both spell a row the
+# same way.
+function Get-RecordLine($r) {
+  $flags = 't'
+  if (Test-FilePayload ([string]$r.Payload)) { $flags = 'f' }
+  elseif (Test-ImagePayload ([string]$r.Payload)) { $flags = 'i' }
+  $body = [string]$r.Payload
+  # a big payload lives in its own file, so a line is a few KB of history at most
+  if ($body.Length -gt $script:BlobChars) {
+    $r.Blob = Save-Blob $body
+    $body = [string]$script:BlobMark + [string]$r.Blob
+  } elseif ($r.Blob) { $r.Blob = '' }
+  return ($flags + [string]$r.Marks + $US + [string][long]$r.Time + $US + [string]$r.Rich + $US + $body)
+}
+
+# One line at the end of the store. The file carries its rows oldest first, so a capture costs
+# an append instead of a rewrite of the whole history; a read reverses the list and keeps the
+# last line of each payload. Returns $false when the file cannot be appended to, and the caller
+# falls back to a rewrite.
+function Append-Record($record) {
+  Ensure-Dir
+  $sv = Get-StoreVersion
+  if (@('old', 'newer', 'unknown') -contains $sv.Kind) {
+    Write-Log ('store not appended: ' + $sv.Label)
+    return $false
+  }
+  $line = Get-RecordLine $record
+  $head = $TAG + $RS + [string]$script:DataVersion + $RS
+  try {
+    # a missing or empty file needs the header as well; anything else just gets the line
+    if (-not (Test-Path -LiteralPath $StoreFile) -or ((Get-Item -LiteralPath $StoreFile).Length -eq 0)) {
+      [IO.File]::WriteAllText($StoreFile, ($head + $line), $Utf8)
+    } else {
+      [IO.File]::AppendAllText($StoreFile, ([string]$RS + $line), $Utf8)
+    }
+  } catch {
+    Write-Log ('append failed: ' + $_.Exception.Message)
+    return $false
+  }
+  $script:RecLines = [int]$script:RecLines + 1
+  # the caller usually holds the parsed list: put the new row in front of it, so the panel and
+  # the CLI see the capture without parsing the file again
+  try {
+    if ($null -ne $script:RecCache) {
+      $list = New-Object System.Collections.Generic.List[object]
+      $list.Add($record)
+      foreach ($r in @($script:RecCache.Records)) {
+        if ([string]$r.Payload -cne [string]$record.Payload) { $list.Add($r) }
+      }
+      $fi = Get-Item -LiteralPath $StoreFile -ErrorAction Stop
+      $stamp = [string]$fi.Length + ':' + [string]$fi.LastWriteTimeUtc.Ticks
+      $script:RecCache = @{ Stamp = $stamp; Records = $list.ToArray() }
+      $script:GateCache = @{ Stamp = $stamp; Value = [pscustomobject]@{ Kind = 'current'; Version = $script:DataVersion; Label = ('CBHIST v' + $script:DataVersion); Hint = '' } }
+    }
+  } catch { }
+  return $true
+}
+
 # Removing the blobs and media files no record points at any more walks two directories. It
 # stays the default, because every caller that drops rows wants it; the capture path - which
 # only ever appends - says -SkipReclaim and saves itself the scans.
@@ -211,33 +296,49 @@ function Save-Records($records, [switch]$SkipReclaim) {
   $sb = New-Object System.Text.StringBuilder
   [void]$sb.Append($TAG).Append($RS).Append([string]$script:DataVersion)
   if ($records) {
-    foreach ($r in $records) {
+    # The file keeps its rows oldest first, so a capture can append and a read only has to
+    # reverse the list. The caller hands rows newest first (or pinned first), so the order is
+    # rebuilt here; the index rides along in the key to keep equal ticks stable.
+    $ordered = @($records)
+    $n = $ordered.Count
+    if ($n -gt 1) {
+      # Sort(keys, items) over two int arrays: handing it an object[] let PowerShell pick a
+      # different overload, and the file came out in the order the caller happened to use
+      $keys = New-Object long[] $n
+      $idx = New-Object int[] $n
+      for ($i = 0; $i -lt $n; $i++) { $keys[$i] = ([long]$ordered[$i].Time * 1000) + $i; $idx[$i] = $i }
+      [Array]::Sort($keys, $idx)
+      $sorted = New-Object System.Collections.Generic.List[object]
+      for ($i = 0; $i -lt $n; $i++) { $sorted.Add($ordered[$idx[$i]]) }
+      $ordered = $sorted
+    }
+    foreach ($r in $ordered) {
+      # spelled out rather than calling Get-RecordLine: one PowerShell call per row measured
+      # 30 ms on a 365 row store, and this is the path a fold back from the append log takes
       $flags = 't'
       if (Test-FilePayload ([string]$r.Payload)) { $flags = 'f' }
       elseif (Test-ImagePayload ([string]$r.Payload)) { $flags = 'i' }
       $body = [string]$r.Payload
-      # a big payload lives in its own file, so the rewrite a capture costs is a few KB of
-      # history instead of the whole store
       if ($body.Length -gt $script:BlobChars) {
         $r.Blob = Save-Blob $body
         $body = [string]$script:BlobMark + [string]$r.Blob
       } elseif ($r.Blob) { $r.Blob = '' }
-      $extra = [string]$r.Rich
-      [void]$sb.Append($RS).Append($flags + [string]$r.Marks).Append($US).Append([string][long]$r.Time).Append($US).Append($extra).Append($US).Append($body)
+      [void]$sb.Append($RS).Append($flags + [string]$r.Marks).Append($US).Append([string][long]$r.Time).Append($US).Append([string]$r.Rich).Append($US).Append($body)
     }
   }
   $tmp = $StoreFile + '.tmp'
   [IO.File]::WriteAllText($tmp, $sb.ToString(), $Utf8)
   Move-Item -LiteralPath $tmp -Destination $StoreFile -Force
   # The caller already holds the records it just wrote, so hand them to the read cache: the
-  # next Get-Records would parse the whole file again (114 ms on a 4 MB store) after every
-  # capture. Records that have never been parsed get their number here.
+  # next Get-Records would parse the whole file again after every write. Records that have
+  # never been parsed get their number here.
   $script:RecCache = $null
   try {
     $arr = @($records)
     foreach ($r in $arr) { if ([int]$r.Key -le 0) { $r.Key = [int](++$script:RecKey) } }
     $fi = Get-Item -LiteralPath $StoreFile -ErrorAction Stop
     $stamp = [string]$fi.Length + ':' + [string]$fi.LastWriteTimeUtc.Ticks
+    $script:RecLines = $arr.Count
     $script:RecCache = @{ Stamp = $stamp; Records = $arr }
     # the file just written is the layout this build reads, so the next save can skip the
     # header read instead of opening the file to learn what it already knows
@@ -333,28 +434,36 @@ function Add-Item([string]$text, $capture = $null) {
   Use-StoreLock {
     $recs = @(Get-Records)
     if ($recs.Count -gt 0 -and $recs[0].Payload -ceq $text -and [string]$recs[0].Rich -ceq $rich) { return }
-    # One pass keeps the marks of a payload that is already in the store and drops the older
-    # copies of it. Comparing the payload is cheaper than hashing it: two strings that differ
-    # answer on length or on the first character, and a long one is never copied.
+    # a payload already in the store keeps its marks when it is captured again
     $prevMarks = ''
-    $seen = $false
-    $list = New-Object System.Collections.Generic.List[object]
-    $fresh = New-Record $text (Get-Epoch) ''
+    foreach ($r in $recs) {
+      if ($r.Payload -ceq $text) { $prevMarks = [string]$r.Marks; break }
+    }
+    $fresh = New-Record $text (Get-Epoch) $prevMarks
     $fresh.Rich = $rich
+    # The capture path is the hot one, so it appends one line instead of rewriting the whole
+    # history. The file may then carry rows the panel already hides - a payload captured twice,
+    # or one past MaxItems - so once it holds twice the rows the history is allowed to show,
+    # the list is folded back into a clean file.
+    if (Append-Record $fresh) {
+      if ([int]$script:RecLines -gt ([int]$script:MaxItems * 2)) {
+        $list = New-Object System.Collections.Generic.List[object]
+        foreach ($r in @(Get-Records)) { $list.Add($r) }
+        $list = Sort-Records $list
+        Trim-Records $list
+        Save-Records $list.ToArray()
+      }
+      return
+    }
+    # the file refused the append (a layout this build does not write, a locked file): rewrite
+    $list = New-Object System.Collections.Generic.List[object]
     $list.Add($fresh)
     foreach ($r in $recs) {
-      if ($r.Payload -ceq $text) {
-        if (-not $seen) { $prevMarks = [string]$r.Marks; $seen = $true }
-        continue
-      }
-      $list.Add($r)
+      if ($r.Payload -cne $text) { $list.Add($r) }
     }
-    $fresh.Marks = $prevMarks
     $list = Sort-Records $list
     Trim-Records $list
-    # only a trim that dropped rows, or a payload that was already there, can have left media
-    # or blobs behind: the two directory scans are for those cases
-    Save-Records $list.ToArray() -SkipReclaim:([int]$script:TrimDropped -eq 0 -and -not $seen)
+    Save-Records $list.ToArray()
   }
 }
 
@@ -372,10 +481,13 @@ function Touch-Record([string]$payload) {
       if ([string]$r.Payload -ceq $payload) { $hit = $r; break }
     }
     if ($null -eq $hit) { return $false }
-    $list = New-Object System.Collections.Generic.List[object]
     $fresh = New-Record ([string]$hit.Payload) (Get-Epoch) ([string]$hit.Marks)
     $fresh.Rich = [string]$hit.Rich
     $fresh.Blob = [string]$hit.Blob
+    # the trick a capture uses: a newer line is enough, because the read side keeps the last
+    # line of each payload and the older copies fall away
+    if (Append-Record $fresh) { return $true }
+    $list = New-Object System.Collections.Generic.List[object]
     $list.Add($fresh)
     # one payload is one row: the older copies of the same text go with the move
     foreach ($r in $recs) {
