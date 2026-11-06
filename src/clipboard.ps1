@@ -54,8 +54,8 @@ $libDir = Join-Path $Root 'lib'
 $coreModules = @(
   'lib\base',
   'utils\ini', 'utils\import', 'utils\schema',
-  'utils\log', 'utils\time', 'utils\format', 'utils\draw', 'utils\query', 'utils\pinyin', 'utils\transfer', 'utils\apprules',
-  'lib\native', 'lib\theme-stub', 'lib\media', 'lib\clip', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\hotkey', 'lib\apprules',
+  'utils\log', 'utils\time', 'utils\format', 'utils\draw', 'utils\hotkey', 'utils\query', 'utils\pinyin', 'utils\transfer', 'utils\apprules',
+  'lib\native', 'lib\theme-stub', 'lib\settings', 'lib\media', 'lib\clip', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\hotkey', 'lib\apprules',
   'lib\entry', 'lib\query', 'lib\select', 'lib\picker-geom', 'lib\diag', 'lib\shortcut', 'lib\config', 'lib\usage', 'lib\dispatch'
 )
 # The panel stack is only needed when something is about to draw: `ui`, `serve`, and the

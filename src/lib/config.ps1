@@ -1,55 +1,13 @@
-# lib/config.ps1 - the settings surface: apply clipboard.ini to the defaults, print the
-# effective values, validate and write one key at a time.
+# lib/config.ps1 - the `config` command surface: apply clipboard.ini to the defaults, print
+# the effective values, validate and write one key at a time, keep the template in sync.
 #
 # The keys are described by schema/clipboard.ps1, and three layers under it do the work:
 # utils/ini.ps1 parses text into a document, utils/import.ps1 reads a file once per change
-# and rewrites a single line, utils/schema.ps1 validates a value against the schema. Nothing
-# here invents a key: a key the schema does not describe is reported as unknown, which is
-# what keeps `config`, `config get` and `config set` consistent with each other.
-
-$script:SettingsSchema = Import-Schema (Join-Path $Root 'schema\clipboard.ps1')
-$script:IniSchema = Get-SchemaProperties $script:SettingsSchema
-if ($null -eq $script:IniSchema) { $script:IniSchema = [ordered]@{} }
-
-
-# clipboard.ini, the settings file beside the entry point: one document per file version,
-# imported once and re-read only when the file changes on disk
-function Read-Ini {
-  return (Import-Ini $IniPath).Map
-}
-
-# the raw value of one key, "" when the file does not set it
-function Get-IniKey([string]$key) {
-  return (Import-IniValue $IniPath $key)
-}
-
-# validate one raw value against the settings schema
-function Convert-IniValue([string]$key, [string]$raw) {
-  return (Convert-SchemaValue $script:SettingsSchema $key $raw)
-}
-
-# effective value of one key coming from clipboard.ini (null when unset or invalid)
-function Get-CfgValue([string]$key) {
-  $c = Read-Ini
-  if (-not $c.ContainsKey($key)) { return $null }
-  $raw = [string]$c[$key]
-  if ($raw -eq '') { return $null }
-  $r = Convert-IniValue $key $raw
-  if (-not $r.Ok) { Write-Log ('config ignored: ' + $key + '=' + $raw + ' (' + $r.Error + ')'); return $null }
-  return [string]$r.Value
-}
-
-# write exactly one key: the importer keeps the comments and every other line, and drops
-# its cached parse so the next read sees the new text
-function Set-IniKey([string]$key, [string]$value) {
-  try {
-    [void](Export-IniValue $IniPath $key $value)
-    return $true
-  } catch {
-    Write-Log ('ini write failed: ' + $_.Exception.Message)
-    return $false
-  }
-}
+# and rewrites a single line, utils/schema.ps1 validates a value against the schema. The
+# schema itself, and reading or writing one key, belong to lib/settings.ps1 - plugin settings
+# use the same entry points, so neither file has to call the other. Nothing here invents a
+# key: a key the schema does not describe is reported as unknown, which is what keeps
+# `config`, `config get` and `config set` consistent with each other.
 
 function Apply-Config {
   param([switch]$NoColors)

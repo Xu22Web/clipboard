@@ -167,11 +167,11 @@ try {
   if (Test-Path -LiteralPath $schemaPath) { $libFiles += @(Get-ChildItem -LiteralPath $schemaPath -Filter '*.ps1' -File | Sort-Object -Property Name) }
 
   # the entry file names these by relative path; a package must carry all of them
-  $requiredLib = @('lib\base', 'lib\native', 'lib\keyhook', 'lib\theme-stub',
+  $requiredLib = @('lib\base', 'lib\native', 'lib\keyhook', 'lib\theme-stub', 'lib\settings',
     'lib\media', 'lib\clip', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\hotkey', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\picker-geom', 'lib\anim',
     'lib\picker-draw', 'lib\picker-edit', 'lib\media-render', 'lib\pinlist', 'lib\preview', 'lib\picker', 'lib\serve', 'lib\diag', 'lib\shortcut',
     'lib\config', 'lib\usage', 'lib\dispatch',
-    'utils\ini', 'utils\import', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\draw',
+    'utils\ini', 'utils\import', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\draw', 'utils\hotkey',
     'utils\query', 'utils\pinyin', 'utils\transfer', 'utils\apprules',
     'schema\clipboard', 'schema\theme')
   $missingLib = @()

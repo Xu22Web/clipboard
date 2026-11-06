@@ -32,6 +32,29 @@
 # A schema file is dot-sourced (not invoked in a child scope) so a Ref can point at the
 # tool's own variables.
 
+# --- value shapes this program happens to use ---------------------------------
+# Two checks the type table needs that would otherwise reach into lib\: the list of theme
+# names (a folder listing) and the shape of a colour (a regular expression). Both stay here
+# so that checking a value never depends on a module that draws.
+
+# Theme names are file names: the list is the folder.
+function Get-ThemeNameList([string]$dir) {
+  $out = New-Object System.Collections.Generic.List[string]
+  try {
+    if ($dir -and (Test-Path -LiteralPath $dir)) {
+      foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.ini' -File -ErrorAction Stop | Sort-Object -Property Name)) {
+        $out.Add($f.BaseName)
+      }
+    }
+  } catch { }
+  return $out.ToArray()
+}
+
+# '#RRGGBB' (opaque) or '#AARRGGBB' (with alpha)
+function Test-ThemeColorValue([string]$spec) {
+  return ([string]$spec -match '^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$')
+}
+
 # load one schema file and check its shape; $null when the file is missing or unusable
 function Import-Schema([string]$path) {
   if (-not (Test-Path -LiteralPath $path)) {
@@ -190,28 +213,24 @@ function Convert-SchemaValue($schema, [string]$key, [string]$raw) {
   if ($type -eq 'theme') {
     if ($v -eq '') { return @{ Ok = $true; Value = (Get-SchemaDefault $schema $key); Error = '' } }
     # only a real theme name counts: the name is the file in themes\, so there is nothing
-    # to guess from
-    $have = @()
-    if (Get-Command Get-ThemeNames -ErrorAction SilentlyContinue) { $have = @(Get-ThemeNames) }
+    # to guess from. The folder is read here rather than through lib/themes.ps1, because a
+    # value check must not depend on the module that draws.
+    $have = @(Get-ThemeNameList (Join-Path $Root 'themes'))
     foreach ($n in $have) { if ($n -ieq $v) { return @{ Ok = $true; Value = $n; Error = '' } } }
     if ($have.Count -eq 0) { return @{ Ok = $true; Value = 'win11-dark'; Error = '' } }
     return @{ Ok = $false; Value = ''; Error = 'unknown theme, available: ' + ($have -join ', ') }
   }
   if ($type -eq 'color') {
     if ($v -eq '') { return @{ Ok = $true; Value = ''; Error = '' } }
-    if (Get-Command Convert-ThemeColor -ErrorAction SilentlyContinue) {
-      if ($null -eq (Convert-ThemeColor $v)) { return @{ Ok = $false; Value = ''; Error = 'expected #RRGGBB or #AARRGGBB' } }
-      return @{ Ok = $true; Value = $v.ToUpperInvariant(); Error = '' }
-    }
-    return @{ Ok = $true; Value = $v; Error = '' }
+    if (-not (Test-ThemeColorValue $v)) { return @{ Ok = $false; Value = ''; Error = 'expected #RRGGBB or #AARRGGBB' } }
+    return @{ Ok = $true; Value = $v.ToUpperInvariant(); Error = '' }
   }
   if ($type -eq 'hotkey') {
     if ((Parse-Hotkey $v).Vk -eq 0) { return @{ Ok = $false; Value = ''; Error = 'unknown key name' } }
     return @{ Ok = $true; Value = $v; Error = '' }
   }
   if ($type -eq 'apprule') {
-    if (Get-Command Test-AppRuleText -ErrorAction SilentlyContinue) { return (Test-AppRuleText $v) }
-    return @{ Ok = $true; Value = $v; Error = '' }
+    return (Test-AppRuleText $v)
   }
   return @{ Ok = $true; Value = $v; Error = '' }
 }

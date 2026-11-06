@@ -37,18 +37,12 @@
 # Apply-Theme plus the built-in palette, so a missing lib\themes.ps1 degrades to
 # "built-in palette only" rather than breaking the panel.
 
-# theme names on disk (file names without .ini, sorted); nothing is parsed here
+# theme names on disk (file names without .ini, sorted); nothing is parsed here. The listing
+# itself lives in utils/schema.ps1, so validating a theme name needs no module that draws.
 function Get-ThemeNames {
-  $out = New-Object System.Collections.Generic.List[string]
-  $dir = Get-ThemeDir
-  try {
-    if (Test-Path -LiteralPath $dir) {
-      foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.ini' -File -ErrorAction Stop | Sort-Object Name)) {
-        $out.Add($f.BaseName)
-      }
-    }
-  } catch { Write-Log ('themes folder not readable: ' + $_.Exception.Message) }
-  return $out.ToArray()
+  $out = @(Get-ThemeNameList (Get-ThemeDir))
+  if ($out.Count -eq 0 -and -not (Test-Path -LiteralPath (Get-ThemeDir))) { Write-Log ('themes folder missing: ' + (Get-ThemeDir)) }
+  return $out
 }
 
 # a theme is matched by name only (the file in themes\); anything else falls back to the
