@@ -3,7 +3,7 @@
 # Parsing the spec ("Ctrl+Alt+V" -> modifiers + virtual key) is pure table work and lives in
 # utils/hotkey.ps1, so a value check can use it without loading anything that talks to
 # Windows. This file answers the question that needs the real keyboard state, and is used by
-# the resident daemon (before it injects a paste) and by `diag`.
+# the resident daemon before it injects a paste.
 
 function Test-Modifiers-Up {
   $m = [int][Windows.Forms.Control]::ModifierKeys

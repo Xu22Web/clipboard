@@ -49,7 +49,7 @@ cli build        # 打包到 dist\clipboard-<version>\
 程序本身也可直接调用，Git Bash 下 `./src/clipboard <命令>`，CMD 下 `src\clipboard.cmd <命令>`：
 
 ```powershell
-.\src\clipboard.cmd diag               # 检查运行环境
+.\src\clipboard.cmd status              # 常驻进程状态、条目数与生效配置
 .\src\clipboard.cmd install            # 建开机自启 + 桌面快捷方式
 .\src\clipboard.cmd uninstall          # 只删快捷方式，保留历史与配置
 .\src\clipboard.cmd uninstall purge    # 连历史、配置、日志一起删
@@ -86,12 +86,10 @@ cli build        # 打包到 dist\clipboard-<version>\
 | | `config edit` / `config init` | 用记事本编辑 / **与当前版本对齐**：补上新增的键、把已不存在的键注释掉，不动任何已有值 |
 | | `config reset` | 用默认值**重写整个 ini**（唯一会丢配置的路径） |
 | **theme** | `themes` | 列出可用主题（`*` = 当前生效） |
-| **setup** | `diag` | 检查运行环境与数据版本 |
-| | `export FILE` | 导出历史：`.json` 全量、`.csv` / `.txt` 仅文本；`-Media` 把图片写进 json |
+| **setup** | `export FILE` | 导出历史：`.json` 全量、`.csv` / `.txt` 仅文本；`-Media` 把图片写进 json |
 | | `import FILE` | 导入导出文件；`-Replace` 整库替换（替换前自动备份） |
-| | `backup [name]` / `restore-data [name]` | 把 `data\` 打成 zip 放到 `data\backup\` / 把某个快照放回去（当前历史先备份） |
+| | `backup [name]` / `restore [name]` | 把 `data\` 打成 zip 放到 `data\backup\` / 把某个快照放回去（当前历史先备份） |
 | | `migrate [-Purge]` | 把旧格式的 `history.dat` 升级到当前版本；`-Purge` 把无法升级的文件归档到 `data\backup\` |
-| | `restore` | 尝试恢复系统原生剪贴板历史的相关设置 |
 | | `install [bypass]` / `uninstall [purge]` | 增删快捷方式（`purge` 连数据一起删） |
 | | `version` | 输出程序版本与数据格式版本 |
 | | `help` | 帮助（插件命令按插件名分组列在后面） |
@@ -109,7 +107,7 @@ cli build        # 打包到 dist\clipboard-<version>\
 - **导入只认本程序的格式**：JSON 必须带 `format: clipboard-history` 与同名 `version`，CSV 必须是那三列的表头；否则直接报错，不会把别的文件当成历史读进来。
 - **合并语义**：默认 `-Merge`，库里已有的条目（按文本比对）**原封不动**，标记也以库里为准，只补充缺失的；`-Replace` 换掉整个库，换之前先做一次快照，选错了还能用 `backup` 列表里的前一个恢复。
 - **媒体还原不信任文件里的名字**：导入时按字节重算 sha1 再落盘，一份手改过的导出文件无法让记录指向 `data\media` 里的别的文件。
-- **备份是整张 `data\` 的 zip**：历史、媒体、blob 一起走，否则图片条目恢复后只剩描述。`restore-data` 不带名字时取最新的一份；带名字时精确匹配，否则按子串匹配。
+- **备份是整张 `data\` 的 zip**：历史、媒体、blob 一起走，否则图片条目恢复后只剩描述。`restore` 不带名字时取最新的一份；带名字时精确匹配，否则按子串匹配。
 
 ### 面板快捷键
 
@@ -170,7 +168,7 @@ cli build        # 打包到 dist\clipboard-<version>\
 
 程序启动时只读取脚本旁的 `clipboard.ini`，文件或某个键缺失时按内置默认值运行；只有 `config init` / `config set` / `config reset` 与下面提到的窗口尺寸回写会写文件。
 
-读取时做一次全量校验：未知键、类型或范围不符的值、不存在的主题名、枚举项中的非法取值，在 `clipboard config` 顶部逐条列出，`status` 与 `diag` 只给出计数（`[!] N value(s) need attention`）；出错项按默认值继续运行。
+读取时做一次全量校验：未知键、类型或范围不符的值、不存在的主题名、枚举项中的非法取值，在 `clipboard config` 顶部逐条列出，`status` 只给出计数（`[!] N value(s) need attention`）；出错项按默认值继续运行。
 
 `clipboard config init` 写出一份带注释的模板：只补缺失的键，已写的值（含插件设置）保留，所有插件的设置键都会列出（无论是否在 `Plugins=` 中启用），并把本版本不认识的键改为 `# [unknown] 原内容`；可重复执行。`clipboard config reset` 用默认值重写整个文件。ini 语法见 [INI 约定](#ini-约定)，插件键就写在 `[<插件名>]` 段里。
 
@@ -420,7 +418,7 @@ Plugins=item-marks,entry-actions
 |---|---|---|
 | 入口 | `clipboard.ps1` | 参数绑定、`$Root`、必需模块清单、运行时路径（ini / store / log 位置）、`Invoke-Main` |
 | 装配 | `lib/dispatch.ps1` | `Invoke-Main`：先 `Apply-Config`，再按 `Plugins=` 装配插件，最后执行一个命令 |
-| 场景 | `lib/panel/picker.ps1`、`lib/panel/pinlist.ps1`、`lib/panel/picker-draw.ps1`、`lib/panel/picker-edit.ps1`、`lib/panel/preview.ps1`、`lib/panel/anim.ps1`、`lib/panel/keyhook.ps1`、`lib/serve.ps1`、`lib/config.ps1`、`lib/config-template.ps1`、`lib/diag.ps1`、`lib/shortcut.ps1`、`lib/usage.ps1` | 面板窗与交互、自绘列表、可复用的绘制件、就地编辑条目、悬停预览卡片、过渡动画、键盘钩子、常驻进程、设置命令面与写出的模板、诊断恢复、快捷方式、帮助 |
+| 场景 | `lib/panel/picker.ps1`、`lib/panel/pinlist.ps1`、`lib/panel/picker-draw.ps1`、`lib/panel/picker-edit.ps1`、`lib/panel/preview.ps1`、`lib/panel/anim.ps1`、`lib/panel/keyhook.ps1`、`lib/serve.ps1`、`lib/config.ps1`、`lib/config-template.ps1`、`lib/shortcut.ps1`、`lib/usage.ps1` | 面板窗与交互、自绘列表、可复用的绘制件、就地编辑条目、悬停预览卡片、过渡动画、键盘钩子、常驻进程、设置命令面与写出的模板、快捷方式、帮助 |
 | 领域 | `lib/clip.ps1`、`lib/store.ps1`、`lib/marks.ps1`、`lib/ordering.ps1`、`lib/media.ps1`、`lib/cfhtml.ps1`、`lib/migrate.ps1`、`lib/entry.ps1`、`lib/modifiers.ps1`、`lib/panel/picker-geom.ps1` | 剪贴板读写、历史记录存储、标记语义、行序与冻结行数、图片与富文本附件、CF_HTML 往返、数据格式迁移、条目分类与文案、修饰键状态、面板纯计算 |
 | 基础 | `lib/native.ps1` | 平台层（P/Invoke、WinForms 类型、程序集、字体探测、DPI） |
 | 工具 | `utils/log.ps1`、`utils/time.ps1`、`utils/format.ps1`、`utils/dpi.ps1` | 纯函数：日志写入、epoch 与相对时间、字节计数、像素缩放与圆角路径（不碰剪贴板、不碰历史） |
@@ -603,7 +601,6 @@ src/                    程序本体（打包只读这个目录）
   lib/query.ps1           搜索语法：字段含义、正则编译、类型判定、逐条匹配与执行
   lib/select.ps1          批量选择：位置集合、Ctrl/Shift 规则、批量复制与批量删除
   lib/serve.ps1           常驻进程：捕获循环、热键、托盘、崩溃重启
-  lib/diag.ps1            diag 报告与 restore
   lib/shortcut.ps1        开机自启 / 桌面快捷方式的安装与卸载
   lib/config.ps1          config 命令面：应用设置、打印有效值、重启常驻
   lib/config-template.ps1 写进文件的 clipboard.ini：注释模板、config init 的补键合并、config reset
@@ -649,7 +646,7 @@ src/                    程序本体（打包只读这个目录）
   schema/plugins/*.ps1    每个插件自己的键表（Properties / ThemeProperties），加载时合并进设置
 ```
 
-分层顺序即依赖方向：`clipboard.ps1`（入口）→ `dispatch`（装配命令）→ `panel\picker` / `panel\preview` / `panel\media-render` / `serve` / `config` / `diag` / `shortcut` / `usage`（场景）→ `store` / `migrate` / `clip` / `media` / `entry` / `modifiers` / `panel\picker-geom`（领域）→ `native`（基础）→ `utils`（ini / inifile / schema、log / time / format / dpi、fileio）→ `schema` / `base` / `theme-stub`（描述、常量与兜底配色）。只允许上层调用下层；`utils` 里的函数只接受值、返回值，不读剪贴板也不读写历史，也不认识任何一个具体的键。
+分层顺序即依赖方向：`clipboard.ps1`（入口）→ `dispatch`（装配命令）→ `panel\picker` / `panel\preview` / `panel\media-render` / `serve` / `config` / `shortcut` / `usage`（场景）→ `store` / `migrate` / `clip` / `media` / `entry` / `modifiers` / `panel\picker-geom`（领域）→ `native`（基础）→ `utils`（ini / inifile / schema、log / time / format / dpi、fileio）→ `schema` / `base` / `theme-stub`（描述、常量与兜底配色）。只允许上层调用下层；`utils` 里的函数只接受值、返回值，不读剪贴板也不读写历史，也不认识任何一个具体的键。
 
 两条结构约束由 `struct` 组校验：
 
@@ -694,7 +691,7 @@ CBHIST RS <数据版本> RS <flags> US <epoch 秒> US <extra> US <payload> RS <f
 - 版本更低但无对应步骤：拒绝处理，提示用 `clipboard migrate -Purge` 将文件归档到 `data\backup\`；
 - 版本更高（由更新的程序写入）：不处理也不降级，提示更新程序。
 
-`status` 与 `diag` 会显示当前数据版本与磁盘文件版本；文件版本不符时 `status` 给出一行 `migration` 提示。写入路径同样拒绝覆盖无法识别的文件，以免一次捕获清空旧历史。打包产物的 `install.bat` 会在 `install` 之前执行 `migrate`，升级安装时无需手动操作。
+`status` 会显示当前数据版本与磁盘文件版本；文件版本不符时给出一个 `migration` 提示。写入路径同样拒绝覆盖无法识别的文件，以免一次捕获清空旧历史。打包产物的 `install.bat` 会在 `install` 之前执行 `migrate`，升级安装时无需手动操作。
 
 ### 版本号
 
@@ -703,7 +700,7 @@ CBHIST RS <数据版本> RS <flags> US <epoch 秒> US <extra> US <payload> RS <f
 - 开发运行（`src\clipboard.ps1`）时，`base.ps1` 在加载阶段读取仓库根的 `package.ini`，改版本只需改该键；
 - 打包时 `scripts\build.ps1` 把这段读取替换为常量，产物不含 `package.ini`，也不读取任何文件。
 
-该值同时决定产物目录名（`dist\clipboard-<version>\`），并由面板底部（`x of y   v<version>`）、`clipboard version`、`status`、`diag`、`help` 输出。数据格式版本是另一个值（`$script:DataVersion`），只影响存储格式。
+该值同时决定产物目录名（`dist\clipboard-<version>\`），并由面板底部（`x of y   v<version>`）、`clipboard version`、`status`、`help` 输出。数据格式版本是另一个值（`$script:DataVersion`），只影响存储格式。
 
 ## 开机自启与桌面快捷方式
 
@@ -730,9 +727,9 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑 CLI 组
 
 | 组 | 开关 | 覆盖内容 |
 |---|---|---|
-| 结构 | 无（总是执行） | 分层契约：49 个必需模块（`lib\` 34 + `utils\` 13）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
+| 结构 | 无（总是执行） | 分层契约：48 个必需模块（`lib\` 33 + `utils\` 13）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
 | 单元 | `-Unit` | 纯函数与存储层：热键解析、条目文案、ini 读写与单值校验、`Apply-Config` 与配置诊断、记录读写与版本识别、迁移引擎（拒绝无步骤 / 备份 / `-Purge` 归档）、图片与富文本的编解码与媒体回收、CF_HTML 片段解析、真实剪贴板的图片与格式往返、标记与保护规则、面板几何与命中计算、条目分类与行图标、主题发现与 `[metrics]` 重置、插件白名单。通过 `-Library` dot-source 主脚本，不触发命令分发 |
-| 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put` / `get` / `list` / `pick` / `del` / `clear` / `pause` / `resume` / `status` / `version` / `migrate` / `themes` / `config get` / `config set` / `config init` / `diag`、主题切换与非法主题名拒绝、插件白名单与各插件命令、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝、`cli` 命令列表；以及打包（进包内容、`install.bat`、包内版本为常量且与 `package.ini` 一致、`Plugins=` / `Themes=` 裁剪、`Overwrite=0` 拒绝覆盖、未知插件名报错） |
+| 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put` / `get` / `list` / `pick` / `del` / `clear` / `pause` / `resume` / `status` / `version` / `migrate` / `themes` / `config get` / `config set` / `config init` / `backup` / `restore`、主题切换与非法主题名拒绝、插件白名单与各插件命令、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝、`cli` 命令列表；以及打包（进包内容、`install.bat`、包内版本为常量且与 `package.ini` 一致、`Plugins=` / `Themes=` 裁剪、`Overwrite=0` 拒绝覆盖、未知插件名报错） |
 | 端到端 | `-E2E` | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启循环 |
 
 全部在 `%TEMP%` 下的沙箱副本（脚本 + `lib` + `utils` + `schema` + `plugins` + `themes`）中运行，不修改 `data/` 与 `clipboard.ini`；真实剪贴板在开始前备份、结束后还原。任一项失败时退出码为 1。
@@ -876,7 +873,7 @@ Themes=win11-dark
 
 ### 恢复系统自带的 Win+V
 
-`diag` 逐项列出环境检查结果；`restore` 针对注册表项（`EnableClipboardHistory`、策略 `AllowClipboardHistory`）与 `cbdhsvc` 实例执行恢复。文件层面的缺失（如 `TextInputHost.exe`）无法通过脚本修复。
+工具不再提供探测或修复命令：Win+V 能不能用只取决于三件事（`HKCU` 的 `EnableClipboardHistory`、策略 `AllowClipboardHistory`、`cbdhsvc` 每用户服务实例），`clipboard status` 在**不满足时**多打一行 `win+v : [!] <原因>`，满足时没有这一行。文件层面的缺失（如 `TextInputHost.exe`）无法通过脚本修复。
 
 ## 许可
 

@@ -47,13 +47,13 @@ if (@($script:PluginList).Count -gt 0 -and (Get-Command Load-Plugins -ErrorActio
 }
 # One pass over clipboard.ini now that every key is registered: an unknown key, a value the
 # schema rejects and a theme name that has no file are collected instead of only logged by
-# whichever loader happened to trip over them. `status` shows the count, `config` and `diag`
-# show the detail.
+# whichever loader happened to trip over them. `status` shows the count, `config` shows the
+# detail.
 $script:ConfigProblems = @()
-# Only the commands that report settings print them: `status` counts, `config` and `diag`
-# list. Walking every key against the schema on a capture path (put, get, list, pick, del)
-# would pay for a validation pass nobody reads.
-$showProblems = ($Command -eq '' -or @('status', 'config', 'diag', 'help', '-h', '--help') -contains $Command.ToLower())
+# Only the commands that report settings print them: `status` counts, `config` lists. Walking
+# every key against the schema on a capture path (put, get, list, pick, del) would pay for a
+# validation pass nobody reads.
+$showProblems = ($Command -eq '' -or @('status', 'config', 'help', '-h', '--help') -contains $Command.ToLower())
 if ($showProblems -and (Get-Command Get-ConfigProblems -ErrorAction SilentlyContinue)) {
   try { $script:ConfigProblems = @(Get-ConfigProblems) } catch { $script:ConfigProblems = @() }
   $stamp = ($script:ConfigProblems -join '|')
@@ -218,6 +218,11 @@ switch ($Command.ToLower()) {
     $eff = '(daemon never started)'
     if (Test-Path -LiteralPath $hkFile) { $eff = ([IO.File]::ReadAllText($hkFile, [Text.Encoding]::UTF8)).Trim() }
     Write-Host ('active key  : ' + $eff + '   (requested: ' + $Hotkey + ')')
+    # the shell has its own history behind Win+V; when it is off there is no command to fix
+    # it from here, so the state is stated once instead of being probed on request
+    $winv = ''
+    if (Get-Command Get-WinVState -ErrorAction SilentlyContinue) { $winv = Get-WinVState }
+    if ($winv) { Write-Host ('win+v       : [!] ' + $winv) }
     Write-Host ('config file : ' + $IniPath + $(if (Test-Path -LiteralPath $IniPath) { '' } else { '   (missing, defaults in effect)' }))
     if (@($script:ConfigProblems).Count -gt 0) {
       Write-Host ('config      : [!] ' + @($script:ConfigProblems).Count + ' value(s) need attention   (clipboard config shows them)')
@@ -263,7 +268,6 @@ switch ($Command.ToLower()) {
     }
     else { Show-Config }
   }
-  'diag' { Invoke-Diag }
   'themes' {
     $names = @(Get-ThemeNames)
     if ($names.Count -eq 0) {
@@ -282,7 +286,6 @@ switch ($Command.ToLower()) {
     Write-Host ''
     Write-Host ('active: ' + $script:Theme + '   change with: clipboard config set Theme <name>')
   }
-  'restore' { Invoke-Restore }
   'export' {
     $r = Invoke-Export $Value -Media:$Media
     if ($r.Ok) { Write-Host ('[ok] ' + $r.Message) } else { Write-Host ('[!] ' + $r.Message) }
@@ -295,8 +298,8 @@ switch ($Command.ToLower()) {
     $r = Save-Snapshot $Value
     if ($r.Ok) { Write-Host ('[ok] ' + $r.Message) } else { Write-Host ('[!] ' + $r.Message) }
   }
-  'restore-data' {
-    $r = Invoke-RestoreData $Value
+  'restore' {
+    $r = Invoke-Restore $Value
     if ($r.Ok) { Write-Host ('[ok] ' + $r.Message) } else { Write-Host ('[!] ' + $r.Message) }
   }
   'install' {

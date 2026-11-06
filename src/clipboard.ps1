@@ -3,8 +3,9 @@
   clipboard.ps1 - lightweight clipboard history for Windows 10 / 11 (a Win+V replacement).
   Zero dependencies: PowerShell 5.1 + .NET Framework only.
 
-  clipboard diag | restore | migrate | version | serve | ui | config [edit|init] | install | uninstall
+  clipboard migrate | version | serve | ui | config [edit|init] | install | uninstall
   clipboard list [-Count N] | put "text" | get | pick N | del N | clear | pause | resume | status | stop
+  clipboard export FILE | import FILE | backup [name] | restore [name]
   Text, file lists (CF_HDROP), pictures and formatted text (HTML / RTF) are captured and
   can be pasted back with their formats.
 
@@ -15,9 +16,9 @@
   the runtime paths. The program itself lives under lib\, with the pure helpers under
   utils\ and the ini schemas under schema\, layer by layer:
 
-    base -> utils (ini / import / schema) -> log / time / format / draw -> native / theme-stub
+    base -> utils (ini / inifile / schema) -> log / time / format / dpi -> native / theme-stub
          -> media -> clip -> store -> entry -> picker-geom -> anim -> picker
-         -> config / serve / diag / shortcut / usage -> dispatch
+         -> config / serve / shortcut / usage -> dispatch
 
   Copy the whole folder, not just this file: every module is required except themes.ps1 and
   plugins.ps1, which degrade to the built-in palette and the base feature set.
@@ -57,11 +58,11 @@ $coreModules = @(
   'utils\ini', 'utils\inifile', 'utils\schema',
   'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey', 'utils\query-words', 'utils\pinyin', 'utils\transfer', 'utils\apprules', 'utils\fileio',
   'lib\native', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering', 'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules',
-  'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\diag', 'lib\shortcut', 'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch'
+  'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\shortcut', 'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch'
 )
 # The panel stack is only needed when something is about to draw: `ui`, `serve`, and the
 # bare command that opens the panel. Every other command - put, get, list, del, clear,
-# status, config, help, diag - skips parsing it entirely. -Library loads everything,
+# status, config, help - skips parsing it entirely. -Library loads everything,
 # because the tests call those functions by name. The files live in lib\panel\, except
 # serve: that is the resident process, which is a scene of its own and only opens a panel.
 $panelModules = @('lib\panel\media-render', 'lib\panel\anim', 'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\keyhook', 'lib\panel\picker', 'lib\serve')

@@ -97,7 +97,23 @@ function New-Sandbox([string]$name) {
   return $dir
 }
 
-# run one CLI call in a child process against a sandbox
+# ---------------------------------------------------------------- test.ini
+# test.ini (repository root) is the harness configuration, read with the parser the tool itself
+# uses: utils\ini.ps1 is pure, and the repository copy is loaded rather than $srcRoot, so this
+# also works when -Source points at a minified package whose function names are rewritten.
+$repoIniParser = Join-Path $defaultSource 'utils\ini.ps1'
+if (Test-Path -LiteralPath $repoIniParser) { . $repoIniParser }
+$script:TestIni = @{}
+$testIniPath = Join-Path $repoRoot 'test.ini'
+if ((Test-Path -LiteralPath $testIniPath) -and (Get-Command Read-IniDoc -ErrorAction SilentlyContinue)) {
+  $script:TestIni = (Read-IniDoc ([IO.File]::ReadAllLines($testIniPath, [Text.Encoding]::UTF8))).Map
+}
+
+# One CLI call in its own process: a command has to start from nothing, the way the user's shell
+# does. (Sharing one process and running each call in a runspace looked like a 3.4 s -> 1.0 s
+# win, but a plugin loaded there calls back into the tool through a script block whose session
+# state is stale, so `pin` lost Set-RecordMark. Speed comes from running sandboxes side by side
+# instead - see the [run] section of test.ini.)
 function Clip([string]$sandbox, [string[]]$cliArgs) {
   $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', (Join-Path $sandbox 'clipboard.ps1')) + $cliArgs
   return (& powershell @a 2>&1 | Out-String)
@@ -169,7 +185,7 @@ try {
   # the entry file names these by relative path; a package must carry all of them
   $requiredLib = @('lib\base', 'lib\native', 'lib\panel\keyhook', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
     'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\panel\anim',
-    'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\serve', 'lib\diag', 'lib\shortcut',
+    'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\serve', 'lib\shortcut',
     'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch',
     'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey',
     'utils\query-words', 'utils\pinyin', 'utils\transfer', 'utils\apprules', 'utils\fileio',
@@ -684,7 +700,7 @@ try {
     $bkName = [IO.Path]::GetFileNameWithoutExtension($bk.Path)
     Save-Records @()
     # not $rs: that is case-insensitively the same variable as the store's record separator
-    $restored = Invoke-RestoreData $bkName
+    $restored = Invoke-Restore $bkName
     Check 'unit' 'a snapshot restores the history' (($restored.Ok) -and (@(Get-Records).Count -eq 2)) $restored.Message
     Save-Records @()
 
@@ -2129,8 +2145,8 @@ try {
     Check 'int' 'import reports what it did' ($o -match 'imported|already there') $o.Trim()
     $o = Clip $intDir @('backup', 'unit')
     Check 'int' 'backup writes a snapshot' ($o -match 'backup written') $o.Trim()
-    $o = Clip $intDir @('restore-data', 'nosuchsnapshot')
-    Check 'int' 'restore-data refuses an unknown snapshot' ($o -match 'no snapshot matches') $o.Trim()
+    $o = Clip $intDir @('restore', 'nosuchsnapshot')
+    Check 'int' 'restore refuses an unknown snapshot' ($o -match 'no snapshot matches') $o.Trim()
 
     # cli reads package.ini and runs the command line it finds there
     $cli = Join-Path $repoRoot 'cli.ps1'
@@ -2190,8 +2206,19 @@ try {
     $o = Clip $intDir @('status')
     Check 'int' 'status fields' (($o -match 'autostart   :') -and ($o -match 'desktop     :') -and ($o -match 'store file')) ''
 
+    # diag and the native Win+V restore are gone: the shell's own history state is a single
+    # line in `status`, and an old command name falls through to the usage text
     $o = Clip $intDir @('diag')
-    Check 'int' 'diag roundtrip' ($o -match 'Clipboard roundtrip') ''
+    Check 'int' 'removed commands fall back to usage' ($o -match 'unknown command: diag') $o.Trim()
+    $o = Clip $intDir @('restore-data')
+    Check 'int' 'restore-data is not a command any more' ($o -match 'unknown command: restore-data') $o.Trim()
+    $o = Clip $intDir @('status')
+    # the state is reported exactly when there is something to report, so a machine where
+    # Win+V works keeps a clean status
+    $winv = ''
+    if (Get-Command Get-WinVState -ErrorAction SilentlyContinue) { $winv = Get-WinVState }
+    $hasLine = [bool]($o -match 'win\+v')
+    Check 'int' 'status states the win+v state only when it is not usable' ($hasLine -eq [bool]$winv) ([string]$winv + ' / printed=' + [string]$hasLine)
 
     # config precedence: ini MaxItems=2, then the CLI switch must win
     $cfg2 = Join-Path $intDir 'clipboard.ini'
@@ -2286,7 +2313,7 @@ try {
     # ------------------------------------------- settings are never created silently
     $roDir = New-Sandbox 'readonly'
     $roIni = Join-Path $roDir 'clipboard.ini'
-    foreach ($args in @(@('status'), @('config'), @('config', 'get', 'Theme'), @('list'), @('diag'))) {
+    foreach ($args in @(@('status'), @('config'), @('config', 'get', 'Theme'), @('list'), @('themes'))) {
       [void](Clip $roDir $args)
     }
     Check 'int' 'no ini created by read-only commands' (-not (Test-Path -LiteralPath $roIni)) $roIni

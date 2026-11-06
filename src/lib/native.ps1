@@ -487,3 +487,20 @@ function Initialize-Dpi {
     } catch { }
   } catch { $script:UiScale = 1.0 }
 }
+
+# Whether the shell's own clipboard history (Win+V) is usable here. This tool keeps its own
+# history, so the answer is only ever a hint - but it is the one thing the user cannot work
+# out from the tool: the switch is a registry value, the block is a policy, and the service
+# is a per-user instance of the cbdhsvc template. '' means nothing to report.
+function Get-WinVState {
+  $on = (Get-ItemProperty 'HKCU:\SOFTWARE\Microsoft\Clipboard' -Name EnableClipboardHistory -ErrorAction SilentlyContinue).EnableClipboardHistory
+  if ($null -eq $on -or [int]$on -ne 1) { return 'off (HKCU EnableClipboardHistory is not 1)' }
+  $pol = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' -Name AllowClipboardHistory -ErrorAction SilentlyContinue).AllowClipboardHistory
+  if ($null -ne $pol -and [int]$pol -eq 0) { return 'blocked by policy AllowClipboardHistory=0' }
+  $svc = @(Get-Service -Name 'cbdhsvc*' -ErrorAction SilentlyContinue)
+  if ($svc.Count -eq 0) {
+    if (-not (Test-Path -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Services\cbdhsvc')) { return 'not available on this Windows build' }
+    return 'the per-user service instance is missing'
+  }
+  return ''
+}

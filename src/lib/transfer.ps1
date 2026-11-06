@@ -7,6 +7,11 @@
 #
 # Merge keeps what the store already has: an entry that is already there stays exactly as it
 # is, marks included. Replace swaps the whole history after a backup this build can undo.
+#
+# `backup` zips history, media and blobs into data\backup; `restore` puts one of those zips
+# back (and takes a fresh snapshot of what it replaces first). Both need Compress-Archive /
+# Expand-Archive, which every supported Windows has - a machine without them gets a one-line
+# "not available here" instead of an exception.
 
 function Get-ExportFormat([string]$path) {
   $ext = [IO.Path]::GetExtension($path)
@@ -188,8 +193,18 @@ function Invoke-Import([string]$path, [switch]$Replace) {
 
 # A zip of the whole data folder: history, media and blobs travel together, which is the only
 # way a picture entry survives a restore.
+# A snapshot is a zip of the whole data folder. Compress-Archive ships with PowerShell 5.1 on
+# a machine that has .NET 4.5 or newer; when it is missing the command says so instead of
+# throwing, because nothing else in the tool needs it.
+function Test-ArchiveSupport([string]$cmd) {
+  if (Get-Command $cmd -ErrorAction SilentlyContinue) { return '' }
+  return ('this system has no ' + $cmd + ' (PowerShell 5.1 with .NET 4.5 or newer is required)')
+}
+
 function Save-Snapshot([string]$Name = '') {
   Ensure-Dir
+  $gap = Test-ArchiveSupport 'Compress-Archive'
+  if ($gap) { return @{ Ok = $false; Message = $gap } }
   $dir = Join-Path $StoreDir 'backup'
   if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
   $stamp = [DateTime]::Now.ToString('yyyyMMdd-HHmmss')
@@ -219,7 +234,9 @@ function Get-SnapshotList {
 }
 
 # Put a snapshot back. The current history is backed up first, so a wrong pick is undoable.
-function Invoke-RestoreData([string]$Name) {
+function Invoke-Restore([string]$Name) {
+  $gap = Test-ArchiveSupport 'Expand-Archive'
+  if ($gap) { return @{ Ok = $false; Message = $gap } }
   $all = @(Get-SnapshotList)
   if ($all.Count -eq 0) { return @{ Ok = $false; Message = 'no snapshot in data\backup' } }
   $pick = ''
