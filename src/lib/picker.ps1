@@ -859,6 +859,8 @@ function Show-Picker {
         } catch { }
       })
     $lst.ContextMenuStrip = $cm
+    # the empty-state layer covers the list and swallows its right click
+    $empty.ContextMenuStrip = $cm
     # Picking an item is a left click outside the panel: remember when the menu closed so
     # the loop below does not dismiss the panel on the very click that chose the item.
     $cm.Add_Closed({ $script:MenuClosedAt = Get-Date })

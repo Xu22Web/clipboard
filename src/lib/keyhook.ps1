@@ -87,6 +87,9 @@ namespace Cb {
       if (vk >= 0x2D && vk <= 0x2E) { return true; }   // insert, delete
       if (vk >= 0xBA && vk <= 0xC0) { return true; }   // ; = , - . /
       if (vk >= 0xDB && vk <= 0xDE) { return true; }   // [ \ ] '
+      // F1-F12 belong to the panel too: F2 is in-place edit, and a function key the panel
+      // did not take would reach the window behind it (F2 = rename in Explorer)
+      if (vk >= 0x70 && vk <= 0x7B) { return true; }
       if (vk == 0x08 || vk == 0x09 || vk == 0x0D || vk == 0x1B) { return true; }
       return false;
     }
