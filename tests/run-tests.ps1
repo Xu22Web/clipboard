@@ -508,6 +508,23 @@ try {
     Add-Item '   '
     Check 'unit' 'store ignores blank input' (@(Get-Records).Count -eq $before) ''
 
+    # Pasting a row is "this one again": it moves to the top instead of staying where it was,
+    # and it keeps its marks, its rich sidecar and its blob reference - re-deriving the entry
+    # from its text is what used to turn a formatted row into a plain one.
+    $touchRichRef = 'H:' + ('a' * 40) + ':100'
+    $touchRich = New-Record 'rich row' ((Get-Epoch) - 300) 'p'
+    $touchRich.Rich = $touchRichRef
+    $touchList = New-Object System.Collections.Generic.List[object]
+    $touchList.Add((New-Record 'plain top' (Get-Epoch) ''))
+    $touchList.Add((New-Record 'middle row' ((Get-Epoch) - 100) ''))
+    $touchList.Add($touchRich)
+    Save-Records $touchList.ToArray()
+    $moved = Touch-Record 'rich row'
+    $afterTouch = @(Get-Records)
+    Check 'unit' 'a pasted row moves to the top' ($moved -and ([string]$afterTouch[0].Payload -ceq 'rich row')) ([string]$afterTouch[0].Payload)
+    Check 'unit' 'a moved row keeps its marks and its rich sidecar' ((([string]$afterTouch[0].Marks) -ceq 'p') -and (([string]$afterTouch[0].Rich) -ceq $touchRichRef)) ([string]$afterTouch[0].Marks + ' / ' + [string]$afterTouch[0].Rich)
+    Check 'unit' 'a row already on top is left alone' (-not (Touch-Record 'rich row')) ''
+
     # ------------------------------------------------------------- record store
     $rawHead = [IO.File]::ReadAllText($StoreFile)
     Check 'unit' 'the store starts with the tag and its layout version' ($rawHead.StartsWith($TAG + $RS + [string]$script:DataVersion)) ($rawHead.Substring(0, [Math]::Min(9, $rawHead.Length)) -replace [string][char]30, '<RS>')

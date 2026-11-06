@@ -34,6 +34,9 @@ function Set-Text([string]$t) {
 function Set-LastCapture([string]$payload) {
   $script:LastText = [string]$payload
   try { $script:LastSeq = [Cb.Win]::GetClipboardSequenceNumber() } catch { }
+  # A paste is also "this one again": the row moves to the top of the history so the next
+  # panel shows it first. Touch-Record keeps its marks, its rich sidecar and its blob.
+  if (Get-Command Touch-Record -ErrorAction SilentlyContinue) { [void](Touch-Record ([string]$payload)) }
 }
 
 # One clipboard snapshot in one clipboard-open window:

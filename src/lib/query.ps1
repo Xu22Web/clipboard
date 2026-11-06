@@ -206,7 +206,38 @@ function Invoke-Query($entries, $query) {
   if ($null -eq $query) { return $all }
   if ($query.Bad.Count -gt 0) { return @() }
   if ($query.Count -eq 0) { return $all }
+  # The panel runs this on every keystroke, and one PowerShell call per record (plus a property
+  # read inside it) was the whole cost at 300 rows. The common shape - plain words and
+  # -exclusions - is spelled out here; a query carrying a filter falls back to the per record
+  # test below, which is the readable version of the same rules.
+  $plain = (($query.Types.Count -eq 0) -and ($query.Marks.Count -eq 0) -and
+            ($query.Patterns.Count -eq 0) -and ($query.Initials.Count -eq 0) -and
+            ([long]$query.Newer -le 0) -and ([long]$query.Older -le 0))
   $rows = New-Object System.Collections.Generic.List[object]
+  if ($plain) {
+    $terms = $query.Terms
+    $excl = $query.Excludes
+    for ($i = 0; $i -lt $all.Count; $i++) {
+      $rec = $all[$i]
+      $head = [string]$rec.Payload
+      $len = $head.Length
+      # only the head of a big payload is ever shown, so that is what the search reads
+      if ($len -gt 4096) { $len = 4096 }
+      $ok = $true
+      for ($t = 0; $t -lt $terms.Count; $t++) {
+        $term = $terms[$t]
+        if ($term.Length -gt $len -or $head.IndexOf($term, 0, $len, [StringComparison]::OrdinalIgnoreCase) -lt 0) { $ok = $false; break }
+      }
+      if ($ok) {
+        for ($t = 0; $t -lt $excl.Count; $t++) {
+          $term = $excl[$t]
+          if ($term.Length -le $len -and $head.IndexOf($term, 0, $len, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $ok = $false; break }
+        }
+      }
+      if ($ok) { $rows.Add($rec) }
+    }
+    return $rows.ToArray()
+  }
   foreach ($rec in $all) {
     if (Test-QueryRecord $rec $query) { $rows.Add($rec) }
   }

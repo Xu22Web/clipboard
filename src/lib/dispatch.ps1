@@ -124,7 +124,7 @@ switch ($Command.ToLower()) {
     $recs = @(Get-Records)
     if ($i -lt 1 -or $i -gt $recs.Count) { Write-Host 'index out of range'; break }
     [void](Set-ClipItem $recs[$i - 1].Payload ([string]$recs[$i - 1].Rich))
-    Add-Item $recs[$i - 1].Payload
+    [void](Touch-Record ([string]$recs[$i - 1].Payload))
     Write-Host ('clipboard set: ' + (Format-Record $recs[$i - 1] 100))
   }
   'edit' {

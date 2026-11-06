@@ -358,10 +358,40 @@ function Add-Item([string]$text, $capture = $null) {
   }
 }
 
+# Move an entry to the top without touching what it holds. Pasting something is how a user
+# says "this one again", so the next panel should show it first: the marks, the rich sidecar
+# and the blob reference all travel with it, only the time changes. Unlike Add-Item this never
+# re-derives the media, which is what used to turn a formatted entry into a plain one.
+function Touch-Record([string]$payload) {
+  $moved = Use-StoreLock {
+    $recs = @(Get-Records)
+    if ($recs.Count -eq 0) { return $false }
+    if ([string]$recs[0].Payload -ceq $payload) { return $false }
+    $hit = $null
+    foreach ($r in $recs) {
+      if ([string]$r.Payload -ceq $payload) { $hit = $r; break }
+    }
+    if ($null -eq $hit) { return $false }
+    $list = New-Object System.Collections.Generic.List[object]
+    $fresh = New-Record ([string]$hit.Payload) (Get-Epoch) ([string]$hit.Marks)
+    $fresh.Rich = [string]$hit.Rich
+    $fresh.Blob = [string]$hit.Blob
+    $list.Add($fresh)
+    # one payload is one row: the older copies of the same text go with the move
+    foreach ($r in $recs) {
+      if ([string]$r.Payload -ceq $payload) { continue }
+      $list.Add($r)
+    }
+    $list = Sort-Records $list
+    Save-Records $list.ToArray() -SkipReclaim
+    return $true
+  }
+  return $moved
+}
+
 # a row carrying a protected mark is kept: the verb that removes the mark belongs to the
 # plugin that declared it, so the base only reports which mark blocked the delete
-function Remove-Record([string]$payload, [switch]$Force) {
-  $r = Use-StoreLock {
+function Remove-Record([string]$payload, [switch]$Force) {  $r = Use-StoreLock {
     $keep = New-Object System.Collections.Generic.List[object]
     $removed = $false
     $blocked = ''
