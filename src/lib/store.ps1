@@ -168,6 +168,14 @@ function Get-MarkCountWords($records) {
   return $out
 }
 
+# Drop both caches. A caller that replaces the file behind the reader's back - a migration,
+# a restore from a snapshot - says so through here instead of writing the cache variables,
+# which are this module's own business and will change shape before they change meaning.
+function Clear-RecordCache {
+  $script:RecCache = $null
+  $script:GateCache = $null
+}
+
 function Get-Records {
   # Parsing the whole store is the hottest path (panel open, filter, delete, undo), so the
   # result is cached against the file stamp: any writer changes size or write time.
@@ -187,7 +195,7 @@ function Get-Records {
       if (-not $script:StoreFormatWarned) {
         $script:StoreFormatWarned = $true
         $sv = Get-StoreVersion
-        Write-Log ('store not read: ' + $sv.Label + '   ' + $sv.Hint)
+        Write-Log ('store not read: ' + $sv.Label)
       }
       $script:RecCache = @{ Stamp = $stamp; Records = @() }
       return @()
@@ -230,7 +238,9 @@ function Get-Records {
 # field are the first two RS-separated fields, so this stays cheap on a 4 MB store).
 #   Kind    none (no file) | current | old | newer | unknown
 #   Version the layout version, -1 when the file is unrecognised
-# Only `migrate` acts on Kind; the reader refuses anything but current.
+#   Hint    only what this module can state on its own; what to do about it belongs to
+#           lib/migrate.ps1 (Get-StoreAdvice), which is the only place that knows the graph
+# A reader refuses anything but current; `migrate` acts on the rest.
 function Get-StoreVersion {
   $o = [pscustomobject]@{ Kind = 'none'; Version = -1; Label = 'no history file'; Hint = '' }
   # Every save asks this, and the answer can only change when the file does.
@@ -279,12 +289,9 @@ function Get-StoreVersion {
   } elseif ($ver -ge 0) {
     $o.Kind = 'old'
     $o.Label = 'CBHIST v' + $ver
-    if (Test-MigrationPath $ver) { $o.Hint = 'run: clipboard migrate' }
-    else { $o.Hint = 'no migration path in this build - clipboard migrate -Purge archives it' }
   } else {
     $o.Kind = 'unknown'
     $o.Label = 'unrecognised layout'
-    $o.Hint = 'clipboard migrate -Purge archives it'
   }
   $script:GateCache = @{ Stamp = $stamp; Value = $o }
   return $o
@@ -299,7 +306,7 @@ function Save-Records($records, [switch]$SkipReclaim) {
   # program would otherwise drop the whole history. The upgrade belongs to `migrate`.
   $sv = Get-StoreVersion
   if (@('old', 'newer', 'unknown') -contains $sv.Kind) {
-    Write-Log ('store not written: ' + $sv.Label + '   ' + $sv.Hint)
+    Write-Log ('store not written: ' + $sv.Label)
     return
   }
   $script:StoreFormatWarned = $false

@@ -212,7 +212,7 @@ switch ($Command.ToLower()) {
     Write-Host ('store file  : ' + $StoreFile)
     $sv = Get-StoreVersion
     Write-Host ('data        : v' + $script:DataVersion + '   (file: ' + $sv.Label + ')')
-    if (@('old', 'newer', 'unknown') -contains $sv.Kind) { Write-Host ('migration   : [!] ' + $sv.Hint) }
+    if (@('old', 'newer', 'unknown') -contains $sv.Kind) { Write-Host ('migration   : [!] ' + (Get-StoreAdvice $sv)) }
     Write-Host ('panel       : ' + $script:WinWidth + 'x' + (Get-PanelHeight $script:Rows (Get-PanelRowHeight) (Get-PanelChrome)) + '  rows=' + $script:Rows + '  theme=' + $script:Theme + '  dpi=' + $script:UiScale)
     $hkFile = Join-Path $StoreDir 'hotkey.txt'
     $eff = '(daemon never started)'

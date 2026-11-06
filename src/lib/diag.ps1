@@ -11,7 +11,7 @@ function Invoke-Diag {
   Row 'OS' ($cv.ProductName + ' ' + $cv.DisplayVersion + ' build ' + $cv.CurrentBuild) ''
   Row 'clipboard' ([string]$script:Version) 'program version'
   $sv = Get-StoreVersion
-  Row 'data version' ('v' + $script:DataVersion + ' / file ' + $sv.Label) $(if ($sv.Hint) { $sv.Hint } else { 'clipboard migrate upgrades an older file' })
+  Row 'data version' ('v' + $script:DataVersion + ' / file ' + $sv.Label) $(if ($sv.Hint) { $sv.Hint } elseif ((Get-Command Get-StoreAdvice -ErrorAction SilentlyContinue) -and (Get-StoreAdvice $sv)) { Get-StoreAdvice $sv } else { 'clipboard migrate upgrades an older file' })
   Row 'PowerShell' $PSVersionTable.PSVersion.ToString() ''
   Row 'Apartment' ([Threading.Thread]::CurrentThread.GetApartmentState()) 'STA required; start via clipboard.cmd'
   # the three fixed value sets: base keys, the theme name, the values a list setting allows

@@ -1,14 +1,8 @@
 # lib/serve.ps1 - the resident process: capture loop, hotkey, tray icon, and the supervisor
 # that restarts the loop after a crash.
 
-# A write made from inside this process (the panel pasting an entry, or `pick` under a running
-# daemon) must not come back as a brand new capture: remember what went on the clipboard and
-# the sequence number that came with it. Same-process calls are exact; a write from another
-# process still lands here through Add-Item's own deduplication.
-function Set-LastCapture([string]$payload) {
-  $script:LastText = [string]$payload
-  try { $script:LastSeq = [Cb.Win]::GetClipboardSequenceNumber() } catch { }
-}
+# The suppression state (LastText / LastSeq) lives here because the capture loop compares
+# against it. Writing to it is lib/clip.ps1's job - see Set-LastCapture there.
 
 function Start-Serve {
   $created = $false

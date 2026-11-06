@@ -254,7 +254,6 @@ function Invoke-RestoreData([string]$Name) {
   }
   # the file was replaced behind the store's back, so both caches have to go: the parsed
   # records and the layout gate, or the next save would judge a file it never read
-  $script:RecCache = $null
-  $script:GateCache = $null
+  Clear-RecordCache
   return @{ Ok = $true; Message = ('restored ' + [IO.Path]::GetFileName($pick) + ' (' + @(Get-Records).Count + ' entries)') }
 }

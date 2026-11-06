@@ -27,6 +27,15 @@ function Set-Text([string]$t) {
   return $false
 }
 
+# A write made from inside this process (the panel pasting an entry, or `pick` under a running
+# daemon) must not come back as a brand new capture: remember what went on the clipboard and
+# the sequence number that came with it. The capture loop in lib/serve.ps1 owns the state and
+# compares against it; registering a write belongs here, with the writes themselves.
+function Set-LastCapture([string]$payload) {
+  $script:LastText = [string]$payload
+  try { $script:LastSeq = [Cb.Win]::GetClipboardSequenceNumber() } catch { }
+}
+
 # One clipboard snapshot in one clipboard-open window:
 #   Text  - the payload the store keeps ('' when this snapshot has no payload of its own)
 #   Rich  - @{ Html = [byte[]]; Rtf = [byte[]]; Blocks = @(@{ Tag; Data }) } or $null
@@ -287,8 +296,7 @@ function Set-RichBlockData($do, [string]$rich, [string]$tag, [string]$format) {
   $do.SetData($format, $ms)
 }
 
-function Set-ClipItem([string]$entry, [string]$rich = '') {
-  if (Test-FilePayload $entry) {
+function Set-ClipItem([string]$entry, [string]$rich = '') {  if (Test-FilePayload $entry) {
     Load-Forms
     $paths = @(Get-FilePayloadPaths $entry)
     $sc = New-Object System.Collections.Specialized.StringCollection

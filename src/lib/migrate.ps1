@@ -32,6 +32,20 @@ function Test-MigrationPath([int]$from) {
   return $true
 }
 
+# What to tell the user about a file this build does not read. Get-StoreVersion reports the
+# facts (kind, version, label) and knows nothing about upgrade paths, so the advice lives
+# here, next to the table that decides it.
+function Get-StoreAdvice($sv) {
+  if ($null -eq $sv) { return '' }
+  if ($sv.Hint) { return [string]$sv.Hint }
+  if ($sv.Kind -eq 'old') {
+    if (Test-MigrationPath ([int]$sv.Version)) { return 'run: clipboard migrate' }
+    return 'no migration path in this build - clipboard migrate -Purge archives it'
+  }
+  if ($sv.Kind -eq 'unknown') { return 'clipboard migrate -Purge archives it' }
+  return ''
+}
+
 # Keep the file as it was, next to the store, so a migration can be undone by hand.
 function Save-StoreBackup([int]$from) {
   $dir = Join-Path $StoreDir 'backup'
@@ -53,12 +67,12 @@ function Invoke-DataMigration {
   $o.From = $sv.Version
   if ($sv.Kind -eq 'none') { $o.Message = 'no history file, nothing to migrate'; return $o }
   if ($sv.Kind -eq 'current') { $o.Message = ('already ' + $sv.Label + ', nothing to migrate'); return $o }
-  if ($sv.Kind -eq 'newer') { $o.Message = ('[!] ' + $sv.Label + ' is newer than this build (v' + $script:DataVersion + '), ' + $sv.Hint); return $o }
+  if ($sv.Kind -eq 'newer') { $o.Message = ('[!] ' + $sv.Label + ' is newer than this build (v' + $script:DataVersion + '), ' + (Get-StoreAdvice $sv)); return $o }
   if (-not (Test-MigrationPath $sv.Version)) {
-    if (-not $Purge) { $o.Message = ('[!] ' + $sv.Label + ' cannot be upgraded, ' + $sv.Hint); return $o }
+    if (-not $Purge) { $o.Message = ('[!] ' + $sv.Label + ' cannot be upgraded, ' + (Get-StoreAdvice $sv)); return $o }
     $o.Backup = Save-StoreBackup $sv.Version
     Remove-Item -LiteralPath $StoreFile -Force
-    $script:RecCache = $null
+    Clear-RecordCache
     $script:StoreFormatWarned = $false
     $o.Changed = $true
     $o.Message = ('archived ' + $sv.Label + ' to ' + $o.Backup)
@@ -79,7 +93,7 @@ function Invoke-DataMigration {
   $tmp = $StoreFile + '.tmp'
   [IO.File]::WriteAllText($tmp, [string]$ctx.Text, $Utf8)
   Move-Item -LiteralPath $tmp -Destination $StoreFile -Force
-  $script:RecCache = $null
+  Clear-RecordCache
   $script:StoreFormatWarned = $false
   $check = Get-StoreVersion
   $o.To = $check.Version
