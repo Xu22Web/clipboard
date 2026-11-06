@@ -286,12 +286,19 @@ function Get-CfHtmlInlined([byte[]]$html, [int]$maxImageBytes, [int]$maxTotalByt
 
 # the byte position where the html starts, taken from the header the block carries
 function Get-CfHtmlHeadLength([string]$text) {
-  $m = [regex]::Match($text, 'StartHTML:\s*(\d+)')
-  if (-not $m.Success) { return 0 }
   $at = 0
-  if (-not [int]::TryParse($m.Groups[1].Value, [ref]$at)) { return 0 }
-  if ($at -le 0 -or $at -ge $text.Length) { return 0 }
-  return $at
+  $m = [regex]::Match($text, 'StartHTML:\s*(\d+)')
+  if ($m.Success) { [void][int]::TryParse($m.Groups[1].Value, [ref]$at) }
+  if ($at -gt 0 -and $at -lt $text.Length) { return $at }
+  # A buffer whose StartHTML is zero or points outside itself: rather than give up on the
+  # formatting, take the header to be everything before the first tag, since CF_HTML always
+  # closes its last header line with a break and no header line contains '<'.
+  $tag = $text.IndexOf('<')
+  if ($tag -gt 0) {
+    $nl = $text.LastIndexOf("`n", $tag - 1)
+    if ($nl -ge 0) { return ($nl + 1) }
+  }
+  return 0
 }
 
 # the four offsets in the CF_HTML header are byte positions in the buffer itself, so they are
@@ -327,6 +334,87 @@ function Set-CfHtmlOffsets([byte[]]$bytes) {
   $head = $head.Replace('StartFragment:0000000000', ('StartFragment:' + $startFrag.ToString('0000000000')))
   $head = $head.Replace('EndFragment:0000000000', ('EndFragment:' + $endFrag.ToString('0000000000')))
   return $strict.GetBytes($head + $body)
+}
+
+# ---- putting the inlined pictures back on disk ------------------------------
+# Word, Excel and PowerPoint do not read a data: uri inside CF_HTML: they resolve every <img>
+# through a file the buffer points at, which is exactly how they write their own copy
+# ('file:///.../msohtmlclip1/01/clip_image001.png'). An entry is stored with its pictures
+# inlined so it survives the source folder disappearing, so the paste has to write them out
+# again - otherwise the text arrives and every picture is an empty frame.
+#
+# The folder is content addressed: the same picture is written once, whichever entry and
+# whichever paste it comes from.
+$script:PasteImageDir = ''
+
+function Get-PasteImageDir {
+  if ($script:PasteImageDir) { return $script:PasteImageDir }
+  $dir = Join-Path ([IO.Path]::GetTempPath()) 'clipboard-paste'
+  try {
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+  } catch { Write-Log ('paste folder failed: ' + $_.Exception.Message) }
+  # a day is long enough for the target application to have read the pictures; after that the
+  # files are only leftovers of a paste nobody is going to finish
+  try {
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue)) {
+      if (([DateTime]::UtcNow - $f.LastWriteTimeUtc).TotalHours -gt 24) {
+        Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue
+      }
+    }
+  } catch { }
+  $script:PasteImageDir = $dir
+  return $dir
+}
+
+# the extension a data: uri mime type names, '' when it is not a raster format we can hand on
+function Get-PasteImageExt([string]$mime) {
+  switch (([string]$mime).ToLowerInvariant()) {
+    'png' { return '.png' }
+    'jpeg' { return '.jpg' }
+    'jpg' { return '.jpg' }
+    'gif' { return '.gif' }
+    'bmp' { return '.bmp' }
+  }
+  return ''
+}
+
+# every data:image/... in the buffer becomes a file next to the entry, and the four offsets are
+# recomputed because the buffer changed length. A buffer with nothing inlined comes back as it
+# was: this runs on the paste path, so it must cost nothing for plain formatted text.
+function Get-CfHtmlOnDisk([byte[]]$html) {
+  if ($null -eq $html -or $html.Length -lt 32) { return $html }
+  $strict = New-Object Text.UTF8Encoding $false, $true
+  $text = ''
+  try { $text = $strict.GetString($html) } catch { return $html }
+  if ($text.IndexOf('data:image', [StringComparison]::OrdinalIgnoreCase) -lt 0) { return $html }
+  $headAt = Get-CfHtmlHeadLength $text
+  if ($headAt -le 0) { return $html }
+  $head = $text.Substring(0, $headAt)
+  $body = $text.Substring($headAt)
+  $hits = @([regex]::Matches($body, 'data:image/([a-zA-Z+]+);base64,([A-Za-z0-9+/=]+)'))
+  if ($hits.Count -eq 0) { return $html }
+  $dir = Get-PasteImageDir
+  $sb = New-Object Text.StringBuilder $body
+  # back to front: an earlier replacement would move every later index
+  for ($i = $hits.Count - 1; $i -ge 0; $i--) {
+    $hit = $hits[$i]
+    $ext = Get-PasteImageExt $hit.Groups[1].Value
+    if (-not $ext) { continue }
+    $bytes = $null
+    try { $bytes = [Convert]::FromBase64String($hit.Groups[2].Value) } catch { continue }
+    if ($null -eq $bytes -or $bytes.Length -eq 0) { continue }
+    try {
+      $path = Join-Path $dir ((Get-MediaSha1 $bytes $null) + $ext)
+      if (-not (Test-Path -LiteralPath $path)) { [IO.File]::WriteAllBytes($path, $bytes) }
+      [void]$sb.Remove($hit.Index, $hit.Length)
+      [void]$sb.Insert($hit.Index, ([uri]$path).AbsoluteUri)
+    } catch {
+      Write-Log ('paste picture not written: ' + $_.Exception.Message)
+    }
+  }
+  $newBody = $sb.ToString()
+  if ($newBody -ceq $body) { return $html }
+  return (Set-CfHtmlOffsets ($strict.GetBytes($head + $newBody)))
 }
 
 # ---- media accounting -------------------------------------------------------

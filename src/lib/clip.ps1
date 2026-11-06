@@ -284,6 +284,9 @@ function Set-RichItem([string]$text, [string]$rich) {
 function Set-RichBlockData($do, [string]$rich, [string]$tag, [string]$format) {
   $bytes = Read-RichBlock $rich $tag
   if ($null -eq $bytes -or $bytes.Length -eq 0) { return }
+  # Word and friends resolve <img> through a file the buffer names, never through a data: uri,
+  # so the pictures inlined at capture time have to exist as files again for this paste
+  if ($tag -ceq 'H') { $bytes = Get-CfHtmlOnDisk $bytes }
   if ($tag -ceq 'E') {
     $mf = ConvertFrom-MediaBytes $bytes 'E'
     if ($null -eq $mf) { Write-Log 'emf block skipped: it does not decode'; return }
@@ -296,7 +299,8 @@ function Set-RichBlockData($do, [string]$rich, [string]$tag, [string]$format) {
   $do.SetData($format, $ms)
 }
 
-function Set-ClipItem([string]$entry, [string]$rich = '') {  if (Test-FilePayload $entry) {
+function Set-ClipItem([string]$entry, [string]$rich = '') {
+  if (Test-FilePayload $entry) {
     Load-Forms
     $paths = @(Get-FilePayloadPaths $entry)
     $sc = New-Object System.Collections.Specialized.StringCollection

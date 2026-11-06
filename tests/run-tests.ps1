@@ -881,6 +881,43 @@ try {
     Check 'unit' 'the bitmap block goes back' (($null -ne $bd) -and ([BitConverter]::ToString($bd) -eq [BitConverter]::ToString($dibPixels))) ([string]$(if ($null -ne $bd) { $bd.Length } else { -1 }) + ' vs ' + [string]$dibPixels.Length)
     Check 'unit' 'the html goes back with its blocks' (($null -ne $bh) -and ($bh.Length -eq $richCap.Html.Length)) ''
 
+    # Word, Excel and PowerPoint resolve <img> through a file the buffer names, never through a
+    # data: uri - an entry stored with its pictures inlined (so it survives the source folder
+    # disappearing) has to hand them back as files, or the text arrives and each picture is an
+    # empty frame. This is the paste path, so it runs on the bytes the store holds.
+    function New-CfHtmlSample([string]$fragment) {
+      $head = "Version:0.9`r`nStartHTML:0000000000`r`nEndHTML:0000000000`r`nStartFragment:0000000000`r`nEndFragment:0000000000`r`n"
+      $len = $Utf8.GetByteCount($head)
+      $head = $head.Replace('StartHTML:0000000000', ('StartHTML:' + $len.ToString('0000000000')))
+      return (Set-CfHtmlOffsets ($Utf8.GetBytes($head + $fragment)))
+    }
+    $b64 = [Convert]::ToBase64String($png)
+    $dataFrag = '<html><body><!--StartFragment--><p>a <img src="data:image/png;base64,' + $b64 + '"> b</p><!--EndFragment--></body></html>'
+    $dataBytes = New-CfHtmlSample $dataFrag
+    $onDisk = Get-CfHtmlOnDisk $dataBytes
+    $onDiskText = $Utf8.GetString($onDisk)
+    Check 'unit' 'a pasted picture becomes a file reference' ((-not ($onDiskText -match 'data:image')) -and ($onDiskText -match 'src="file:')) ([regex]::Match($onDiskText, 'src="(.{0,30})').Groups[1].Value)
+    $imgUrl = [regex]::Match($onDiskText, 'src="(file:[^"]+)"')
+    $imgPath = ''
+    if ($imgUrl.Success) { try { $imgPath = ([uri]$imgUrl.Groups[1].Value).LocalPath } catch { $imgPath = '' } }
+    $sameFile = $false
+    if ($imgPath -and (Test-Path -LiteralPath $imgPath)) {
+      $sameFile = ([BitConverter]::ToString([IO.File]::ReadAllBytes($imgPath)) -eq [BitConverter]::ToString($png))
+    }
+    Check 'unit' 'the picture file carries the same bytes' $sameFile $imgPath
+    $pasteHead = [int](Get-CfHtmlHeadLength $onDiskText)
+    Check 'unit' 'the pasted html keeps valid offsets' (($pasteHead -gt 0) -and ($onDiskText.Substring($pasteHead, 5) -eq '<html')) ([string]$pasteHead)
+    $plainBytes = New-CfHtmlSample '<html><body><!--StartFragment--><p>plain</p><!--EndFragment--></body></html>'
+    $plainBack = Get-CfHtmlOnDisk $plainBytes
+    Check 'unit' 'html without pictures is left alone' (([BitConverter]::ToString($plainBack)) -eq ([BitConverter]::ToString($plainBytes))) ''
+    # a header whose StartHTML was left at zero still gets its offsets repaired
+    $zeroHead = "Version:0.9`r`nStartHTML:0000000000`r`nEndHTML:0000000000`r`nStartFragment:0000000000`r`nEndFragment:0000000000`r`n"
+    $zeroBytes = $Utf8.GetBytes($zeroHead + '<html><body><!--StartFragment--><p>x</p><!--EndFragment--></body></html>')
+    $zeroFixed = Set-CfHtmlOffsets $zeroBytes
+    $zeroText = $Utf8.GetString($zeroFixed)
+    $zeroAt = [int](Get-CfHtmlHeadLength $zeroText)
+    Check 'unit' 'a zero StartHTML is discovered and repaired' (($zeroAt -gt 0) -and ($zeroText.Substring($zeroAt, 5) -eq '<html')) ([string]$zeroAt)
+
     # a big picture: the card scales it down once and keeps a small copy beside it
     $bigBmp = New-Object Drawing.Bitmap 1600, 900
     $bgfx = [Drawing.Graphics]::FromImage($bigBmp)
