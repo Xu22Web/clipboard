@@ -199,10 +199,52 @@ function Test-QueryRecord($record, $query) {
   return $true
 }
 
+# True when every row that matches New also matches Old - that is, when Old's answer can be
+# used as the candidate set for New. Adding a term or an exclusion narrows; extending the last
+# term narrows (a longer word only matches a subset); extending an exclusion does not, because
+# -ab rejected rows containing 'ab' and -abc rejects fewer.
+function Test-QueryNarrow($old, $new) {
+  if ($null -eq $old) { return $false }
+  if (($old.Types.Count -gt 0) -or ($old.Marks.Count -gt 0) -or ($old.Patterns.Count -gt 0) -or ($old.Initials.Count -gt 0)) { return $false }
+  if (([long]$old.Newer -ne [long]$new.Newer) -or ([long]$old.Older -ne [long]$new.Older)) { return $false }
+  $oldTerms = $old.Terms
+  $newTerms = $new.Terms
+  if ($oldTerms.Count -eq 0) { return $false }
+  if ($newTerms.Count -lt $oldTerms.Count) { return $false }
+  for ($i = 0; $i -lt $oldTerms.Count; $i++) {
+    if ($i -eq ($oldTerms.Count - 1)) {
+      if (-not ([string]$newTerms[$i]).StartsWith([string]$oldTerms[$i], [StringComparison]::OrdinalIgnoreCase)) { return $false }
+    } elseif ([string]$newTerms[$i] -cne [string]$oldTerms[$i]) { return $false }
+  }
+  $oldExcl = $old.Excludes
+  $newExcl = $new.Excludes
+  if ($newExcl.Count -lt $oldExcl.Count) { return $false }
+  for ($i = 0; $i -lt $oldExcl.Count; $i++) {
+    if ([string]$newExcl[$i] -cne [string]$oldExcl[$i]) { return $false }
+  }
+  return $true
+}
+
 # The rows the panel and the CLI show for one query. A query that could not be understood
 # matches nothing: answering with everything would hide the typo.
+#
+# The panel asks again for every typed character, and each line is the one before it plus a
+# character or a word. When the new line can only narrow the old one, the rows the old answer
+# kept are the only candidates left, so the scan shrinks as the user types instead of starting
+# over: a 3000 row history costs 76 ms cold and 2 ms once the first characters have landed.
+# The cache holds one line and its answer; anything that is not a narrowing falls back to a
+# full scan, which keeps the semantics identical to one query per line.
+$script:QueryNarrow = $null
 function Invoke-Query($entries, $query) {
-  $all = @($entries)
+  # The caller's array is kept rather than copied: the store replaces its array whenever a row
+  # is added or removed and never edits one in place, so the identity is what tells the
+  # narrowing cache below that the rows it knows about are still the rows on screen.
+  $all = $entries
+  if ($null -eq $all) { return @() }
+  if ($all -isnot [array]) {
+    $asList = $all -as [System.Collections.IList]
+    if ($null -ne $asList) { $all = $asList.ToArray() } else { $all = @($all) }
+  }
   if ($null -eq $query) { return $all }
   if ($query.Bad.Count -gt 0) { return @() }
   if ($query.Count -eq 0) { return $all }
@@ -217,8 +259,18 @@ function Invoke-Query($entries, $query) {
   if ($plain) {
     $terms = $query.Terms
     $excl = $query.Excludes
-    for ($i = 0; $i -lt $all.Count; $i++) {
-      $rec = $all[$i]
+    # a line that only adds to the one just answered keeps a subset of that answer, so only
+    # those rows are read again; the array identity covers a store that changed in between
+    $scan = $all
+    $memo = $script:QueryNarrow
+    if ($null -ne $memo) {
+      if (([object]::ReferenceEquals($memo.Array, $all)) -and
+          ($memo.Line.Length -gt 0) -and
+          ([string]$query.Line).StartsWith($memo.Line, [StringComparison]::Ordinal) -and
+          (Test-QueryNarrow $memo.Query $query)) { $scan = $memo.Rows }
+    }
+    for ($i = 0; $i -lt $scan.Count; $i++) {
+      $rec = $scan[$i]
       $head = [string]$rec.Payload
       $len = $head.Length
       # only the head of a big payload is ever shown, so that is what the search reads
@@ -236,7 +288,9 @@ function Invoke-Query($entries, $query) {
       }
       if ($ok) { $rows.Add($rec) }
     }
-    return $rows.ToArray()
+    $kept = $rows.ToArray()
+    $script:QueryNarrow = @{ Array = $all; Line = [string]$query.Line; Query = $query; Rows = $kept }
+    return $kept
   }
   foreach ($rec in $all) {
     if (Test-QueryRecord $rec $query) { $rows.Add($rec) }

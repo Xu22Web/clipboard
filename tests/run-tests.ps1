@@ -1392,6 +1392,43 @@ try {
     $es = Get-EmptyState $qRows (New-Query -Line 'type:nonsense') 'type:nonsense' @{ History = 'H'; Search = 'S' }
     Check 'unit' 'a filter nobody understands explains itself' ($es.Title -eq 'The search was not understood') $es.Title
 
+    # Typing one character at a time reuses the previous answer as the candidate set, so the
+    # panel stops rescanning rows the earlier keystroke already rejected. Every step must still
+    # equal a cold run of the same line on its own copy of the rows.
+    function Get-ColdPayloads($rows, [string]$line) {
+      $copy = @($rows)
+      return (@(Invoke-Query $copy (New-Query -Line $line)) | ForEach-Object { [string]$_.Payload }) -join ','
+    }
+    $narrowRows = @(
+      (New-Record 'alpha one' 100 ''),
+      (New-Record 'alpha two' 90 ''),
+      (New-Record 'alphabet soup' 80 ''),
+      (New-Record 'beta three' 70 '')
+    )
+    $steps = @('a', 'al', 'alp', 'alph', 'alpha', 'alpha o', 'alpha on')
+    $drift = @()
+    $lastCount = $narrowRows.Count
+    foreach ($step in $steps) {
+      $live = (@(Invoke-Query $narrowRows (New-Query -Line $step)) | ForEach-Object { [string]$_.Payload }) -join ','
+      if ($live -cne (Get-ColdPayloads $narrowRows $step)) { $drift += $step }
+    }
+    Check 'unit' 'typing narrows without changing the answer' ($drift.Count -eq 0) ($drift -join ' | ')
+    # the helper above ran on its own copy, so ask once more on the real array before looking
+    [void](Invoke-Query $narrowRows (New-Query -Line 'alpha on'))
+    Check 'unit' 'the last keystroke only kept the rows the previous one did' (([object]::ReferenceEquals($script:QueryNarrow.Array, $narrowRows)) -and ($script:QueryNarrow.Rows.Count -le 2)) ([string]$script:QueryNarrow.Rows.Count)
+    # a line that does not start with the previous one is a new question, not a narrower one
+    $restart = (@(Invoke-Query $narrowRows (New-Query -Line 'beta')) | ForEach-Object { [string]$_.Payload }) -join ','
+    Check 'unit' 'a fresh word is answered from the whole list' ($restart -ceq (Get-ColdPayloads $narrowRows 'beta')) $restart
+    # extending an exclusion widens the answer, so the old row set must not be reused
+    $exclRows = @(
+      (New-Record 'ab here' 100 ''),
+      (New-Record 'abc here' 90 ''),
+      (New-Record 'nothing' 80 '')
+    )
+    $narrowedAway = @(Invoke-Query $exclRows (New-Query -Line 'here -ab'))
+    $widened = @(Invoke-Query $exclRows (New-Query -Line 'here -abc'))
+    Check 'unit' 'a longer exclusion is not treated as a narrower one' (($narrowedAway.Count -eq 0) -and ($widened.Count -eq 1)) ([string]$narrowedAway.Count + ' -> ' + [string]$widened.Count)
+
     # ---- batch selection (lib/select.ps1): positions in the filtered list, nothing else
     $sel = New-Selection
     Check 'unit' 'a new selection holds nothing' ((Get-SelectionCount $sel) -eq 0) ''
