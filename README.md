@@ -575,7 +575,8 @@ src/                    程序本体（打包只读这个目录）
   lib/base.ps1            常量、版本读取、记录格式、运行时标识、度量/字形/时序与全部默认值
   lib/native.ps1          平台层：P/Invoke、WinForms 类型、程序集加载、字体探测、DPI
   lib/theme-stub.ps1      内置配色与主题空实现（lib/themes.ps1 会覆盖它们）
-  lib/media.ps1           图片与富文本的媒体文件：块存储、图片内联、载荷编解码、孤儿回收、预览位图
+  lib/media.ps1           图片与富文本的媒体文件：块存储、图片内联、载荷编解码、孤儿回收
+  lib/media-render.ps1    图片与富文本的位图：缩略图文件、两级位图缓存、缩放与三种预览图
   lib/clip.ps1            剪贴板读写（文本 / 文件清单 / 图片 / HTML+RTF）
   lib/store.ps1           历史文件：CBHIST 读写、版本字段、加锁、标记存储、排序裁剪
   lib/migrate.ps1         数据格式迁移：检测版本、备份、逐级升级
@@ -620,7 +621,7 @@ src/                    程序本体（打包只读这个目录）
   schema/plugins/*.ps1    每个插件自己的键表（Properties / ThemeProperties），加载时合并进设置
 ```
 
-分层顺序即依赖方向：`clipboard.ps1`（入口）→ `dispatch`（装配命令）→ `picker` / `serve` / `config` / `diag` / `shortcut` / `usage`（场景）→ `store` / `migrate` / `clip` / `media` / `entry` / `hotkey` / `picker-geom`（领域）→ `native`（基础）→ `utils`（ini / import / schema、log / time / format / draw）→ `schema` / `base` / `theme-stub`（描述、常量与兜底配色）。只允许上层调用下层；`utils` 里的函数只接受值、返回值，不读剪贴板也不读写历史，也不认识任何一个具体的键。
+分层顺序即依赖方向：`clipboard.ps1`（入口）→ `dispatch`（装配命令）→ `picker` / `preview` / `media-render` / `serve` / `config` / `diag` / `shortcut` / `usage`（场景）→ `store` / `migrate` / `clip` / `media` / `entry` / `hotkey` / `picker-geom`（领域）→ `native`（基础）→ `utils`（ini / import / schema、log / time / format / draw）→ `schema` / `base` / `theme-stub`（描述、常量与兜底配色）。只允许上层调用下层；`utils` 里的函数只接受值、返回值，不读剪贴板也不读写历史，也不认识任何一个具体的键。
 
 两条结构约束由 `struct` 组校验：
 
@@ -696,7 +697,7 @@ xpm test -Source dist\clipboard-0.1.0   # 对打包副本跑 CLI 组
 
 | 组 | 开关 | 覆盖内容 |
 |---|---|---|
-| 结构 | 无（总是执行） | 分层契约：40 个必需模块（`lib\` 27 + `utils\` 11）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
+| 结构 | 无（总是执行） | 分层契约：41 个必需模块（`lib\` 28 + `utils\` 11）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
 | 单元 | `-Unit` | 纯函数与存储层：热键解析、条目文案、ini 读写与单值校验、`Apply-Config` 与配置诊断、记录读写与版本识别、迁移引擎（拒绝无步骤 / 备份 / `-Purge` 归档）、图片与富文本的编解码与媒体回收、CF_HTML 片段解析、真实剪贴板的图片与格式往返、标记与保护规则、面板几何与命中计算、条目分类与行图标、主题发现与 `[metrics]` 重置、插件白名单。通过 `-Library` dot-source 主脚本，不触发命令分发 |
 | 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put` / `get` / `list` / `pick` / `del` / `clear` / `pause` / `resume` / `status` / `version` / `migrate` / `themes` / `config get` / `config set` / `config init` / `diag`、主题切换与非法主题名拒绝、插件白名单与各插件命令、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝、`xpm` 命令列表；以及打包（进包内容、`install.bat`、包内版本为常量且与 `package.ini` 一致、`Plugins=` / `Themes=` 裁剪、`Overwrite=0` 拒绝覆盖、未知插件名报错） |
 | 端到端 | `-E2E` | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启循环 |
