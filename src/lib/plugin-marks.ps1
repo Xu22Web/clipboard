@@ -134,6 +134,19 @@ function Get-PluginStickyMark {
 }
 
 
+# Everything the panel needs about the sticky mark in one call: the mark itself, and how many
+# rows it may freeze for a visible area of that size. This is the direction that keeps
+# lib/layout.ps1 free of the plugin layer - the plugin layer asks it, not the other way round.
+function Get-PluginStickyPlan([int]$rows) {
+  $mark = Get-PluginStickyMark
+  if (-not $mark) { return @{ Mark = ''; Max = 0 } }
+  $declared = 0
+  $d = @(Get-PluginStickyRows)
+  if ($d.Count -gt 0 -and $null -ne $d[0]) { $declared = [int]$d[0] }
+  return (Get-StickyPlan $rows $mark $declared)
+}
+
+
 # marks `clear` keeps without -All
 function Get-PluginClearKeeps {
   $out = @()

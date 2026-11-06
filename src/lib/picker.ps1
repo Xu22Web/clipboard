@@ -542,8 +542,10 @@ function Show-Picker {
         $tokens = @($query.Terms)
         $script:Tokens = $tokens
         # sticky pins: the plugin names the mark and the cap, the base decides how many rows
-        # actually fit - see Get-StickyPlan / Get-StickyTopRows in lib/store.ps1
-        $plan = Get-StickyPlan (Get-Rows)
+        # actually fit - see Get-StickyPlan / Get-StickyTopRows in lib/layout.ps1
+        $plan = $null
+        if (Get-Command Get-PluginStickyPlan -ErrorAction SilentlyContinue) { $plan = Get-PluginStickyPlan (Get-Rows) }
+        if ($null -eq $plan) { $plan = @{ Mark = ''; Max = 0 } }
         $rows = @(Invoke-Query $script:Entries $query)
         # the pins sort first, so the run of sticky rows at the top is what gets frozen
         $script:StickyTop = Get-StickyTopRows $rows $plan.Mark $plan.Max
