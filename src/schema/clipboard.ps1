@@ -26,7 +26,7 @@
     CaptureImages     = @{ Type = 'bool'; Ref = [ref]$script:CaptureImages; Default = 1; Description = '1 = capture pictures from the clipboard' }
     MaxImageBytes     = @{ Type = 'int'; Ref = [ref]$script:MaxImageBytes; Default = 16777216; Minimum = 1024; Maximum = 104857600; Description = 'per image cap in bytes; larger pictures are not captured' }
     CaptureRich       = @{ Type = 'bool'; Ref = [ref]$script:CaptureRich; Default = 1; Description = '1 = remember the html / rtf of formatted text' }
-    MaxRichBytes      = @{ Type = 'int'; Ref = [ref]$script:MaxRichBytes; Default = 8388608; Minimum = 1024; Maximum = 67108864; Description = 'cap per block (html and rtf counted apart); a block over it is dropped on its own' }
+    MaxRichBytes      = @{ Type = 'int'; Ref = [ref]$script:MaxRichBytes; Default = 20971520; Minimum = 1024; Maximum = 67108864; Description = 'cap per block (html and rtf counted apart); a block over it is dropped on its own' }
     MaxRichImages     = @{ Type = 'int'; Ref = [ref]$script:MaxRichImages; Default = 4194304; Minimum = 0; Maximum = 10485760; Description = 'inline a temp-file picture in the html when it is at most this large, 0 = never' }
     PasteRich         = @{ Type = 'bool'; Ref = [ref]$script:PasteRich; Default = 1; Description = '1 = paste the formatting back, 0 = always paste plain text' }
     PasteFilesAsText  = @{ Type = 'bool'; Ref = [ref]$script:PasteFilesAsText; Default = 1; Description = '1 = a file list also goes on the clipboard as text (paths), 0 = file list only' }

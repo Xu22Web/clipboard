@@ -184,7 +184,7 @@ cli build        # 打包到 dist\clipboard-<version>\
 | `CaptureImages` | `1` | `1` = 捕获剪贴板里的图片 |
 | `MaxImageBytes` | `16777216` | 单张图片上限；更大的图片记日志后跳过（不缩放，避免粘回去不是原图） |
 | `CaptureRich` | `1` | `1` = 记住带格式文本的 HTML / RTF（含随复制一起来的图片块） |
-| `MaxRichBytes` | `8388608` | 富文本**每个块**的上限（HTML 与 RTF 分开计数）；超出的那一块单独丢弃，不会连带丢另一块。RTF 里的图是十六进制，8 MB 的 RTF 约装得下 4 MB 的图 |
+| `MaxRichBytes` | `20971520` | 富文本**每个块**的上限（HTML 与 RTF 分开计数）；超出的那一块单独丢弃，不会连带丢另一块。RTF 里的图是十六进制，20 MB 的 RTF 约装得下 10 MB 的图 |
 | `MaxRichImages` | `4194304` | HTML 里引用本机临时文件的图片，单张不超这个字节数就内联进 HTML（`data:` URI）；`0` = 不内联 |
 | `PasteRich` | `1` | `1` = `pick` / 回车粘贴时把格式一起写回剪贴板，`0` = 只粘纯文本 |
 | `PasteFilesAsText` | `1` | `1` = 文件条目粘贴时同时写入路径文本（地址栏、终端、编辑器才有内容），`0` = 只写文件列表 |
@@ -275,7 +275,7 @@ cli build        # 打包到 dist\clipboard-<version>\
 
 - 单次复制只让历史文件增长几十字节；重复复制同一张图按内容哈希去重。
 - 记录被删除、清空或裁剪时，其独占的媒体文件在同一次保存中回收。
-- 媒体有独立预算 `MaxMediaTotal`（默认 64 MB）：超出时由旧到新丢弃带媒体的行，受保护标记的行不动。
+- 媒体有独立预算 `MaxMediaTotal`（默认 128 MB）：超出时由旧到新丢弃带媒体的行，受保护标记的行不动。
 
 `pick N` 与面板中回车把捕获到的块全部写回剪贴板：纯文本、`HTML Format`、`Rich Text Format`，以及源应用同时提供的 `PNG` / 设备无关位图 / 图元文件（Excel 的图表、Word 的形状就是后两种），所以粘回 Word / Excel / PowerPoint / WordPad / 邮件客户端都能保留排版与图片，粘到记事本得到纯文本。
 
@@ -722,7 +722,7 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑 CLI 组
 
 | 命令 | 作用 |
 |---|---|
-| `cli dev` | 停止残留常驻进程，启动 `src\clipboard.ps1 serve`，被加载的文件变化后重启 |
+| `cli dev` | 停止残留常驻进程，启动 `src\clipboard.ps1 serve`，被加载的文件变化后重启；`dev` 退出（`Ctrl+C` / 异常）时一并停掉它启动的常驻进程 |
 | `cli test` | 运行自测（开关见上一节） |
 | `cli bench` | 在临时副本里计时捕获、保存、解析与过滤，用于改动前后对比 |
 | `cli shot` | 重新生成 `docs\screenshot-dark.png` 与 `screenshot-light.png` |
@@ -737,7 +737,7 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑 CLI 组
 - 监视范围是程序真正会读的文件：`src` 下全部 `.ps1`（入口、`lib\`、`utils\`）、`themes\*.ini`、`plugins\`、`src\clipboard.cmd` 以及 `package.ini`（版本号）。`clipboard.ini` 不在范围内：常驻进程会写窗口尺寸与位置，盯它会导致自己重启自己。
 - 新增与删除也算变化，所以新建 `lib\foo.ps1` 并补上加载行后只需保存一次；入口里的 dot-source 行会被解析，指向不存在文件的引用会打印 `[!] missing: ...`。
 - 变化按路径逐行列出（`[+]` 新增、`[-]` 删除、`[~]` 修改），并等待文件写完，通过正常的 stop 事件停掉常驻进程再启动；启动不成功会明确提示，下一次变化重试。
-- `Ctrl+C` 结束循环，常驻进程保留运行。
+- `Ctrl+C` 结束循环**并停掉它启动的常驻进程**，不会留一个继续抓剪贴板的后台进程；同一条 `finally` 也覆盖循环内的异常。终端窗口被直接杀掉时进程来不及清理，这种情况需要手动 `clipboard stop`。
 
 `cli shot` 在 `%TEMP%` 下复制一份 `src\`，写入示例历史（固定时间、一条置顶、一条收藏），启动常驻进程并通过显示事件打开面板，再用 `CopyFromScreen` 截取面板区域；仓库的 `data\` 与 `clipboard.ini` 不参与。
 

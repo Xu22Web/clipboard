@@ -135,8 +135,8 @@ $script:CaptureImages = $true
 $script:MaxImageBytes = 16777216
 $script:CaptureRich = $true
 # per block cap: the html and the rtf are measured apart, so a large rtf cannot cost the html.
-# 8 MB of rtf carries about 4 MB of picture (the hex spelling doubles every byte)
-$script:MaxRichBytes = 8388608
+# 20 MB of rtf carries about 10 MB of picture (the hex spelling doubles every byte)
+$script:MaxRichBytes = 20971520
 # a picture the html points at is inlined only when it is at most this large, 0 = never
 $script:MaxRichImages = 4194304
 $script:PasteRich = $true

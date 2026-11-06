@@ -45,7 +45,7 @@ function Get-IniTemplateLines {
     '# 1 = remember the html / rtf of formatted text so it can be pasted back',
     'CaptureRich=1',
     '# cap per block: html and rtf are counted apart, so a large rtf cannot cost the html',
-    'MaxRichBytes=8388608',
+    'MaxRichBytes=20971520',
     '# a picture the html points at is inlined when it is at most this large, 0 = never',
     'MaxRichImages=4194304',
     '# 1 = paste the formatting back, 0 = always paste plain text',

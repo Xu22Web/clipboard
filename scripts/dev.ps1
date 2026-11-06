@@ -11,7 +11,8 @@
   a resident left over from an earlier run, starts src\clipboard.ps1 serve, and after a
   change stops it through its normal stop event and starts it again, so the history, the
   hotkey and the tray icon behave exactly as in a real run; a start that does not come up is
-  reported. Ctrl+C ends the loop and leaves the resident running.
+  reported. Ctrl+C ends the loop and stops the resident with it, so nothing keeps capturing
+  in the background after dev is gone.
 #>
 [CmdletBinding()]
 param(
@@ -153,7 +154,17 @@ function Test-ResidentUp {
 }
 
 function Stop-Resident {
-  [void](Invoke-Cli @('stop'))
+  # The resident waits on its own stop event (base.ps1: $StopName). Setting it here skips a
+  # cold PowerShell start, which matters twice: a restart is quicker, and the finally block
+  # that Ctrl+C runs can stop the resident with plain .NET calls only.
+  $sent = $false
+  try {
+    $se = [System.Threading.EventWaitHandle]::OpenExisting('Local\clipboard.stop')
+    [void]$se.Set()
+    $se.Dispose()
+    $sent = $true
+  } catch { }
+  if (-not $sent) { [void](Invoke-Cli @('stop')) }
   # the resident releases its mutex on the way out; wait for that before starting again
   for ($i = 0; $i -lt 40; $i++) {
     if (-not (Test-ResidentUp)) { return }
@@ -187,7 +198,7 @@ function Start-DevLoop {
   } else {
     Write-Host '[x] the resident did not start - run src\clipboard.ps1 serve to see the error, the next change retries'
   }
-  Write-Host ('     watching ' + $stamps.Count + ' file(s), poll ' + $Interval + ' ms - Ctrl+C ends the loop')
+  Write-Host ('     watching ' + $stamps.Count + ' file(s), poll ' + $Interval + ' ms - Ctrl+C ends the loop and the resident')
   $reported = @{}
   while ($true) {
     Start-Sleep -Milliseconds $Interval
@@ -221,4 +232,15 @@ if ($Action -and $Action.ToLower() -ne 'watch') {
   Write-Host '    dev always watches - run cli dev with no argument'
   exit 1
 }
-Start-DevLoop
+# The resident belongs to the loop: when dev ends - Ctrl+C, a crash in the loop, or an error -
+# it goes with it. Ctrl+C reaches the finally block, so a half-stopped resident is not left
+# capturing into a history nobody is watching. The one case this cannot cover is the terminal
+# itself being killed, which terminates the process before any cleanup runs.
+try {
+  Start-DevLoop
+} finally {
+  if (Test-ResidentUp) {
+    Stop-Resident
+    Write-Host '[..] resident stopped'
+  }
+}
