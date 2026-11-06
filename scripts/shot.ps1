@@ -2,10 +2,10 @@
 <#
   scripts\shot.ps1 - refresh docs\screenshot-dark.png and screenshot-light.png.
 
-      xpm shot                 both themes
-      xpm shot -Theme light    one theme
-      xpm shot -Select 7       row to leave selected (1 = first row)
-      xpm shot -KeepBox        keep the temporary sandbox for inspection
+      cli shot                 both themes
+      cli shot -Theme light    one theme
+      cli shot -Select 7       row to leave selected (1 = first row)
+      cli shot -KeepBox        keep the temporary sandbox for inspection
 
   The shot is taken from a throw-away copy of src\ in %TEMP%: the store is seeded with
   example rows (fixed ages, one pinned row, one starred row), the resident is started from

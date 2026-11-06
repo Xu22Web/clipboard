@@ -1,11 +1,11 @@
 #Requires -Version 5.1
 <#
-  xpm.ps1 - run a command declared in package.ini.
+  cli.ps1 - run a command declared in package.ini.
 
-      xpm                 list the commands
-      xpm <command> ...   run scripts.<command>, passing the remaining arguments on
+      cli                 list the commands
+      cli <command> ...   run scripts.<command>, passing the remaining arguments on
 
-  xpm.cmd and xpm (Git Bash / MSYS) call this file; all three read the same package.ini.
+  cli.cmd and cli (Git Bash / MSYS) call this file; all three read the same package.ini.
   The working directory is set to the project root first, so the command lines in
   package.ini may use paths relative to that folder.
 #>
@@ -60,7 +60,7 @@ function Show-Commands {
     Write-Host 'no scripts.<name>= lines in package.ini'
     return
   }
-  Write-Host 'usage: xpm <command> [args]'
+  Write-Host 'usage: cli <command> [args]'
   Write-Host ''
   # the command is typed in any case, so the list shows it in lower case
   foreach ($name in $order) {

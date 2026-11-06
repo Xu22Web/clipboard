@@ -35,16 +35,16 @@ Windows 10 / 11 的剪贴板历史工具，纯 PowerShell 5.1 实现，无第三
 
 ## 快速开始
 
-源码目录不是安装包：直接在仓库里运行程序本体（`src\clipboard.ps1` + `src\lib\` / `utils\` / `schema\`），或在仓库根用 `xpm` 执行 `package.ini` 中声明的命令。
+源码目录不是安装包：直接在仓库里运行程序本体（`src\clipboard.ps1` + `src\lib\` / `utils\` / `schema\`），或在仓库根用 `cli` 执行 `package.ini` 中声明的命令。
 
 ```powershell
-xpm              # 列出 package.ini 中的命令
-xpm dev          # 启动常驻进程，被加载的文件变化后自动重启
-xpm test         # 运行全部自测
-xpm build        # 打包到 dist\clipboard-<version>\
+cli              # 列出 package.ini 中的命令
+cli dev          # 启动常驻进程，被加载的文件变化后自动重启
+cli test         # 运行全部自测
+cli build        # 打包到 dist\clipboard-<version>\
 ```
 
-`xpm` 有 `xpm`（Git Bash / MSYS）与 `xpm.cmd`（CMD）两个启动入口，命令名不区分大小写，例如 `xpm test -Unit`、`xpm build -Config other.ini`；机制见[开发](#开发)。
+`cli` 有 `cli`（Git Bash / MSYS）与 `cli.cmd`（CMD）两个启动入口，命令名不区分大小写，例如 `cli test -Unit`、`cli build -Config other.ini`；机制见[开发](#开发)。
 
 程序本身也可直接调用，Git Bash 下 `./src/clipboard <命令>`，CMD 下 `src\clipboard.cmd <命令>`：
 
@@ -225,17 +225,17 @@ xpm build        # 打包到 dist\clipboard-<version>\
 
 ### INI 约定
 
-仓库内的 ini 使用同一套语法（`package.ini`、`build.ini`、`clipboard.ini`、`themes\*.ini`），并共用同一份实现：`utils\ini.ps1` 负责文本与数据结构，`utils\import.ps1` 负责读文件与缓存，`utils\schema.ps1` 负责校验——程序、`xpm` 与 `xpm build` 都调它们，规则不会两边跑偏。
+仓库内的 ini 使用同一套语法（`package.ini`、`build.ini`、`clipboard.ini`、`themes\*.ini`），并共用同一份实现：`utils\ini.ps1` 负责文本与数据结构，`utils\import.ps1` 负责读文件与缓存，`utils\schema.ps1` 负责校验——程序、`cli` 与 `cli build` 都调它们，规则不会两边跑偏。
 
 - 一行一个 `Key=Value`；`#` 或 `;` 开头**整行**为注释，行尾没有注释（值里的 `#` 属于值本身，如 `Accent=#5AC8FA`）；值不加引号，两端空白会被去掉；同一个键写两次以最后一次为准。
 - `[section]` 把后续键归入该段：`[scripts]` 下的 `Dev=...` 与顶层的 `scripts.Dev=...` 是同一个键，`[item-marks]` 下的 `MaxPins=50` 与 `item-marks.MaxPins=50` 同理。段头必须整行只有 `[名字]`，后面不能跟注释。
-- 段名小写，键名大驼峰；两者都不区分大小写，`config set`、`xpm` 接受任意写法。
+- 段名小写，键名大驼峰；两者都不区分大小写，`config set`、`cli` 接受任意写法。
 - 解析结果按文件缓存（键为路径，比较大小与写入时间），同一进程内重复读取不再扫盘解析；写入只改对应行并作废该文件的缓存，不重建整个文件。
 
 | 文件 | 用途 | 段 |
 |---|---|---|
-| `package.ini` | 项目元数据与命令，`xpm` 读取 | `[package]` 的 `Name` / `Version`，`[scripts]` 的命令名 |
-| `build.ini` | 打包选项，`xpm build` 读取 | `[build]` |
+| `package.ini` | 项目元数据与命令，`cli` 读取 | `[package]` 的 `Name` / `Version`，`[scripts]` 的命令名 |
+| `build.ini` | 打包选项，`cli build` 读取 | `[build]` |
 | `clipboard.ini` | 程序设置，由 `config init` 生成 | 基础键不分组；插件键写在 `[<插件名>]` 段里（平铺的 `<插件名>.<Key>` 仍可读） |
 | `themes\*.ini` | 主题定义 | `[palette]` `[fonts]` `[metrics]` `[<插件名>]` |
 | `schema\*.ps1` | 给上面两类文件用的 schema（`clipboard.ps1` / `theme.ps1`） | — |
@@ -558,11 +558,11 @@ clipboard config set entry-actions.Reveal 0
 ## 文件与数据
 
 ```
-package.ini             项目元数据与命令：Name / Version / [scripts] 下的命令名（xpm 读取）
-xpm  xpm.cmd  xpm.ps1   命令入口（sh / CMD / PowerShell），执行 package.ini 中的命令
+package.ini             项目元数据与命令：Name / Version / [scripts] 下的命令名（cli 读取）
+cli  cli.cmd  cli.ps1   命令入口（sh / CMD / PowerShell），执行 package.ini 中的命令
 build.ini               打包选项（输出目录 / 压缩 / 重命名 / 验证 / 打哪些插件与主题）
 scripts/build.ps1       打包脚本（读 src\，输出 dist\clipboard-<version>\，并写 install.bat / uninstall.bat）
-scripts/minify.ps1      压缩器（按语法树合并语句、删注释与缩进、重命名内部函数与局部变量）
+scripts/minify.ps1      压缩器（按语法树合并语句、删注释与缩进、重命名内部函数与局部变量、C# 段去注释折行）
 scripts/dev.ps1         开发运行：启动常驻并监视被加载的文件，变化即重启
 scripts/test.ps1        自测入口（转发 tests\run-tests.ps1 的开关）
 scripts/shot.ps1        重新生成 docs\ 下的界面截图
@@ -695,9 +695,9 @@ CBHIST RS <数据版本> RS <flags> US <epoch 秒> US <extra> US <payload> RS <f
 ## 测试
 
 ```powershell
-xpm test                             # 全部四组
-xpm test -Unit                       # 只跑一组
-xpm test -Source dist\clipboard-0.1.0   # 对打包副本跑 CLI 组
+cli test                             # 全部四组
+cli test -Unit                       # 只跑一组
+cli test -Source dist\clipboard-0.1.0   # 对打包副本跑 CLI 组
 ```
 
 也可以直接调用，参数相同：`powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run-tests.ps1`。
@@ -708,7 +708,7 @@ xpm test -Source dist\clipboard-0.1.0   # 对打包副本跑 CLI 组
 |---|---|---|
 | 结构 | 无（总是执行） | 分层契约：46 个必需模块（`lib\` 32 + `utils\` 12）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
 | 单元 | `-Unit` | 纯函数与存储层：热键解析、条目文案、ini 读写与单值校验、`Apply-Config` 与配置诊断、记录读写与版本识别、迁移引擎（拒绝无步骤 / 备份 / `-Purge` 归档）、图片与富文本的编解码与媒体回收、CF_HTML 片段解析、真实剪贴板的图片与格式往返、标记与保护规则、面板几何与命中计算、条目分类与行图标、主题发现与 `[metrics]` 重置、插件白名单。通过 `-Library` dot-source 主脚本，不触发命令分发 |
-| 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put` / `get` / `list` / `pick` / `del` / `clear` / `pause` / `resume` / `status` / `version` / `migrate` / `themes` / `config get` / `config set` / `config init` / `diag`、主题切换与非法主题名拒绝、插件白名单与各插件命令、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝、`xpm` 命令列表；以及打包（进包内容、`install.bat`、包内版本为常量且与 `package.ini` 一致、`Plugins=` / `Themes=` 裁剪、`Overwrite=0` 拒绝覆盖、未知插件名报错） |
+| 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put` / `get` / `list` / `pick` / `del` / `clear` / `pause` / `resume` / `status` / `version` / `migrate` / `themes` / `config get` / `config set` / `config init` / `diag`、主题切换与非法主题名拒绝、插件白名单与各插件命令、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝、`cli` 命令列表；以及打包（进包内容、`install.bat`、包内版本为常量且与 `package.ini` 一致、`Plugins=` / `Themes=` 裁剪、`Overwrite=0` 拒绝覆盖、未知插件名报错） |
 | 端到端 | `-E2E` | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启循环 |
 
 全部在 `%TEMP%` 下的沙箱副本（脚本 + `lib` + `utils` + `schema` + `plugins` + `themes`）中运行，不修改 `data/` 与 `clipboard.ini`；真实剪贴板在开始前备份、结束后还原。任一项失败时退出码为 1。
@@ -721,32 +721,32 @@ xpm test -Source dist\clipboard-0.1.0   # 对打包副本跑 CLI 组
 
 | 命令 | 作用 |
 |---|---|
-| `xpm dev` | 停止残留常驻进程，启动 `src\clipboard.ps1 serve`，被加载的文件变化后重启 |
-| `xpm test` | 运行自测（开关见上一节） |
-| `xpm bench` | 在临时副本里计时捕获、保存、解析与过滤，用于改动前后对比 |
-| `xpm shot` | 重新生成 `docs\screenshot-dark.png` 与 `screenshot-light.png` |
-| `xpm build` | 打包到 `dist\` |
+| `cli dev` | 停止残留常驻进程，启动 `src\clipboard.ps1 serve`，被加载的文件变化后重启 |
+| `cli test` | 运行自测（开关见上一节） |
+| `cli bench` | 在临时副本里计时捕获、保存、解析与过滤，用于改动前后对比 |
+| `cli shot` | 重新生成 `docs\screenshot-dark.png` 与 `screenshot-light.png` |
+| `cli build` | 打包到 `dist\` |
 
-`xpm` / `xpm.cmd` / `xpm.ps1` 三个入口行为一致，均先把工作目录切到仓库根，再把其余参数原样追加到 `package.ini` 里 `[scripts]` 那一行命令。
+`cli` / `cli.cmd` / `cli.ps1` 三个入口行为一致，均先把工作目录切到仓库根，再把其余参数原样追加到 `package.ini` 里 `[scripts]` 那一行命令。
 
-`xpm bench` 在 `%TEMP%` 下复制一份 `src\` 并把 `DataDir` 指向临时目录，所以在常驻进程运行时也能跑：输出 `cli status` / `cli list` 的冷启动、2 KB 与 200 KB 文本的捕获、保存、解析、单词过滤七项耗时（`-Records` 改库规模，`-Json` / `-Out <文件>` 便于改动前后对比）。面板打开与粘贴注入需要真实桌面，不在其中。
+`cli bench` 在 `%TEMP%` 下复制一份 `src\` 并把 `DataDir` 指向临时目录，所以在常驻进程运行时也能跑：输出 `clipboard status` / `clipboard list` 的冷启动、2 KB 与 200 KB 文本的捕获、保存、解析、单词过滤七项耗时（`-Records` 改库规模，`-Json` / `-Out <文件>` 便于改动前后对比）。面板打开与粘贴注入需要真实桌面，不在其中。
 
-`xpm dev` 只有一种模式：常驻进程一直在跑，文件一变就重启。
+`cli dev` 只有一种模式：常驻进程一直在跑，文件一变就重启。
 
 - 监视范围是程序真正会读的文件：`src` 下全部 `.ps1`（入口、`lib\`、`utils\`）、`themes\*.ini`、`plugins\`、`src\clipboard.cmd` 以及 `package.ini`（版本号）。`clipboard.ini` 不在范围内：常驻进程会写窗口尺寸与位置，盯它会导致自己重启自己。
 - 新增与删除也算变化，所以新建 `lib\foo.ps1` 并补上加载行后只需保存一次；入口里的 dot-source 行会被解析，指向不存在文件的引用会打印 `[!] missing: ...`。
 - 变化按路径逐行列出（`[+]` 新增、`[-]` 删除、`[~]` 修改），并等待文件写完，通过正常的 stop 事件停掉常驻进程再启动；启动不成功会明确提示，下一次变化重试。
 - `Ctrl+C` 结束循环，常驻进程保留运行。
 
-`xpm shot` 在 `%TEMP%` 下复制一份 `src\`，写入示例历史（固定时间、一条置顶、一条收藏），启动常驻进程并通过显示事件打开面板，再用 `CopyFromScreen` 截取面板区域；仓库的 `data\` 与 `clipboard.ini` 不参与。
+`cli shot` 在 `%TEMP%` 下复制一份 `src\`，写入示例历史（固定时间、一条置顶、一条收藏），启动常驻进程并通过显示事件打开面板，再用 `CopyFromScreen` 截取面板区域；仓库的 `data\` 与 `clipboard.ini` 不参与。
 
 ## 打包分发
 
-`xpm build` 调用 `scripts\build.ps1`：读取 `src\`，输出 `dist\clipboard-<version>\`。目录结构不变、产物仍是 PowerShell，但每个 `.ps1` 都按语法树重写（删注释与缩进、重命名内部函数与局部变量）。不编译、不生成 exe、默认不打包 zip。
+`cli build` 调用 `scripts\build.ps1`：读取 `src\`，输出 `dist\clipboard-<version>\`。目录结构不变、产物仍是 PowerShell，但每个 `.ps1` 都按语法树重写（删注释与缩进、重命名内部函数与局部变量）。不编译、不生成 exe、默认不打包 zip。
 
 ```powershell
-xpm build                       # 用 build.ini
-xpm build -Config other.ini     # 换一份配置
+cli build                       # 用 build.ini
+cli build -Config other.ini     # 换一份配置
 ```
 
 `build.ini` 只放打包选项，语法与其它 ini 一致（`[build]` 段，也可以写成顶层的 `build.OutDir=...`）；版本在 `package.ini`：
@@ -819,11 +819,11 @@ Themes=win11-dark
 
 | workflow | 触发 | 步骤 |
 |---|---|---|
-| `ci.yml` | 推到 `master`、PR、手动 | 打印 PowerShell 版本 → `xpm test -Unit -Integration` → `xpm build`（`Verify=1`，产物复测） |
+| `ci.yml` | 推到 `master`、PR、手动 | 打印 PowerShell 版本 → `cli test -Unit -Integration` → `cli build`（`Verify=1`，产物复测） |
 | `release.yml` | 推 `v*` tag、手动 | 校验 tag 与 `package.ini` 的版本一致 → 跑测试 → 打包成 `clipboard-<version>.zip` → 生成 `SHA256SUMS.txt` → 发布 Release |
 
 - 结构组校验文件布局与纯 ASCII（PowerShell 5.1 按 GBK 解码无 BOM 的 UTF-8，脚本里有中文就会炸），单元组按名字调用内部函数，集成组起子进程跑每一条 CLI 能力——三者都在 `ci.yml` 里，每次推送都会跑。
-- 端到端组（常驻进程 / 全局热键 / 剪贴板接管）需要真实桌面，托管 runner 不保证有交互式会话，所以在 `ci.yml` 里单独一个 job 且不阻塞合并，只作参考信号；要确认这一层请在本机跑 `xpm test -E2E`。
+- 端到端组（常驻进程 / 全局热键 / 剪贴板接管）需要真实桌面，托管 runner 不保证有交互式会话，所以在 `ci.yml` 里单独一个 job 且不阻塞合并，只作参考信号；要确认这一层请在本机跑 `cli test -E2E`。
 - 发版只改 `package.ini` 的 `Version=`，然后 `git tag v<version>` 并推送 tag；版本号与 tag 对不上时 workflow 在第一步就失败，不会发出一个版本号对不上的包。手动触发 `release.yml` 时按 `package.ini` 发同名 Release，已存在就覆盖资产。
 
 ## 常见问题

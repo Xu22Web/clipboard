@@ -32,7 +32,7 @@ jobs:
 
       - name: Self tests
         shell: pwsh
-        run: .\xpm.ps1 test -Unit -Integration
+        run: .\cli.ps1 test -Unit -Integration
 
       - name: Package
         shell: pwsh
@@ -41,7 +41,7 @@ jobs:
         run: |
           @('OutDir=dist', 'Zip=1', 'Overwrite=1', 'Verify=1') |
             Set-Content -LiteralPath build-release.ini -Encoding ascii
-          .\xpm.ps1 build -Config build-release.ini
+          .\cli.ps1 build -Config build-release.ini
           Remove-Item -LiteralPath build-release.ini -Force
           $zip = @(Get-ChildItem -Path dist -Filter '*.zip')
           if ($zip.Count -ne 1) { throw ('dist\ 下应当正好一个 zip，实际 ' + $zip.Count + ' 个') }

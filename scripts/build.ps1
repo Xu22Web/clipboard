@@ -6,8 +6,8 @@
   folder keeps the same shape and behaviour while being noticeably smaller. Nothing is
   compiled.
 
-      xpm build                          settings from build.ini
-      xpm build -Config other.ini         a different settings file
+      cli build                          settings from build.ini
+      cli build -Config other.ini         a different settings file
 
   build.ini holds the build options only: output folder, whether to minify and rename,
   whether to verify the result by running the CLI suite against it, whether to also write a

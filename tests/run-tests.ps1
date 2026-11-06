@@ -264,8 +264,8 @@ try {
     $entryLines = @([IO.File]::ReadAllLines($entryPath)).Count
     Check 'struct' 'entry file stays an entry point' ($entryLines -le 200) ([string]$entryLines + ' lines')
 
-    # the tooling lives outside src\: package.ini declares the commands, xpm runs them
-    $tooling = @('package.ini', 'xpm.ps1', 'xpm.cmd', 'xpm', 'build.ini',
+    # the tooling lives outside src\: package.ini declares the commands, cli runs them
+    $tooling = @('package.ini', 'cli.ps1', 'cli.cmd', 'cli', 'build.ini',
       'scripts\build.ps1', 'scripts\minify.ps1', 'scripts\dev.ps1', 'scripts\test.ps1', 'scripts\shot.ps1')
     $missingTool = @()
     foreach ($tool in $tooling) {
@@ -1944,17 +1944,17 @@ try {
     $o = Clip $intDir @('restore-data', 'nosuchsnapshot')
     Check 'int' 'restore-data refuses an unknown snapshot' ($o -match 'no snapshot matches') $o.Trim()
 
-    # xpm reads package.ini and runs the command line it finds there
-    $xpm = Join-Path $repoRoot 'xpm.ps1'
-    if (Test-Path -LiteralPath $xpm) {
-      $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $xpm 2>&1 | Out-String)
-      Check 'int' 'xpm lists the declared commands' (($o -match '\bdev\b') -and ($o -match '\bbuild\b') -and ($o -match '\btest\b') -and ($o -match '\bshot\b')) $o.Trim()
-      $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $xpm 'nosuchcmd' 2>&1 | Out-String)
-      Check 'int' 'xpm reports an unknown command' (($o -match 'unknown command') -and ($o -match '\bdev\b')) $o.Trim()
-      $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $xpm 'dev' 'nosuch' 2>&1 | Out-String)
-      Check 'int' 'xpm runs a script through its command line' ($o -match 'dev always watches') $o.Trim()
+    # cli reads package.ini and runs the command line it finds there
+    $cli = Join-Path $repoRoot 'cli.ps1'
+    if (Test-Path -LiteralPath $cli) {
+      $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $cli 2>&1 | Out-String)
+      Check 'int' 'cli lists the declared commands' (($o -match '\bdev\b') -and ($o -match '\bbuild\b') -and ($o -match '\btest\b') -and ($o -match '\bshot\b')) $o.Trim()
+      $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $cli 'nosuchcmd' 2>&1 | Out-String)
+      Check 'int' 'cli reports an unknown command' (($o -match 'unknown command') -and ($o -match '\bdev\b')) $o.Trim()
+      $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $cli 'dev' 'nosuch' 2>&1 | Out-String)
+      Check 'int' 'cli runs a script through its command line' ($o -match 'dev always watches') $o.Trim()
     } else {
-      Check 'int' 'xpm lists the declared commands' $false 'no xpm.ps1'
+      Check 'int' 'cli lists the declared commands' $false 'no cli.ps1'
     }
 
     $o = Clip $intDir @('config')

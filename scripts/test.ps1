@@ -2,9 +2,9 @@
 <#
   scripts\test.ps1 - run the self test suite.
 
-      xpm test                       every group (struct, unit, integration, e2e)
-      xpm test -Unit                 one group
-      xpm test -Source dist\clipboard-0.1.0
+      cli test                       every group (struct, unit, integration, e2e)
+      cli test -Unit                 one group
+      cli test -Source dist\clipboard-0.1.0
                                      run the CLI groups against a packaged copy
 
   Switches are passed straight to tests\run-tests.ps1; -Sta is required because the

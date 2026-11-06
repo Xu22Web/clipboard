@@ -2,7 +2,7 @@
 <#
   scripts\dev.ps1 - run the development copy from src\.
 
-      xpm dev           start the resident, restart it whenever a watched file changes
+      cli dev           start the resident, restart it whenever a watched file changes
 
   "dev" always watches what the program reads - the entry point, the modules it loads
   from lib\ and utils\, the theme files, the plugins and package.ini (the version) - and
@@ -15,7 +15,7 @@
 #>
 [CmdletBinding()]
 param(
-  # dev has one mode; the parameter only makes "xpm dev <something>" explain itself
+  # dev has one mode; the parameter only makes "cli dev <something>" explain itself
   [Parameter(Position = 0)][string]$Action = '',
   # how often the watcher looks at the source tree, in ms
   [int]$Interval = 600
@@ -174,7 +174,7 @@ function Start-Resident {
   return $false
 }
 
-# xpm dev starts the resident, watches what it reads and starts it again after a change,
+# cli dev starts the resident, watches what it reads and starts it again after a change,
 # so every edit lands in a running copy without a second command.
 function Start-DevLoop {
   if ($Interval -lt 100) { $Interval = 100 }
@@ -218,7 +218,7 @@ function Start-DevLoop {
 # one mode only: refuse an argument instead of starting a loop the caller did not ask for
 if ($Action -and $Action.ToLower() -ne 'watch') {
   Write-Host ('[!] unknown argument: ' + $Action)
-  Write-Host '    dev always watches - run xpm dev with no argument'
+  Write-Host '    dev always watches - run cli dev with no argument'
   exit 1
 }
 Start-DevLoop
