@@ -969,6 +969,18 @@ try {
     $cardFixed = ConvertTo-CardRtf $cardRtf
     Check 'unit' 'a png picture is re-spelled for the layout' ((-not ($cardFixed -match '\\pngblip')) -and ($cardFixed -match '\\dibitmap0')) ([string]$cardFixed.Length + ' chars')
     Check 'unit' 'rtf without a picture is left alone' ((ConvertTo-CardRtf '{\rtf1\ansi plain words\par}') -ceq '{\rtf1\ansi plain words\par}') ''
+    # a picture the card will not convert is still held by the entry and still pastes back, so
+    # the card marks the spot instead of leaving a blank strip nobody can explain
+    $savedCardPng = $script:CardRtfMaxPng
+    $script:CardRtfMaxPng = 64
+    $cardCapped = ConvertTo-CardRtf $cardRtf
+    $script:CardRtfMaxPng = $savedCardPng
+    Check 'unit' 'a picture too big for the card leaves a marker' ((-not ($cardCapped -match '\\pngblip')) -and ($cardCapped -match '\[image\]')) ([string]$cardCapped.Length + ' chars')
+    $savedCardDib = $script:CardRtfMaxDib
+    $script:CardRtfMaxDib = 64
+    $cardBudget = ConvertTo-CardRtf $cardRtf
+    $script:CardRtfMaxDib = $savedCardDib
+    Check 'unit' 'the layout budget leaves a marker as well' ((-not ($cardBudget -match '\\pngblip')) -and ($cardBudget -match '\[image\]')) ''
     $cardRef = New-RichRef @{ Html = $null; Rtf = $Utf8.GetBytes($cardRtf) }
     [void](Write-RichMedia $cardRef @{ Html = $null; Rtf = $Utf8.GetBytes($cardRtf) })
     Clear-MediaCache

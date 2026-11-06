@@ -293,41 +293,55 @@ function ConvertTo-CardRtf([string]$rtf) {
   if ($hits.Count -eq 0) { return $rtf }
   $sb = New-Object Text.StringBuilder $rtf
   $total = 0
+  $placed = 0
+  # A picture the layout will not take - too big on its own, over the running bitmap budget,
+  # or an encoding that does not decode - is still part of the entry and still pastes back.
+  # Leaving it as \pngblip would draw nothing at all, so the block becomes a short marker:
+  # the card then shows that a picture belongs there instead of an unexplained blank strip.
+  $note = '{\fs16 [image]}'
   # back to front: a replacement changes the length, and every later index would move
   for ($i = $hits.Count - 1; $i -ge 0; $i--) {
     $hit = $hits[$i]
-    # the block is control words and one hex run; c, d, e, f are hex digits too, so the control
-    # words have to go first or '\picw' would be read as data
-    $inner = [regex]::Replace($hit.Groups[1].Value, '\\[a-zA-Z]+-?\d*\s?', '')
-    $hex = ($inner -replace '[^0-9a-fA-F]', '')
-    if ($hex.Length -lt 32 -or ($hex.Length % 2) -ne 0) { continue }
-    $png = $null
-    try { $png = [System.Runtime.Remoting.Metadata.W3cXsd2001.SoapHexBinary]::Parse($hex).Value } catch { continue }
-    if ($null -eq $png -or $png.Length -lt 8 -or $png.Length -gt $script:CardRtfMaxPng) { continue }
+    $replacement = $note
     $src = $null
     try {
-      $ms = New-Object IO.MemoryStream (,$png)
-      $src = [Drawing.Image]::FromStream($ms)
-      $bmpMs = New-Object IO.MemoryStream
-      $src.Save($bmpMs, [Drawing.Imaging.ImageFormat]::Bmp)
-      $all = $bmpMs.ToArray()
-      $bmpMs.Dispose()
-      # a .bmp file is a 14 byte file header in front of the DIB the clipboard and RTF both want
-      if ($all.Length -le 14 + 40) { continue }
-      $dibLen = $all.Length - 14
-      if (($total + $dibLen) -gt $script:CardRtfMaxDib) { continue }
-      $dib = New-Object byte[] $dibLen
-      [Array]::Copy($all, 14, $dib, 0, $dibLen)
-      $total = $total + $dibLen
-      $newHex = ([System.Runtime.Remoting.Metadata.W3cXsd2001.SoapHexBinary]::new($dib)).ToString()
-      [void]$sb.Remove($hit.Index, $hit.Length)
-      [void]$sb.Insert($hit.Index, ('{\pict\dibitmap0 ' + $newHex + '}'))
+      # the block is control words and one hex run; c, d, e, f are hex digits too, so the
+      # control words have to go first or '\picw' would be read as data
+      $inner = [regex]::Replace($hit.Groups[1].Value, '\\[a-zA-Z]+-?\d*\s?', '')
+      $hex = ($inner -replace '[^0-9a-fA-F]', '')
+      if ($hex.Length -ge 32 -and ($hex.Length % 2) -eq 0) {
+        $png = $null
+        try { $png = [System.Runtime.Remoting.Metadata.W3cXsd2001.SoapHexBinary]::Parse($hex).Value } catch { $png = $null }
+        if ($null -ne $png -and $png.Length -ge 8 -and $png.Length -le $script:CardRtfMaxPng) {
+          $ms = New-Object IO.MemoryStream (,$png)
+          $src = [Drawing.Image]::FromStream($ms)
+          $bmpMs = New-Object IO.MemoryStream
+          $src.Save($bmpMs, [Drawing.Imaging.ImageFormat]::Bmp)
+          $all = $bmpMs.ToArray()
+          $bmpMs.Dispose()
+          # a .bmp file is a 14 byte file header in front of the DIB the clipboard and RTF both want
+          if ($all.Length -gt 14 + 40) {
+            $dibLen = $all.Length - 14
+            if (($total + $dibLen) -le $script:CardRtfMaxDib) {
+              $dib = New-Object byte[] $dibLen
+              [Array]::Copy($all, 14, $dib, 0, $dibLen)
+              $total = $total + $dibLen
+              $newHex = ([System.Runtime.Remoting.Metadata.W3cXsd2001.SoapHexBinary]::new($dib)).ToString()
+              $replacement = '{\pict\dibitmap0 ' + $newHex + '}'
+            }
+          }
+        }
+      }
     } catch {
       Write-Log ('card picture skipped: ' + $_.Exception.Message)
     } finally {
       if ($null -ne $src) { try { $src.Dispose() } catch { } }
     }
+    if ($replacement -eq $note) { $placed++ }
+    [void]$sb.Remove($hit.Index, $hit.Length)
+    [void]$sb.Insert($hit.Index, $replacement)
   }
+  if ($placed -gt 0) { Write-Log ('card pictures drawn as a placeholder: ' + [string]$placed) }
   $newText = $sb.ToString()
   if ($newText -ceq $rtf) { return $rtf }
   return $newText
