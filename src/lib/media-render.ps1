@@ -274,6 +274,65 @@ function Get-ImagePreviewBitmap([string]$sha1, [int]$maxW, [int]$maxH) {
   return (Set-MediaCache $key $out)
 }
 
+# ---- what the card's layout engine can actually draw -------------------------
+# The off-screen RichTextBox lays RTF out through EM_FORMATRANGE, and that engine silently
+# drops the \pngblip spelling - which is exactly what Word and Excel write when a picture is
+# copied. The words arrived on the card and every picture was missing, while the paste itself
+# was fine (a target application parses the RTF itself). So the pictures are re-spelled as
+# \dibitmap for the layout only; the entry and the clipboard bytes are untouched.
+#
+# A bitmap is much bigger than the png it came from, so both sides are capped: a card must not
+# be able to stall the panel on a page full of screenshots.
+$script:CardRtfMaxPng = 4194304
+$script:CardRtfMaxDib = 25165824
+
+function ConvertTo-CardRtf([string]$rtf) {
+  if ([string]::IsNullOrEmpty($rtf) -or $rtf.Length -lt 16) { return $rtf }
+  if ($rtf.IndexOf('\pngblip', [StringComparison]::OrdinalIgnoreCase) -lt 0) { return $rtf }
+  $hits = @([regex]::Matches($rtf, '(?s)\{\\pict\\pngblip([^{}]*)\}'))
+  if ($hits.Count -eq 0) { return $rtf }
+  $sb = New-Object Text.StringBuilder $rtf
+  $total = 0
+  # back to front: a replacement changes the length, and every later index would move
+  for ($i = $hits.Count - 1; $i -ge 0; $i--) {
+    $hit = $hits[$i]
+    # the block is control words and one hex run; c, d, e, f are hex digits too, so the control
+    # words have to go first or '\picw' would be read as data
+    $inner = [regex]::Replace($hit.Groups[1].Value, '\\[a-zA-Z]+-?\d*\s?', '')
+    $hex = ($inner -replace '[^0-9a-fA-F]', '')
+    if ($hex.Length -lt 32 -or ($hex.Length % 2) -ne 0) { continue }
+    $png = $null
+    try { $png = [System.Runtime.Remoting.Metadata.W3cXsd2001.SoapHexBinary]::Parse($hex).Value } catch { continue }
+    if ($null -eq $png -or $png.Length -lt 8 -or $png.Length -gt $script:CardRtfMaxPng) { continue }
+    $src = $null
+    try {
+      $ms = New-Object IO.MemoryStream (,$png)
+      $src = [Drawing.Image]::FromStream($ms)
+      $bmpMs = New-Object IO.MemoryStream
+      $src.Save($bmpMs, [Drawing.Imaging.ImageFormat]::Bmp)
+      $all = $bmpMs.ToArray()
+      $bmpMs.Dispose()
+      # a .bmp file is a 14 byte file header in front of the DIB the clipboard and RTF both want
+      if ($all.Length -le 14 + 40) { continue }
+      $dibLen = $all.Length - 14
+      if (($total + $dibLen) -gt $script:CardRtfMaxDib) { continue }
+      $dib = New-Object byte[] $dibLen
+      [Array]::Copy($all, 14, $dib, 0, $dibLen)
+      $total = $total + $dibLen
+      $newHex = ([System.Runtime.Remoting.Metadata.W3cXsd2001.SoapHexBinary]::new($dib)).ToString()
+      [void]$sb.Remove($hit.Index, $hit.Length)
+      [void]$sb.Insert($hit.Index, ('{\pict\dibitmap0 ' + $newHex + '}'))
+    } catch {
+      Write-Log ('card picture skipped: ' + $_.Exception.Message)
+    } finally {
+      if ($null -ne $src) { try { $src.Dispose() } catch { } }
+    }
+  }
+  $newText = $sb.ToString()
+  if ($newText -ceq $rtf) { return $rtf }
+  return $newText
+}
+
 # RTF is the only rich format Windows can lay out without a browser engine, so the card
 # renders it with an off-screen RichTextBox and keeps the bitmap. A document keeps its own
 # colours, so the paper stays light whatever the panel theme is.
@@ -284,6 +343,8 @@ function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $pap
   if ($null -ne $hit) { return $hit }
   $rtf = Read-RichRtf $ref
   if (-not $rtf) { return $null }
+  # the layout engine cannot draw a png picture: re-spell it as a bitmap first
+  $rtf = ConvertTo-CardRtf $rtf
   Load-Forms
   Add-Native
   if ($null -eq $paper) { $paper = [Drawing.Color]::White }

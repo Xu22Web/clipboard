@@ -284,6 +284,7 @@ xpm build        # 打包到 dist\clipboard-<version>\
 - **图片内联**：Word / Excel / 浏览器把图片放在临时目录（`msohtmlclip1/clip_image001.png`）里、HTML 里只写路径，那个目录活不过这次复制。不超 `MaxRichImages` 的图片在捕获时被读进来、换成 `data:` URI，四个头部偏移跟着重算。
 - **粘贴时再落回文件**：Word / Excel / PowerPoint **不认 CF_HTML 里的 `data:` URI**，它们只按照 `<img>` 指向的文件取图（这也是它们自己写剪贴板的方式）。因此粘贴前会把 `data:` 图片解出来写成 `%TEMP%\clipboard-paste\<sha1>.<ext>`，HTML 里的 `src` 换回 `file:///` 并重算偏移 —— 否则文字能贴上，而每个图位都是空白框（预览卡片看着正常，因为它直接用存下的位图块画，不走 HTML）。同一张图只写一份；超过 24 小时的残留文件在下次粘贴时清掉。
 - **图片块随行**：同一次复制里源应用额外提供的位图 / 图元文件也一起存下，粘贴时一并还原；目标程序自己会挑它偏好的那种。卡片渲染不出排版时（如 Excel 只给 HTML 与图元文件），就用第一张图片当缩略图。
+- **卡片里的图片**：悬停卡片用离屏 `RichTextBox` 排版 RTF，而这个排版引擎**不画 `\pngblip`（PNG 图片）**——偏偏 Word / Excel 复制时的图片就是这种写法，所以卡片只能显示文字。因此排版前会把 `\pngblip` 就地改写成 `\dibitmap0`（`ConvertTo-CardRtf`，只影响显示，不动存储与剪贴板字节）；单张超过 4 MB、或一次排版累计超过 24 MB 的图片不改写，以免卡片卡住面板。
 
 超过 `MaxRichImages`（默认 2 MB）的图不会被内联，日志里记一行 `html image not inlined`。这类图仍然能被预览（它存在源临时目录时就已拷进 `data\media`），但**源目录消失后粘贴时无法还原**：想要图文混排长期可粘，把这个值调大，例如 `clipboard config set MaxRichImages 16777216`。
 

@@ -918,6 +918,41 @@ try {
     $zeroAt = [int](Get-CfHtmlHeadLength $zeroText)
     Check 'unit' 'a zero StartHTML is discovered and repaired' (($zeroAt -gt 0) -and ($zeroText.Substring($zeroAt, 5) -eq '<html')) ([string]$zeroAt)
 
+    # The card lays a formatted entry out with an off-screen RichTextBox, and that engine drops
+    # an RTF picture written as \pngblip - which is what Word and Excel write when a picture is
+    # copied. The words appeared on the card and every picture was missing, so the picture is
+    # re-spelled as a device independent bitmap before the layout runs.
+    $cardPng = New-Object Drawing.Bitmap 48, 48
+    $cardG = [Drawing.Graphics]::FromImage($cardPng)
+    $cardG.Clear([Drawing.Color]::FromArgb(255, 220, 20, 20))
+    $cardG.Dispose()
+    $cardMs = New-Object IO.MemoryStream
+    $cardPng.Save($cardMs, [Drawing.Imaging.ImageFormat]::Png)
+    $cardBytes = $cardMs.ToArray()
+    $cardPng.Dispose()
+    $cardMs.Dispose()
+    $cardHex = (([BitConverter]::ToString($cardBytes)) -replace '-', '')
+    $cardRtf = '{\rtf1\ansi\deff0\fs20 before {\pict\pngblip\picw48\pich48\picwgoal720\pichgoal720 ' + $cardHex + '} after\par}'
+    $cardFixed = ConvertTo-CardRtf $cardRtf
+    Check 'unit' 'a png picture is re-spelled for the layout' ((-not ($cardFixed -match '\\pngblip')) -and ($cardFixed -match '\\dibitmap0')) ([string]$cardFixed.Length + ' chars')
+    Check 'unit' 'rtf without a picture is left alone' ((ConvertTo-CardRtf '{\rtf1\ansi plain words\par}') -ceq '{\rtf1\ansi plain words\par}') ''
+    $cardRef = New-RichRef @{ Html = $null; Rtf = $Utf8.GetBytes($cardRtf) }
+    [void](Write-RichMedia $cardRef @{ Html = $null; Rtf = $Utf8.GetBytes($cardRtf) })
+    Clear-MediaCache
+    $cardFont = New-Object Drawing.Font 'Segoe UI', 9
+    $cardShot = Get-RichPreviewBitmap $cardRef 380 200 $cardFont ([Drawing.Color]::White)
+    $redPixels = 0
+    if ($null -ne $cardShot) {
+      for ($cy = 0; $cy -lt $cardShot.Height; $cy += 2) {
+        for ($cx = 0; $cx -lt $cardShot.Width; $cx += 2) {
+          $cpx = $cardShot.GetPixel($cx, $cy)
+          if (($cpx.R - $cpx.B) -gt 40 -and $cpx.R -gt 80) { $redPixels++ }
+        }
+      }
+    }
+    Check 'unit' 'the card draws the picture of a formatted entry' ($redPixels -gt 100) ([string]$redPixels + ' coloured pixels')
+    Clear-MediaCache
+
     # a big picture: the card scales it down once and keeps a small copy beside it
     $bigBmp = New-Object Drawing.Bitmap 1600, 900
     $bgfx = [Drawing.Graphics]::FromImage($bigBmp)
