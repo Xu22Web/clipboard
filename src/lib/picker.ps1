@@ -361,7 +361,7 @@ function Show-Picker {
           }
           $chipLimit = $footR.Left - (Px 8)
           if ($chipLimit -lt (Px 60)) { $chipLimit = $footL.ClientSize.Width - (Px 8) }
-          Draw-KeyChips $g (Px 14) $cy (Get-FootHints $script:Filtered.Count $script:CtrlHeld $ctrlHints) $ui.Dim $ui.Faint $chipLimit
+          Draw-KeyChips $g (Px 14) $cy (Get-PanelHints $script:Filtered.Count (Get-SelectionCount $script:Sel) $(if ($lst.SelectedIndex -ge 0 -and $lst.SelectedIndex -lt $script:Filtered.Count) { [string]$script:Filtered[$lst.SelectedIndex].Payload } else { '' }) $txt.Text.Length $script:CtrlHeld $ctrlHints) $ui.Dim $ui.Faint $chipLimit
         } catch { }
       })
 

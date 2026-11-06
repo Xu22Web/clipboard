@@ -158,7 +158,7 @@ cli build        # 打包到 dist\clipboard-<version>\
 
 插件可通过 `PanelKeys` 注册面板按键：`item-marks` 提供 `Ctrl+P` / `Ctrl+S` / `Ctrl+H`，`entry-actions` 提供 `Ctrl+O`，均列在 `clipboard help` 的 Panel keys 并根据来源插件标注。
 
-底部提示为描边按键胶囊，随状态切换：默认 `Enter` Paste · `Ctrl+Enter` Copy only · `Del` Delete · `Esc` Close；按住 `Ctrl` 时变为 `1-9,0` Pick · `Enter` Copy only · `Z` Undo（启用 `item-marks` 时另有 `P` Pin / `S` Star / `H` Mark）；列表为空时只显示 `Esc` Close。删除、置顶、清空后短暂显示结果，被拒绝的操作（如置顶已达上限）在同处说明原因。
+底部提示为描边按键胶囊，**按当前能做什么列出**，不是一张固定表：选中一行文本时是 `Enter` Paste · `Ctrl+Enter` Copy · `F2` Edit · `Del` Delete · `Esc` Close；选中图片时没有 `F2`（图片没有文本可改）；多选时换成 `Ctrl+Enter` Copy N · `Del` Delete N（批量不粘贴、也不编辑单行）；搜索框有词时最后一项变成 `Esc` Clear；按住 `Ctrl` 时变为 `1-9,0` Pick · `Enter` Copy · `Z` Undo（多选时显示 Copy N，启用 `item-marks` 时另有 `P` Pin / `S` Star / `H` Mark）；列表为空时只显示 `Esc` Close。删除、置顶、清空后短暂显示结果，被拒绝的操作（如置顶已达上限）在同处说明原因。
 
 ## 配置
 

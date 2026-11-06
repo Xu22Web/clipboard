@@ -1922,6 +1922,31 @@ try {
       }
       Check 'unit' 'a flattened single hint pair still draws a chip' $flatOk $flatErr
 
+      # The footer lists only what is possible right now: a batch can be copied and deleted
+      # but not pasted or edited, a picture has no text to edit, and Esc clears the search
+      # before it closes the panel.
+      function Get-HintText($pairs) {
+        $parts = New-Object System.Collections.Generic.List[string]
+        foreach ($p in @($pairs)) {
+          if ($p -is [array]) { $parts.Add([string]$p[0] + ' ' + [string]$p[1]) }
+          else { $parts.Add([string]$p) }
+        }
+        return ($parts -join ' | ')
+      }
+      $hSingle = Get-HintText (Get-PanelHints 5 0 'hello' 0 $false @())
+      Check 'unit' 'a text row offers paste, copy, edit, delete' ((($hSingle -match 'Enter') -and ($hSingle -match 'Paste')) -and (($hSingle -match 'F2') -and ($hSingle -match 'Edit')) -and (($hSingle -match 'Del') -and ($hSingle -match 'Delete')) -and ($hSingle -match 'Close')) $hSingle
+      $picPay = New-ImagePayload $png 2 2 'PNG'
+      $hPic = Get-HintText (Get-PanelHints 5 0 $picPay 0 $false @())
+      Check 'unit' 'a picture row does not offer edit' ((-not ($hPic -match 'Edit')) -and ($hPic -match 'Paste')) $hPic
+      $hMulti = Get-HintText (Get-PanelHints 5 3 'hello' 0 $false @())
+      Check 'unit' 'a batch offers copy and delete with its size' ((($hMulti -match 'Copy 3') -and ($hMulti -match 'Delete 3')) -and (-not ($hMulti -match 'Paste')) -and (-not ($hMulti -match 'Edit'))) $hMulti
+      $hQuery = Get-HintText (Get-PanelHints 5 0 'hello' 4 $false @())
+      Check 'unit' 'a search turns the Escape hint into clear' (($hQuery -match 'Clear') -and (-not ($hQuery -match 'Close'))) $hQuery
+      $hEmpty = Get-HintText (Get-PanelHints 0 0 '' 0 $false @())
+      Check 'unit' 'an empty list only offers close' (($hEmpty -match 'Close') -and (-not ($hEmpty -match 'Paste'))) $hEmpty
+      $hCtrl = Get-HintText (Get-PanelHints 5 3 'hello' 0 $true @())
+      Check 'unit' 'the Ctrl footer counts a batch too' (($hCtrl -match 'Copy 3') -and ($hCtrl -match 'Undo')) $hCtrl
+
       # The self-painted list freezes its first rows. 10 visible rows of 10px, 3 frozen, so
       # the scrollable window is 7 rows tall and TopIndex can never drop below 3.
       Add-PinList

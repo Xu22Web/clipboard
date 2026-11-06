@@ -19,26 +19,53 @@ function Update-PanelRegion($form) {
   } catch { }
 }
 
-# One StringFormat set for the whole process. Idempotent: Show-Picker calls it every time
-# the panel opens and gets the same objects back.
 # Shortcut hints as Fluent key chips: [key] action. Plain data, so the footer can be checked
 # without a window and the panel only has to say what state it is in.
-function Get-FootHints([int]$rows, [bool]$ctrlHeld, $ctrlKeys) {
+#
+# The row is built from what is actually possible right now, not from a fixed list: a batch
+# (more than one row selected) can be copied and deleted but not pasted or edited, a picture
+# has no text to edit so F2 would only promise something the editor refuses, and Esc clears the
+# search before it closes the panel. The footer truncates from the right, so the keys that
+# change something come before the one that leaves.
+function Get-PanelHints([int]$rows, [int]$selected, [string]$payload, [int]$queryLen, [bool]$ctrlHeld, $ctrlKeys) {
   if ($rows -le 0) {
     # the comma keeps the pair nested: a one-element array would be unrolled by the function
     # return and each string would then be read as a list of characters
     return ,@(@('Esc', 'Close'))
   }
+  $multi = ($selected -gt 1)
+  # the count is worked out first: inside the array below, '+ [string]$selected' would be read
+  # as a second pair element and the chip would come out as 'Copy' and '3' side by side
+  $copyLabel = 'Copy'
+  $delLabel = 'Delete'
+  if ($multi) {
+    $copyLabel = 'Copy ' + $selected.ToString()
+    $delLabel = 'Delete ' + $selected.ToString()
+  }
   if ($ctrlHeld) {
     # Ctrl is held while these show; each chip spells the whole combination out, core ones
     # first, because the footer truncates and the plugin keys are the optional ones
     $pairs = @(@('Ctrl+1-9,0', 'Pick'))
-    $pairs += ,@('Ctrl+Enter', 'Copy')
+    $pairs += ,@('Ctrl+Enter', $copyLabel)
     $pairs += ,@('Ctrl+Z', 'Undo')
     foreach ($pk in @($ctrlKeys)) { $pairs += ,@('Ctrl+' + [string]$pk.Key, [string]$pk.Hint) }
     return $pairs
   }
-  return @(@('Enter', 'Paste'), @('Ctrl+Enter', 'Copy'), @('Del', 'Delete'), @('Esc', 'Close'))
+  $out = New-Object System.Collections.Generic.List[object]
+  if ($multi) {
+    $out.Add(@('Ctrl+Enter', $copyLabel))
+  } else {
+    $out.Add(@('Enter', 'Paste'))
+    $out.Add(@('Ctrl+Enter', $copyLabel))
+    $picture = $false
+    if ($payload -and (Get-Command Test-ImagePayload -ErrorAction SilentlyContinue)) {
+      $picture = [bool](Test-ImagePayload $payload)
+    }
+    if (-not $picture) { $out.Add(@('F2', 'Edit')) }
+  }
+  $out.Add(@('Del', $delLabel))
+  if ($queryLen -gt 0) { $out.Add(@('Esc', 'Clear')) } else { $out.Add(@('Esc', 'Close')) }
+  return $out.ToArray()
 }
 
 # One brush per colour, kept for the process: the row painter runs on every scroll tick, so
