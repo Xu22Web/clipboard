@@ -1,15 +1,17 @@
 #Requires -Version 5.1
 <#
-  Self tests for clipboard.ps1.
+  Self tests that have to run in-process.
 
-  No external framework: Pester 3.4 is the only one shipped with Windows and its
-  syntax is legacy, while this project deliberately stays dependency free.
+  Two parts live here because they cannot be isolated the way the command line parts are:
+  the structure guards (they parse the sources) and the unit tests (they dot-source the tool
+  and call its functions by name). Everything that talks to the command line lives in
+  tests\cli\*.ps1 and tests\pkg\*.ps1, the resident run in tests\e2e\serve.ps1, and
+  tests\run.ps1 runs all of them.
 
   Usage:
-    powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run-tests.ps1
-    powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run-tests.ps1 -Unit
-    powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run-tests.ps1 -Integration
-    powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run-tests.ps1 -E2E
+    tests\run.ps1                                        every part, several at a time
+    powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\unit\unit.ps1
+                                                         just this part
 
   -Sta is required: clipboard.ps1 uses System.Windows.Forms.
   Every group runs inside a sandbox copy of the tool under %TEMP%, so the store and
@@ -18,17 +20,17 @@
 #>
 [CmdletBinding()]
 param(
-  [switch]$Unit,
-  [switch]$Integration,
-  [switch]$E2E,
   # directory holding clipboard.ps1 + lib + plugins + themes; default is this repo.
-  # scripts\build.ps1 points it at the packaged copy to prove the minified code still behaves.
-  [string]$Source = ''
+  # A packaged copy has minified internals, so the unit checks cannot run against one.
+  [string]$Source = '',
+  # tests\run.ps1 reads back one json file per part
+  [string]$ResultFile = '',
+  [switch]$Quiet
 )
 
 $ErrorActionPreference = 'Continue'
 
-$repoRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
+$repoRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPath))
 $defaultSource = Join-Path $repoRoot 'src'
 if (-not $Source) { $Source = $defaultSource }
 if (-not (Test-Path -LiteralPath $Source)) { Write-Error ('no such -Source: ' + $Source); exit 2 }
@@ -36,15 +38,20 @@ $srcRoot = (Resolve-Path -LiteralPath $Source).Path
 $clipPs1 = Join-Path $srcRoot 'clipboard.ps1'
 if (-not (Test-Path -LiteralPath $clipPs1)) { Write-Error ('cannot find ' + $clipPs1); exit 2 }
 
-if (-not ($Unit -or $Integration -or $E2E)) { $Unit = $true; $Integration = $true; $E2E = $true }
+# this file is the unit group: it always runs, there is no switch to turn it off
+$Unit = $true
 
-# A packaged copy has its internal function names minified, so the unit group (which calls
-# them by name through -Library) cannot run against it - the CLI groups can.
+# A packaged copy has its internal function names minified, so the unit checks (which call
+# them by name through -Library) cannot run against one - the command line parts can.
 $isPackaged = -not [string]::Equals($srcRoot.TrimEnd([char]92, [char]47), (Resolve-Path -LiteralPath $defaultSource).Path.TrimEnd([char]92, [char]47), [StringComparison]::OrdinalIgnoreCase)
 if ($isPackaged) {
-  if ($Unit) { Write-Output 'unit group skipped: a packaged copy has renamed internals' }
-  $Unit = $false
-  if (-not ($Integration -or $E2E)) { $Integration = $true }
+  Write-Output 'unit group skipped: a packaged copy has renamed internals'
+  # nothing to run, and an empty result file would read as a broken part
+  if ($ResultFile) {
+    $payload = @{ Part = 'unit'; Source = $srcRoot; Results = @() }
+    [IO.File]::WriteAllText($ResultFile, ($payload | ConvertTo-Json -Depth 4), (New-Object Text.UTF8Encoding $false))
+  }
+  exit 0
 }
 
 $script:results = New-Object System.Collections.Generic.List[object]
@@ -151,11 +158,10 @@ function Set-Clip([string]$value) {
 
 $tmpRoot = Join-Path $env:TEMP ('clipboard-tests-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 $unitDir = New-Sandbox 'unit'
-# the CLI sandboxes carry their own clipboard: the commands still run for real, but two of them
-# can run at the same time and the machine clipboard is left alone
+# the command line sandboxes carry their own clipboard (tests\lib\fake-clip.ps1), so the parts
+# can run side by side and the machine clipboard is left alone
 $intDir = New-FakeSandbox 'integration'
-$e2eDir = New-Sandbox 'e2e'
-# -Integration and -E2E run without dot-sourcing the tool, so the encoding the fixtures
+# a package runs without dot-sourcing the tool, so the encoding the fixtures
 # write with has to exist here instead of coming from the main script
 $Utf8 = New-Object System.Text.UTF8Encoding $false
 
@@ -2134,558 +2140,6 @@ try {
       $pl.Dispose()
     }
 
-  # --------------------------------------------------------- integration tests
-  if ($Integration) {
-    # A sandbox can carry its own clipboard (tests\lib\fake-clip.ps1), which is what lets the
-    # suite run beside another copy of itself and keeps the user's clipboard out of it. The
-    # checks below are the contract: the same commands, the same answers, and the machine's
-    # clipboard untouched.
-    $fakeDir = New-FakeSandbox 'fakeclip'
-    $realBefore = ''
-    try { $realBefore = [string](Get-Clipboard -Raw -ErrorAction Stop) } catch { $realBefore = '' }
-    $o = Clip $fakeDir @('put', 'fake-one')
-    Check 'int' 'a sandbox can carry its own clipboard' ($o -match 'clipboard set') $o.Trim()
-    $o = Clip $fakeDir @('get')
-    Check 'int' 'the fake clipboard reads back' ($o -match 'fake-one') $o.Trim()
-    $o = Clip $fakeDir @('list')
-    Check 'int' 'a capture from the fake clipboard is stored' ($o -match 'fake-one') $o.Trim()
-    $o = Clip $fakeDir @('pick', '1')
-    Check 'int' 'picking writes the fake clipboard' (($o -match 'clipboard set') -or ($o -match 'picked')) $o.Trim()
-    $o = Clip $fakeDir @('get')
-    Check 'int' 'the picked entry comes back through the fake clipboard' ($o -match 'fake-one') $o.Trim()
-    $realAfter = ''
-    try { $realAfter = [string](Get-Clipboard -Raw -ErrorAction Stop) } catch { $realAfter = '' }
-    Check 'int' 'the machine clipboard is never touched' ($realBefore -ceq $realAfter) ('before=' + $realBefore.Length + ' after=' + $realAfter.Length)
-
-    $o = Clip $intDir @('help')
-    Check 'int' 'help' ($o -match 'Usage: clipboard') ''
-
-    $o = Clip $intDir @('version')
-    Check 'int' 'version prints the program and data version' ($o -match ('clipboard ' + [regex]::Escape($programVersion) + '\s+data v\d+')) $o.Trim()
-
-    $o = Clip $intDir @('migrate')
-    Check 'int' 'migrate reports a store it does not need to touch' ($o -match 'nothing to migrate|migrated') $o.Trim()
-
-    # export / import / backup, through the command line the user actually types
-    $jsonOut = Join-Path $intDir 'history-export.json'
-    [void](Clip $intDir @('put', 'export round trip'))
-    $o = Clip $intDir @('export', $jsonOut)
-    Check 'int' 'export writes a json file' ((Test-Path -LiteralPath $jsonOut) -and ($o -match 'exported')) $o.Trim()
-    $o = Clip $intDir @('export', (Join-Path $intDir 'history-export.csv'))
-    Check 'int' 'export writes a csv file' ($o -match 'exported') $o.Trim()
-    $notes = Join-Path $intDir 'note.txt'
-    $o = Clip $intDir @('export', $notes, '-Media')
-    Check 'int' 'export refuses -Media for a format that cannot carry pictures' ($o -match 'needs a .json') $o.Trim()
-    $o = Clip $intDir @('import', $jsonOut)
-    Check 'int' 'import reports what it did' ($o -match 'imported|already there') $o.Trim()
-    $o = Clip $intDir @('backup', 'unit')
-    Check 'int' 'backup writes a snapshot' ($o -match 'backup written') $o.Trim()
-    $o = Clip $intDir @('restore', 'nosuchsnapshot')
-    Check 'int' 'restore refuses an unknown snapshot' ($o -match 'no snapshot matches') $o.Trim()
-
-    # cli reads package.ini and runs the command line it finds there
-    $cli = Join-Path $repoRoot 'cli.ps1'
-    if (Test-Path -LiteralPath $cli) {
-      $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $cli 2>&1 | Out-String)
-      Check 'int' 'cli lists the declared commands' (($o -match '\bdev\b') -and ($o -match '\bbuild\b') -and ($o -match '\btest\b') -and ($o -match '\bshot\b')) $o.Trim()
-      $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $cli 'nosuchcmd' 2>&1 | Out-String)
-      Check 'int' 'cli reports an unknown command' (($o -match 'unknown command') -and ($o -match '\bdev\b')) $o.Trim()
-      $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $cli 'dev' 'nosuch' 2>&1 | Out-String)
-      Check 'int' 'cli runs a script through its command line' ($o -match 'dev always watches') $o.Trim()
-    } else {
-      Check 'int' 'cli lists the declared commands' $false 'no cli.ps1'
-    }
-
-    $o = Clip $intDir @('config')
-    Check 'int' 'config shows ini path' ($o -match 'clipboard\.ini') ''
-
-    $o = Clip $intDir @('put', 'itest-alpha')
-    Check 'int' 'put' ($o -match 'clipboard set') $o.Trim()
-
-    $o = Clip $intDir @('get')
-    Check 'int' 'get' ($o -match 'itest-alpha') $o.Trim()
-
-    $o = Clip $intDir @('list', '-Count', '5')
-    Check 'int' 'list' ($o -match 'itest-alpha') ''
-
-    $o = Clip $intDir @('pick', '1')
-    Check 'int' 'pick' ($o -match 'clipboard set') $o.Trim()
-    $o = Clip $intDir @('get')
-    Check 'int' 'pick sets clipboard' ($o -match 'itest-alpha') ''
-
-    $o = Clip $intDir @('del', '1')
-    Check 'int' 'del' ($o -match 'deleted') $o.Trim()
-
-    $o = Clip $intDir @('clear')
-    Check 'int' 'clear' ($o -match 'history cleared') ''
-    $o = Clip $intDir @('list')
-    Check 'int' 'list empty after clear' ($o -match 'history is empty') ''
-
-    $o = Clip $intDir @('put', 'stdin-like-value')
-    $o = Clip $intDir @('del', '9')
-    Check 'int' 'del out of range' ($o -match 'index out of range') $o.Trim()
-
-    $o = Clip $intDir @('pick', 'x')
-    Check 'int' 'pick bad arg' ($o -match 'usage: clipboard pick') $o.Trim()
-
-    $o = Clip $intDir @('nosuchcommand')
-    Check 'int' 'unknown command' ($o -match 'unknown command') ''
-
-    $o = Clip $intDir @('pause')
-    $s = Clip $intDir @('status')
-    Check 'int' 'pause' (($o -match 'paused') -and ($s -match 'capture     : paused')) ''
-    $o = Clip $intDir @('resume')
-    $s = Clip $intDir @('status')
-    Check 'int' 'resume' ($s -match 'capture     : active') ''
-
-    $o = Clip $intDir @('status')
-    Check 'int' 'status fields' (($o -match 'autostart   :') -and ($o -match 'desktop     :') -and ($o -match 'store file')) ''
-
-    # diag and the native Win+V restore are gone: the shell's own history state is a single
-    # line in `status`, and an old command name falls through to the usage text
-    $o = Clip $intDir @('diag')
-    Check 'int' 'removed commands fall back to usage' ($o -match 'unknown command: diag') $o.Trim()
-    $o = Clip $intDir @('restore-data')
-    Check 'int' 'restore-data is not a command any more' ($o -match 'unknown command: restore-data') $o.Trim()
-    $o = Clip $intDir @('status')
-    # the state is reported exactly when there is something to report, so a machine where
-    # Win+V works keeps a clean status
-    $winv = ''
-    if (Get-Command Get-WinVState -ErrorAction SilentlyContinue) { $winv = Get-WinVState }
-    $hasLine = [bool]($o -match 'win\+v')
-    Check 'int' 'status states the win+v state only when it is not usable' ($hasLine -eq [bool]$winv) ([string]$winv + ' / printed=' + [string]$hasLine)
-
-    # config precedence: ini MaxItems=2, then the CLI switch must win
-    $cfg2 = Join-Path $intDir 'clipboard.ini'
-    [IO.File]::WriteAllLines($cfg2, @('MaxItems=2'), $Utf8)
-    [void](Clip $intDir @('clear'))
-    1..3 | ForEach-Object { [void](Clip $intDir @('put', ('cfg-' + $_))) }
-    $o = Clip $intDir @('list')
-    Check 'int' 'ini MaxItems respected' (@($o -split "`n" | Where-Object { $_ -match 'cfg-' }).Count -eq 2) $o.Trim()
-
-    [void](Clip $intDir @('clear'))
-    # settings are config-only: a setting switch is refused, nothing is silently applied
-    [void](Clip $intDir @('put', 'cfg-guard'))
-    $bad = & powershell -NoProfile -ExecutionPolicy Bypass -Sta -File (Join-Path $intDir 'clipboard.ps1') put 'cli-override' -MaxItems 5 2>&1
-    $badText = ($bad -join ' ')
-    Check 'int' 'setting switches are refused' (($badText -match 'MaxItems') -and -not ((Clip $intDir @('get')) -match 'cli-override')) $badText.Trim()
-    $o = Clip $intDir @('help')
-    Check 'int' 'help advertises no setting switches' ((-not ($o -match 'Options \(override')) -and ($o -match 'clipboard\.ini only') -and (-not ($o -match '-MaxItems'))) ''
-
-    # the sandbox keeps its store next to its own script, never in the repo
-    Check 'int' 'data dir isolate' ((Test-Path -LiteralPath (Join-Path $intDir 'data\history.dat')) -and -not (Test-Path -LiteralPath (Join-Path $srcRoot 'data\integration'))) ''
-
-    # DataDir= in clipboard.ini decides the write location
-    $altDir = Join-Path $tmpRoot 'alt'
-    $cfgRoot = Join-Path $tmpRoot 'cfgroot'
-    foreach ($d in @($altDir, $cfgRoot)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
-    Copy-Item -LiteralPath $clipPs1 -Destination (Join-Path $cfgRoot 'clipboard.ps1')
-    # the program is entry file + lib\ + utils\ + schema\: a lone clipboard.ps1 cannot start
-    foreach ($d in @('lib', 'utils', 'schema')) { Copy-Item -LiteralPath (Join-Path $srcRoot $d) -Destination $cfgRoot -Recurse -Force }
-    [IO.File]::WriteAllLines((Join-Path $cfgRoot 'clipboard.ini'), @('DataDir=' + $altDir), $Utf8)
-    & powershell -NoProfile -ExecutionPolicy Bypass -Sta -File (Join-Path $cfgRoot 'clipboard.ps1') put 'ini-datadir' 2>&1 | Out-Null
-    Check 'int' 'DataDir from ini' (Test-Path -LiteralPath (Join-Path $altDir 'history.dat')) $altDir
-
-    # pin / unpin / clear / config set  (pin and star are verbs of the item-marks plugin)
-    [IO.File]::WriteAllLines($cfg2, @('MaxItems=300', 'Plugins=item-marks'), $Utf8)
-    [void](Clip $intDir @('clear', '-All'))
-    [void](Clip $intDir @('put', 'pin-me'))
-    [void](Clip $intDir @('put', 'other-one'))
-    $o = Clip $intDir @('pin', '2')
-    Check 'int' 'pin' ($o -match 'pinned') $o.Trim()
-    $o = Clip $intDir @('list')
-    $pinLine = @($o -split "`n" | Where-Object { $_ -match 'pin-me' })
-    Check 'int' 'pin floats to the top' ($pinLine.Count -gt 0 -and $pinLine[0] -match '\*') $o.Trim()
-    $o = Clip $intDir @('status')
-    Check 'int' 'status shows the pin count' ($o -match '1 pinned') $o.Trim()
-    $o = Clip $intDir @('clear')
-    Check 'int' 'clear keeps the pin mark' ((($o -match 'kept by marks')) -and ((Clip $intDir @('list')) -match 'pin-me')) $o.Trim()
-    $o = Clip $intDir @('clear', '-All')
-    Check 'int' 'clear -All drops the pin mark' (($o -match 'history cleared')) $o.Trim()
-    $o = Clip $intDir @('list')
-    Check 'int' 'list empty after clear -All' ($o -match 'history is empty') $o.Trim()
-
-    # with sticky pins on, the frozen block may never fill the list: the third pin is
-    # refused instead of pushing the rows below out of reach
-    [IO.File]::WriteAllLines($cfg2, @('MaxItems=300', 'Plugins=item-marks', 'item-marks.StickyPins=1', 'item-marks.StickyRows=2'), $Utf8)
-    [void](Clip $intDir @('clear', '-All'))
-    [void](Clip $intDir @('put', 'cap-one'))
-    [void](Clip $intDir @('put', 'cap-two'))
-    [void](Clip $intDir @('put', 'cap-three'))
-    $o = Clip $intDir @('pin', '1')
-    Check 'int' 'pin fits under the sticky cap' ($o -match 'pinned') $o.Trim()
-    [void](Clip $intDir @('pin', '2'))
-    $o = Clip $intDir @('pin', '3')
-    Check 'int' 'pin refused when the sticky cap is full' (($o -match '\[!\]') -and ($o -match 'unpin one first') -and ($o -match 'raise Rows')) $o.Trim()
-    $o = Clip $intDir @('list')
-    $capLine = @($o -split "`n" | Where-Object { $_ -match 'cap-one' })
-    Check 'int' 'refused pin leaves the row unmarked' ($capLine.Count -gt 0 -and $capLine[0] -notmatch '\*') ($capLine -join '/')
-    # turning the feature off drops the cap, so the same pin goes through
-    [IO.File]::WriteAllLines($cfg2, @('MaxItems=300', 'Plugins=item-marks', 'item-marks.StickyPins=0', 'item-marks.StickyRows=2'), $Utf8)
-    $o = Clip $intDir @('pin', '3')
-    Check 'int' 'no cap while sticky pins are off' ($o -match 'pinned') $o.Trim()
-    [void](Clip $intDir @('clear', '-All'))
-    [IO.File]::WriteAllLines($cfg2, @('MaxItems=300', 'Plugins=item-marks'), $Utf8)
-
-    $o = Clip $intDir @('config', 'get', 'Rows')
-    Check 'int' 'config get' ($o -match 'Rows = 10') $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'Rows', '12')
-    $iniAfter = [IO.File]::ReadAllText($cfg2)
-    Check 'int' 'config set writes' (($o -match '10 -> 12') -and ($iniAfter -match '(?m)^Rows=12\r?$')) $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'Rows', '1')
-    Check 'int' 'config set rejects range' ($o -match 'must be >= 3') $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'NopeKey', '1')
-    Check 'int' 'config set rejects unknown key' ($o -match 'unknown key') $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'DataDir', 'D:\x')
-    Check 'int' 'config set rejects DataDir' ($o -match 'DataDir cannot be changed') $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'Hotkey', 'Ctrl+Nope')
-    Check 'int' 'config set rejects bad hotkey' ($o -match 'unknown key name') $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'PreviewDelay', '900')
-    Check 'int' 'a preview setting is writable' ($o -match '350 -> 900') $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'PreviewDelay', '350')
-    Check 'int' 'a preview setting is restorable' ($o -match '900 -> 350') $o.Trim()
-
-    # ------------------------------------------- settings are never created silently
-    $roDir = New-FakeSandbox 'readonly'
-    $roIni = Join-Path $roDir 'clipboard.ini'
-    foreach ($args in @(@('status'), @('config'), @('config', 'get', 'Theme'), @('list'), @('themes'))) {
-      [void](Clip $roDir $args)
-    }
-    Check 'int' 'no ini created by read-only commands' (-not (Test-Path -LiteralPath $roIni)) $roIni
-    $o = Clip $roDir @('status')
-    Check 'int' 'status labels missing ini' ($o -match 'missing, defaults in effect') $o.Trim()
-    $o = Clip $roDir @('config')
-    Check 'int' 'config labels defaults' ($o -match '<- default') ''
-    $schemaKeys = New-Object System.Collections.Generic.List[string]
-    $inBase = $false
-    foreach ($ln in @($o -split "`n")) {
-      if ($ln -match '^\s+\[base\]') { $inBase = $true; continue }
-      if ($ln -match '^\s+\[plugin:') { $inBase = $false; continue }
-      if ($inBase -and $ln -match '^\s+([A-Za-z0-9_]+)\s+=') { $schemaKeys.Add($matches[1]) }
-    }
-    $o = Clip $roDir @('config', 'init')
-    Check 'int' 'config init creates template' ((Test-Path -LiteralPath $roIni) -and ($o -match 'key\(s\) added')) $o.Trim()
-    $iniTpl = [IO.File]::ReadAllText($roIni)
-    $missing = @($schemaKeys | Where-Object { $iniTpl -notmatch ('(?m)^' + $_ + '=') })
-    Check 'int' 'template has every schema key' ($schemaKeys.Count -gt 20 -and $missing.Count -eq 0) (($missing -join ','))
-    # the template writes the numbers the schema declares, so the value a user reads in the
-    # comment and the value the program falls back to cannot drift apart (the schema variable
-    # itself is renamed in a package, so a packaged copy skips this comparison)
-    if (($script:IniSchema -is [System.Collections.IDictionary]) -and (@($script:IniSchema.Keys).Count -gt 20)) {
-      $tplDrift = @()
-      foreach ($k in @($script:IniSchema.Keys)) {
-        $spec = $script:IniSchema[$k]
-        if (-not $spec.Contains('Ref')) { continue }
-        $m = [regex]::Match($iniTpl, '(?m)^' + $k + '=(.*)$')
-        if (-not $m.Success) { continue }
-        $want = [string]$spec['Default']
-        $got = $m.Groups[1].Value.Trim()
-        if ($got -ne $want) { $tplDrift += ($k + '=' + $got + '/' + $want) }
-      }
-      Check 'int' 'the template writes the schema defaults' ($tplDrift.Count -eq 0) (($tplDrift | Select-Object -First 4) -join '; ')
-    }
-    Check 'int' 'template lists every plugin by name' (($iniTpl -match '(?m)^Plugins=entry-actions,item-marks,retention,transform\r?$') -and (-not ($iniTpl -match 'PluginDisabled'))) ''
-    # every plugin key is documented in its own [section], and none is written flat
-    Check 'int' 'config init documents every plugin key' (($iniTpl -match '(?m)^\[item-marks\]\r?$') -and ($iniTpl -match '(?m)^MaxPins=50\r?$') -and ($iniTpl -match '(?m)^StickyPins=1\r?$') -and ($iniTpl -match '(?m)^\[entry-actions\]\r?$') -and ($iniTpl -match '(?m)^Reveal=1\r?$') -and (-not ($iniTpl -match '(?m)^item-marks\.')) -and (-not ($iniTpl -match '(?m)^entry-actions\.'))) ''
-
-    # init must never overwrite a value the user set - only reset may throw settings away
-    [IO.File]::WriteAllText($roIni, ("Theme=win11-light`r`nRows=7`r`nMaxItems=42`r`n"), $Utf8)
-    $o = Clip $roDir @('config', 'init')
-    $iniTpl = [IO.File]::ReadAllText($roIni)
-    Check 'int' 'config init keeps existing values' (($iniTpl -match '(?m)^Theme=win11-light\r?$') -and ($iniTpl -match '(?m)^Rows=7\r?$') -and ($iniTpl -match '(?m)^MaxItems=42\r?$')) $o.Trim()
-    Check 'int' 'config init still fills the gaps' ($iniTpl -match '(?m)^Hotkey=') ''
-    Check 'int' 'config init reports what it did' ($o -match 'key\(s\) added, \d+ unknown key') $o.Trim()
-    # a key this version does not know is commented out, not silently kept or dropped
-    [IO.File]::WriteAllText($roIni, ("Nonsense=1`r`nRows=7`r`n"), $Utf8)
-    $o = Clip $roDir @('config', 'init')
-    $iniTpl = [IO.File]::ReadAllText($roIni)
-    Check 'int' 'config init comments out unknown keys' (($iniTpl -match '(?m)^#\s*\[unknown\]\s*Nonsense=1\r?$') -and (-not ($iniTpl -match '(?m)^Nonsense='))) $o.Trim()
-    Check 'int' 'the pruned key keeps its value' ($iniTpl -match '\[unknown\]\s*Nonsense=1') ''
-    Check 'int' 'pruning does not touch a known value' ($iniTpl -match '(?m)^Rows=7\r?$') ''
-    $o = Clip $roDir @('config', 'reset')
-    $iniTpl = [IO.File]::ReadAllText($roIni)
-    Check 'int' 'config reset restores the defaults' (($iniTpl -match '(?m)^Theme=win11-dark\r?$') -and ($iniTpl -match '(?m)^Rows=10\r?$') -and ($iniTpl -match '(?m)^Animations=1\r?$')) $o.Trim()
-
-    # --------------------------------------- plugin commands (loaded by default)
-    [void](Clip $intDir @('clear', '-All'))
-    [void](Clip $intDir @('put', 'https://example.com/hello'))
-    Remove-Item -LiteralPath $cfg2 -Force -ErrorAction SilentlyContinue
-    $o = Clip $intDir @('kind', '1')
-    Check 'int' 'kind is available by default' ($o -match 'link') $o.Trim()
-    $o = Clip $intDir @('open', '99')
-    Check 'int' 'open reports a bad index' ($o -match 'index out of range') $o.Trim()
-    $o = Clip $intDir @('config')
-    Check 'int' 'config lists every loaded plugin' (($o -match 'plugins     : loaded') -and ($o -match 'item-marks') -and ($o -match 'entry-actions') -and ($o -match 'retention') -and ($o -match 'transform')) $o.Trim()
-    $o = Clip $intDir @('status')
-    Check 'int' 'status lists every loaded plugin' ($o -match 'plugins     : entry-actions, item-marks, retention, transform') $o.Trim()
-    $o = Clip $intDir @('help')
-    Check 'int' 'help has the plugin groups by default' (($o -match '\[plugin: item-marks\]') -and ($o -match '(?m)^    pin\s')) ''
-    Check 'int' 'help lists the plugin panel keys' ($o -match 'Ctrl\+S\s+star.*\(item-marks\)') ''
-
-    # a shorter list narrows it: a plugin that is not named never runs
-    [IO.File]::WriteAllLines($cfg2, @('Plugins=entry-actions'), $Utf8)
-    $o = Clip $intDir @('star', '1')
-    Check 'int' 'a shorter list turns the other plugins off' ($o -match 'unknown command') $o.Trim()
-    $o = Clip $intDir @('open', '99')
-    Check 'int' 'Plugins= enables the plugin' ($o -match 'index out of range') $o.Trim()
-    $o = Clip $intDir @('config')
-    Check 'int' 'config lists the loaded plugin' ($o -match 'plugins     : loaded entry-actions') $o.Trim()
-    $o = Clip $intDir @('status')
-    Check 'int' 'status lists the loaded plugin' ($o -match 'plugins     : entry-actions') $o.Trim()
-    $o = Clip $intDir @('help')
-    Check 'int' 'help groups base commands' (($o -match '\[history\]') -and ($o -match '(?m)^    del N\s')) ''
-    Check 'int' 'help groups plugin commands' (($o -match '\[plugin: entry-actions\]') -and ($o -match '(?m)^    open\s')) ''
-    Check 'int' 'help lists plugin panel keys' ($o -match 'Ctrl\+O\s+open link or path\s+\(entry-actions\)') ''
-
-    $o = Clip $intDir @('config', 'get', 'entry-actions.Browser')
-    Check 'int' 'plugin setting is visible' ($o -match 'entry-actions\.Browser') $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'entry-actions.Reveal', '0')
-    $iniPlugin = [IO.File]::ReadAllText($cfg2)
-    # a plugin key lands in its own section, which is created when the file has none yet
-    Check 'int' 'plugin setting is writable' (($o -match 'entry-actions\.Reveal') -and ($iniPlugin -match '(?m)^\[entry-actions\]\r?$') -and ($iniPlugin -match '(?m)^Reveal=0\r?$')) $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'entry-actions.Reveal', 'maybe')
-    Check 'int' 'plugin setting rejects bad value' ($o -match '0 or 1') $o.Trim()
-    $o = Clip $intDir @('config', 'init')
-    $tplText = [IO.File]::ReadAllText($cfg2)
-    # the missing plugin key is added inside the existing section, the one the user set to 0
-    # keeps its value, and the section header is not duplicated
-    Check 'int' 'config init fills plugin settings only' (($tplText -match '(?m)^Browser=\r?$') -and ($tplText -match '(?m)^Reveal=0\r?$') -and (([regex]::Matches($tplText, '(?m)^\[entry-actions\]\r?$')).Count -eq 1)) ''
-    [IO.File]::WriteAllLines($cfg2, @('Plugins=entry-actions'), $Utf8)
-
-    [IO.File]::WriteAllLines($cfg2, @('Plugins=nosuch'), $Utf8)
-    $o = Clip $intDir @('status')
-    Check 'int' 'unknown plugin name is reported' ($o -match 'not found: nosuch') $o.Trim()
-    $o = Clip $intDir @('help')
-    Check 'int' 'help reports unknown plugin' ($o -match 'plugin not found: nosuch') ''
-    $o = Clip $intDir @('list')
-    Check 'int' 'data commands stay clean' (-not ($o -match 'plugin')) $o.Trim()
-    $o = Clip $intDir @('list')
-    Check 'int' 'base commands survive a bad plugin name' ($o -match 'example\.com/hello') $o.Trim()
-    $o = Clip $intDir @('config', 'get', 'Plugins')
-    Check 'int' 'config get Plugins' ($o -match 'Plugins = nosuch') $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'Plugins', 'entry-actions')
-    Check 'int' 'config set accepts a plugin list' ($o -match 'entry-actions') $o.Trim()
-
-    # -------------------------------------------------------------------- themes
-    [IO.File]::WriteAllLines($cfg2, @('MaxItems=300'), $Utf8)
-    $o = Clip $intDir @('themes')
-    Check 'int' 'themes lists both' (($o -match 'win11-dark') -and ($o -match 'win11-light') -and ($o -match 'active: win11-dark')) $o.Trim()
-    $o = Clip $intDir @('config', 'get', 'Theme')
-    Check 'int' 'theme default' ($o -match 'Theme = win11-dark') $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'Theme', 'win11-light')
-    Check 'int' 'theme switch writes ini' (($o -match 'win11-dark -> win11-light') -and ([IO.File]::ReadAllText($cfg2) -match '(?m)^Theme=win11-light\r?$')) $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'Theme', 'nosuch')
-    Check 'int' 'theme rejects unknown' ($o -match 'unknown theme') $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'Theme', 'dark')
-    Check 'int' 'theme alias is rejected' (($o -match 'unknown theme') -and ([IO.File]::ReadAllText($cfg2) -match '(?m)^Theme=win11-light\r?$')) $o.Trim()
-
-    # ------------------------------------------------- starred entries + new plugins
-    [IO.File]::WriteAllLines($cfg2, @('MaxItems=300', 'Plugins=item-marks'), $Utf8)
-    [void](Clip $intDir @('clear', '-All'))
-    [void](Clip $intDir @('put', 'star-alpha'))
-    [void](Clip $intDir @('put', 'star-beta'))
-    $o = Clip $intDir @('star', '1')
-    Check 'int' 'star command' ($o -match 'starred:') $o.Trim()
-    $o = Clip $intDir @('status')
-    Check 'int' 'status counts starred' ($o -match '1 starred') $o.Trim()
-    $o = Clip $intDir @('del', '1')
-    Check 'int' 'starred entry cannot be deleted' ($o -match 'starred entry, unstar it first') $o.Trim()
-    $o = Clip $intDir @('clear', '-All')
-    Check 'int' 'clear keeps starred' (($o -match '1 starred kept') -and ((Clip $intDir @('list')) -match 'star-beta')) $o.Trim()
-    $o = Clip $intDir @('unstar', '1')
-    Check 'int' 'unstar command' ($o -match 'unstarred:') $o.Trim()
-    $o = Clip $intDir @('del', '1')
-    Check 'int' 'delete works after unstar' ($o -match 'deleted:') $o.Trim()
-    [void](Clip $intDir @('put', 'mark-gamma'))
-    $o = Clip $intDir @('highlight', '1')
-    Check 'int' 'highlight command' ($o -match 'highlighted:') $o.Trim()
-    $o = Clip $intDir @('highlight', '1')
-    Check 'int' 'highlight is repeatable-safe' ($o -match 'already highlighted') $o.Trim()
-    $o = Clip $intDir @('unhighlight', '1')
-    Check 'int' 'unhighlight command' ($o -match 'highlight cleared:') $o.Trim()
-    $o = Clip $intDir @('unhighlight', '1')
-    Check 'int' 'unhighlight reports the empty state' ($o -match 'not highlighted') $o.Trim()
-
-    [IO.File]::WriteAllLines($cfg2, @('MaxItems=300', 'Plugins=transform,retention,item-marks,entry-actions', 'transform.Mode=snake'), $Utf8)
-    [void](Clip $intDir @('clear', '-All'))
-    [void](Clip $intDir @('put', 'Hello World Demo'))
-    $o = Clip $intDir @('transform', '1 upper')
-    Check 'int' 'transform one-off mode' ($o -match '\[upper\] HELLO WORLD DEMO') $o.Trim()
-    $o = Clip $intDir @('transform', '1')
-    Check 'int' 'transform uses configured mode' ($o -match '\[snake\] hello_world_demo') $o.Trim()
-    $o = Clip $intDir @('marks')
-    Check 'int' 'marks command' (($o -match 'star glyph') -and ($o -match 'highlight ink')) $o.Trim()
-    $o = Clip $intDir @('sweep', 'force')
-    Check 'int' 'sweep command' ($o -match 'retention') $o.Trim()
-    $o = Clip $intDir @('kind', '1')
-    Check 'int' 'kind detail block' (($o -match 'kind text') -and ($o -match '(?m)^  size\s+:') -and ($o -match '(?m)^  preview\s+:')) $o.Trim()
-    $o = Clip $intDir @('kind', '0')
-    Check 'int' 'kind out of range' ($o -match 'index out of range') $o.Trim()
-    $o = Clip $intDir @('kinds')
-    Check 'int' 'kinds distribution' (($o -match 'kinds in ') -and ($o -match '(?m)^  text\s')) $o.Trim()
-    $o = Clip $intDir @('config')
-    Check 'int' 'config groups plugin settings' (($o -match '\[plugin: transform\]') -and ($o -match '(?m)^    Mode\s+=\s+snake')) ''
-    Check 'int' 'config groups each enabled plugin' (($o -match '\[plugin: retention\]') -and ($o -match '\[plugin: item-marks\]') -and ($o -match '\[plugin: entry-actions\]')) ''
-    Check 'int' 'config has no theme-only keys' (-not ($o -match 'Theme\.(Accent|Surface|Pin)|item-marks\.StarColor')) ''
-    $o = Clip $intDir @('help')
-    Check 'int' 'help groups every plugin' (($o -match '\[plugin: transform\]') -and ($o -match '\[plugin: retention\]') -and ($o -match 'transform entry N')) ''
-    Check 'int' 'help groups pin and star' (($o -match '(?s)\[plugin: item-marks\].*pin\s+pin entry N.*unstar')) ''
-    Check 'int' 'help lists the highlight verbs' (($o -match '(?s)\[plugin: item-marks\].*highlight\s+highlight entry N.*unhighlight')) ''
-    Check 'int' 'help puts kind under entry-actions' ($o -match '(?s)\[plugin: entry-actions\].*kind\s+analyse entry N.*kinds') ''
-    $o = Clip $intDir @('config', 'set', 'transform.Mode', 'kebab')
-    Check 'int' 'plugin setting is writable' (($o -match 'transform\.Mode') -and ((Clip $intDir @('config', 'get', 'transform.Mode')) -match 'kebab')) $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'Theme.Accent', '#FF6600')
-    Check 'int' 'theme colour keys are rejected' ($o -match 'unknown key') $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'Theme', 'win11-light')
-    Check 'int' 'theme name is still settable' ($o -match 'win11-light') $o.Trim()
-    Remove-Item -LiteralPath $cfg2 -Force -ErrorAction SilentlyContinue
-
-    # scripts\build.ps1 is driven by a settings file and rewrites the scripts from their
-    # syntax tree, never packing the history
-    $pkgOut = Join-Path $tmpRoot 'pkg'
-    $build = Join-Path $repoRoot 'scripts\build.ps1'
-    $buildCfg = Join-Path $tmpRoot 'build-test.ini'
-    Check 'int' 'build script ships under scripts\\' (Test-Path -LiteralPath $build) ''
-    Check 'int' 'build options ship with the repo' (Test-Path -LiteralPath (Join-Path $repoRoot 'build.ini')) ''
-    Check 'int' 'minifier ships under scripts\\' (Test-Path -LiteralPath (Join-Path $repoRoot 'scripts\minify.ps1')) ''
-    Check 'int' 'package.ini ships with the repo' (Test-Path -LiteralPath (Join-Path $repoRoot 'package.ini')) ''
-    [IO.File]::WriteAllLines($buildCfg, @(('OutDir=' + $pkgOut), 'Verify=0', 'Minify=1', 'Rename=1', 'IncludeDocs=1', 'Overwrite=1'), $Utf8)
-    # the package folder is named after the version package.ini declares
-    Check 'int' 'package.ini carries the version for the package name' ($programVersion -match '^\d+\.\d+\.\d+$') ([string]$programVersion)
-    $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
-    $pkgDir = Join-Path $pkgOut ('clipboard-' + $programVersion)
-    Check 'int' 'build.ps1 writes a folder named after the program version' (Test-Path -LiteralPath $pkgDir) (($bout | Select-Object -Last 1) -as [string])
-    if (Test-Path -LiteralPath $pkgDir) {
-      $names = @(Get-ChildItem -LiteralPath $pkgDir -Recurse -File | ForEach-Object { $_.FullName.Substring($pkgDir.Length) })
-      Check 'int' 'package keeps the program files' ((Test-Path -LiteralPath (Join-Path $pkgDir 'clipboard.ps1')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'clipboard.cmd')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'lib\plugin\plugins.ps1')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'lib\panel\picker.ps1'))) ''
-      # a packaged copy is installed from the folder: the two batch files sit next to
-      # clipboard.ps1 and only call commands the program has
-      $installBat = Join-Path $pkgDir 'install.bat'
-      $uninstallBat = Join-Path $pkgDir 'uninstall.bat'
-      $instText = ''
-      $uninstText = ''
-      $instHigh = 0
-      $uninstHigh = 0
-      if (Test-Path -LiteralPath $installBat) {
-        $instText = [IO.File]::ReadAllText($installBat)
-        $instHigh = @([IO.File]::ReadAllBytes($installBat) | Where-Object { $_ -gt 127 }).Count
-      }
-      if (Test-Path -LiteralPath $uninstallBat) {
-        $uninstText = [IO.File]::ReadAllText($uninstallBat)
-        $uninstHigh = @([IO.File]::ReadAllBytes($uninstallBat) | Where-Object { $_ -gt 127 }).Count
-      }
-      Check 'int' 'package ships install and uninstall scripts' ((Test-Path -LiteralPath $installBat) -and (Test-Path -LiteralPath $uninstallBat)) ''
-      Check 'int' 'install script sets up the ini, migrates and installs' (($instText -match 'config init') -and ($instText -match '\bmigrate\b') -and ($instText -match '\binstall\b') -and ($instText -match 'clipboard\.ps1')) ''
-      Check 'int' 'uninstall script purges the data folder' (($uninstText -match 'uninstall purge') -and ($uninstText -match '\bstop\b') -and ($uninstText -match 'clipboard\.ps1')) ''
-      Check 'int' 'the batch scripts stay plain ASCII' (($instHigh -eq 0) -and ($uninstHigh -eq 0)) ([string]$instHigh + '/' + [string]$uninstHigh)
-      Check 'int' 'package keeps plugins and themes' ((Test-Path -LiteralPath (Join-Path $pkgDir 'plugins\item-marks.ps1')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'themes\win11-dark.ini'))) ''
-      Check 'int' 'package leaves history, tooling and metadata out' ((@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|scripts)([\\/]|$)' }).Count -eq 0) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir 'build.ini')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir 'package.ini'))) (@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|scripts)' }) -join ', ')
-
-      # the point of the build: same scripts, smaller, still parsing
-      # (compare against the repository sources, not $srcRoot: with -Source the latter is
-      # the package under test and both sides would be the same minified file)
-      $srcText = [IO.File]::ReadAllText((Join-Path $defaultSource 'clipboard.ps1'))
-      $outText = [IO.File]::ReadAllText((Join-Path $pkgDir 'clipboard.ps1'))
-      Check 'int' 'minified script is smaller' ($outText.Length -lt $srcText.Length) (([string]$srcText.Length) + ' -> ' + ([string]$outText.Length))
-      # ask the tokenizer instead of searching for a sentence: the same words also live in
-      # the --help strings, which are data and have to survive
-      $pkgTokens = $null
-      $pkgParseErrors = $null
-      [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $pkgDir 'clipboard.ps1'), [ref]$pkgTokens, [ref]$pkgParseErrors)
-      $leftComments = @($pkgTokens | Where-Object { [string]$_.Kind -eq 'Comment' -and $_.Text -notmatch '(?i)^\s*#requires' })
-      Check 'int' 'minified script drops comments' ($leftComments.Count -eq 0) (($leftComments | Select-Object -First 1 | ForEach-Object { $_.Text }) -as [string])
-      Check 'int' 'minified script renames internals' ((-not ($outText -match 'function Get-Record\b')) -and (-not ($outText -match 'function Show-Usage\b'))) ''
-      $pe = $null
-      [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $pkgDir 'clipboard.ps1'), [ref]$null, [ref]$pe)
-      Check 'int' 'minified script still parses' ($pe.Count -eq 0) (($pe | Select-Object -First 1 | ForEach-Object { $_.Message }) -as [string])
-      Check 'int' 'minified script keeps the requires line' ($outText -match '(?m)^#Requires -Version 5\.1') ''
-      Check 'int' 'minified script keeps cli parameter names' (($outText -match '\[string\]\$Command') -and ($outText -match '\$Library')) ''
-      $o2 = & powershell -NoProfile -ExecutionPolicy Bypass -Sta -File (Join-Path $pkgDir 'clipboard.ps1') status 2>&1
-      Check 'int' 'packaged copy runs' ((($o2 -join ' ') -match 'plugins\s+:') -and -not (($o2 -join ' ') -match 'not recognized')) ((@($o2) | Select-Object -First 1) -as [string])
-      # the version is a constant in a package: same number, no package.ini to read
-      $pkgBase = [IO.File]::ReadAllText((Join-Path $pkgDir 'lib\base.ps1'))
-      Check 'int' 'a package carries the version as a constant' ((-not ($pkgBase -match 'package\.ini')) -and ($pkgBase -match [regex]::Escape($programVersion))) ''
-      $o3 = & powershell -NoProfile -ExecutionPolicy Bypass -Sta -File (Join-Path $pkgDir 'clipboard.ps1') version 2>&1
-      Check 'int' 'a package reports the package.ini version' (($o3 -join ' ') -match ('clipboard\s+' + [regex]::Escape($programVersion))) (($o3 -join ' ') -as [string]).Trim()
-    }
-    # Overwrite=0 refuses to replace an existing package
-    [IO.File]::WriteAllLines($buildCfg, @(('OutDir=' + $pkgOut), 'Verify=0', 'Overwrite=0'), $Utf8)
-    $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
-    Check 'int' 'Overwrite=0 keeps the existing folder' (($bout -join ' ') -match 'already exists') (($bout | Select-Object -Last 1) -as [string])
-
-    # Plugins= / Themes= trim the package; an unknown name stops the build
-    $pkgOut2 = Join-Path $tmpRoot 'pkg2'
-    [IO.File]::WriteAllLines($buildCfg, @(('OutDir=' + $pkgOut2), 'Verify=0', 'IncludeDocs=0', 'Plugins=transform', 'Themes=win11-light'), $Utf8)
-    $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
-    $pkgDir2 = Join-Path $pkgOut2 ('clipboard-' + $programVersion)
-    if (Test-Path -LiteralPath $pkgDir2) {
-      Check 'int' 'Plugins= ships only the listed plugin' ((Test-Path -LiteralPath (Join-Path $pkgDir2 'plugins\transform.ps1')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir2 'plugins\item-marks.ps1'))) ''
-      Check 'int' 'Themes= ships only the listed theme' ((Test-Path -LiteralPath (Join-Path $pkgDir2 'themes\win11-light.ini')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir2 'themes\win11-dark.ini'))) ''
-      Check 'int' 'IncludeDocs=0 drops the readme' (-not (Test-Path -LiteralPath (Join-Path $pkgDir2 'README.md'))) ''
-      Check 'int' 'plugin page travels with its plugin' (Test-Path -LiteralPath (Join-Path $pkgDir2 'plugins\transform.md')) ''
-    } else {
-      Check 'int' 'Plugins= ships only the listed plugin' $false (($bout | Select-Object -Last 1) -as [string])
-    }
-    [IO.File]::WriteAllLines($buildCfg, @(('OutDir=' + $pkgOut2), 'Verify=0', 'Plugins=nosuchplugin'), $Utf8)
-    $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
-    Check 'int' 'unknown plugin name stops the build' (($bout -join ' ') -match 'nosuchplugin') (($bout | Select-Object -Last 1) -as [string])
-    Remove-Item -LiteralPath $pkgOut -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $pkgOut2 -Recurse -Force -ErrorAction SilentlyContinue
-  }
-
-  # ------------------------------------------------------------------ e2e tests
-  if ($E2E) {
-    if (-not (Test-MutexFree 'Local\clipboard.daemon')) {
-      Skip 'e2e' 'daemon lifecycle' 'a resident is already running - stop it first'
-      Skip 'e2e' 'capture pipeline' 'a resident is already running - stop it first'
-    }
-    else {
-      $child = $null
-      try {
-        $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', (Join-Path $e2eDir 'clipboard.ps1'), 'serve')
-        $child = Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList $argList -PassThru
-
-        $up = $false
-        for ($i = 0; $i -lt 30 -and -not $up; $i++) {
-          Start-Sleep -Milliseconds 500
-          if ((Clip $e2eDir @('status')) -match 'resident    : running') { $up = $true }
-        }
-        Check 'e2e' 'daemon starts' $up ''
-
-        $s = Clip $e2eDir @('status')
-        Check 'e2e' 'hotkey registered' ($s -match 'active key  : Ctrl\+Alt\+V') (@($s -split "`n" | Where-Object { $_ -match 'active key' }) -join '')
-        Check 'e2e' 'store lives in the sandbox' ($s -match [regex]::Escape((Join-Path $e2eDir 'data'))) ''
-
-        $marker = 'e2e-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-        [void](Set-Clip $marker)
-        Start-Sleep -Milliseconds 1600
-        Check 'e2e' 'capture pipeline' ((Clip $e2eDir @('list', '-Count', '5')) -match [regex]::Escape($marker)) $marker
-
-        [void](Clip $e2eDir @('pause'))
-        $marker2 = 'e2e-paused-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-        [void](Set-Clip $marker2)
-        Start-Sleep -Milliseconds 1600
-        Check 'e2e' 'pause stops capture' (-not ((Clip $e2eDir @('list', '-Count', '5')) -match [regex]::Escape($marker2))) $marker2
-        [void](Clip $e2eDir @('resume'))
-
-        [void](Clip $e2eDir @('stop'))
-        $down = $false
-        for ($i = 0; $i -lt 25 -and -not $down; $i++) {
-          Start-Sleep -Milliseconds 400
-          if ((Clip $e2eDir @('status')) -match 'resident    : not running') { $down = $true }
-        }
-        Check 'e2e' 'daemon stops' $down ''
-
-        $log = Join-Path $e2eDir 'data\clipboard.log'
-        $logText = if (Test-Path -LiteralPath $log) { [IO.File]::ReadAllText($log) } else { '' }
-        Check 'e2e' 'clean shutdown logged' (($logText -match 'serve stop \(stop\)') -and ($logText -match 'supervisor exit')) ''
-        Check 'e2e' 'no restart loop' (-not ($logText -match 'serve restart #')) ''
-      }
-      finally {
-        if ($child -and -not $child.HasExited) { try { $child.Kill() } catch { } }
-      }
-    }
-  }
 }
 catch {
   # an unexpected exception used to skip every remaining group and still exit 0, which
@@ -2700,11 +2154,21 @@ finally {
   try { Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
 }
 
-$script:results | Format-Table -AutoSize -Wrap | Out-String -Width 160 | Write-Output
+# tests\run.ps1 reads this back; a plain run leaves the file alone
+if ($ResultFile) {
+  # ToArray, not @($list): wrapping a List[object] throws "Argument types do not match" in 5.1
+  $payload = @{ Part = 'unit'; Source = $srcRoot; Results = $script:results.ToArray() }
+  try {
+    [IO.File]::WriteAllText($ResultFile, ($payload | ConvertTo-Json -Depth 4), (New-Object Text.UTF8Encoding $false))
+  } catch { Write-Output ('[!] cannot write ' + $ResultFile + ': ' + $_.Exception.Message) }
+}
 
 $pass = @($script:results | Where-Object { $_.Result -eq 'PASS' }).Count
 $fail = @($script:results | Where-Object { $_.Result -eq 'FAIL' }).Count
 $skipped = @($script:results | Where-Object { $_.Result -eq 'SKIP' }).Count
-Write-Output ('TOTAL ' + $script:results.Count + '   PASS ' + $pass + '   FAIL ' + $fail + '   SKIP ' + $skipped)
+if (-not $Quiet) {
+  $script:results | Format-Table -AutoSize -Wrap | Out-String -Width 160 | Write-Output
+  Write-Output ('TOTAL ' + $script:results.Count + '   PASS ' + $pass + '   FAIL ' + $fail + '   SKIP ' + $skipped)
+}
 if ($fail -gt 0) { exit 1 }
 exit 0

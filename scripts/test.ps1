@@ -2,35 +2,49 @@
 <#
   scripts\test.ps1 - run the self test suite.
 
-      cli test                       every group (struct, unit, integration, e2e)
-      cli test -Unit                 one group
+      cli test                       every part (tests\run.ps1)
+      cli test -Unit                 only the in-process unit part
+      cli test -Integration          only the command line parts
+      cli test -E2E                  only the resident / clipboard part
+      cli test -Part cli              one part by name (transfer, capture, config, marks, build,
+                                     unit, serve)
+      cli test -Workers 6            more parts at a time
+      cli test -Serial               one after another
       cli test -Source dist\clipboard-0.1.0
-                                     run the CLI groups against a packaged copy
+                                     run the command line parts against a packaged copy
 
-  Switches are passed straight to tests\run-tests.ps1; -Sta is required because the
-  program loads System.Windows.Forms.
+  Switches are passed straight to tests\run.ps1; -Sta is required because the program loads
+  System.Windows.Forms.
 #>
 [CmdletBinding()]
 param(
   [switch]$Unit,
   [switch]$Integration,
   [switch]$E2E,
-  [string]$Source = ''
+  [string]$Source = '',
+  [string]$Part = '',
+  [int]$Workers = 0,
+  [switch]$Serial,
+  [switch]$Verbose_Log
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
-$suite = Join-Path $root 'tests\run-tests.ps1'
-if (-not (Test-Path -LiteralPath $suite)) {
-  Write-Host ('[x] missing: ' + $suite)
+$driver = Join-Path $root 'tests\run.ps1'
+if (-not (Test-Path -LiteralPath $driver)) {
+  Write-Host ('[x] missing: ' + $driver)
   exit 1
 }
 
-$cli = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', $suite)
+$cli = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', $driver)
 if ($Unit) { $cli += '-Unit' }
 if ($Integration) { $cli += '-Integration' }
 if ($E2E) { $cli += '-E2E' }
 if ($Source) { $cli += @('-Source', $Source) }
+if ($Part) { $cli += @('-Part', $Part) }
+if ($Workers -gt 0) { $cli += @('-Workers', [string]$Workers) }
+if ($Serial) { $cli += '-Serial' }
+if ($Verbose_Log) { $cli += '-Verbose_Log' }
 & powershell @cli
 $code = $LASTEXITCODE
 if ($null -eq $code) { $code = 0 }

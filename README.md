@@ -569,9 +569,16 @@ build.ini               打包选项（输出目录 / 压缩 / 重命名 / 验�
 scripts/build.ps1       打包脚本（读 src\，输出 dist\clipboard-<version>\，并写 install.bat / uninstall.bat）
 scripts/minify.ps1      压缩器（按语法树合并语句、删注释与缩进、重命名内部函数与局部变量、C# 段去注释折行）
 scripts/dev.ps1         开发运行：启动常驻并监视被加载的文件，变化即重启
-scripts/test.ps1        自测入口（转发 tests\run-tests.ps1 的开关）
+scripts/test.ps1        自测入口（转发 tests\run.ps1 的开关）
 scripts/shot.ps1        重新生成 docs\ 下的界面截图
-tests/run-tests.ps1     自测套件
+test.ini                自测配置：并行度、每个沙箱的初始设置
+tests/run.ps1           自测驱动：按目录发现分件、并行执行、合并结果
+tests/lib/harness.ps1   分件共用的断言、沙箱与命令调用
+tests/lib/fake-clip.ps1 沙箱自带的剪贴板（一条测试不碰本机剪贴板）
+tests/unit/unit.ps1     结构与单元测试（进程内 dot-source）
+tests/cli/*.ps1         命令行分件：transfer / capture / config / marks
+tests/pkg/build.ps1     打包
+tests/e2e/serve.ps1     真实常驻进程、真实剪贴板
 docs/                   界面截图
 dist/                   打包产物（不入库）
 
@@ -716,21 +723,26 @@ CBHIST RS <数据版本> RS <flags> US <epoch 秒> US <extra> US <payload> RS <f
 ## 测试
 
 ```powershell
-cli test                             # 全部四组
-cli test -Unit                       # 只跑一组
-cli test -Source dist\clipboard-0.1.0   # 对打包副本跑 CLI 组
+cli test                             # 全部分件（默认四路并行）
+cli test -Unit                       # 只跑单元分件
+cli test -Part transfer,capture      # 指定分件
+cli test -Serial                     # 逐个跑
+cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 ```
 
-也可以直接调用，参数相同：`powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run-tests.ps1`。
+也可以直接调用：`powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run.ps1`。
 
-结构组没有开关，任何模式下都会先跑；其余三组默认全跑，也可以单独指定：
+一个分件一个文件、一个进程、一个沙箱，彼此看不到对方；并行度由 `test.ini` 的 `[run] Workers` 决定，结果由驱动合并成一张表。
 
-| 组 | 开关 | 覆盖内容 |
+分件与分组：
+
+| 分件 | 所在 | 覆盖内容 |
 |---|---|---|
-| 结构 | 无（总是执行） | 分层契约：48 个必需模块（`lib\` 33 + `utils\` 13）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
-| 单元 | `-Unit` | 纯函数与存储层：热键解析、条目文案、ini 读写与单值校验、`Apply-Config` 与配置诊断、记录读写与版本识别、迁移引擎（拒绝无步骤 / 备份 / `-Purge` 归档）、图片与富文本的编解码与媒体回收、CF_HTML 片段解析、真实剪贴板的图片与格式往返、标记与保护规则、面板几何与命中计算、条目分类与行图标、主题发现与 `[metrics]` 重置、插件白名单。通过 `-Library` dot-source 主脚本，不触发命令分发 |
-| 集成 | `-Integration` | 每条 CLI 能力都起子进程验证：`put` / `get` / `list` / `pick` / `del` / `clear` / `pause` / `resume` / `status` / `version` / `migrate` / `themes` / `config get` / `config set` / `config init` / `backup` / `restore`、主题切换与非法主题名拒绝、插件白名单与各插件命令、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝、`cli` 命令列表；以及打包（进包内容、`install.bat`、包内版本为常量且与 `package.ini` 一致、`Plugins=` / `Themes=` 裁剪、`Overwrite=0` 拒绝覆盖、未知插件名报错） |
-| 端到端 | `-E2E` | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启循环 |
+| 结构 | `tests/unit/unit.ps1`（总是执行） | 分层契约：48 个必需模块（`lib\` 33 + `utils\` 13）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
+| 单元 | `tests/unit/unit.ps1`（同上，dot-source 后逐函数） | 纯函数与存储层：热键解析、条目文案、ini 读写与单值校验、`Apply-Config` 与配置诊断、记录读写与版本识别、迁移引擎（拒绝无步骤 / 备份 / `-Purge` 归档）、图片与富文本的编解码与媒体回收、CF_HTML 片段解析、真实剪贴板的图片与格式往返、标记与保护规则、面板几何与命中计算、条目分类与行图标、主题发现与 `[metrics]` 重置、插件白名单。通过 `-Library` dot-source 主脚本，不触发命令分发 |
+| 命令行 | `tests/cli/transfer.ps1`、`capture.ps1`、`config.ps1`、`marks.ps1`（并行） | 每条 CLI 能力都起子进程验证：`put` / `get` / `list` / `pick` / `del` / `clear` / `pause` / `resume` / `status` / `version` / `migrate` / `themes` / `config get` / `config set` / `config init` / `backup` / `restore`、主题切换与非法主题名拒绝、插件白名单与各插件命令、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝、`cli` 命令列表 |
+| 打包 | `tests/pkg/build.ps1`（并行） | 进包内容、`install.bat`、包内版本为常量且与 `package.ini` 一致、`Plugins=` / `Themes=` 裁剪、`Overwrite=0` 拒绝覆盖、未知插件名报错 |
+| 端到端 | `tests/e2e/serve.ps1`（串行） | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启循环 |
 
 全部在 `%TEMP%` 下的沙箱副本（脚本 + `lib` + `utils` + `schema` + `plugins` + `themes`）中运行，不修改 `data/` 与 `clipboard.ini`；真实剪贴板在开始前备份、结束后还原。任一项失败时退出码为 1。
 

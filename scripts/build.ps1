@@ -343,10 +343,12 @@ try {
 
 # ---------------------------------------------------------------- verify
 if ($verify) {
-  $suite = Join-Path $root 'tests\run-tests.ps1'
+  $suite = Join-Path $root 'tests\run.ps1'
   if (-not (Test-Path -LiteralPath $suite)) { Fail ('test suite not found: ' + $suite) }
   Write-Step 'running the CLI suite against the package'
-  $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -File $suite -Integration -Source $dest 2>&1
+  # -Serial: a packaged copy has no fake clipboard (its function names are rewritten), so the
+  # parts would fight over the machine clipboard if they ran side by side
+  $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -File $suite -Integration -Serial -Source $dest 2>&1
   $code = $LASTEXITCODE
   $total = @($out | Where-Object { [string]$_ -match '^TOTAL ' }) | Select-Object -Last 1
   if ($code -ne 0) {
