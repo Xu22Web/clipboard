@@ -56,7 +56,7 @@ $coreModules = @(
   'utils\ini', 'utils\import', 'utils\schema',
   'utils\log', 'utils\time', 'utils\format', 'utils\draw', 'utils\hotkey', 'utils\query', 'utils\pinyin', 'utils\transfer', 'utils\apprules',
   'lib\native', 'lib\theme-stub', 'lib\settings', 'lib\media', 'lib\clip', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\hotkey', 'lib\apprules',
-  'lib\entry', 'lib\query', 'lib\select', 'lib\picker-geom', 'lib\diag', 'lib\shortcut', 'lib\config', 'lib\usage', 'lib\dispatch'
+  'lib\entry', 'lib\query', 'lib\select', 'lib\picker-geom', 'lib\diag', 'lib\shortcut', 'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch'
 )
 # The panel stack is only needed when something is about to draw: `ui`, `serve`, and the
 # bare command that opens the panel. Every other command - put, get, list, del, clear,

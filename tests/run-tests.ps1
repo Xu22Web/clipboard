@@ -170,7 +170,7 @@ try {
   $requiredLib = @('lib\base', 'lib\native', 'lib\keyhook', 'lib\theme-stub', 'lib\settings',
     'lib\media', 'lib\clip', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\hotkey', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\picker-geom', 'lib\anim',
     'lib\picker-draw', 'lib\picker-edit', 'lib\media-render', 'lib\pinlist', 'lib\preview', 'lib\picker', 'lib\serve', 'lib\diag', 'lib\shortcut',
-    'lib\config', 'lib\usage', 'lib\dispatch',
+    'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch',
     'utils\ini', 'utils\import', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\draw', 'utils\hotkey',
     'utils\query', 'utils\pinyin', 'utils\transfer', 'utils\apprules',
     'schema\clipboard', 'schema\theme')
@@ -809,26 +809,55 @@ try {
     Check 'unit' 'pixels never enter the history file' (-not ([IO.File]::ReadAllText($StoreFile)).Contains('PNG' + [string][char]1)) ''
 
     # the clipboard itself: an image goes back as an image, formatted text keeps its formats
-    if (Set-ClipItem $p1) {
-      $hasImage = $false
-      try { $hasImage = [Windows.Forms.Clipboard]::ContainsImage() } catch { }
-      Check 'unit' 'an image goes back to the clipboard' $hasImage ''
-      $capBack = Get-ClipCapture
-      $sameImage = ($null -ne $capBack.Image) -and ((New-ImagePayload $capBack.Image.Png $capBack.Image.W $capBack.Image.H $capBack.Image.Fmt) -ceq $p1)
-      Check 'unit' 'a captured image is the same picture' $sameImage ''
-    } else {
-      Check 'unit' 'an image goes back to the clipboard' $false 'set image failed'
+    # The clipboard is shared with every other program on the machine: an outside write can
+    # land between ours and our read, which used to surface as an unrelated failure (it also
+    # reproduced with none of the code under test changed). Retry the pair a few times; a real
+    # regression still fails every attempt.
+    function Get-ClipBack([string]$entry, [string]$rich = '', [int]$tries = 4) {
+      # a picture entry has no text of its own: the clipboard carries the bitmap only, so
+      # the read-back is judged by the image, not by the payload string
+      $wantImage = (Test-ImagePayload $entry)
+      for ($i = 0; $i -lt $tries; $i++) {
+        if (-not (Set-ClipItem $entry $rich)) { continue }
+        Start-Sleep -Milliseconds 60
+        $cap = Get-ClipCapture
+        if ($null -eq $cap) { continue }
+        if ($wantImage) {
+          if ($null -ne $cap.Image) { return $cap }
+          continue
+        }
+        if ([string]$cap.Text -cne $entry) { continue }
+        if ($rich -and $null -eq $cap.Rich) { continue }
+        return $cap
+      }
+      return $null
     }
-    if (Set-ClipItem 'hi there' $rref) {
-      $capRich = Get-ClipCapture
-      Check 'unit' 'formatted text keeps its formats on the clipboard' (($null -ne $capRich.Rich) -and [string]$capRich.Text -eq 'hi there') ''
-      $htmlSame = ($null -ne $capRich.Rich.Html) -and ([BitConverter]::ToString($capRich.Rich.Html) -eq [BitConverter]::ToString($richCap.Html))
-      Check 'unit' 'the html block comes back byte for byte' $htmlSame ''
-      $rtfSame = ($null -ne $capRich.Rich.Rtf) -and ([Text.Encoding]::Default.GetString($capRich.Rich.Rtf) -ceq $richRtf)
-      Check 'unit' 'the rtf block comes back byte for byte' $rtfSame ''
-    } else {
-      Check 'unit' 'formatted text keeps its formats on the clipboard' $false 'set formatted text failed'
+    function Get-RichBack([string]$text, [string]$ref, [int]$tries = 4) {
+      for ($i = 0; $i -lt $tries; $i++) {
+        if (-not (Set-RichItem $text $ref)) { return $null }
+        Start-Sleep -Milliseconds 60
+        $bh = $null
+        $br = $null
+        $bp = $null
+        $bd = $null
+        $be = $null
+        [Cb.Win]::ReadRichFormats([ref]$bh, [ref]$br, [ref]$bp, [ref]$bd, [ref]$be)
+        if (($null -ne $bh) -or ($null -ne $bd)) {
+          return @{ Html = $bh; Rtf = $br; Png = $bp; Dib = $bd; Emf = $be }
+        }
+      }
+      return $null
     }
+    $capBack = Get-ClipBack $p1
+    Check 'unit' 'an image goes back to the clipboard' (($null -ne $capBack) -and ($null -ne $capBack.Image)) ''
+    $sameImage = ($null -ne $capBack) -and ($null -ne $capBack.Image) -and ((New-ImagePayload $capBack.Image.Png $capBack.Image.W $capBack.Image.H $capBack.Image.Fmt) -ceq $p1)
+    Check 'unit' 'a captured image is the same picture' $sameImage ''
+    $capRich = Get-ClipBack 'hi there' $rref
+    Check 'unit' 'formatted text keeps its formats on the clipboard' (($null -ne $capRich) -and [string]$capRich.Text -eq 'hi there') ''
+    $htmlSame = ($null -ne $capRich) -and ($null -ne $capRich.Rich.Html) -and ([BitConverter]::ToString($capRich.Rich.Html) -eq [BitConverter]::ToString($richCap.Html))
+    Check 'unit' 'the html block comes back byte for byte' $htmlSame ''
+    $rtfSame = ($null -ne $capRich) -and ($null -ne $capRich.Rich.Rtf) -and ([Text.Encoding]::Default.GetString($capRich.Rich.Rtf) -ceq $richRtf)
+    Check 'unit' 'the rtf block comes back byte for byte' $rtfSame ''
     # A UTF-8 CF_HTML block that goes through a .NET string is decoded with the ANSI code page
     # and stored re-encoded, which is what made Word and Excel paste mojibake. The bytes the
     # clipboard hands over have to come back unchanged.
@@ -836,33 +865,21 @@ try {
     $cnHtml = $Utf8.GetBytes('<html><body><p>' + $cnChar + '</p></body></html>')
     $cnRef = New-RichRef @{ Html = $cnHtml; Rtf = $null }
     [void](Write-RichMedia $cnRef @{ Html = $cnHtml; Rtf = $null })
-    if (Set-ClipItem ([string]$cnChar) $cnRef) {
-      $cnBack = Get-ClipCapture
-      $cnHtmlBack = $null
-      if ($null -ne $cnBack -and $null -ne $cnBack.Rich) { $cnHtmlBack = $cnBack.Rich.Html }
-      $cnSame = ($null -ne $cnHtmlBack) -and ([BitConverter]::ToString($cnHtmlBack) -eq [BitConverter]::ToString($cnHtml))
-      Check 'unit' 'utf-8 html keeps its bytes on the clipboard' $cnSame ''
-      Check 'unit' 'utf-8 html reads back as its text' (($null -ne $cnHtmlBack) -and ((Get-HtmlText $cnHtmlBack) -eq [string]$cnChar)) ([string]$cnChar)
-    } else {
-      Check 'unit' 'utf-8 html keeps its bytes on the clipboard' $false 'set formatted text failed'
-      Check 'unit' 'utf-8 html reads back as its text' $false 'set formatted text failed'
-    }
+    $cnBack = Get-ClipBack ([string]$cnChar) $cnRef
+    $cnHtmlBack = $null
+    if ($null -ne $cnBack -and $null -ne $cnBack.Rich) { $cnHtmlBack = $cnBack.Rich.Html }
+    $cnSame = ($null -ne $cnHtmlBack) -and ([BitConverter]::ToString($cnHtmlBack) -eq [BitConverter]::ToString($cnHtml))
+    Check 'unit' 'utf-8 html keeps its bytes on the clipboard' $cnSame ''
+    Check 'unit' 'utf-8 html reads back as its text' (($null -ne $cnHtmlBack) -and ((Get-HtmlText $cnHtmlBack) -eq [string]$cnChar)) ([string]$cnChar)
 
     # the picture blocks travel with the text: a target that prefers a bitmap over html (a
     # chart, a shape, PowerPoint) still gets one
-    if (Set-RichItem 'hi there' $bRef) {
-      $bh = $null
-      $br = $null
-      $bp = $null
-      $bd = $null
-      $be = $null
-      [Cb.Win]::ReadRichFormats([ref]$bh, [ref]$br, [ref]$bp, [ref]$bd, [ref]$be)
-      Check 'unit' 'the bitmap block goes back' (($null -ne $bd) -and ([BitConverter]::ToString($bd) -eq [BitConverter]::ToString($dibPixels))) ([string]$(if ($null -ne $bd) { $bd.Length } else { -1 }) + ' vs ' + [string]$dibPixels.Length)
-      Check 'unit' 'the html goes back with its blocks' (($null -ne $bh) -and ($bh.Length -eq $richCap.Html.Length)) ''
-    } else {
-      Check 'unit' 'the bitmap block goes back' $false 'set formatted text failed'
-      Check 'unit' 'the html goes back with its blocks' $false 'set formatted text failed'
-    }
+    $fmtBack = Get-RichBack 'hi there' $bRef
+    $bd = $null
+    $bh = $null
+    if ($null -ne $fmtBack) { $bd = $fmtBack.Dib; $bh = $fmtBack.Html }
+    Check 'unit' 'the bitmap block goes back' (($null -ne $bd) -and ([BitConverter]::ToString($bd) -eq [BitConverter]::ToString($dibPixels))) ([string]$(if ($null -ne $bd) { $bd.Length } else { -1 }) + ' vs ' + [string]$dibPixels.Length)
+    Check 'unit' 'the html goes back with its blocks' (($null -ne $bh) -and ($bh.Length -eq $richCap.Html.Length)) ''
 
     # a big picture: the card scales it down once and keeps a small copy beside it
     $bigBmp = New-Object Drawing.Bitmap 1600, 900
