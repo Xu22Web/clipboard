@@ -97,6 +97,18 @@ function New-Sandbox([string]$name) {
   return $dir
 }
 
+# A sandbox whose clipboard is a file instead of the machine's: the one file that touches
+# Windows is replaced (see tests\lib\fake-clip.ps1), so the sandbox can run beside another one
+# and never disturbs what the user has copied.
+function New-FakeSandbox([string]$name) {
+  $dir = New-Sandbox $name
+  $fake = Join-Path $repoRoot 'tests\lib\fake-clip.ps1'
+  if (Test-Path -LiteralPath $fake) {
+    Copy-Item -LiteralPath $fake -Destination (Join-Path $dir 'lib\clip.ps1') -Force
+  }
+  return $dir
+}
+
 # ---------------------------------------------------------------- test.ini
 # test.ini (repository root) is the harness configuration, read with the parser the tool itself
 # uses: utils\ini.ps1 is pure, and the repository copy is loaded rather than $srcRoot, so this
@@ -2122,6 +2134,27 @@ try {
 
   # --------------------------------------------------------- integration tests
   if ($Integration) {
+    # A sandbox can carry its own clipboard (tests\lib\fake-clip.ps1), which is what lets the
+    # suite run beside another copy of itself and keeps the user's clipboard out of it. The
+    # checks below are the contract: the same commands, the same answers, and the machine's
+    # clipboard untouched.
+    $fakeDir = New-FakeSandbox 'fakeclip'
+    $realBefore = ''
+    try { $realBefore = [string](Get-Clipboard -Raw -ErrorAction Stop) } catch { $realBefore = '' }
+    $o = Clip $fakeDir @('put', 'fake-one')
+    Check 'int' 'a sandbox can carry its own clipboard' ($o -match 'clipboard set') $o.Trim()
+    $o = Clip $fakeDir @('get')
+    Check 'int' 'the fake clipboard reads back' ($o -match 'fake-one') $o.Trim()
+    $o = Clip $fakeDir @('list')
+    Check 'int' 'a capture from the fake clipboard is stored' ($o -match 'fake-one') $o.Trim()
+    $o = Clip $fakeDir @('pick', '1')
+    Check 'int' 'picking writes the fake clipboard' (($o -match 'clipboard set') -or ($o -match 'picked')) $o.Trim()
+    $o = Clip $fakeDir @('get')
+    Check 'int' 'the picked entry comes back through the fake clipboard' ($o -match 'fake-one') $o.Trim()
+    $realAfter = ''
+    try { $realAfter = [string](Get-Clipboard -Raw -ErrorAction Stop) } catch { $realAfter = '' }
+    Check 'int' 'the machine clipboard is never touched' ($realBefore -ceq $realAfter) ('before=' + $realBefore.Length + ' after=' + $realAfter.Length)
+
     $o = Clip $intDir @('help')
     Check 'int' 'help' ($o -match 'Usage: clipboard') ''
 
