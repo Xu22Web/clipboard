@@ -298,7 +298,9 @@ try {
   # sizes and the single $Root line only make sense in the readable source
   if (-not $isPackaged) {
     $entryLines = @([IO.File]::ReadAllLines($entryPath)).Count
-    Check 'struct' 'entry file stays an entry point' ($entryLines -le 200) ([string]$entryLines + ' lines')
+    # 220, not 200: the entry also decides whether the resident answers the command instead of
+    # a fresh process (the proxy block), which is a table plus a few lines of glue
+    Check 'struct' 'entry file stays an entry point' ($entryLines -le 220) ([string]$entryLines + ' lines')
 
     # the entry loads only the module groups a command can reach. A command the dispatcher
     # knows and the table does not would reach the default group and fail at run time, so the

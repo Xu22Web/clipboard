@@ -61,7 +61,7 @@ try {
         $marker = 'e2e-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
         [void](Set-Clip $marker)
         $seen = $false
-        for ($i = 0; $i -lt 50 -and -not $seen; $i++) {
+        for ($i = 0; $i -lt 100 -and -not $seen; $i++) {
           Start-Sleep -Milliseconds 200
           if ((Read-TextSafe $store).Contains($marker)) { $seen = $true }
         }

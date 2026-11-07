@@ -94,10 +94,10 @@ function Get-ChangedParts([string[]]$Given) {
     if ($p -match '^tests\\cli\\(?<part>[A-Za-z0-9_-]+)\.ps1$') { $names = @($matches['part']) }
     elseif ($p -match '^tests\\pkg\\') { $names = @('build') }
     elseif ($p -match '^tests\\unit\\') { $names = @('unit') }
-    elseif ($p -match '^tests\\e2e\\') { $names = @('serve') }
+    elseif ($p -match '^tests\\e2e\\(?<part>[A-Za-z0-9_-]+)\.ps1$') { $names = @($matches['part']) }
     elseif ($p -match '^tests\\') { $names = $script:AllParts }
     elseif ($p -match '\.md$' -or $p -match '^docs\\' -or $p -match '^LICENSE$') { $names = @() }
-    elseif ($p -match '^src\\lib\\panel\\' -or $p -match '^src\\lib\\serve\.ps1$') { $names = @('unit', 'serve') }
+    elseif ($p -match '^src\\lib\\panel\\' -or $p -match '^src\\lib\\serve\.ps1$' -or $p -match '^src\\lib\\proxy\.ps1$') { $names = @('unit', 'serve', 'proxy') }
     elseif ($p -match '^src\\lib\\plugin\\') { $names = @('unit', 'config', 'marks', 'pins') }
     elseif ($p -match '^src\\schema\\') { $names = @('unit', 'settings', 'config') }
     elseif ($p -match '^src\\') { $names = $script:AllParts }

@@ -417,7 +417,7 @@ Plugins=item-marks,entry-actions
 | 层 | 位置 | 职责 |
 |---|---|---|
 | 入口 | `clipboard.ps1` | 参数绑定、`$Root`、必需模块清单、运行时路径（ini / store / log 位置）、`Invoke-Main` |
-| 装配 | `lib/dispatch.ps1` | `Invoke-Main`：先 `Apply-Config`，再按 `Plugins=` 装配插件，最后执行一个命令 |
+| 装配 | `lib/dispatch.ps1` | `Invoke-Main` 分成两半：`Initialize-Main`（`Apply-Config` + 按 `Plugins=` 装配插件）与 `Invoke-Dispatch`（执行一个命令），后者被命令代理复用 |
 | 场景 | `lib/panel/picker.ps1`、`lib/panel/pinlist.ps1`、`lib/panel/picker-draw.ps1`、`lib/panel/picker-edit.ps1`、`lib/panel/preview.ps1`、`lib/panel/anim.ps1`、`lib/panel/keyhook.ps1`、`lib/serve.ps1`、`lib/config.ps1`、`lib/config-template.ps1`、`lib/shortcut.ps1`、`lib/usage.ps1` | 面板窗与交互、自绘列表、可复用的绘制件、就地编辑条目、悬停预览卡片、过渡动画、键盘钩子、常驻进程、设置命令面与写出的模板、快捷方式、帮助 |
 | 领域 | `lib/clip.ps1`、`lib/store.ps1`、`lib/marks.ps1`、`lib/ordering.ps1`、`lib/media.ps1`、`lib/cfhtml.ps1`、`lib/migrate.ps1`、`lib/entry.ps1`、`lib/modifiers.ps1`、`lib/panel/picker-geom.ps1` | 剪贴板读写、历史记录存储、标记语义、行序与冻结行数、图片与富文本附件、CF_HTML 往返、数据格式迁移、条目分类与文案、修饰键状态、面板纯计算 |
 | 基础 | `lib/native.ps1` | 平台层（P/Invoke、WinForms 类型、程序集、字体探测、DPI） |
@@ -549,6 +549,27 @@ clipboard config set entry-actions.Reveal 0
 }
 ```
 
+## 命令代理（常驻进程代跑命令）
+
+每条命令都要起一个 PowerShell 进程，而其中约 1.5 s 花在解析本程序上；已经跑着的常驻进程早就付过这笔钱。所以能交给它的命令会走一条命名管道，由常驻进程直接执行：
+
+| 项 | 说明 |
+|---|---|
+| 代理的命令 | `get` / `list` / `put` / `pick` / `del` / `clear` / `status` / `pause` / `resume` / `version` / `help`，以及所有插件动词 |
+| 直连的命令 | `config` / `themes` / `install` / `uninstall` / `serve` / `stop` / `ui` / `edit` / `export` / `import` / `backup` / `restore` / `migrate` —— 它们改设置、换存储、动注册表或本身就是常驻进程 |
+| 管道名 | `\\.\pipe\clipboard-cmd-<hash>`，hash 只由「当前用户 SID」算出：客户端因此不必读 `clipboard.ini`、不必算数据目录，连 ini 解析都省了 |
+| 隔离 | 请求里带工具根目录，只在 `root` 与自己的相等时才执行；另一份拷贝（含测试沙箱）拿到 `wrong root` 后静默走慢路径 |
+| 传输内容 | 命令名、四个位置参数、`-Count`、四个开关、以及实际绑定过的参数名（`put` 无文本时另带 stdin）；不发脚本，服务端只认白名单里的命令 |
+| 失败处理 | 连不上、超时（连接 120 ms、往返 2 s）或版本不一致都会静默回退到「起一个新进程」，行为与没有这个功能时完全一样 |
+| 关闭 | `-NoProxy` 开关，或环境变量 `CLIPBOARD_NO_PROXY=1` |
+| 时限 | 只执行短命令：命令在常驻进程的 UI 线程上跑，与捕获循环、面板同一个线程，因此不会并发改状态 |
+
+实测（本机，沙箱常驻，各 4 次取均值）：`clipboard list` 由 2.9 s 降到 1.34 s、`status` 由 3.7 s 降到 1.36 s、`version` 由 2.1 s 降到 1.26 s。剩下约 1.2 s 全是 `powershell.exe` 自身启动（`-Sta` + 引擎初始化），纯脚本方案压不下去 —— 再往下只能换客户端里那个启动进程本身。
+
+服务端在 `lib/proxy.ps1`，`serve` 场景里由 50 ms 的定时器轮询待连接请求；客户端在入口装载模块**之前**就决定要不要代理，且只加载 `lib\proxy.ps1` 一个文件（不解析 ini、不算路径），因此不必为一个被代理的命令解析整套模块。
+
+常驻与数据目录的对应关系也在这里收紧了：`status` 的 `resident` 行与 `config set` 之后的自动重启，只认**服务于当前数据目录**的那个常驻（判断依据是它写在自己 `data\` 下的 `hotkey.txt`，退出时写成 `(stopped)`），因此另装一份、或跑测试沙箱时不会误报或误重启。
+
 ## 兼容性（Windows 10 / 11）
 
 | 项 | 处理方式 |
@@ -612,7 +633,8 @@ src/                    程序本体（打包只读这个目录）
   lib/config.ps1          config 命令面：应用设置、打印有效值、重启常驻
   lib/config-template.ps1 写进文件的 clipboard.ini：注释模板、config init 的补键合并、config reset
   lib/usage.ps1           help 输出（基础命令分组 + 每个插件的分组）
-  lib/dispatch.ps1        Invoke-Main：先 Apply-Config，再装配插件，最后执行一个命令
+  lib/dispatch.ps1        Invoke-Main：先 Initialize-Main（Apply-Config + 装配插件），再 Invoke-Dispatch（执行一个命令）
+  lib/proxy.ps1           命令代理：把高频命令交给常驻进程执行，连不上就静默回退（见「命令代理」）
 
   lib/panel/              面板栈：只在要画东西时加载（ui / serve / 无参数），其余命令不解析它
   lib/panel/picker.ps1      历史面板：窗体、过滤、列表、按键、右键菜单、粘贴
@@ -744,7 +766,7 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 
 也可以直接调用：`powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run.ps1`。
 
-一个分件一个文件、一个进程、一个沙箱，彼此看不到对方；并行度由 `test.ini` 的 `[run] Workers` 决定（默认 8，本机实测刻度见该文件注释），结果由驱动合并成一张表。全量 710 项在 12 逻辑核上约 140 s；改前是同一条命令 3.0 s、全套 480 s。
+一个分件一个文件、一个进程、一个沙箱，彼此看不到对方；并行度由 `test.ini` 的 `[run] Workers` 决定（默认 8，本机实测刻度见该文件注释），结果由驱动合并成一张表。全量 720 项在 12 逻辑核上约 140 s；改前是同一条命令 3.0 s、全套 480 s。
 
 分件分三条泳道：`unit` / `e2e` 都要驱动**真实**剪贴板，两者排队互斥，但可以与命令行分件同时跑；命令行分件各用各的假剪贴板，只受 `Workers` 限制。驱动先启动 `unit`，坏函数几秒内就能让整轮失败；打包副本（`-Source` 指向非 `src\`）里假剪贴板失效，命令行分件自动改为一次一个，打包分件仍照常并行。
 
@@ -752,11 +774,12 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 
 | 分件 | 所在 | 覆盖内容 |
 |---|---|---|
-| 结构 | `tests/unit/unit.ps1`（总是执行） | 分层契约：48 个必需模块（`lib\` 33 + `utils\` 13）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
+| 结构 | `tests/unit/unit.ps1`（总是执行） | 分层契约：46 个必需模块（`lib\` 33 + `utils\` 13）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 220 行且 `$Root` 只算一次、单模块 ≤ 1400 行；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
 | 单元 | `tests/unit/unit.ps1`（同上，dot-source 后逐函数） | 纯函数与存储层：热键解析、条目文案、ini 读写与单值校验、`Apply-Config` 与配置诊断、记录读写与版本识别、迁移引擎（拒绝无步骤 / 备份 / `-Purge` 归档）、图片与富文本的编解码与媒体回收、CF_HTML 片段解析、真实剪贴板的图片与格式往返、标记与保护规则、面板几何与命中计算、条目分类与行图标、主题发现与 `[metrics]` 重置、插件白名单。通过 `-Library` dot-source 主脚本，不触发命令分发 |
 | 命令行 | `tests/cli/history.ps1`、`transfer.ps1`、`settings.ps1`、`config.ps1`、`template.ps1`、`marks.ps1`、`pins.ps1`、`plugins.ps1`（并行） | 每条 CLI 能力都起子进程验证：`put` / `get` / `list` / `pick` / `del` / `clear` / `pause` / `resume` / `status` / `version` / `migrate` / `themes` / `config get` / `config set` / `config init` / `backup` / `restore`、主题切换与非法主题名拒绝、插件白名单与各插件命令、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝、`cli` 命令列表 |
 | 打包 | `tests/pkg/build.ps1`（并行） | 进包内容、`install.bat`、包内版本为常量且与 `package.ini` 一致、`Plugins=` / `Themes=` 裁剪、`Overwrite=0` 拒绝覆盖、未知插件名报错 |
 | 端到端 | `tests/e2e/serve.ps1`（独占剪贴板泳道） | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启 |
+| 代理 | `tests/e2e/proxy.ps1`（同上泳道） | 沙箱常驻进程 + 命名管道：代理结果与 `-NoProxy` 逐字节一致、确实更快、`status` 在常驻进程里说自己正在运行、`put` 与 stdin 两条路径、直连命令不被代理、`stop` 之后静默回退 |
 
 全部在 `%TEMP%` 下的沙箱副本（脚本 + `lib` + `utils` + `schema` + `plugins` + `themes`）中运行，不修改 `data/` 与 `clipboard.ini`；真实剪贴板在开始前备份、结束后还原。任一项失败时退出码为 1。
 
