@@ -585,7 +585,7 @@ dist/                   打包产物（不入库）
 src/                    程序本体（打包只读这个目录）
   clipboard               Git Bash / MSYS2 启动器（sh 壳，负责把路径转成 Windows 形式）
   clipboard.cmd           CMD 启动器
-  clipboard.ps1           入口：参数绑定 / $Root / 必需模块清单 / 运行时路径 / 调用 Invoke-Main
+  clipboard.ps1           入口：参数绑定 / $Root / 模块分组表（base + 四个组）/ 运行时路径 / 调用 Invoke-Main
   clipboard.ini           配置（只读；不存在时用内置默认，config init 才生成）
   data/                   历史 / 日志 / 生效热键缓存 / 媒体（不入库）
   lib/base.ps1            常量、版本读取、记录格式、运行时标识、度量/字形/时序与全部默认值
@@ -662,6 +662,17 @@ src/                    程序本体（打包只读这个目录）
 
 除 `lib\themes.ps1` 与插件三件套（`plugins.ps1` / `plugin-settings.ps1` / `plugin-marks.ps1`，要么全有要么全无）外，模块缺失会报 `missing: …\<lib|utils>\<name>.ps1` 并以退出码 1 结束，因此分发时必须提供 `lib\`、`utils\`、`schema\` 三个目录。
 
+模块按命令加载，不要求全部装进进程。入口持有两张表：
+
+| 表 | 内容 |
+|---|---|
+| `$baseModules` | 每条命令都要的 18 个文件：`base`、`utils` 的 ini / inifile / schema / log / time / format / fileio / hotkey / apprules、`native`、`theme-stub`、`settings`、`marks`、`ordering`、`config`、`usage`、`dispatch` |
+| `$groupModules` + `$commandGroups` | 四个组 `store` / `transfer` / `config` / `panel`，以及每个命令能触达哪几组：`put`/`get`/`list`/`pick`/`del`/`clear`/`pause`/`resume`/`status` 与插件动词取 `store`，`export`/`import`/`backup`/`restore`/`migrate` 再加 `transfer`，`config`/`themes`/`install`/`uninstall` 取 `config`，`version`/`stop` 不取组，`ui`/`serve`/无参数才取 `panel` |
+
+因此 `version` 只解析十八个文件，`list` 约三十个，只有会画面板的命令才付出 `picker` / `preview` / `media-render` 的代价；`-Library`（测试用）加载全部。三条 `struct` 契约守着这张表：调度器认识的每个命令都在表里、表里没有不存在的命令、表里引用的每个模块文件都在磁盘上。
+
+命令启动时间的大头就是这些文件的解析：一次进程启动约 3.4 s，其中 PowerShell 自身 0.46 s、模块与插件层约 1.5 s、`schema\clipboard.ps1` 的形状校验 0.18 s（只在 `-Library` 时做）、主题解析约 0.3 s（只有绘制命令做）。
+
 写入位置由 `clipboard.ini` 的 `DataDir=` 决定，留空则使用脚本旁的 `data\`（相对路径相对脚本目录）；`config` 的 `data dir` 与 `status` 的 `store file` 显示实际生效位置。程序不写入 `%LOCALAPPDATA%` 或其它用户目录：位置不可写时报错并以退出码 1 结束，不回退到其它位置。除 `install`（快捷方式）与 `restore`（注册表项）外不写注册表。
 
 ### 历史文件格式
@@ -723,16 +734,19 @@ CBHIST RS <数据版本> RS <flags> US <epoch 秒> US <extra> US <payload> RS <f
 ## 测试
 
 ```powershell
-cli test                             # 全部分件（默认四路并行）
+cli test                             # 全部分件（默认六路并行）
 cli test -Unit                       # 只跑单元分件
-cli test -Part transfer,capture      # 指定分件
+cli test -Part transfer,history      # 指定分件
+cli test -Changed                    # 只跑本次改动可能影响到的分件（开发循环）
 cli test -Serial                     # 逐个跑
 cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 ```
 
 也可以直接调用：`powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run.ps1`。
 
-一个分件一个文件、一个进程、一个沙箱，彼此看不到对方；并行度由 `test.ini` 的 `[run] Workers` 决定，结果由驱动合并成一张表。
+一个分件一个文件、一个进程、一个沙箱，彼此看不到对方；并行度由 `test.ini` 的 `[run] Workers` 决定（默认 8，本机实测刻度见该文件注释），结果由驱动合并成一张表。全量 710 项在 12 逻辑核上约 140 s；改前是同一条命令 3.0 s、全套 480 s。
+
+分件分三条泳道：`unit` / `e2e` 都要驱动**真实**剪贴板，两者排队互斥，但可以与命令行分件同时跑；命令行分件各用各的假剪贴板，只受 `Workers` 限制。驱动先启动 `unit`，坏函数几秒内就能让整轮失败；打包副本（`-Source` 指向非 `src\`）里假剪贴板失效，命令行分件自动改为一次一个，打包分件仍照常并行。
 
 分件与分组：
 
@@ -740,9 +754,9 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 |---|---|---|
 | 结构 | `tests/unit/unit.ps1`（总是执行） | 分层契约：48 个必需模块（`lib\` 33 + `utils\` 13）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 200 行且 `$Root` 只算一次、单模块 ≤ 1400 行；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
 | 单元 | `tests/unit/unit.ps1`（同上，dot-source 后逐函数） | 纯函数与存储层：热键解析、条目文案、ini 读写与单值校验、`Apply-Config` 与配置诊断、记录读写与版本识别、迁移引擎（拒绝无步骤 / 备份 / `-Purge` 归档）、图片与富文本的编解码与媒体回收、CF_HTML 片段解析、真实剪贴板的图片与格式往返、标记与保护规则、面板几何与命中计算、条目分类与行图标、主题发现与 `[metrics]` 重置、插件白名单。通过 `-Library` dot-source 主脚本，不触发命令分发 |
-| 命令行 | `tests/cli/transfer.ps1`、`capture.ps1`、`config.ps1`、`marks.ps1`（并行） | 每条 CLI 能力都起子进程验证：`put` / `get` / `list` / `pick` / `del` / `clear` / `pause` / `resume` / `status` / `version` / `migrate` / `themes` / `config get` / `config set` / `config init` / `backup` / `restore`、主题切换与非法主题名拒绝、插件白名单与各插件命令、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝、`cli` 命令列表 |
+| 命令行 | `tests/cli/history.ps1`、`transfer.ps1`、`settings.ps1`、`config.ps1`、`template.ps1`、`marks.ps1`、`pins.ps1`、`plugins.ps1`（并行） | 每条 CLI 能力都起子进程验证：`put` / `get` / `list` / `pick` / `del` / `clear` / `pause` / `resume` / `status` / `version` / `migrate` / `themes` / `config get` / `config set` / `config init` / `backup` / `restore`、主题切换与非法主题名拒绝、插件白名单与各插件命令、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝、`cli` 命令列表 |
 | 打包 | `tests/pkg/build.ps1`（并行） | 进包内容、`install.bat`、包内版本为常量且与 `package.ini` 一致、`Plugins=` / `Themes=` 裁剪、`Overwrite=0` 拒绝覆盖、未知插件名报错 |
-| 端到端 | `tests/e2e/serve.ps1`（串行） | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启循环 |
+| 端到端 | `tests/e2e/serve.ps1`（独占剪贴板泳道） | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启 |
 
 全部在 `%TEMP%` 下的沙箱副本（脚本 + `lib` + `utils` + `schema` + `plugins` + `themes`）中运行，不修改 `data/` 与 `clipboard.ini`；真实剪贴板在开始前备份、结束后还原。任一项失败时退出码为 1。
 
