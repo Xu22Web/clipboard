@@ -32,6 +32,15 @@ function Start-Serve {
       $script:ExitKind = ''
       $started = Get-Date
       try { Invoke-ServeOnce } catch { Write-Log ('serve crash: ' + $_.Exception.Message) }
+      # the tray's Restart entry: rebuild the scene without leaving the supervisor loop, so
+      # the mutex, the stop event and the process itself stay exactly as they are
+      if ($script:ExitKind -eq 'restart') {
+        Write-Log 'serve restart (requested from the tray)'
+        $round = 0
+        $delay = 1000
+        if ($script:StopEvt.WaitOne(200)) { break }
+        continue
+      }
       if ($script:ExitKind) { Write-Log ('serve stop (' + $script:ExitKind + ')'); break }
       if (((Get-Date) - $started).TotalSeconds -gt 60) { $round = 0; $delay = 1000 }
       $round++
@@ -98,11 +107,77 @@ function Invoke-ServeOnce {
     $script:Tray.Text = 'clipboard - ' + $eff
     $script:Tray.Add_DoubleClick({ try { Show-Picker } catch { } })
     $dm = New-Object Windows.Forms.ContextMenuStrip
-    $i1 = $dm.Items.Add('Show history'); $i1.Add_Click({ try { Show-Picker } catch { } })
-    $i2 = $dm.Items.Add('Pause capture'); $i2.Add_Click({ Ensure-Dir; New-Item -ItemType File -Path $Paused -Force | Out-Null })
-    $i3 = $dm.Items.Add('Resume capture'); $i3.Add_Click({ if (Test-Path -LiteralPath $Paused) { Remove-Item -LiteralPath $Paused -Force } })
-    $i4 = $dm.Items.Add('Clear history'); $i4.Add_Click({ Clear-Store (Get-ClearKeepMarks) })
-    $i5 = $dm.Items.Add('Exit'); $i5.Add_Click({ $script:ExitKind = 'user'; [Windows.Forms.Application]::ExitThread() })
+
+    # The menu is built once and read every time it opens: the count and the tick on "Pause
+    # capture" come from the Opening handler, so they never go stale while the tray lives.
+    $iShow = $dm.Items.Add('Show history')
+    $iShow.Add_Click({ try { Show-Picker } catch { } })
+    try { $iShow.Font = New-Object Drawing.Font($dm.Font, [Drawing.FontStyle]::Bold) } catch { }
+    $iInfo = $dm.Items.Add('clipboard')
+    $iInfo.Enabled = $false
+    [void]$dm.Items.Add('-')
+
+    $iPause = $dm.Items.Add('Pause capture')
+    $iPause.Add_Click({
+        try {
+          if (Test-Path -LiteralPath $Paused) { Remove-Item -LiteralPath $Paused -Force }
+          else { Ensure-Dir; New-Item -ItemType File -Path $Paused -Force | Out-Null }
+        } catch { Write-Log ('tray pause: ' + $_.Exception.Message) }
+      })
+    $iClear = $dm.Items.Add('Clear history...')
+    $iClear.Add_Click({
+        try {
+          $n = @(Get-Records).Count
+          $keep = @(Get-ClearKeepMarks).Count
+          $q = 'Delete ' + $n + ' ' + $(if ($n -eq 1) { 'entry' } else { 'entries' }) + ' from the history?'
+          if ($keep -gt 0) { $q += "`n`n" + $keep + ' pinned ' + $(if ($keep -eq 1) { 'entry stays' } else { 'entries stay' }) + '.' }
+          $r = [Windows.Forms.MessageBox]::Show($q, 'clipboard', [Windows.Forms.MessageBoxButtons]::YesNo, [Windows.Forms.MessageBoxIcon]::Question)
+          if ($r -ne [Windows.Forms.DialogResult]::Yes) { return }
+          Clear-Store (Get-ClearKeepMarks)
+          Write-Log 'tray: history cleared'
+        } catch { Write-Log ('tray clear: ' + $_.Exception.Message) }
+      })
+    [void]$dm.Items.Add('-')
+
+    $iSet = $dm.Items.Add('Settings...')
+    $iSet.Add_Click({
+        try {
+          $p = Write-IniTemplate
+          Start-Process -FilePath 'notepad.exe' -ArgumentList ('"' + $p + '"')
+        } catch { Write-Log ('tray settings: ' + $_.Exception.Message) }
+      })
+    $iOpen = $dm.Items.Add('Open data folder')
+    $iOpen.Add_Click({
+        try { Ensure-Dir; Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $StoreDir + '"') }
+        catch { Write-Log ('tray folder: ' + $_.Exception.Message) }
+      })
+    $iRestart = $dm.Items.Add('Restart')
+    $iRestart.Add_Click({ $script:ExitKind = 'restart'; [Windows.Forms.Application]::ExitThread() })
+    $iAbout = $dm.Items.Add('About')
+    $iAbout.Add_Click({
+        try {
+          $n = @(Get-Records).Count
+          $msg = 'clipboard ' + $script:Version + "`n`n" +
+                 'hotkey   : ' + $eff + "`n" +
+                 'entries  : ' + $n + "`n" +
+                 'data     : ' + $StoreDir + "`n" +
+                 'settings : ' + $IniPath
+          [void][Windows.Forms.MessageBox]::Show($msg, 'About clipboard', [Windows.Forms.MessageBoxButtons]::OK, [Windows.Forms.MessageBoxIcon]::Information)
+        } catch { Write-Log ('tray about: ' + $_.Exception.Message) }
+      })
+    [void]$dm.Items.Add('-')
+
+    $iExit = $dm.Items.Add('Exit')
+    $iExit.Add_Click({ $script:ExitKind = 'user'; [Windows.Forms.Application]::ExitThread() })
+
+    $dm.Add_Opening({
+        try { $iPause.Checked = Test-Path -LiteralPath $Paused } catch { }
+        try {
+          $n = @(Get-Records).Count
+          $iInfo.Text = $n.ToString() + $(if ($n -eq 1) { ' entry' } else { ' entries' }) + '   ' + $eff
+        } catch { $iInfo.Text = $eff }
+      })
+
     $script:Tray.ContextMenuStrip = $dm
     $script:Tray.Visible = $true
     if ($script:ShowBalloon) {
