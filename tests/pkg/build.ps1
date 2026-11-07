@@ -37,6 +37,21 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
     if (Test-Path -LiteralPath $pkgDir) {
       $names = @(Get-ChildItem -LiteralPath $pkgDir -Recurse -File | ForEach-Object { $_.FullName.Substring($pkgDir.Length) })
       Check 'int' 'package keeps the program files' ((Test-Path -LiteralPath (Join-Path $pkgDir 'clipboard.ps1')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'clipboard.cmd')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'lib\plugin\plugins.ps1')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'lib\panel\picker.ps1'))) ''
+      # the launcher tries the compiled client before it starts PowerShell; the executable
+      # itself is optional, so a machine without a compiler is a skip, not a failure
+      $launcher = Join-Path $pkgDir 'clipboard.cmd'
+      $launcherText = ''
+      if (Test-Path -LiteralPath $launcher) { $launcherText = [IO.File]::ReadAllText($launcher) }
+      Check 'int' 'the launcher tries the compiled client first' ($launcherText -match 'cbx\.exe') $launcherText.Trim()
+      $cbxFile = Join-Path $pkgDir 'cbx.exe'
+      if (Test-Path -LiteralPath $cbxFile) {
+        $null = (& $cbxFile $pkgDir 'version' 2>&1)
+        $cbxRc = $LASTEXITCODE
+        # no resident is listening for this package, so "not proxied" is the right answer
+        Check 'int' 'the compiled client in the package runs' ($cbxRc -eq 100) ('exit ' + [string]$cbxRc)
+      } else {
+        Skip 'int' 'the compiled client in the package runs' 'no C# compiler on this machine'
+      }
       # a packaged copy is installed from the folder: the two batch files sit next to
       # clipboard.ps1 and only call commands the program has
       $installBat = Join-Path $pkgDir 'install.bat'

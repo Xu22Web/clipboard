@@ -344,7 +344,8 @@ try {
 
     # the tooling lives outside src\: package.ini declares the commands, cli runs them
     $tooling = @('package.ini', 'cli.ps1', 'cli.cmd', 'cli', 'build.ini',
-      'scripts\build.ps1', 'scripts\minify.ps1', 'scripts\dev.ps1', 'scripts\test.ps1', 'scripts\shot.ps1')
+      'scripts\build.ps1', 'scripts\minify.ps1', 'scripts\dev.ps1', 'scripts\test.ps1', 'scripts\shot.ps1',
+      'scripts\build-cbx.ps1', 'src\lib\cbx.cs')
     $missingTool = @()
     foreach ($tool in $tooling) {
       if (-not (Test-Path -LiteralPath (Join-Path $repoRoot $tool))) { $missingTool += $tool }
@@ -357,7 +358,7 @@ try {
     $sm = [regex]::Match($pkgText, '(?ms)^\s*\[scripts\]\s*$(.*?)(?=^\s*\[|\z)')
     if ($sm.Success) { $scriptBlock = $sm.Groups[1].Value }
     $noCmd = @()
-    foreach ($cmd in @('Dev', 'Build', 'Test', 'Shot')) {
+    foreach ($cmd in @('Dev', 'Build', 'Test', 'Shot', 'Cbx')) {
       if (-not ($scriptBlock -match ('(?m)^' + $cmd + '=\S'))) { $noCmd += $cmd }
     }
     Check 'struct' 'package.ini declares every command' (($pkgText -match '(?m)^Name=\S') -and ($pkgText -match '(?m)^Version=\d+\.\d+\.\d+') -and $noCmd.Count -eq 0) ($noCmd -join ', ')

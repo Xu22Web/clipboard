@@ -63,6 +63,31 @@ function New-FakeSandbox([string]$name) {
   return $dir
 }
 
+# The compiled client (lib\cbx.cs) is optional, so a part that wants to exercise it asks for
+# one here: a package carries its own copy, a source checkout gets one built into %TEMP% once
+# per run, and an empty string means "no compiler here" - the caller skips instead of failing.
+function Get-CbxExe {
+  if ($null -ne $script:Harness.CbxExe) { return $script:Harness.CbxExe }
+  $script:Harness.CbxExe = ''
+  $beside = Join-Path $script:Harness.SrcRoot 'cbx.exe'
+  if (Test-Path -LiteralPath $beside) { $script:Harness.CbxExe = $beside; return $beside }
+  $builder = Join-Path $script:Harness.RepoRoot 'scripts\build-cbx.ps1'
+  $source = Join-Path $script:Harness.SrcRoot 'lib\cbx.cs'
+  if (-not (Test-Path -LiteralPath $builder) -or -not (Test-Path -LiteralPath $source)) { return '' }
+  $cache = Join-Path $script:Harness.TmpRoot 'cbx'
+  if (-not (Test-Path -LiteralPath $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
+  $exe = Join-Path $cache 'cbx.exe'
+  $stale = $true
+  if (Test-Path -LiteralPath $exe) {
+    $stale = (Get-Item -LiteralPath $exe).LastWriteTime -lt (Get-Item -LiteralPath $source).LastWriteTime
+  }
+  if ($stale) {
+    $null = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $builder -Source $source -Out $exe 2>&1
+  }
+  if (Test-Path -LiteralPath $exe) { $script:Harness.CbxExe = $exe }
+  return $script:Harness.CbxExe
+}
+
 # one CLI call in its own process: a command starts from nothing, the way the user's shell does
 function Clip([string]$sandbox, [string[]]$cliArgs) {
   $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', (Join-Path $sandbox 'clipboard.ps1')) + $cliArgs

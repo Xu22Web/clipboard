@@ -42,6 +42,7 @@ cli              # 列出 package.ini 中的命令
 cli dev          # 启动常驻进程，被加载的文件变化后自动重启
 cli test         # 运行全部自测
 cli build        # 打包到 dist\clipboard-<version>\
+cli cbx          # 把 lib\cbx.cs 编成 src\cbx.exe（可选的编译版客户端）
 ```
 
 `cli` 有 `cli`（Git Bash / MSYS）与 `cli.cmd`（CMD）两个启动入口，命令名不区分大小写，例如 `cli test -Unit`、`cli build -Config other.ini`；机制见[开发](#开发)。
@@ -559,14 +560,28 @@ clipboard config set entry-actions.Reveal 0
 | 直连的命令 | `config` / `themes` / `install` / `uninstall` / `serve` / `stop` / `ui` / `edit` / `export` / `import` / `backup` / `restore` / `migrate` —— 它们改设置、换存储、动注册表或本身就是常驻进程 |
 | 管道名 | `\\.\pipe\clipboard-cmd-<hash>`，hash 只由「当前用户 SID」算出：客户端因此不必读 `clipboard.ini`、不必算数据目录，连 ini 解析都省了 |
 | 隔离 | 请求里带工具根目录，只在 `root` 与自己的相等时才执行；另一份拷贝（含测试沙箱）拿到 `wrong root` 后静默走慢路径 |
-| 传输内容 | 命令名、四个位置参数、`-Count`、四个开关、以及实际绑定过的参数名（`put` 无文本时另带 stdin）；不发脚本，服务端只认白名单里的命令 |
+| 传输内容 | 命令名、四个位置参数、`-Count`、四个开关；不发脚本，服务端只认白名单里的命令 |
 | 失败处理 | 连不上、超时（连接 120 ms、往返 2 s）或版本不一致都会静默回退到「起一个新进程」，行为与没有这个功能时完全一样 |
 | 关闭 | `-NoProxy` 开关，或环境变量 `CLIPBOARD_NO_PROXY=1` |
 | 时限 | 只执行短命令：命令在常驻进程的 UI 线程上跑，与捕获循环、面板同一个线程，因此不会并发改状态 |
 
-实测（本机，沙箱常驻，各 4 次取均值）：`clipboard list` 由 2.9 s 降到 1.34 s、`status` 由 3.7 s 降到 1.36 s、`version` 由 2.1 s 降到 1.26 s。剩下约 1.2 s 全是 `powershell.exe` 自身启动（`-Sta` + 引擎初始化），纯脚本方案压不下去 —— 再往下只能换客户端里那个启动进程本身。
+实测（本机，沙箱常驻，各 4 次取均值）：`clipboard list` 由 2.9 s 降到 1.34 s、`status` 由 3.7 s 降到 1.36 s、`version` 由 2.1 s 降到 1.26 s。剩下约 1.2 s 全是 `powershell.exe` 自身启动（`-Sta` + 引擎初始化），纯脚本方案压不下去。
 
 服务端在 `lib/proxy.ps1`，`serve` 场景里由 50 ms 的定时器轮询待连接请求；客户端在入口装载模块**之前**就决定要不要代理，且只加载 `lib\proxy.ps1` 一个文件（不解析 ini、不算路径），因此不必为一个被代理的命令解析整套模块。
+
+### 编译版客户端（可选，再快约五倍）
+
+上面那 1.2 s 里没有任何一行是本程序的——全是 `powershell.exe` 自己的启动。所以 `clipboard.cmd` 会在启动 PowerShell **之前**先试一个编译好的客户端（`cbx.exe`，源码 `lib/cbx.cs`，系统自带的 .NET Framework 编译器即可生成）：
+
+| 项 | 说明 |
+|---|---|
+| 谁调用它 | 只有 `clipboard.cmd`（`.cmd` 层）。`clipboard.ps1` 内部不调，那时 PowerShell 已经启动了，省不下任何东西 |
+| 回退约定 | 退出码 `100` = 「没掌到」（无常驻 / 另一份拷贝 / 命令不该代理），此时批处理接着跑 `powershell -File clipboard.ps1`，输出和行为与没有它时一致；其它退出码原样透传 |
+| 参数 | 不发脚本，只发命令名与位置参数；`-Count` / `-Purge` / `-All` / `-Media` / `-Replace` 会被识别，其余开关（`-NoProxy` / `-Library` 等）直接回退给脚本解析 |
+| 编码 | 进程之间只走 UTF-8 的 JSON 帧，中文、emoji、多行文本往返无损（存储层字节级校验过）；`put` 无文本时从 stdin 读，与脚本客户端一致 |
+| 怎么生成 | `cli cbx` 写入 `src\cbx.exe`（不入库）；`cli build` 默认把它编进产物，`build.ini` 的 `Cbx=0` 可关掉 |
+
+实测（本机，沙箱常驻，`clipboard.cmd list`，各 5 次）：**有 exe 321 ms（最快 251 ms）**，没有 exe 1314 ms。也就是说从冷启动 2.9 s 到 0.25 s 左右，差了约十倍；其中约 100 ms 是 cmd 与 exe 自身的启动，再往下要换的就是整个宿主了。
 
 常驻与数据目录的对应关系也在这里收紧了：`status` 的 `resident` 行与 `config set` 之后的自动重启，只认**服务于当前数据目录**的那个常驻（判断依据是它写在自己 `data\` 下的 `hotkey.txt`，退出时写成 `(stopped)`），因此另装一份、或跑测试沙箱时不会误报或误重启。
 
@@ -589,6 +604,7 @@ cli  cli.cmd  cli.ps1   命令入口（sh / CMD / PowerShell），执行 package
 build.ini               打包选项（输出目录 / 压缩 / 重命名 / 验证 / 打哪些插件与主题）
 scripts/build.ps1       打包脚本（读 src\，输出 dist\clipboard-<version>\，并写 install.bat / uninstall.bat）
 scripts/minify.ps1      压缩器（按语法树合并语句、删注释与缩进、重命名内部函数与局部变量、C# 段去注释折行）
+scripts/build-cbx.ps1   用系统自带的 C# 编译器把 lib\cbx.cs 编成 cbx.exe（可选客户端）
 scripts/dev.ps1         开发运行：启动常驻并监视被加载的文件，变化即重启
 scripts/test.ps1        自测入口（转发 tests\run.ps1 的开关）
 scripts/shot.ps1        重新生成 docs\ 下的界面截图
@@ -635,6 +651,8 @@ src/                    程序本体（打包只读这个目录）
   lib/usage.ps1           help 输出（基础命令分组 + 每个插件的分组）
   lib/dispatch.ps1        Invoke-Main：先 Initialize-Main（Apply-Config + 装配插件），再 Invoke-Dispatch（执行一个命令）
   lib/proxy.ps1           命令代理：把高频命令交给常驻进程执行，连不上就静默回退（见「命令代理」）
+  lib/cbx.cs              编译版客户端源码：由 scripts\build-cbx.ps1 编成 cbx.exe，缺它就回退到脚本客户端
+  cbx.exe                 上面那份源码的产物（不入库；cli cbx 生成）
 
   lib/panel/              面板栈：只在要画东西时加载（ui / serve / 无参数），其余命令不解析它
   lib/panel/picker.ps1      历史面板：窗体、过滤、列表、按键、右键菜单、粘贴
@@ -766,7 +784,7 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 
 也可以直接调用：`powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run.ps1`。
 
-一个分件一个文件、一个进程、一个沙箱，彼此看不到对方；并行度由 `test.ini` 的 `[run] Workers` 决定（默认 8，本机实测刻度见该文件注释），结果由驱动合并成一张表。全量 720 项在 12 逻辑核上约 140 s；改前是同一条命令 3.0 s、全套 480 s。
+一个分件一个文件、一个进程、一个沙箱，彼此看不到对方；并行度由 `test.ini` 的 `[run] Workers` 决定（默认 8，本机实测刻度见该文件注释），结果由驱动合并成一张表。全量 724 项在 12 逻辑核上约 140 s；改前是同一条命令 3.0 s、全套 480 s。
 
 分件分三条泳道：`unit` / `e2e` 都要驱动**真实**剪贴板，两者排队互斥，但可以与命令行分件同时跑；命令行分件各用各的假剪贴板，只受 `Workers` 限制。驱动先启动 `unit`，坏函数几秒内就能让整轮失败；打包副本（`-Source` 指向非 `src\`）里假剪贴板失效，命令行分件自动改为一次一个，打包分件仍照常并行。
 
@@ -796,6 +814,7 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 | `cli bench` | 在临时副本里计时捕获、保存、解析与过滤，用于改动前后对比 |
 | `cli shot` | 重新生成 `docs\screenshot-dark.png` 与 `screenshot-light.png` |
 | `cli build` | 打包到 `dist\` |
+| `cli cbx` | 编译 `lib/cbx.cs` → `src\cbx.exe`（可选的编译版客户端；没有它则自动回退到脚本客户端） |
 
 `cli` / `cli.cmd` / `cli.ps1` 三个入口行为一致，均先把工作目录切到仓库根，再把其余参数原样追加到 `package.ini` 里 `[scripts]` 那一行命令。
 
@@ -832,6 +851,7 @@ cli build -Config other.ini     # 换一份配置
 | `Plugins` | 空 | 只打这些插件（逗号分隔，名字 = `src\plugins\` 下的文件名去 `.ps1`）；空 = 全部 |
 | `Themes` | 空 | 只打这些主题（同上）；空 = 全部 |
 | `Zip` | `0` | `1` = 另外再打一个 `clipboard-<version>.zip` |
+| `Cbx` | `1` | `1` = 把 `lib\cbx.cs` 编成产物里的 `cbx.exe`（需要 .NET Framework 自带的 csc；编不出来只警告，包仍可用） |
 
 ```ini
 # 只发一个精简包：两个插件 + 一套主题，不压缩不验证
@@ -874,6 +894,7 @@ Themes=win11-dark
 | 进包（来自 `src\`） | 不进包 |
 |---|---|
 | `clipboard.ps1`、`clipboard.cmd`、`clipboard`（Git Bash 壳） | `src\data\`（历史与日志） |
+| `cbx.exe`（`Cbx=1` 时编译产出的可选客户端） | `src\cbx.exe`（开发副本的编释物，不入库） |
 | `lib\`（28 个模块：24 必需 + `themes.ps1` 与插件三件套共 4 个可选加载层）、`utils\`（9 个纯工具）、`schema\`（2 个文件 schema + 所选插件的 `schema\plugins\*.ps1`）、所选 `plugins\`（含 `.md`）、所选 `themes\`（ini 与 `.md`） | `src\clipboard.ini`（用户设置） |
 | `README.md`、`LICENSE`、`docs\`（截图，`IncludeDocs=1` 时） | `tests\`、`scripts\`、`build.ini`、`package.ini`、`dist\`、`.git` |
 
