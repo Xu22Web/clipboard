@@ -53,22 +53,60 @@ $libDir = Join-Path $Root 'lib'
 # utils\. The utils\ files are the pure helpers: utils\ini parses text into a document,
 # utils\inifile reads a file once and writes a key back, utils\schema validates a value
 # against src\schema\.
-$coreModules = @(
+#
+# Only what a command can reach is parsed: compiling a module costs about 20 ms, so `version`
+# reads eighteen files, `list` about thirty, and only `ui` / `serve` pay for the panel, the
+# palette and the renderers. -Library loads everything, because the tests call those functions
+# by name. Everything Invoke-Main does before it reaches a command (the ini, the settings
+# schema, the palette stubs, the usage text, the dispatcher) is in the base list, because every
+# command pays for it.
+$baseModules = @(
   'lib\base',
-  'utils\ini', 'utils\inifile', 'utils\schema',
-  'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey', 'utils\query-words', 'utils\pinyin', 'utils\transfer', 'utils\apprules', 'utils\fileio',
-  'lib\native', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering', 'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules',
-  'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\shortcut', 'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch'
+  'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\fileio',
+  'utils\hotkey', 'utils\apprules',
+  'lib\native', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering', 'lib\config', 'lib\usage', 'lib\dispatch'
 )
-# The panel stack is only needed when something is about to draw: `ui`, `serve`, and the
-# bare command that opens the panel. Every other command - put, get, list, del, clear,
-# status, config, help - skips parsing it entirely. -Library loads everything,
-# because the tests call those functions by name. The files live in lib\panel\, except
-# serve: that is the resident process, which is a scene of its own and only opens a panel.
-$panelModules = @('lib\panel\media-render', 'lib\panel\anim', 'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\keyhook', 'lib\panel\picker', 'lib\serve')
-$needPanel = ($Library -or $Command -eq '' -or $Command -eq 'ui' -or $Command -eq 'serve')
-$requiredModules = $coreModules
-if ($needPanel) { $requiredModules = $coreModules + $panelModules }
+# one group per job: the files a job can reach, and nothing else. Storing an entry and getting
+# it back are one job - the capture pipeline (clip), the payload files (blobs), the image and
+# formatted-text sidecars (media, cfhtml) and the paste modifiers all live in it.
+$groupModules = @{
+  store    = @('lib\store', 'lib\entry', 'lib\query', 'lib\select', 'lib\clip', 'lib\media', 'lib\blobs', 'lib\cfhtml', 'lib\modifiers', 'lib\apprules', 'utils\query-words', 'utils\pinyin')
+  transfer = @('lib\transfer', 'utils\transfer', 'lib\migrate')
+  config   = @('lib\config', 'lib\config-template', 'lib\shortcut', 'utils\dpi')
+  panel    = @('lib\panel\media-render', 'lib\panel\anim', 'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\keyhook', 'lib\panel\picker', 'lib\panel\picker-geom', 'lib\serve')
+}
+# what each command can reach. A name that is not listed here is a plugin verb: those read and
+# write entries, so they get the store group.
+$commandGroups = @{
+  'version'   = @()
+  'status'    = @('store')
+  'list'      = @('store')
+  'get'       = @('store')
+  'put'       = @('store')
+  'edit'      = @('store')
+  'del'       = @('store')
+  'clear'     = @('store')
+  'pause'     = @('store')
+  'resume'    = @('store')
+  'pick'      = @('store')
+  'migrate'   = @('store', 'transfer')
+  'export'    = @('store', 'transfer')
+  'import'    = @('store', 'transfer')
+  'backup'    = @('store', 'transfer')
+  'restore'   = @('store', 'transfer')
+  'config'    = @('config')
+  'themes'    = @('config')
+  'stop'      = @()
+  'install'   = @('config')
+  'uninstall' = @('config')
+}
+$wantGroups = @('store')
+if ($Library) { $wantGroups = @('store', 'transfer', 'config', 'panel') }
+elseif ($Command -eq '' -or $Command -eq 'ui' -or $Command -eq 'serve') { $wantGroups = @('store', 'config', 'panel') }
+elseif ($commandGroups.ContainsKey($Command)) { $wantGroups = @($commandGroups[$Command]) }
+$requiredModules = New-Object System.Collections.Generic.List[string]
+foreach ($m in $baseModules) { $requiredModules.Add($m) }
+foreach ($g in $wantGroups) { foreach ($m in $groupModules[$g]) { $requiredModules.Add($m) } }
 foreach ($module in $requiredModules) {
   $modulePath = Join-Path $Root ($module + '.ps1')
   if (-not (Test-Path -LiteralPath $modulePath)) {
@@ -139,4 +177,23 @@ try { [Console]::OutputEncoding = $Utf8 } catch { }
 # Dot-source mode (the test suite uses it): every function is defined, nothing runs. The
 # plugins are loaded by Invoke-Main, so this mode stays a base-tool view.
 if ($Library) { return }
-Invoke-Main -Command $Command -Value $Value -Sub $Sub -Arg $Arg -Count $Count -Purge:$Purge -All:$All -Media:$Media -Replace:$Replace
+$mainArgs = @{
+  Command = $Command; Value = $Value; Sub = $Sub; Arg = $Arg; Count = $Count
+  Purge = [bool]$Purge; All = [bool]$All; Media = [bool]$Media; Replace = [bool]$Replace
+}
+try {
+  Invoke-Main @mainArgs
+} catch {
+  # A module this command needed was not in its group. The self tests check the groups against
+  # the code, so this is the safety net rather than the plan: load everything once and retry.
+  if ($_.Exception -isnot [System.Management.Automation.CommandNotFoundException]) { throw }
+  Write-Log ('module group too small for ' + $Command + ': ' + $_.Exception.Message)
+  foreach ($g in @('store', 'transfer', 'config', 'panel')) {
+    foreach ($m in $groupModules[$g]) {
+      if ($requiredModules.Contains($m)) { continue }
+      . (Join-Path $Root ($m + '.ps1'))
+      $requiredModules.Add($m)
+    }
+  }
+  Invoke-Main @mainArgs
+}

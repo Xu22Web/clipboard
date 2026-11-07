@@ -10,7 +10,7 @@
 # `config`, `config get` and `config set` consistent with each other.
 
 function Apply-Config {
-  param([switch]$NoColors)
+  param([switch]$NoColors, [switch]$SkipTheme)
   # One pass over the schema: reset every variable it points at to the declared default, then
   # let clipboard.ini override it. Settings never come from the command line, and a reload
   # therefore starts from the same numbers the file is documented with.
@@ -59,8 +59,10 @@ function Apply-Config {
   if ($script:PluginThemeSpec -and $script:PluginThemeSpec.Count -gt 0 -and (Get-Command Apply-PluginTheme -ErrorAction SilentlyContinue)) {
     Apply-PluginTheme
   }
-  # resolves the palette / fonts / metric overrides for the selected theme
-  Apply-Theme -SkipColors:$NoColors
+  # resolves the palette / fonts / metric overrides for the selected theme. A command that
+  # never draws keeps the theme name the ini set and pays nothing: reading the theme file,
+  # resolving its name and loading System.Drawing is about a third of the start-up.
+  if (-not $SkipTheme) { Apply-Theme -SkipColors:$NoColors }
 }
 
 # effective values of every key, in schema order

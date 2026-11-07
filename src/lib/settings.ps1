@@ -9,7 +9,7 @@
 # Absent keys are not an error: a setting the file does not mention keeps the default that
 # base.ps1 declares, and the schema says what that default is.
 
-$script:SettingsSchema = Import-Schema (Join-Path $Root 'schema\clipboard.ps1')
+$script:SettingsSchema = Import-Schema (Join-Path $Root 'schema\clipboard.ps1') -Validate:([bool]$Library)
 $script:IniSchema = Get-SchemaProperties $script:SettingsSchema
 if ($null -eq $script:IniSchema) { $script:IniSchema = [ordered]@{} }
 

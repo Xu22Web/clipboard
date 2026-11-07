@@ -19,9 +19,9 @@ function Invoke-Main {
   )
 # Only the two that put a panel on screen need the palette. Everything else - put, get,
 # list, del, status, config, help - would pay ~250 ms to load System.Drawing for colours it
-# never draws, so it resolves fonts and metrics only.
+# never draws, and another ~300 ms to read the theme file, so it skips the theme altogether.
 $needColors = ($Command -eq '' -or $Command -eq 'ui' -or $Command -eq 'serve')
-Apply-Config -NoColors:(-not $needColors)
+Apply-Config -NoColors:(-not $needColors) -SkipTheme:(-not $needColors)
 # Plugins are loaded by default: clipboard.ini lists them by name, in load order. A file
 # that is not listed is never executed, so the list is the whole surface.
 if (@($script:PluginList).Count -gt 0 -and (Get-Command Load-Plugins -ErrorAction SilentlyContinue)) {

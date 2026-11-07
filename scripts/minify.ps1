@@ -123,10 +123,18 @@ function New-FunctionMap([string[]]$paths) {
   return $map
 }
 
+# a splat is a variable read with a different sigil, and the parser reports its extent from
+# the '@': rebuilding the text with a '$' turns `f @h` into `f $h`, which passes the hashtable
+# as the first positional argument instead of spreading it over the parameters
+function Get-VariableSigil($node) {
+  $text = [string]$node.Extent.Text
+  if ($text.StartsWith('@')) { return '@' }
+  return '$'
+}
+
 # the bare name of a variable: VariablePath.UnqualifiedPath comes back empty in this
 # runtime, while UserPath gives "x" for $x and "script:x" for $script:x
-function Get-VariableName($variablePath) {
-  $u = [string]$variablePath.UserPath
+function Get-VariableName($variablePath) {  $u = [string]$variablePath.UserPath
   if (-not $u) { return '' }
   if ($u -match '(?i)^script:(.+)$') { return $Matches[1] }
   if ($u.Contains(':')) { return '' }
@@ -602,7 +610,7 @@ function Invoke-MinifyFile {
       if ($script:ReservedVariables -contains $name) { continue }
       # a script-scope name keeps the one short name the whole project agreed on
       if ($GlobalVarMap.ContainsKey($name)) {
-        $edits.Add(@{ Offset = $v.Extent.StartOffset; Length = $v.Extent.EndOffset - $v.Extent.StartOffset; Text = '$' + [string]$GlobalVarMap[$name] })
+        $edits.Add(@{ Offset = $v.Extent.StartOffset; Length = $v.Extent.EndOffset - $v.Extent.StartOffset; Text = (Get-VariableSigil $v) + [string]$GlobalVarMap[$name] })
         continue
       }
       if (-not $varMap.ContainsKey($name)) {
@@ -612,7 +620,7 @@ function Invoke-MinifyFile {
         [void]$taken.Add($new)
         $varMap[$name] = $new
       }
-      $edits.Add(@{ Offset = $v.Extent.StartOffset; Length = $v.Extent.EndOffset - $v.Extent.StartOffset; Text = '$' + [string]$varMap[$name] })
+      $edits.Add(@{ Offset = $v.Extent.StartOffset; Length = $v.Extent.EndOffset - $v.Extent.StartOffset; Text = (Get-VariableSigil $v) + [string]$varMap[$name] })
     }
 
     if ($edits.Count -gt 0) { $renamed = Apply-Edits $text $edits }

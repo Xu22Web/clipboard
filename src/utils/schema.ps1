@@ -55,8 +55,10 @@ function Test-ThemeColorValue([string]$spec) {
   return ([string]$spec -match '^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$')
 }
 
-# load one schema file and check its shape; $null when the file is missing or unusable
-function Import-Schema([string]$path) {
+# load one schema file; $null when the file is missing or unusable. Checking the shape costs
+# about a fifth of a second and the schema ships with the program, so a normal run trusts it:
+# only the test suite (-Library) asks for the check.
+function Import-Schema([string]$path, [switch]$Validate) {
   if (-not (Test-Path -LiteralPath $path)) {
     if (Get-Command Write-Log -ErrorAction SilentlyContinue) { Write-Log ('schema missing: ' + $path) }
     return $null
@@ -66,10 +68,12 @@ function Import-Schema([string]$path) {
     if (Get-Command Write-Log -ErrorAction SilentlyContinue) { Write-Log ('schema failed: ' + $path + ' - ' + $_.Exception.Message) }
     return $null
   }
-  $problems = @(Test-SchemaFormat $schema)
-  if ($problems.Count -gt 0) {
-    if (Get-Command Write-Log -ErrorAction SilentlyContinue) { Write-Log ('schema rejected: ' + $path + ' - ' + ($problems -join '; ')) }
-    return $null
+  if ($Validate) {
+    $problems = @(Test-SchemaFormat $schema)
+    if ($problems.Count -gt 0) {
+      if (Get-Command Write-Log -ErrorAction SilentlyContinue) { Write-Log ('schema rejected: ' + $path + ' - ' + ($problems -join '; ')) }
+      return $null
+    }
   }
   return $schema
 }
