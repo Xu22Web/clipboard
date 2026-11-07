@@ -54,12 +54,22 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
     }
 
     # the state is reported exactly when there is something to report, so a machine where
-    # Win+V works keeps a clean status
+    # Win+V works keeps a clean status. The probe lives in the product module, which this
+    # process never loads: without it the expected value would be '' and the check would only
+    # ever pass where Win+V happens to work - a runner without the shell service failed here.
     $o = Clip $intDir @('status')
-    $winv = ''
-    if (Get-Command Get-WinVState -ErrorAction SilentlyContinue) { $winv = Get-WinVState }
+    if (-not (Get-Command Get-WinVState -ErrorAction SilentlyContinue)) {
+      $nativeFile = Join-Path $script:srcRoot 'lib\native.ps1'
+      if (Test-Path -LiteralPath $nativeFile) { . $nativeFile }
+    }
     $hasLine = [bool]($o -match 'win\+v')
-    Check 'int' 'status states the win+v state only when it is not usable' ($hasLine -eq [bool]$winv) ([string]$winv + ' / printed=' + [string]$hasLine)
+    if (Get-Command Get-WinVState -ErrorAction SilentlyContinue) {
+      $winv = [string](Get-WinVState)
+      Check 'int' 'status states the win+v state only when it is not usable' ($hasLine -eq [bool]$winv) ([string]$winv + ' / printed=' + [string]$hasLine)
+    } else {
+      # nothing to compare against: say so instead of asserting a value nobody computed
+      Skip 'int' 'status states the win+v state only when it is not usable' 'the probe module is not loadable here'
+    }
 
     $o = Clip $intDir @('config')
     Check 'int' 'config shows ini path' ($o -match 'clipboard\.ini') ''
