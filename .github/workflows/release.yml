@@ -10,10 +10,12 @@ on:
 jobs:
   release:
     runs-on: windows-latest
+    # 默认 360 分钟太长：卡住时会一直占着并发额度。实测整组约 5 分钟
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Read the version and check the tag
         shell: pwsh
