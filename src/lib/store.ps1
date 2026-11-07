@@ -107,8 +107,10 @@ function Get-Records {
     $keys = New-Object long[] $out.Count
     for ($i = 0; $i -lt $out.Count; $i++) {
       # ascending keys, so the sort yields newest first; the negated index keeps the later
-      # line of two equal ticks in front, which is what makes an update win
-      $keys[$i] = ([long]$out[$i].Time * -1000) - $i
+    # line of two equal ticks in front, which is what makes an update win. The factor has to
+    # exceed any row count the file can reach, or the index would outrank a second of time:
+    # the fold threshold is twice MaxItems, and MaxItems tops out at 100000.
+    $keys[$i] = ([long]$out[$i].Time * -1048576) - $i
       $order[$i] = $i
     }
     [Array]::Sort($keys, $order)
@@ -220,6 +222,22 @@ function Get-RecordLine($r) {
   return ($flags + [string]$r.Marks + $US + [string][long]$r.Time + $US + [string]$r.Rich + $US + $body)
 }
 
+# A tick is the sort key, so writing one has to keep it growing: a burst of captures inside
+# one second, or a wall clock that steps back, would otherwise file a row behind the tombstone
+# or behind the older copy it is meant to replace. The list a caller holds is newest first, so
+# the head carries the largest tick and the check costs one comparison.
+function Get-NextTick($rows) {
+  $tick = [long](Get-Epoch)
+  foreach ($r in $rows) {
+    if ($null -ne $r) {
+      $head = [long]$r.Time
+      if ($head -ge $tick) { $tick = $head + 1 }
+    }
+    break
+  }
+  return $tick
+}
+
 # One line at the end of the store. The file carries its rows oldest first, so a capture costs
 # an append instead of a rewrite of the whole history; a read reverses the list and keeps the
 # last line of each payload. Returns $false when the file cannot be appended to, and the caller
@@ -288,7 +306,11 @@ function Save-FoldedStore {
   foreach ($r in @(Get-Records)) { $list.Add($r) }
   $list = Sort-Records $list
   Trim-Records $list
+  $t0 = Get-Date
   Save-Records $list.ToArray()
+  # a fold rewrites the whole file and reclaims what nobody points at; when a capture feels
+  # slow this is the line that accounts for it
+  Write-Log ('store: folded to ' + [string]$list.Count + ' rows in ' + [string]([int]((Get-Date) - $t0).TotalMilliseconds) + ' ms')
 }
 
 # Removing the blobs and media files no record points at any more walks two directories. It
@@ -317,7 +339,7 @@ function Save-Records($records, [switch]$SkipReclaim) {
       # different overload, and the file came out in the order the caller happened to use
       $keys = New-Object long[] $n
       $idx = New-Object int[] $n
-      for ($i = 0; $i -lt $n; $i++) { $keys[$i] = ([long]$ordered[$i].Time * 1000) + $i; $idx[$i] = $i }
+      for ($i = 0; $i -lt $n; $i++) { $keys[$i] = ([long]$ordered[$i].Time * 1048576) + $i; $idx[$i] = $i }
       [Array]::Sort($keys, $idx)
       $sorted = New-Object System.Collections.Generic.List[object]
       for ($i = 0; $i -lt $n; $i++) { $sorted.Add($ordered[$idx[$i]]) }
@@ -452,7 +474,7 @@ function Add-Item([string]$text, $capture = $null) {
     foreach ($r in $recs) {
       if ($r.Payload -ceq $text) { $prevMarks = [string]$r.Marks; break }
     }
-    $fresh = New-Record $text (Get-Epoch) $prevMarks
+    $fresh = New-Record $text (Get-NextTick $recs) $prevMarks
     $fresh.Rich = $rich
     # The capture path is the hot one, so it appends one line instead of rewriting the whole
     # history. The file may then carry rows the panel already hides - a payload captured twice,
@@ -487,7 +509,7 @@ function Touch-Record([string]$payload) {
       if ([string]$r.Payload -ceq $payload) { $hit = $r; break }
     }
     if ($null -eq $hit) { return $false }
-    $fresh = New-Record ([string]$hit.Payload) (Get-Epoch) ([string]$hit.Marks)
+    $fresh = New-Record ([string]$hit.Payload) (Get-NextTick $recs) ([string]$hit.Marks)
     $fresh.Rich = [string]$hit.Rich
     $fresh.Blob = [string]$hit.Blob
     # the trick a capture uses: a newer line is enough, because the read side keeps the last
@@ -521,8 +543,11 @@ function Remove-Record([string]$payload, [switch]$Force) {
       if ($pm) { return ('protected:' + $pm) }
     }
     # A delete is one appended line, not a rewrite: the tombstone names the payload and the
-    # read side drops every line for it. The row's media is reclaimed when the log is folded.
-    $gone = New-Record ([string]$target.Payload) (Get-Epoch) ''
+    # read side drops every line for it. Its tick is the row's own, so an undo can append the
+    # row again at the same tick and win by being the later line - a tombstone stamped with
+    # the delete time would outrank it forever. The row's media is reclaimed when the log is
+    # folded.
+    $gone = New-Record ([string]$target.Payload) ([long]$target.Time) ''
     $gone.Gone = $true
     if (Append-Record $gone) {
       if (Test-StoreFold) { Save-FoldedStore }
@@ -539,18 +564,52 @@ function Remove-Record([string]$payload, [switch]$Force) {
   return [string]$r
 }
 
+# A tick is the only sort key, and two rows sharing one are ordered by which line came last.
+# Appending a row would therefore put it in front of the others in its own second, which is
+# wrong for an edit or an undo (the row has to stay where it was). Callers ask here first: a
+# row alone in its second can be appended, otherwise the rewrite keeps the order.
+function Test-TickAlone($rows, [long]$tick, [string]$skipPayload) {
+  $n = 0
+  # walk the sequence as it arrives: wrapping a List[object] in @() and binding it back to an
+  # untyped parameter answered "Argument types do not match" on this build
+  foreach ($r in $rows) {
+    if ($null -eq $r) { continue }
+    if ([long]$r.Time -ne $tick) { continue }
+    if ($skipPayload -and ([string]$r.Payload -ceq $skipPayload)) { continue }
+    $n++
+  }
+  return ($n -eq 0)
+}
+
 function Restore-Record($record, [int]$index) {
   Use-StoreLock {
+    if ($null -eq $record) { return $false }
     $recs = New-Object System.Collections.Generic.List[object]
     foreach ($r in @(Get-Records)) {
-      if ($r.Payload -ceq $record.Payload) { return }
+      if ($r.Payload -ceq $record.Payload) { return $false }
       $recs.Add($r)
+    }
+    # the row comes back as one appended line carrying its own tick: the read side keeps the
+    # newest statement about a payload, so the tombstone that removed it needs no rewrite
+    if (Test-TickAlone $recs ([long]$record.Time) '') {
+      $fresh = New-Record ([string]$record.Payload) ([long]$record.Time) ([string]$record.Marks)
+      $fresh.Rich = [string]$record.Rich
+      $fresh.Blob = [string]$record.Blob
+      $fresh.Key = [int](++$script:RecKey)
+      if (Append-Record $fresh) {
+        # the append keeps the row at the end of the list it updated, so drop the cache and
+        # let the next read put it back where its tick says it belongs
+        Clear-RecordCache
+        if (Test-StoreFold) { Save-FoldedStore }
+        return $true
+      }
     }
     if ($index -lt 0) { $index = 0 }
     if ($index -gt $recs.Count) { $index = $recs.Count }
     $recs.Insert($index, $record)
     $recs = Sort-Records $recs
     Save-Records $recs.ToArray()
+    return $true
   }
 }
 
@@ -575,7 +634,9 @@ function Remove-Records([string[]]$payloads, [switch]$Force) {
     # rewrite, which is what made a batch delete cost one rewrite per row before
     $wrote = $true
     foreach ($rec in $victims) {
-      $gone = New-Record ([string]$rec.Payload) (Get-Epoch) ''
+      # the row's own tick, for the same reason as a single delete: an undo appends at that
+      # tick and has to win
+      $gone = New-Record ([string]$rec.Payload) ([long]$rec.Time) ''
       $gone.Gone = $true
       if (-not (Append-Record $gone)) { $wrote = $false; break }
     }
@@ -632,6 +693,26 @@ function Update-RecordText([string]$payload, [string]$text) {
     if ($null -eq $target) { return 'that entry is gone' }
     # payload is identity: a second row with the same text could never be told apart
     foreach ($rec in $recs) { if ($rec.Payload -ceq $text) { return 'another entry already says that' } }
+    $tick = [long]$target.Time
+    # An edit writes two lines instead of the whole file: a tombstone for the old text, then
+    # the row under its new text with the same tick and marks. The tombstone comes first
+    # because the later line wins at an equal tick. A row that shares its tick is rewritten
+    # instead, since appending would also move it in front of the others in its second.
+    if (Test-TickAlone $recs $tick $payload) {
+      $gone = New-Record ([string]$payload) $tick ''
+      $gone.Gone = $true
+      $fresh = New-Record ([string]$text) $tick ([string]$target.Marks)
+      $fresh.Key = [int](++$script:RecKey)
+      if ((Append-Record $gone) -and (Append-Record $fresh)) {
+        Clear-RecordCache
+        if (Test-StoreFold) { Save-FoldedStore }
+        # the formatted sidecar described the old text, and the old blob belongs to nobody now
+        try { Remove-OrphanBlobs @(Get-Records) } catch { }
+        return ''
+      }
+    }
+    # the fallback writes the snapshot this lock started from: reading the file again here
+    # would lose the row when the tombstone landed and the replacement did not
     $target.Payload = [string]$text
     $target.Rich = ''
     $target.Blob = ''          # the save path decides again, by the new length
@@ -677,6 +758,32 @@ function Update-Records([scriptblock]$mutate) {
       $changed.Add($rows[$i])
     }
     if ($renamed) {
+      # A renamed row is an edit too: a tombstone for the old payload and the row again under
+      # the new one, which costs two lines instead of the file. The rows only line up with the
+      # input when none was added or dropped, and a row sharing its tick has to keep its place
+      # - both cases fall back to the rewrite below.
+      $appendable = ($rows.Count -eq $beforePayload.Count)
+      if ($appendable) {
+        for ($i = 0; $i -lt $rows.Count; $i++) {
+          if ([string]$rows[$i].Payload -ceq $beforePayload[$i]) { continue }
+          if (-not (Test-TickAlone $rows ([long]$rows[$i].Time) ([string]$rows[$i].Payload))) { $appendable = $false; break }
+        }
+      }
+      if ($appendable) {
+        $wrote = $true
+        for ($i = 0; $i -lt $rows.Count; $i++) {
+          if ([string]$rows[$i].Payload -ceq $beforePayload[$i]) { continue }
+          $gone = New-Record $beforePayload[$i] ([long]$rows[$i].Time) ''
+          $gone.Gone = $true
+          if (-not (Append-Record $gone)) { $wrote = $false; break }
+          if (-not (Append-Record $rows[$i])) { $wrote = $false; break }
+        }
+        if ($wrote) {
+          Clear-RecordCache
+          if (Test-StoreFold) { Save-FoldedStore }
+          return $out
+        }
+      }
       $rows = Sort-Records $rows
       Save-Records $rows.ToArray()
       return $out
