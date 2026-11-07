@@ -78,6 +78,28 @@ function Get-ClipCapture {
   return $null
 }
 
+# One line per capture, for the log: what came off the clipboard, not what was stored - a
+# picture is a descriptor and a formatted copy is a block list, and the two are what a report
+# about "the paste had no picture" needs to show.
+function Format-Capture([string]$text, $cap) {
+  if ($null -eq $cap) { return 'nothing' }
+  if ($null -ne $cap.Image) {
+    return ('image ' + [string]$cap.Image.W + 'x' + [string]$cap.Image.H + ' ' + (Format-Size ([long]$cap.Image.Png.Length)))
+  }
+  $what = 'text ' + [string]$text.Length + ' chars'
+  if ($null -ne $cap.Rich) {
+    $parts = New-Object System.Collections.Generic.List[string]
+    if ($null -ne $cap.Rich.Html) { $parts.Add('html ' + (Format-Size ([long]$cap.Rich.Html.Length))) }
+    if ($null -ne $cap.Rich.Rtf) { $parts.Add('rtf ' + (Format-Size ([long]$cap.Rich.Rtf.Length))) }
+    foreach ($b in @($cap.Rich.Blocks)) {
+      if ($null -eq $b -or $null -eq $b.Data) { continue }
+      $parts.Add('block ' + [string]$b.Tag + ' ' + (Format-Size ([long]$b.Data.Length)))
+    }
+    if ($parts.Count -gt 0) { $what = $what + ' + ' + ($parts -join ', ') }
+  }
+  return $what
+}
+
 # The whole formatted snapshot: the html, the rtf and the picture blocks a target may prefer.
 # CF_HTML keeps byte offsets into its own buffer and RTF is an 8-bit format, so every block is
 # read raw and stored byte for byte - a .NET string decodes with the ANSI code page (UTF-8 html
@@ -278,6 +300,14 @@ function Set-RichItem([string]$text, [string]$rich) {
     Set-RichBlockData $do $rich 'P' 'PNG'
     Set-RichBlockData $do $rich 'D' ([Windows.Forms.DataFormats]::Dib)
     Set-RichBlockData $do $rich 'E' ([Windows.Forms.DataFormats]::EnhancedMetafile)
+    # what actually went on the clipboard: a paste that arrives without its pictures is a
+    # question about this line, and the answer is the block list it names
+    $r = Get-RichRef $rich
+    if ($null -ne $r) {
+      $parts = New-Object System.Collections.Generic.List[string]
+      foreach ($b in $r.Blocks) { $parts.Add([string]$b.Tag + ' ' + (Format-Size ([long]$b.Bytes))) }
+      Write-Log ('clipboard: text ' + [string]$text.Length + ' chars + ' + ($parts -join ', '))
+    }
     return (Set-ItemDataObject $do)
   } catch {
     Write-Log ('set formatted text failed: ' + $_.Exception.Message)

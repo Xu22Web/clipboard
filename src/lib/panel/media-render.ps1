@@ -383,6 +383,28 @@ function ConvertTo-PlaceholderRtf([string]$rtf, [string]$mark) {
   } catch { return $rtf }
 }
 
+# The marker wants the quiet grey the panel uses for secondary text, and an rtf only knows the
+# colours in its own table. Appending one entry leaves every existing \cfN index where it is,
+# so a document that already has a table keeps all of its own colours.
+function Add-RtfGrayColor([string]$rtf) {
+  if ([string]::IsNullOrEmpty($rtf)) { return @{ Text = $rtf; Index = 0 } }
+  $gray = '\red140\green140\blue140;'
+  $m = [regex]::Match($rtf, '\{\\colortbl[^}]*\}')
+  if ($m.Success) {
+    $body = $m.Value.Substring(0, $m.Value.Length - 1)
+    $count = ([regex]::Matches($body, ';')).Count
+    $new = $body + $gray + '}'
+    $text = $rtf.Substring(0, $m.Index) + $new + $rtf.Substring($m.Index + $m.Length)
+    return @{ Text = $text; Index = $count + 1 }
+  }
+  $head = [regex]::Match($rtf, '^\{\\rtf1[^\\]*')
+  if (-not $head.Success) { return @{ Text = $rtf; Index = 0 } }
+  $at = $head.Index + $head.Length
+  # a leading ';' is the automatic colour (index 1), so the grey is index 2
+  $text = $rtf.Substring(0, $at) + '{\colortbl ;' + $gray + '}' + $rtf.Substring($at)
+  return @{ Text = $text; Index = 2 }
+}
+
 function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $paper, [string]$mode = 'full') {
   if (-not $ref -or $maxW -lt 16 -or $maxH -lt 16) { return $null }
   if ($mode -ceq 'none' -or $mode -ceq 'text') { return $null }
@@ -392,8 +414,14 @@ function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $pap
   $rtf = Read-RichRtf $ref
   if (-not $rtf) { return $null }
   if ($mode -ceq 'plain') {
-    # the words and the layout, with a marker where each picture was
-    $rtf = ConvertTo-PlaceholderRtf $rtf '{\fs16 [image]}'
+    # the words and the layout, with a quiet marker where each picture was. The marker is
+    # substituted after the colour table exists, because it names the entry it needs.
+    $token = '@cbp@'
+    $rtf = ConvertTo-PlaceholderRtf $rtf $token
+    $gray = Add-RtfGrayColor $rtf
+    $mark = '{\fs18\i [image]}'
+    if ($gray.Index -gt 0) { $mark = '{\fs18\i\cf' + [string]$gray.Index + ' [image]}' }
+    $rtf = $gray.Text.Replace($token, $mark)
   } else {
     # the layout engine cannot draw a png picture: re-spell it as a bitmap first
     $rtf = ConvertTo-CardRtf $rtf

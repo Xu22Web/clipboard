@@ -16,7 +16,7 @@
 function New-PreviewState {
   return @{ Win = $null; Key = -1; Lines = @(); Head = ''; Cfg = $null; Kind = 'text'; Ref = ''; Bmp = $null
     Panel = $null; Anchor = 0; Pending = $false; JobPath = ''; JobKey = -1; Handle = $null; RS = $null; Shell = $null
-    FadeAt = $null; FadeBmp = $null }
+    FadeAt = $null; FadeBmp = $null; JobAt = $null; JobMode = ''; JobW = 0; JobH = 0 }
 }
 
 # Whether the card may stand a picture in for a formatted entry. Only an entry with no rtf
@@ -468,13 +468,16 @@ function Clear-OldPreviewCache {
       }
     }
     if ($keep.Count -le $script:PreviewCacheMaxFiles -and $bytes -le $script:PreviewCacheMaxBytes) { return }
-    # over the budget: oldest first, because that is the one least likely to come back
-    foreach ($f in @($keep | Sort-Object LastWriteTimeUtc)) {
-      if ($keep.Count -le $script:PreviewCacheMaxFiles -and $bytes -le $script:PreviewCacheMaxBytes) { break }
+    # over the budget: the oldest go first, because that is the one least likely to come back.
+    # Sorted once and walked with an index: removing while enumerating a list is what made an
+    # earlier version delete too much.
+    $ordered = @($keep | Sort-Object LastWriteTimeUtc)
+    for ($i = 0; $i -lt $ordered.Count; $i++) {
+      if ($keep.Count - $i -le $script:PreviewCacheMaxFiles -and $bytes -le $script:PreviewCacheMaxBytes) { break }
+      $f = $ordered[$i]
       try {
         Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue
         $bytes -= [long]$f.Length
-        [void]$keep.Remove($f)
       } catch { }
     }
   } catch { }
@@ -531,6 +534,10 @@ function Start-CardJob($ps, [string]$ref, [int]$w, [int]$h, $cfg, [string]$mode 
     [void]$shell.AddArgument($size)
     [void]$shell.AddArgument([int]$paper.ToArgb())
     [void]$shell.AddArgument($mode)
+    $ps.JobAt = Get-Date
+    $ps.JobMode = $mode
+    $ps.JobW = $w
+    $ps.JobH = $h
     $ps.Handle = $shell.BeginInvoke()
     return $true
   } catch {
@@ -570,6 +577,12 @@ function Step-PreviewCard($ps) {
   $ps.Handle = $null
   $ps.Pending = $false
   if ($null -eq $bmp -or -not ($bmp -is [Drawing.Bitmap])) { return $moved }
+  # how long the page took to build: the number that says whether a hover was cheap
+  if ($null -ne $ps.JobAt) {
+    $ms = [int]((Get-Date) - $ps.JobAt).TotalMilliseconds
+    Write-Log ('card: ' + [string]$ps.JobMode + ' ' + [string]$ps.JobW + 'x' + [string]$ps.JobH + ' in ' + [string]$ms + ' ms')
+    $ps.JobAt = $null
+  }
   # the picture is worth keeping even when the card has moved on to another row
   if ([string]$ps.JobPath) {
     try { $bmp.Save($ps.JobPath, [Drawing.Imaging.ImageFormat]::Png); Clear-OldPreviewCache } catch { }

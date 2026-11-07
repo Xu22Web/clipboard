@@ -190,10 +190,14 @@ function Get-CfHtmlPlaceholder([string]$tag) {
   if ($w -gt 360) { $h = [int][Math]::Round($h * 360 / $w); $w = 360 }
   if ($h -lt 32) { $h = 32 }
   if ($h -gt 240) { $h = 240 }
+  # A soft chip rather than a dashed frame: the same quiet grey the panel uses for secondary
+  # text, a hairline border and a barely tinted fill. It reads as "not part of the document"
+  # in Word and in a browser alike, and it does not compete with the words around it.
   $style = 'display:inline-block;width:' + [string]$w + 'px;height:' + [string]$h + 'px;' +
-    'border:1px dashed #a6a6a6;border-radius:6px;color:#8c8c8c;' +
-    'font-size:12px;line-height:' + [string]$h + 'px;text-align:center;vertical-align:middle;overflow:hidden'
-  return ('<span style="' + $style + '">[ image not saved ]</span>')
+    'border:1px solid #e3e3e3;border-radius:6px;background:#fafafa;color:#8c8c8c;' +
+    "font-family:'Segoe UI',Segoe UI,sans-serif;font-size:11px;line-height:" + [string]$h + 'px;' +
+    'text-align:center;vertical-align:middle;overflow:hidden'
+  return ('<span style="' + $style + '">image not saved</span>')
 }
 
 # every picture in the buffer becomes a file next to the entry, and the four offsets are

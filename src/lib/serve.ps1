@@ -135,6 +135,7 @@ function Invoke-ServeOnce {
       $seq = [Cb.Win]::GetClipboardSequenceNumber()
       if ($seq -ne 0 -and $seq -eq $script:LastSeq) { return }
       if (Test-Path -LiteralPath $Paused) { return }
+      $t0 = Get-Date
       $cap = Get-ClipCapture
       if ($null -eq $cap) { return }
       # an image payload is its descriptor, so the comparison stays a short string compare
@@ -146,6 +147,9 @@ function Invoke-ServeOnce {
       # was deleted could never come back. What is already in the history is Add-Item's
       # business - it moves a known payload to the top by itself.
       Add-Item $t $cap
+      # one line per capture, with what it cost: a slow clipboard read or a block that was
+      # dropped is only visible here
+      Write-Log ('capture: ' + (Format-Capture $t $cap) + ' in ' + [string]([int]((Get-Date) - $t0).TotalMilliseconds) + ' ms')
       $script:LastSeq = [Cb.Win]::GetClipboardSequenceNumber()
     })
   $timer.Start()
