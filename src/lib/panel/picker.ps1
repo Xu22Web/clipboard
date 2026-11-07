@@ -1369,6 +1369,16 @@ function Show-Picker([switch]$Warm) {
       # repaint only the rows whose alpha moved, not the whole list on every tick
       if ($am -ne 0 -and -not $form.IsDisposed) { try { if ($am -band 1) { foreach ($i in @($script:Anim.HoverIndex, $script:Anim.PrevHoverIndex, $script:Anim.SelIndex, $script:Anim.PrevSelIndex)) { if ($i -ge 0 -and $i -lt $lst.ItemCount) { $lst.Invalidate($lst.GetItemRectangle($i)) } } }; if ($am -band 2) { $sbar.Invalidate() }; if ($am -band 4) { $grip.Invalidate() }; if ($am -band 8) { $box.Invalidate() } } catch { } }
       if ($script:PickerClose) { $form.Close(); break }
+      # Ctrl is a modifier, not a key the hook answers: it stays with the window behind, so a
+      # KeyDown for it never reaches the panel while the hook owns the keyboard, and the key
+      # caps kept their neutral colour while Ctrl was held. Polling the key state is what makes
+      # the accents (and the Ctrl group in the footer) follow the modifier in both modes.
+      $ctrlNow = ([Cb.Win]::GetAsyncKeyState(0x11) -band 0x8000) -ne 0
+      if ($ctrlNow -ne $script:CtrlHeld) {
+        $script:CtrlHeld = $ctrlNow
+        try { $lst.Invalidate() } catch { }
+        try { $footL.Invalidate() } catch { }
+      }
       if ($script:PickerHook) {
         # cache the IME state instead of asking per keystroke (a cross-process call); the
         # box the user is working in may have changed, so ask about the foreground window
