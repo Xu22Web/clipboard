@@ -34,8 +34,10 @@ function Set-PickerEditHost($form, $lst, $txt, $ui, $font, $refresh, $note, $foc
   $form.Add_KeyDown({ param($s, $e) Invoke-PickerEditKey $e })
 }
 
-# Why a row cannot be edited: '' means it can. The three refusals are the content the box
-# cannot represent, so both the footer and the context menu ask here.
+# Why a row cannot be edited: '' means it can. This is the single place that decides, so the
+# footer, the context menu and the F2 key cannot disagree. The strings are kept as the reason
+# a test can print; the user is never shown one - a key the footer does not offer explains
+# itself by doing nothing.
 function Get-RowEditBlock($rec) {
   if ($null -eq $rec) { return 'Nothing selected' }
   $payload = [string]$rec.Payload
@@ -149,8 +151,9 @@ function Begin-RowEdit {
   if ($idx -lt 0 -or $idx -ge @($script:Filtered).Count) { & $ctx.Note 'Nothing selected'; return }
   $rec = $script:Filtered[$idx]
   if ($null -eq $rec) { return }
-  $block = Get-RowEditBlock $rec
-  if ($block) { & $ctx.Note $block; return }
+  # A picture, a file list and a formatted entry have no F2 in the footer and no Edit in the
+  # context menu, so pressing the key on one stays silent: there is nothing to explain.
+  if (-not (Test-RowEditable $rec)) { return }
   $payload = [string]$rec.Payload
   # The card is the editor window: it covers the whole panel, so the search field and the
   # footer step aside while an entry is being edited and the text gets the full area.
