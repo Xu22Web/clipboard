@@ -9,10 +9,12 @@
   there is no second mode. A file that appears or disappears counts as a change as well, so
   a new lib\foo.ps1 is picked up together with the line that loads it. The loop first stops
   a resident left over from an earlier run, starts src\clipboard.ps1 serve, and after a
-  change stops it through its normal stop event and starts it again, so the history, the
+  change - once the tree has been quiet for a whole poll interval - stops it through its
+  normal stop event and starts it again, so the history, the
   hotkey and the tray icon behave exactly as in a real run; a start that does not come up is
-  reported. Ctrl+C ends the loop and stops the resident with it, so nothing keeps capturing
-  in the background after dev is gone.
+  reported. Ctrl+C ends the loop and stops the resident with it; closing the resident from
+  outside (tray exit, `clipboard stop`) ends the loop as well, so dev never outlives the
+  process it is watching.
 #>
 [CmdletBinding()]
 param(
@@ -200,8 +202,27 @@ function Start-DevLoop {
   }
   Write-Host ('     watching ' + $stamps.Count + ' file(s), poll ' + $Interval + ' ms - Ctrl+C ends the loop and the resident')
   $reported = @{}
+  # Did the resident ever come up? A resident that has been up and stays gone was closed
+  # from outside (tray exit, `clipboard stop`), so there is nothing left to restart and dev
+  # ends with it. A start that failed before is not that case: it keeps retrying on the next
+  # change, which is what the message above says it does.
+  $sawUp = $started
+  $goneAt = $null
   while ($true) {
     Start-Sleep -Milliseconds $Interval
+    if (Test-ResidentUp) {
+      $sawUp = $true
+      $goneAt = $null
+    } elseif ($sawUp) {
+      # `config set` restarts the resident from another console, and a restart drops the
+      # mutex for a second or two too: only a resident that stays gone counts as an exit
+      if ($null -eq $goneAt) {
+        $goneAt = Get-Date
+      } elseif (((Get-Date) - $goneAt).TotalSeconds -ge 5) {
+        Write-Host '[..] the resident exited - leaving dev'
+        return
+      }
+    }
     $set = Get-WatchSet
     foreach ($m in @($set.Missing)) {
       if ($reported.ContainsKey($m)) { continue }
@@ -210,17 +231,32 @@ function Start-DevLoop {
     }
     $next = Get-WatchStamps $set.Files
     if (@(Compare-WatchStamps $stamps $next).Count -eq 0) { continue }
-    # an editor writes a file in more than one step: let it settle, then report what changed
-    Start-Sleep -Milliseconds 200
-    $set = Get-WatchSet
-    $next = Get-WatchStamps $set.Files
+    # Strict debounce: an editor writes a file in more than one step, and a batch of saves can
+    # land a few hundred ms apart. Restart only after a whole poll interval with no further
+    # change, so one save - however many writes it takes - costs exactly one restart.
+    while ($true) {
+      Start-Sleep -Milliseconds $Interval
+      if ($sawUp -and -not (Test-ResidentUp)) {
+        Write-Host '[..] the resident exited - leaving dev'
+        return
+      }
+      $set = Get-WatchSet
+      $after = Get-WatchStamps $set.Files
+      if (@(Compare-WatchStamps $next $after).Count -eq 0) { break }
+      $next = $after
+    }
     $changes = @(Compare-WatchStamps $stamps $next)
     $stamps = $next
     $reported = @{}
     foreach ($c in $changes) { Write-Host $c }
     Write-Host ('[..] ' + (Get-Date).ToString('HH:mm:ss') + ' restarting (' + $changes.Count + ' change(s))')
     Stop-Resident
-    if (-not (Start-Resident)) {
+    $goneAt = $null
+    if (Start-Resident) {
+      $sawUp = $true
+    } else {
+      # a restart that failed is not an outside exit: report it and retry on the next change
+      $sawUp = $false
       Write-Host '[x] the resident did not start - the next change tries again'
     }
   }
