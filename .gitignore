@@ -4,4 +4,5 @@ _*.ps1
 _*.txt
 src/data/
 src/clipboard.ini
+src/cbx.exe
 dist/

@@ -112,6 +112,9 @@ $verify = CfgBool 'Verify' $true
 $includeDocs = CfgBool 'IncludeDocs' $true
 $overwrite = CfgBool 'Overwrite' $false
 $wantZip = CfgBool 'Zip' $false
+# the native client is an accelerator, never a requirement: without a compiler the package
+# still works, one ~1 s slower per command
+$cbx = CfgBool 'Cbx' $true
 $pluginNames = CfgList 'Plugins'
 $themeNames = CfgList 'Themes'
 
@@ -326,6 +329,21 @@ try {
     if ($before -gt 0) { $totalPct = [Math]::Round(100 * (1 - $after / $before), 1) }
     Write-Host ('  {0,-26} {1,8} -> {2,7}  ({3}%)' -f 'scripts total', $before, $after, $totalPct)
     Write-Host ''
+  }
+
+  # ------------------------------------------------------------ native client (optional)
+  # A compiled client turns a proxied command into a ~150 ms call instead of ~1 s, because it
+  # is started before any PowerShell exists. clipboard.cmd falls back to the script when the
+  # file is missing, so a machine without the .NET Framework compiler still gets a package.
+  if ($cbx) {
+    $cbxScript = Join-Path $root 'scripts\build-cbx.ps1'
+    if (Test-Path -LiteralPath $cbxScript) {
+      Write-Step 'compiling the native client'
+      $cbxOut = Join-Path $stage 'cbx.exe'
+      $cbxLog = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $cbxScript -Out $cbxOut 2>&1
+      foreach ($line in @($cbxLog)) { Write-Host ('    ' + ([string]$line).Trim()) }
+      if (-not (Test-Path -LiteralPath $cbxOut)) { Write-Step '  (no client compiled: the package uses the PowerShell client)' }
+    }
   }
 
   # ------------------------------------------------------------ publish

@@ -121,7 +121,9 @@ switch ($Command.ToLower()) {
   }
   'put' {
     $t = $Value
-    if ([string]::IsNullOrEmpty($t)) {
+    # The resident answers over the pipe, and the client read stdin before it asked: an empty
+    # value there is an empty entry, not an invitation to read this process's own stdin.
+    if ([string]::IsNullOrEmpty($t) -and -not $script:AnsweringAsResident) {
       $t = [Console]::In.ReadToEnd()
       $t = $t -replace '(\r\n|\n|\r)$', ''
     }
