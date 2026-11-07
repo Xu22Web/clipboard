@@ -14,6 +14,11 @@
 
 function Add-KeyHookType {
   if ('Cb.KeyHook' -as [type]) { return }
+  # the compiled assembly carries this type too (see Test-NativeAssembly in lib\native.ps1)
+  if (Get-Command Test-NativeAssembly -ErrorAction SilentlyContinue) {
+    [void](Test-NativeAssembly)
+    if ('Cb.KeyHook' -as [type]) { return }
+  }
   Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Concurrent;

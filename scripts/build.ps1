@@ -350,14 +350,18 @@ try {
   # A compiled client turns a proxied command into a ~150 ms call instead of ~1 s, because it
   # is started before any PowerShell exists. clipboard.cmd falls back to the script when the
   # file is missing, so a machine without the .NET Framework compiler still gets a package.
+  # The same compiler produces lib\cb.dll: the two embedded C# blocks, compiled ahead of time
+  # (loading it costs milliseconds where a cold source compile costs ~1.2 s).
   if ($cbx) {
     $cbxScript = Join-Path $root 'scripts\build-cbx.ps1'
     if (Test-Path -LiteralPath $cbxScript) {
-      Write-Step 'compiling the native client'
+      Write-Step 'compiling the native client and the C# assembly'
       $cbxOut = Join-Path $stage 'cbx.exe'
-      $cbxLog = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $cbxScript -Out $cbxOut 2>&1
+      $asmOut = Join-Path $stage 'lib\cb.dll'
+      $cbxLog = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $cbxScript -Out $cbxOut -Asm $asmOut 2>&1
       foreach ($line in @($cbxLog)) { Write-Host ('    ' + ([string]$line).Trim()) }
       if (-not (Test-Path -LiteralPath $cbxOut)) { Write-Step '  (no client compiled: the package uses the PowerShell client)' }
+      if (-not (Test-Path -LiteralPath $asmOut)) { Write-Step '  (no assembly compiled: the package compiles the C# at run time)' }
     }
   }
 

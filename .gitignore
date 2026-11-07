@@ -5,4 +5,5 @@ _*.txt
 src/data/
 src/clipboard.ini
 src/cbx.exe
+src/lib/cb.dll
 dist/

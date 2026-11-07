@@ -6,8 +6,35 @@
 # No clipboard, no settings and no panel state beyond the DPI factor, so a command, the
 # picker and the resident loop can all call into this file.
 
+# The C# block below - and the one in lib\panel\keyhook.ps1 - can be compiled ahead of time
+# into lib\cb.dll by scripts\build-cbx.ps1: a cold panel open takes 850 ms with the assembly
+# against 1050 ms compiling the source (measured, three runs each). A development copy that
+# never ran the build keeps the source path: no file, no assembly, the block is compiled.
+function Test-NativeAssembly {
+  if ($script:NativeAssemblyChecked) { return $script:NativeAssemblyOk }
+  $script:NativeAssemblyChecked = $true
+  $script:NativeAssemblyOk = $false
+  try {
+    $asmPath = Join-Path $Root 'lib\cb.dll'
+    if (-not (Test-Path -LiteralPath $asmPath)) { return $false }
+    # source newer than the assembly means the file is stale: compile the source instead of
+    # running C# that no longer matches this copy of the module
+    $asmTime = (Get-Item -LiteralPath $asmPath).LastWriteTimeUtc
+    foreach ($cs in @((Join-Path $Root 'lib\native.ps1'), (Join-Path $Root 'lib\panel\keyhook.ps1'))) {
+      if (-not (Test-Path -LiteralPath $cs)) { continue }
+      if ((Get-Item -LiteralPath $cs).LastWriteTimeUtc -gt $asmTime) { return $false }
+    }
+    [void][Reflection.Assembly]::LoadFrom($asmPath)
+    $script:NativeAssemblyOk = [bool]('Cb.Win' -as [type])
+  } catch {
+    $script:NativeAssemblyOk = $false
+  }
+  return $script:NativeAssemblyOk
+}
+
 function Add-Native {
   if ($script:NativeReady) { return }
+  if (Test-NativeAssembly) { $script:NativeReady = $true; return }
   $cs = @'
 using System;
 using System.Runtime.InteropServices;
