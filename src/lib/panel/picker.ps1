@@ -1382,7 +1382,20 @@ function Show-Picker([switch]$Warm) {
         # or picking an item (the popup reaches past the panel) would close the panel too.
         $mouseDown = ([Cb.Win]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
         $justPicked = $script:MenuClosedAt -and (((Get-Date) - $script:MenuClosedAt).TotalMilliseconds -lt 400)
-        if ($mouseDown -and -not $script:PrevMouseDown -and -not $justPicked -and -not $cm.Visible -and -not $form.Bounds.Contains([Windows.Forms.Cursor]::Position)) {
+        $clicked = ($mouseDown -and -not $script:PrevMouseDown)
+        # One click outside ends both. The menu is shown without activation, so it does not
+        # always see the click that lands beside it, and the check below deliberately skips
+        # while it is up (a click on an item reaches past the panel). Doing it here means the
+        # click that dismisses the menu also dismisses the panel, instead of needing two.
+        if ($clicked -and $cm.Visible -and -not $justPicked) {
+          $pos = [Windows.Forms.Cursor]::Position
+          if (-not $cm.Bounds.Contains($pos) -and -not $form.Bounds.Contains($pos)) {
+            try { $cm.Close() } catch { }
+            Write-Log 'picker: dismissed by a click outside (menu was open)'
+            $form.Close(); break
+          }
+        }
+        if ($clicked -and -not $justPicked -and -not $cm.Visible -and -not $form.Bounds.Contains([Windows.Forms.Cursor]::Position)) {
           Write-Log 'picker: dismissed by a click outside'
           $form.Close(); break
         }
