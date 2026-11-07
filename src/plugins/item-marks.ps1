@@ -237,7 +237,7 @@
       Key    = 'H'
       Ctrl   = $true
       Label  = 'highlight / clear'
-      Hint   = 'Mark'
+      Hint   = 'Highlight'
       Test   = { param($rec) $null -ne $rec }
       Invoke = {
         param($rec)

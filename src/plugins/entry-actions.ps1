@@ -343,6 +343,7 @@
       Key    = 'O'
       Ctrl   = $true
       Label  = 'open link or path'
+      Hint   = 'Open'
       Test   = { param($rec) [bool](& (Get-PluginData 'entry-actions' 'CanOpen') $rec) }
       Invoke = { param($rec) if ($null -ne $rec) { [void](& (Get-PluginData 'entry-actions' 'OpenPayload') ([string]$rec.Payload)) } }
     }

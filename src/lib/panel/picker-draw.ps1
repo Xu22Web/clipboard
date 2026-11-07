@@ -27,7 +27,11 @@ function Update-PanelRegion($form) {
 # has no text to edit so F2 would only promise something the editor refuses, and Esc clears the
 # search before it closes the panel. The footer truncates from the right, so the keys that
 # change something come before the one that leaves.
-function Get-PanelHints([int]$rows, [int]$selected, [string]$payload, [int]$queryLen, [bool]$ctrlHeld, $ctrlKeys) {
+function Get-PanelHints([int]$rows, [int]$selected, [string]$payload, [int]$queryLen, [bool]$ctrlHeld, $ctrlKeys, [bool]$editing, [bool]$undoOn) {
+  # while the editor covers the list, only the editor's own keys work
+  if ($editing) {
+    return @(@('Enter', 'Save'), @('Shift+Enter', 'Newline'), @('Esc', 'Cancel'))
+  }
   if ($rows -le 0) {
     # the comma keeps the pair nested: a one-element array would be unrolled by the function
     # return and each string would then be read as a list of characters
@@ -47,7 +51,8 @@ function Get-PanelHints([int]$rows, [int]$selected, [string]$payload, [int]$quer
     # first, because the footer truncates and the plugin keys are the optional ones
     $pairs = @(@('Ctrl+1-9,0', 'Pick'))
     $pairs += ,@('Ctrl+Enter', $copyLabel)
-    $pairs += ,@('Ctrl+Z', 'Undo')
+    # undo is only worth a chip while the setting allows it
+    if ($undoOn) { $pairs += ,@('Ctrl+Z', 'Undo') }
     foreach ($pk in @($ctrlKeys)) { $pairs += ,@('Ctrl+' + [string]$pk.Key, [string]$pk.Hint) }
     return $pairs
   }

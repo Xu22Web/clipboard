@@ -72,24 +72,52 @@ namespace Cb {
 
     public static bool Active { get { return hook != IntPtr.Zero; } }
 
-    // keys the panel handles itself: printables, editing keys and the navigation keys.
-    // Modifiers and Win/Alt combinations pass through, so the shell keeps working and the
-    // keyboard state stays consistent.
+    // ctrl combinations the panel answers; everything else keeps working for the window
+    // behind it. The panel adds its plugin keys on top of these.
+    private static System.Collections.Generic.HashSet<uint> ctrlKeys = DefaultCtrlKeys();
+
+    private static System.Collections.Generic.HashSet<uint> DefaultCtrlKeys() {
+      var set = new System.Collections.Generic.HashSet<uint>();
+      set.Add(0x41);                        // A  select every row in the result
+      set.Add(0x5A);                        // Z  undo a delete
+      set.Add(0x0D);                        // Enter  copy
+      set.Add(0x50); set.Add(0x53); set.Add(0x48); set.Add(0x4F);   // plugin keys
+      for (uint i = 0x30; i <= 0x39; i++) { set.Add(i); }           // 0-9  pick a visible row
+      for (uint i = 0x60; i <= 0x69; i++) { set.Add(i); }           // numpad 0-9
+      return set;
+    }
+
+    public static void SetCtrlKeys(int[] keys) {
+      var set = DefaultCtrlKeys();
+      if (keys != null) { foreach (int k in keys) { set.Add((uint)k); } }
+      ctrlKeys = set;
+    }
+
+    // Keys the panel handles itself: printables, editing keys and the navigation keys. What
+    // the panel does not use stays with the shell - the hook exists to feed the panel, not to
+    // own the keyboard - so Alt/Win combinations, the other function keys and every Ctrl
+    // shortcut the panel does not answer keep working while it is open.
     private static bool Eat(uint vk) {
-      // Ctrl+Space switches the input method on and off - never swallow it, or the panel
-      // would be the only thing the user can no longer reach their IME with
-      if (vk == 0x20 && (GetAsyncKeyState(0x11) & 0x8000) != 0) { return false; }
+      // Win combinations belong to the shell: Win+V, Win+Shift+S and Win+. would otherwise be
+      // swallowed as plain letters and do nothing while the panel is open
+      if (((GetAsyncKeyState(0x5B) & 0x8000) != 0) || ((GetAsyncKeyState(0x5C) & 0x8000) != 0)) { return false; }
+      // Ctrl+Shift+Esc opens Task Manager; the panel only needs a bare Esc
+      if (vk == 0x1B && (GetAsyncKeyState(0x11) & 0x8000) != 0 && (GetAsyncKeyState(0x10) & 0x8000) != 0) { return false; }
+      bool ctrl = (GetAsyncKeyState(0x11) & 0x8000) != 0;
+      if (ctrl) {
+        // Ctrl+Space switches the input method on and off, so it is never swallowed
+        if (vk == 0x20) { return false; }
+        return ctrlKeys.Contains(vk);
+      }
       if (vk >= 0x41 && vk <= 0x5A) { return true; }   // A-Z
       if (vk >= 0x30 && vk <= 0x39) { return true; }   // 0-9
       if (vk >= 0x60 && vk <= 0x69) { return true; }   // numpad 0-9
       if (vk == 0x20) { return true; }                 // space
       if (vk >= 0x21 && vk <= 0x28) { return true; }   // pgup, pgdn, end, home, arrows
-      if (vk >= 0x2D && vk <= 0x2E) { return true; }   // insert, delete
+      if (vk == 0x2E) { return true; }                 // delete (Insert stays with the shell)
       if (vk >= 0xBA && vk <= 0xC0) { return true; }   // ; = , - . /
       if (vk >= 0xDB && vk <= 0xDE) { return true; }   // [ \ ] '
-      // F1-F12 belong to the panel too: F2 is in-place edit, and a function key the panel
-      // did not take would reach the window behind it (F2 = rename in Explorer)
-      if (vk >= 0x70 && vk <= 0x7B) { return true; }
+      if (vk == 0x71) { return true; }                 // F2: in-place edit is the only F key used
       if (vk == 0x08 || vk == 0x09 || vk == 0x0D || vk == 0x1B) { return true; }
       return false;
     }
@@ -162,6 +190,15 @@ function Enable-KeyHook {
   }
   Write-Log 'key hook installed'
   return $true
+}
+
+# The panel answers Ctrl+A / Ctrl+Z / Ctrl+Enter / Ctrl+0-9 plus whatever its plugins claim;
+# passing those in means every other Ctrl shortcut keeps reaching the window behind.
+function Set-KeyHookCtrlKeys([int[]]$keys) {
+  try {
+    Add-KeyHookType
+    [Cb.KeyHook]::SetCtrlKeys($keys)
+  } catch { Write-Log ('key hook keys: ' + $_.Exception.Message) }
 }
 
 function Disable-KeyHook {

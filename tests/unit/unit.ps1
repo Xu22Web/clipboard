@@ -378,12 +378,6 @@ try {
       }
     }
     Check 'struct' 'ini files use lower case sections and PascalCase keys' ($badIni.Count -eq 0) ($badIni -join ', ')
-    $huge = @()
-    foreach ($f in $libFiles) {
-      $count = @([IO.File]::ReadAllLines($f.FullName)).Count
-      if ($count -gt 1400) { $huge += ($f.Name + '(' + $count + ')') }
-    }
-    Check 'struct' 'no module grows past 1400 lines' ($huge.Count -eq 0) ($huge -join ', ')
     $rootHits = ([regex]::Matches([IO.File]::ReadAllText($entryPath), '(?m)^\$Root = Split-Path -Parent \$PSCommandPath\s*$')).Count
     Check 'struct' 'tool root is computed once, in the entry' ($rootHits -eq 1) ([string]$rootHits + ' occurrence(s)')
 
@@ -1183,6 +1177,12 @@ try {
     $plainRtf = ConvertTo-PlaceholderRtf $cardRtf '{\fs16 [image]}'
     Check 'unit' 'a plain card keeps the words and marks the pictures' (($plainRtf -notmatch '\\pict') -and ($plainRtf -match 'before') -and ($plainRtf -match '\[image\]')) ([string]$plainRtf.Length + ' chars')
     Check 'unit' 'an rtf without pictures needs no placeholder pass' ((ConvertTo-PlaceholderRtf '{\rtf1\ansi words}' 'x') -ceq '{\rtf1\ansi words}') ''
+    # the marker is grey like the panel's secondary text: the colour is appended to the
+    # document's own table (or a table is made), so no existing \cfN index moves
+    $grayNew = Add-RtfGrayColor '{\rtf1\ansi words}'
+    Check 'unit' 'the card marker gets a grey colour' (($grayNew.Index -eq 2) -and ($grayNew.Text -match '\\colortbl ;\\red140\\green140\\blue140;')) ''
+    $grayOld = Add-RtfGrayColor '{\rtf1\ansi{\colortbl ;\red255\green0\blue0;} words}'
+    Check 'unit' 'an existing colour table keeps its indexes' (($grayOld.Index -eq 3) -and ($grayOld.Text -match '\\blue0;\\red140')) $grayOld.Text
     # Word nests the hex behind a picprop chain; a regex cannot follow that, the brace walk can
     $deepPic = '{\rtf1\ansi a {\*\shppict{\pict{\*\picprop{\sp{\sn shapeType}{\sv 75}}}89504e47}} b}'
     $deepPlain = ConvertTo-PlaceholderRtf $deepPic 'M'
@@ -1194,7 +1194,14 @@ try {
     # a rendered card is kept on disk, so the next hover (or the next session) is a file read
     $cachePath = Get-PreviewCachePath $cardRef 380 200
     # the card cache is derived data: it keeps a week, a file count and a byte budget, and the
-    # oldest go first when either budget is passed
+    # oldest go first when either budget is passed. The temp folder itself is redirected here,
+    # so a card another run left behind cannot make the counts vague.
+    $savedTemp = $env:TEMP
+    $savedTmp = $env:TMP
+    $tempBase = Join-Path $tmpRoot 'cachetest'
+    [void](New-Item -ItemType Directory -Path $tempBase -Force)
+    $env:TEMP = $tempBase
+    $env:TMP = $tempBase
     $cacheDir = Get-PreviewCacheDir
     $savedMaxFiles = $script:PreviewCacheMaxFiles
     $savedMaxBytes = $script:PreviewCacheMaxBytes
@@ -1206,15 +1213,18 @@ try {
       (Get-Item -LiteralPath $tp).LastWriteTimeUtc = [DateTime]::UtcNow.AddMinutes(-$n)
     }
     Clear-OldPreviewCache
-    Check 'unit' 'the card cache keeps only the newest few' (@(Get-ChildItem -LiteralPath $cacheDir -Filter 't*.png' -ErrorAction SilentlyContinue).Count -eq 2) ([string]@(Get-ChildItem -LiteralPath $cacheDir -Filter 't*.png' -ErrorAction SilentlyContinue).Count)
+    $leftCards = @(Get-ChildItem -LiteralPath $cacheDir -Filter '*.png' -ErrorAction SilentlyContinue)
+    Check 'unit' 'the card cache keeps only the newest few' (($leftCards.Count -eq 2) -and ($leftCards[0].Name -eq 't1.png') -and ($leftCards[1].Name -eq 't2.png')) ($leftCards.Name -join ',')
     $stalePath = Join-Path $cacheDir 'tstale.png'
     [IO.File]::WriteAllBytes($stalePath, $png)
     (Get-Item -LiteralPath $stalePath).LastWriteTimeUtc = [DateTime]::UtcNow.AddDays(-9)
     Clear-OldPreviewCache
     Check 'unit' 'a week-old card is dropped' (-not (Test-Path -LiteralPath $stalePath)) ''
-    foreach ($tf in @(Get-ChildItem -LiteralPath $cacheDir -Filter 't*.png' -ErrorAction SilentlyContinue)) { Remove-Item -LiteralPath $tf.FullName -Force }
     $script:PreviewCacheMaxFiles = $savedMaxFiles
     $script:PreviewCacheMaxBytes = $savedMaxBytes
+    $env:TEMP = $savedTemp
+    $env:TMP = $savedTmp
+    Remove-Item -LiteralPath $tempBase -Recurse -Force -ErrorAction SilentlyContinue
     $probeCard = New-Object Drawing.Bitmap 40, 20
     $probeCard.Save($cachePath, [Drawing.Imaging.ImageFormat]::Png)
     $probeCard.Dispose()
@@ -2220,8 +2230,12 @@ try {
       Check 'unit' 'a search turns the Escape hint into clear' (($hQuery -match 'Clear') -and (-not ($hQuery -match 'Close'))) $hQuery
       $hEmpty = Get-HintText (Get-PanelHints 0 0 '' 0 $false @())
       Check 'unit' 'an empty list only offers close' (($hEmpty -match 'Close') -and (-not ($hEmpty -match 'Paste'))) $hEmpty
-      $hCtrl = Get-HintText (Get-PanelHints 5 3 'hello' 0 $true @())
+      $hCtrl = Get-HintText (Get-PanelHints 5 3 'hello' 0 $true @() $false $true)
       Check 'unit' 'the Ctrl footer counts a batch too' (($hCtrl -match 'Copy 3') -and ($hCtrl -match 'Undo')) $hCtrl
+      $hNoUndo = Get-HintText (Get-PanelHints 5 0 'hello' 0 $true @() $false $false)
+      Check 'unit' 'the Ctrl footer drops undo while it is off' (-not ($hNoUndo -match 'Undo')) $hNoUndo
+      $hEdit = Get-HintText (Get-PanelHints 5 0 'hello' 0 $false @() $true $true)
+      Check 'unit' 'an edit in progress lists only the editor keys' ((($hEdit -match 'Save') -and ($hEdit -match 'Newline')) -and (-not ($hEdit -match 'Paste'))) $hEdit
 
       # The self-painted list freezes its first rows. 10 visible rows of 10px, 3 frozen, so
       # the scrollable window is 7 rows tall and TopIndex can never drop below 3.

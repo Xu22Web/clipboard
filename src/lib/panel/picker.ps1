@@ -361,7 +361,7 @@ function Show-Picker {
           }
           $chipLimit = $footR.Left - (Px 8)
           if ($chipLimit -lt (Px 60)) { $chipLimit = $footL.ClientSize.Width - (Px 8) }
-          Draw-KeyChips $g (Px 14) $cy (Get-PanelHints $script:Filtered.Count (Get-SelectionCount $script:Sel) $(if ($lst.SelectedIndex -ge 0 -and $lst.SelectedIndex -lt $script:Filtered.Count) { [string]$script:Filtered[$lst.SelectedIndex].Payload } else { '' }) $txt.Text.Length $script:CtrlHeld $ctrlHints) $ui.Dim $ui.Faint $chipLimit
+          Draw-KeyChips $g (Px 14) $cy (Get-PanelHints $script:Filtered.Count (Get-SelectionCount $script:Sel) $(if ($lst.SelectedIndex -ge 0 -and $lst.SelectedIndex -lt $script:Filtered.Count) { [string]$script:Filtered[$lst.SelectedIndex].Payload } else { '' }) $txt.Text.Length $script:CtrlHeld $ctrlHints ($null -ne $script:EditRow) $script:UndoOn) $ui.Dim $ui.Faint $chipLimit
         } catch { }
       })
 
@@ -694,7 +694,7 @@ function Show-Picker {
       $rec = $script:UndoRec
       $at = $script:UndoIdx
       $script:UndoRec = $null
-      Restore-Record $rec $at
+      [void](Restore-Record $rec $at)
       $script:Entries = @(Get-Records)
       Update-List $txt.Text
       Set-Foot 'Restored to its original position' ([int]$script:Timing['FootInfo'])
@@ -747,6 +747,8 @@ function Show-Picker {
     $m1.Add_Click({ Use-Index $lst.SelectedIndex })
     $m2 = $cm.Items.Add('Copy only'); $m2.ShortcutKeyDisplayString = 'Ctrl+Enter'
     $m2.Add_Click({ Use-Index $lst.SelectedIndex -NoInject })
+    $m7 = $cm.Items.Add('Edit'); $m7.ShortcutKeyDisplayString = 'F2'
+    $m7.Add_Click({ Begin-RowEdit })
     $m5 = $cm.Items.Add('Delete'); $m5.ShortcutKeyDisplayString = 'Del'
     $m5.Add_Click({ try { Del-Index $lst.SelectedIndex } catch { } })
     [void]$cm.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
@@ -1091,7 +1093,7 @@ function Show-Picker {
     $deb.Interval = [int]$script:Timing['Debounce']
     $deb.Add_Tick({ $deb.Stop(); Update-List $txt.Text })
     # F2 edits the selected entry in place; the editor lives in lib/panel/picker-edit.ps1
-    Set-PickerEditHost $form $lst $txt $ui $fBody { param($q) Update-List $q } { param($m) Set-Foot $m ([int]$script:Timing['FootInfo']) }
+    Set-PickerEditHost $form $lst $txt $ui $fBody { param($q) Update-List $q } { param($m, $ms) Set-Foot $m ([int]$ms) } { Focus-Search }
     function Flush-List { if ($deb.Enabled) { $deb.Stop(); Update-List $txt.Text } }
     $txt.Add_TextChanged({ Sync-Placeholder; $deb.Stop(); $deb.Start() })
     $txt.Add_GotFocus({ $script:SearchFocus = $true; Set-AnimTarget $script:Anim 'Field' 1.0 })
@@ -1099,6 +1101,10 @@ function Show-Picker {
     $clr.Add_Click({ $txt.Text = ''; Focus-Search })
     $form.Add_KeyDown({
         param($s, $e)
+        # The editor owns the keyboard while it is open. KeyPreview runs this handler before
+        # the focused control, so without this guard Ctrl+A / Del / Ctrl+Z would act on the
+        # history instead of the text being edited.
+        if ($null -ne $script:EditRow) { return }
         $code = [int]$e.KeyCode
         if ($e.Control -and -not $script:CtrlHeld) {
           $script:CtrlHeld = $true
@@ -1201,8 +1207,11 @@ function Show-Picker {
       })
     # ---- input plumbing for the hook model ------------------------------------
     # Under the hook the panel never activates, so the box must not take the real focus
-    # either: keys are posted to the controls, keeping every handler working.
+    # either: keys are posted to the controls, keeping every handler working. While the
+    # editor is open the search field must not take the focus back - that is what sent
+    # keystrokes typed into the editor to the filter box.
     function Focus-Search {
+      if ($null -ne $script:EditRow) { return }
       if (-not $script:PickerHook) { $txt.Focus() }
     }
 
@@ -1215,9 +1224,13 @@ function Show-Picker {
         $ch = Get-HookedChar $vk
         $mod = [Windows.Forms.Control]::ModifierKeys
         $plain = ($mod -band ([Windows.Forms.Keys]::Control -bor [Windows.Forms.Keys]::Alt)) -eq 0
+        # where this key belongs: the editor while it is open, the search field otherwise. The
+        # input-method hand-over has to use the same target, or the hand-over would move the
+        # keyboard to the filter box and everything typed next would land there.
+        $tg = $(if ($null -ne $script:HookTargetBox) { $script:HookTargetBox } else { $txt })
         # an input method needs a real focus: hand over and replay the key so it composes there
         if ($plain -and ($claimed -or ($script:ImeNative -and $vk -ge 0x30 -and $vk -le 0x5A))) {
-          if (Switch-ToTakeover $form.Handle $txt) {
+          if (Switch-ToTakeover $form.Handle $tg) {
             $script:PickerHook = $false
             $script:PickerEscalated = $true
             Write-Log 'picker: handing the keyboard over for the input method'
@@ -1231,7 +1244,6 @@ function Show-Picker {
         $isText = $ch -ne [char]0 -and (-not [char]::IsControl($ch) -or $ch -eq [char]8)
         # Esc closes the panel, so the handle is read once and the delivery is guarded
         try {
-          $tg = $(if ($null -ne $script:HookTargetBox) { $script:HookTargetBox } else { $txt })
           if ($isText -and $plain) { [void][Cb.Win]::SendMessage($tg.Handle, 0x0102, [IntPtr][int]$ch, [IntPtr]1) }
           else {
             $wh = $tg.Handle
@@ -1283,6 +1295,8 @@ function Show-Picker {
       })
     $form.Add_Deactivate({
         $script:CtrlHeld = $false
+        # an edit in progress keeps the panel open: closing would drop the text
+        if ($null -ne $script:EditRow) { return }
         if (((Get-Date) - $script:ShownAt).TotalMilliseconds -gt [int]$script:Timing['CloseOnBlur']) { $form.Close() }
       })
 
@@ -1304,6 +1318,9 @@ function Show-Picker {
     # through a real focus, so the panel hands itself the keyboard as soon as one is active
     # (see the loop) - without that, Chinese/Japanese/Korean could never be typed in.
     Disable-KeyHook   # never inherit a hook from a panel that closed badly
+    # the Ctrl combinations this panel answers, plugin keys included; the rest of the
+    # keyboard still reaches the window behind
+    Set-KeyHookCtrlKeys ([int[]]@($ctrlHints | ForEach-Object { [int][char]([string]$_.Key).ToUpperInvariant() }))
     $script:PickerHook = Enable-KeyHook
     if (-not $script:PickerHook) { [void](Switch-ToTakeover $form.Handle $txt) }
     Write-Log ('picker: input=' + $(if ($script:PickerHook) { 'hook' } else { 'takeover' }))
