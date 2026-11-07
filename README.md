@@ -953,11 +953,12 @@ Themes=win11-dark
 
 | workflow | 触发 | 步骤 |
 |---|---|---|
-| `ci.yml` | 推到 `master`、PR、手动 | 打印 PowerShell 版本 → `cli test -Unit -Integration` → `cli build`（`Verify=1`，产物复测） |
+| `ci.yml` | 推到 `master`、PR、手动（端到端 job 只在手动时跑） | 打印 PowerShell 版本 → `cli test -Unit -Integration` → `cli build`（`Verify=1`，产物复测） |
 | `release.yml` | 推 `v*` tag、手动 | 校验 tag 与 `package.ini` 的版本一致 → 跑测试 → 打包成 `clipboard-<version>.zip` → 生成 `SHA256SUMS.txt` → 发布 Release |
 
 - 结构组校验文件布局与纯 ASCII（PowerShell 5.1 按 GBK 解码无 BOM 的 UTF-8，脚本中出现中文即报语法错误），单元组按名字调用内部函数，集成组起子进程跑每一条 CLI 能力——三者都在 `ci.yml` 里，每次推送都会跑。
-- 端到端组（常驻进程 / 全局热键 / 剪贴板接管）需要真实桌面，托管 runner 不保证有交互式会话，所以在 `ci.yml` 里单独一个 job 且不阻塞合并，只作参考信号；要确认这一层请在本机跑 `cli test -E2E`。
+- 端到端组（常驻进程 / 全局热键 / 剪贴板接管）需要真实桌面，托管 runner 没有交互式会话，所以在 `ci.yml` 里只在手动触发时运行；要确认这一层请在本机跑 `cli test -E2E`，或在 Actions 页面点一次 Run workflow。
+- 同一分支只保留一次运行：新的推送会取消上一次（`concurrency`）；`test` job 上限 20 分钟，避免卡住的运行长时间占住并发额度。
 - 发版只改 `package.ini` 的 `Version=`，然后 `git tag v<version>` 并推送 tag；版本号与 tag 对不上时 workflow 在第一步就失败，不会发出一个版本号对不上的包。手动触发 `release.yml` 时按 `package.ini` 发同名 Release，已存在就覆盖资产。
 
 ## 常见问题

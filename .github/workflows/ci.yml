@@ -6,20 +6,33 @@ on:
   pull_request:
   workflow_dispatch:
 
+# 同一分支只留一次运行：连续推送时取消上一次，省掉重复的 5 分钟
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# 工作流只读仓库内容，不需要写权限
+permissions:
+  contents: read
+
 jobs:
   test:
     # 工具是 Windows 专属（WinForms 面板、剪贴板 API、RegisterHotKey），Linux 上跑不了，
     # 所以 CI 直接用 windows-latest：那里的 powershell.exe 就是目标环境（5.1）。
     runs-on: windows-latest
+    # 默认 360 分钟太长：卡住时会一直占着并发额度。实测整组约 5 分钟
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Environment
         shell: pwsh
         # 先把版本打出来：报错时能一眼看出是 5.1 还是 7（本项目只支持 5.1）。
+        # 前两行是外层的 pwsh，最后一行是被调用的 5.1 版本号。
         run: |
           $PSVersionTable.PSVersion
           (Get-Command powershell).Source
+          powershell -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
 
       - name: Self tests
         shell: pwsh
@@ -33,12 +46,14 @@ jobs:
         run: .\cli.ps1 build
 
   e2e:
-    # 端到端要真实桌面：注册全局热键、接管剪贴板、启动常驻进程。托管 runner 不保证有
-    # 交互式会话，这一项只作为参考信号，失败不拦合并（本机 cli test -E2E 才是准的）。
+    # 端到端要真实桌面：注册全局热键、接管剪贴板、启动常驻进程。托管 runner 没有交互式
+    # 会话，这一项在推送与 PR 上只会一直红，因此只留手动触发：需要时在 Actions 页面点
+    # Run workflow 跑一次，日常以本机 cli test -E2E 为准。
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
-    continue-on-error: true
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Resident and clipboard end-to-end
         shell: pwsh
