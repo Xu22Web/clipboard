@@ -259,6 +259,11 @@ function Append-Record($record, [switch]$InPlace) {
   }
   $script:RecLines = [int]$script:RecLines + 1
   if ($record.Gone) { $script:RecGone = [int]$script:RecGone + 1 }
+  # A record that never went through the parser still has to get its number before it reaches
+  # the read cache: key 0 is the "not numbered yet" value, so a capture appended here would
+  # share it with every other appended row, and the panel caches its row text by that number -
+  # every row then painted the label of the newest capture until the next full parse.
+  if ([int]$record.Key -le 0) { $record.Key = [int](++$script:RecKey) }
   # The caller usually holds the parsed list, so keep it in step instead of re-parsing the
   # file: a capture goes in front, an updated row replaces itself where it was, and a
   # tombstone drops its payload.
