@@ -925,11 +925,12 @@ Themes=win11-dark
 
 产物目录名取自 `package.ini` 的 `Version=`（见[版本号](#版本号)）；`Overwrite=1` 会替换同版本目录，需要同时保留两份时改 `OutDir`。
 
-压缩（`scripts\minify.ps1`）按语法树处理，分五步：
+压缩（`scripts\minify.ps1`）按语法树处理，分六步：
 
 - 内部函数名与局部变量名换成短名，全项目一套函数映射、每文件一套局部变量映射；`param()` 名、`$script:` / `$env:` 变量、自动变量、成员名与哈希键不改；
 - here-string 里的 C# 块去掉 `//` 与 `/* */` 注释、把空白折成一个空格（只在两个标识符或两个运算符之间留空格），`"..."`、`'...'`、`@"..."` 字面量原样复制——这是产物里最大的一块可压缩文本；
 - `-ErrorAction SilentlyContinue` 变成 `-ea 0`，已知的枚举名换成数字（`Stop`=1、`Continue`=2、`Inquire`=3、`Ignore`=4）；
+- 带内置别名的 cmdlet 换成别名（`Get-Command` → `gcm`、`Where-Object` → `?`、`ForEach-Object` → `%` 等 27 个，由当前会话的 `Get-Alias -Definition` 核对）；`Write-Host`、`Test-Path` 这类没有内置别名的保持原样，与 profile 惯常重定向的 `ls` / `cat` / `ps` / `cd` / `rm` / `sort` 等以及项目自定义的同名函数一律跳过；
 - 同一语句块内相邻语句之间的换行合成 `;`，边界由解析器给出，`if` / `else` / `try` / `catch` / `param()` 等跨行位置不受影响；
 - 删除注释（`#Requires` 保留）与缩进，token 之间只在标点旁去掉空格，其余保留一个空格。
 
@@ -941,9 +942,11 @@ Themes=win11-dark
 - 变量名需从 `VariablePath.UserPath` 读取。`VariablePath.UnqualifiedPath` 在本机运行时对 `$x` 与 `$script:x` 均返回空串，据此做映射会导致部分变量未改名，`$MaxItems` 与 `$script:MaxItems` 成为两个变量。
 - 函数返回空集合（如 `HashSet`）时会被 PowerShell 展开为 `$null`，调用方 `.Contains()` 会报错；需 `return , $set` 包一层或在调用处用 `@()`。
 
-实测（本仓库）：脚本总量约缩小 `46%`；`lib\base.ps1` −74%、
+实测（本仓库）：脚本总量约缩小 `48%`；`lib\base.ps1` −74%、
 `clipboard.ps1` −57%、`lib\panel\picker.ps1` −44%、`lib\plugin\plugins.ps1` −54%，C# 段收益最大的两个
 是 `lib\native.ps1` −39% 与 `lib\panel\keyhook.ps1` −47%（压缩前后都能通过 `Add-Type`）。
+
+别名那步在 7z 包上只省十几字节：重复的 cmdlet 名本来就被固实压缩消掉了，它省的是脚本本身的字节与需要词法化的 token 数。
 
 > `Verify=1` 用于验证重命名后的产物：包内函数名与变量名均已改变，只有运行真实 CLI 测试才能确认行为不变。`-Source` 指向产物时单元组跳过（它按名字调用内部函数），集成与端到端照常运行。
 

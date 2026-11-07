@@ -13,6 +13,8 @@
                       where two word characters would merge
     4. call pass      -ErrorAction <name> becomes -ea <number>, the same documented interface
                       in fewer characters
+    5. alias pass     a cmdlet that ships with a short alias (Get-Command -> gcm,
+                      Where-Object -> ?) keeps its meaning and loses characters
 
   Never renamed: parameters (they are passed by name: -Library, -Count, -NoInject), any
   variable with a scope/drive qualifier ($script:, $env:, $using:), PowerShell automatic
@@ -24,6 +26,8 @@
 #>
 
 $script:LetterPool = 'abcdefghijklmnopqrstuvwxyz'
+$script:AliasMapReady = $false
+$script:AliasMap = @{}
 
 # Names that must survive: automatic variables, and anything the runtime or a caller
 # may look up by name.
@@ -503,6 +507,91 @@ function Compress-CSharpBlocks([string]$text) {
   return (Apply-Edits $text $edits)
 }
 
+# ---- built-in aliases ------------------------------------------------------
+# A cmdlet that ships with a short alias resolves to the same command: Get-Command and gcm are
+# one cmdlet, so the call reads in fewer characters and acts the same. Three rules keep the
+# replacement honest:
+#   - the alias must be reported by the running session for exactly that cmdlet, so a release
+#     that drops one leaves the call as it was;
+#   - names a shell profile commonly redirects (ls, cat, ps, kill, sort, ...) are never used:
+#     clipboard.cmd starts PowerShell with a profile, and a user alias for ls must not turn
+#     Get-ChildItem into eza;
+#   - a name the project defines as a function is left alone, because aliases win over
+#     functions and the call would no longer reach the project's own code.
+$script:AliasCandidates = @(
+  'Get-Command', 'Get-Item', 'Get-ChildItem', 'Get-ItemProperty', 'Get-Process', 'Get-Member',
+  'Remove-Item', 'New-Item', 'Copy-Item', 'Move-Item', 'Rename-Item', 'Set-ItemProperty',
+  'Start-Process', 'Stop-Process', 'Measure-Object', 'Group-Object', 'Tee-Object',
+  'Select-Object', 'Get-Content', 'Set-Content', 'Add-Content', 'Select-String',
+  'Invoke-Expression', 'Set-Location', 'Get-Location', 'Where-Object', 'ForEach-Object'
+)
+
+$script:AliasAvoid = @(
+  'ls', 'dir', 'cat', 'type', 'ps', 'kill', 'sort', 'start', 'where', 'foreach', 'echo',
+  'write', 'sleep', 'man', 'help', 'rm', 'cp', 'cd'
+)
+
+function Get-AliasMap {
+  if ($script:AliasMapReady) { return $script:AliasMap }
+  $script:AliasMapReady = $true
+  $map = @{}
+  foreach ($cmdlet in $script:AliasCandidates) {
+    $best = ''
+    foreach ($a in @(Get-Alias -Definition $cmdlet -ErrorAction SilentlyContinue)) {
+      $short = [string]$a.Name
+      if ($short -notmatch '^[A-Za-z?%]{1,8}$') { continue }
+      if ($script:AliasAvoid -contains $short.ToLowerInvariant()) { continue }
+      if ($short.Length -ge $cmdlet.Length) { continue }
+      if (-not $best -or $short.Length -lt $best.Length) { $best = $short }
+    }
+    if ($best) { $map[$cmdlet] = $best }
+  }
+  $script:AliasMap = $map
+  return $map
+}
+
+function Compress-Aliases([string]$text, $functionMap) {
+  $map = Get-AliasMap
+  if ($map.Count -eq 0) { return $text }
+  $parsed = Get-ParsedScript $text
+  if ($parsed.Errors.Count -gt 0) { return $text }
+
+  # a function the file defines under the alias name keeps its callers: aliases outrank
+  # functions, so the candidate is dropped entirely rather than applied in the wrong places
+  $ownNames = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
+  foreach ($f in $parsed.Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+    [void]$ownNames.Add([string]$f.Name)
+  }
+  if ($functionMap) {
+    foreach ($k in $functionMap.Keys) { [void]$ownNames.Add([string]$k) }
+    foreach ($v in $functionMap.Values) { [void]$ownNames.Add([string]$v) }
+  }
+  $usable = @{}
+  foreach ($k in $map.Keys) {
+    $short = [string]$map[$k]
+    if ($ownNames.Contains($short)) { continue }
+    $usable[$k] = $short
+  }
+  if ($usable.Count -eq 0) { return $text }
+
+  $edits = New-Object System.Collections.Generic.List[object]
+  foreach ($c in $parsed.Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+    if ($c.CommandElements.Count -eq 0) { continue }
+    $head = $c.CommandElements[0]
+    # only a literal name in command position: "& 'Get-Item'" and dynamic calls keep theirs
+    if ($head -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) { continue }
+    $name = [string]$head.Value
+    if (-not $usable.ContainsKey($name)) { continue }
+    $edits.Add(@{
+        Offset = $head.Extent.StartOffset
+        Length = $head.Extent.EndOffset - $head.Extent.StartOffset
+        Text   = [string]$usable[$name]
+      })
+  }
+  if ($edits.Count -eq 0) { return $text }
+  return (Apply-Edits $text $edits)
+}
+
 # ---- how a call spells its preference --------------------------------------
 # -ErrorAction takes the name of an enum value, and every one of them also has a number. Both
 # are the documented interface, so the call reads differently rather than acting differently.
@@ -634,6 +723,8 @@ function Invoke-MinifyFile {
   # parse, and both are their own token level rewrite
   $squeezed = Compress-CSharpBlocks $renamed
   $squeezed = Compress-ErrorAction $squeezed
+  # "minify only" keeps every name: the alias pass is a rename like any other
+  if (-not $NoRename) { $squeezed = Compress-Aliases $squeezed $FunctionMap }
   # statement pass, then the lexical pass on what is left
   $merged = Merge-Statements $squeezed
   $minified = Compress-Whitespace $merged
