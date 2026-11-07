@@ -1,10 +1,16 @@
 # lib/panel/picker.ps1 - the history panel. One function owns the whole window lifecycle (create,
 # filter, draw, keys, paste); the standalone pieces live in picker-geom / entry / plugins.
 
-function Show-Picker {
+function Show-Picker([switch]$Warm) {
   if ($script:PickerOpen) { $script:PickerClose = $true; return }   # a second hotkey press closes it
   $script:PickerOpen = $true
   $script:PickerClose = $false
+  # how long the window takes to appear: one line per open, so a slow start can be told
+  # apart from a slow list (records / widgets / bind / list)
+  $swOpen = [System.Diagnostics.Stopwatch]::StartNew()
+  $msRecords = 0
+  $msWidgets = 0
+  $msBind = 0
   try {
     Load-Forms
     Add-Native
@@ -26,6 +32,7 @@ function Show-Picker {
     $prev = [Cb.Win]::GetForegroundWindow()
     $script:Entries = @(Get-Records)
     if ($script:Entries.Count -eq 0) { Write-Log 'picker: empty (showing hint)' }
+    $msRecords = [int]$swOpen.ElapsedMilliseconds
 
     $ui = Get-UiPalette
     if (-not $script:FBody) {
@@ -306,6 +313,7 @@ function Show-Picker {
     $form.Controls.Add($foot)
     $form.Controls.Add($head)
     $form.Controls.Add($grip)
+    $msWidgets = [int]$swOpen.ElapsedMilliseconds
 
     # A remembered position wins only when the panel still lands on a screen.
     $areas = @()
@@ -1272,12 +1280,8 @@ function Show-Picker {
         $pen.Dispose()
       })
     $form.Add_Shown({
-        Update-PanelRegion $form
-        Layout-Chrome
-        Size-List
-        Sync-Sb
-        Update-List ''
-        # the box looks focused (accent underline) but only takes the real focus without a hook
+        # the layout and the list were built before Show() (see below), so this only takes
+        # the keyboard back and paints the search field as focused
         Focus-Search
         $script:SearchFocus = $true
         Set-AnimTarget $script:Anim 'Field' 1.0
@@ -1317,9 +1321,32 @@ function Show-Picker {
     # already holding as a fresh click and close the panel on its first frame
     $script:MenuClosedAt = $null
     $script:PrevMouseDown = ([Cb.Win]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
-    # Non-modal on purpose: ShowDialog would block this message pump. The rounded region is
-    # set before the first paint, or one square frame shows through first.
+    # Non-modal on purpose: ShowDialog would block this message pump. Layout, list and the
+    # rounded region all happen before the window appears, so the first frame is the whole
+    # panel instead of an empty list that fills in a beat later (measured at ~60 ms).
+    Layout-Chrome
+    Size-List
+    Sync-Sb
+    Update-List ''
     Update-PanelRegion $form
+    $msBuild = [int]$swOpen.ElapsedMilliseconds
+    $swOpen.Stop()
+    $shape = (' ms (records ' + $msRecords + ', widgets ' + $msWidgets + ', bind ' + ($msBuild - $msWidgets) + ', items ' + $script:Entries.Count + ')')
+    # a warm run is a different event in the log: it built the panel and threw it away
+    if ($Warm) { Write-Log ('picker: warm ' + $msBuild + $shape) } else { Write-Log ('picker: open ' + $msBuild + $shape) }
+    # A warm run (see Start-Serve) builds everything and throws it away: the first hotkey then
+    # pays only for Show(), which is what the resident wants to avoid after a restart.
+    if ($Warm) {
+      try { $deb.Dispose() } catch { }
+      try { $footTimer.Dispose() } catch { }
+      try { $confirmTimer.Dispose() } catch { }
+      try { Close-Preview $pv } catch { }
+      try { $pvCfg.InkBrush.Dispose(); $pvCfg.DimBrush.Dispose() } catch { }
+      try { $cm.Dispose() } catch { }
+      try { if ($null -ne $groupFont) { $groupFont.Dispose() } } catch { }
+      try { $rg = $form.Region; $form.Dispose(); if ($null -ne $rg) { $rg.Dispose() } } catch { }
+      return
+    }
     $form.Show()
     # The hook keeps the foreground window untouched. An input method can only be driven
     # through a real focus, so the panel hands itself the keyboard as soon as one is active

@@ -112,6 +112,23 @@ function Invoke-ServeOnce {
 
   $hw.add_Hot({ try { Show-Picker } catch { Write-Log ('hotkey handler: ' + $_.Exception.Message) } })
 
+  # Build the panel once, in the background, and throw it away: right after a restart the
+  # first hotkey would otherwise pay for the type load, the fonts, the GDI objects and every
+  # event binding (~1.3 s, measured). The timer keeps it off the startup path; a failure is
+  # only a log line, and the next hotkey builds the panel the usual way.
+  $warm = New-Object Windows.Forms.Timer
+  $warm.Interval = 1500
+  $warm.Add_Tick({
+      $warm.Stop()
+      $warm.Dispose()
+      try {
+        $tw = Get-Date
+        Show-Picker -Warm
+        Write-Log ('picker: warm-up in ' + [string]([int]((Get-Date) - $tw).TotalMilliseconds) + ' ms')
+      } catch { Write-Log ('picker warm-up failed: ' + $_.Exception.Message) }
+    })
+  $warm.Start()
+
   $script:LastSeq = [Cb.Win]::GetClipboardSequenceNumber()
   # resolved once: asking for the command on every poll costs more than the work it guards
   $hasTicks = $null -ne (Get-Command Invoke-PluginTicks -ErrorAction SilentlyContinue)
