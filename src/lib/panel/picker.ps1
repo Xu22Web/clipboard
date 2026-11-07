@@ -361,7 +361,9 @@ function Show-Picker {
           }
           $chipLimit = $footR.Left - (Px 8)
           if ($chipLimit -lt (Px 60)) { $chipLimit = $footL.ClientSize.Width - (Px 8) }
-          Draw-KeyChips $g (Px 14) $cy (Get-PanelHints $script:Filtered.Count (Get-SelectionCount $script:Sel) $(if ($lst.SelectedIndex -ge 0 -and $lst.SelectedIndex -lt $script:Filtered.Count) { [string]$script:Filtered[$lst.SelectedIndex].Payload } else { '' }) $txt.Text.Length $script:CtrlHeld $ctrlHints ($null -ne $script:EditRow) $script:UndoOn) $ui.Dim $ui.Faint $chipLimit
+          $hintRec = $null
+          if ($lst.SelectedIndex -ge 0 -and $lst.SelectedIndex -lt $script:Filtered.Count) { $hintRec = $script:Filtered[$lst.SelectedIndex] }
+          Draw-KeyChips $g (Px 14) $cy (Get-PanelHints $script:Filtered.Count (Get-SelectionCount $script:Sel) (Test-RowEditable $hintRec) $txt.Text.Length $script:CtrlHeld $ctrlHints ($null -ne $script:EditRow) $script:UndoOn) $ui.Dim $ui.Faint $chipLimit
         } catch { }
       })
 
@@ -818,6 +820,11 @@ function Show-Picker {
           for ($k = 0; $k -lt $keep.Length; $k++) {
             $keep[$k] = ($cm.Items[$k] -isnot [Windows.Forms.ToolStripSeparator])
           }
+          # a picture, a file list and a formatted entry have nothing the editor can show
+          $editable = ($null -ne $cur -and (Test-RowEditable $cur))
+          $m7.Visible = $editable
+          $m7.Enabled = $editable
+          $keep[[int]$cm.Items.IndexOf($m7)] = $editable
           $ownerShown = @{}
           foreach ($slot in $pluginItems) {
             $it = $slot.Item

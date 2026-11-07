@@ -2209,7 +2209,7 @@ try {
       Check 'unit' 'a flattened single hint pair still draws a chip' $flatOk $flatErr
 
       # The footer lists only what is possible right now: a batch can be copied and deleted
-      # but not pasted or edited, a picture has no text to edit, and Esc clears the search
+      # but not pasted or edited, only a plain text row offers F2, and Esc clears the search
       # before it closes the panel.
       function Get-HintText($pairs) {
         $parts = New-Object System.Collections.Generic.List[string]
@@ -2219,22 +2219,30 @@ try {
         }
         return ($parts -join ' | ')
       }
-      $hSingle = Get-HintText (Get-PanelHints 5 0 'hello' 0 $false @())
+      $hSingle = Get-HintText (Get-PanelHints 5 0 $true 0 $false @())
       Check 'unit' 'a text row offers paste, copy, edit, delete' ((($hSingle -match 'Enter') -and ($hSingle -match 'Paste')) -and (($hSingle -match 'F2') -and ($hSingle -match 'Edit')) -and (($hSingle -match 'Del') -and ($hSingle -match 'Delete')) -and ($hSingle -match 'Close')) $hSingle
-      $picPay = New-ImagePayload $png 2 2 'PNG'
-      $hPic = Get-HintText (Get-PanelHints 5 0 $picPay 0 $false @())
-      Check 'unit' 'a picture row does not offer edit' ((-not ($hPic -match 'Edit')) -and ($hPic -match 'Paste')) $hPic
-      $hMulti = Get-HintText (Get-PanelHints 5 3 'hello' 0 $false @())
+      $hPic = Get-HintText (Get-PanelHints 5 0 $false 0 $false @())
+      Check 'unit' 'a row that cannot be edited offers no F2' ((-not ($hPic -match 'Edit')) -and ($hPic -match 'Paste')) $hPic
+      $picRec = New-Record (New-ImagePayload $png 2 2 'PNG') 1 ''
+      Check 'unit' 'a picture row cannot be edited' (-not (Test-RowEditable $picRec)) (Get-RowEditBlock $picRec)
+      $listPay = [string][char]1 + 'C:\a.txt'
+      $listRec = New-Record $listPay 1 ''
+      Check 'unit' 'a file list row cannot be edited' (-not (Test-RowEditable $listRec)) (Get-RowEditBlock $listRec)
+      $fmtRec = New-Record 'hello' 1 ''
+      $fmtRec.Rich = 'H1'
+      Check 'unit' 'a formatted row cannot be edited' (-not (Test-RowEditable $fmtRec)) (Get-RowEditBlock $fmtRec)
+      Check 'unit' 'a plain text row can be edited' (Test-RowEditable (New-Record 'hello' 1 '')) ''
+      $hMulti = Get-HintText (Get-PanelHints 5 3 $true 0 $false @())
       Check 'unit' 'a batch offers copy and delete with its size' ((($hMulti -match 'Copy 3') -and ($hMulti -match 'Delete 3')) -and (-not ($hMulti -match 'Paste')) -and (-not ($hMulti -match 'Edit'))) $hMulti
-      $hQuery = Get-HintText (Get-PanelHints 5 0 'hello' 4 $false @())
+      $hQuery = Get-HintText (Get-PanelHints 5 0 $true 4 $false @())
       Check 'unit' 'a search turns the Escape hint into clear' (($hQuery -match 'Clear') -and (-not ($hQuery -match 'Close'))) $hQuery
-      $hEmpty = Get-HintText (Get-PanelHints 0 0 '' 0 $false @())
+      $hEmpty = Get-HintText (Get-PanelHints 0 0 $false 0 $false @())
       Check 'unit' 'an empty list only offers close' (($hEmpty -match 'Close') -and (-not ($hEmpty -match 'Paste'))) $hEmpty
-      $hCtrl = Get-HintText (Get-PanelHints 5 3 'hello' 0 $true @() $false $true)
+      $hCtrl = Get-HintText (Get-PanelHints 5 3 $true 0 $true @() $false $true)
       Check 'unit' 'the Ctrl footer counts a batch too' (($hCtrl -match 'Copy 3') -and ($hCtrl -match 'Undo')) $hCtrl
-      $hNoUndo = Get-HintText (Get-PanelHints 5 0 'hello' 0 $true @() $false $false)
+      $hNoUndo = Get-HintText (Get-PanelHints 5 0 $true 0 $true @() $false $false)
       Check 'unit' 'the Ctrl footer drops undo while it is off' (-not ($hNoUndo -match 'Undo')) $hNoUndo
-      $hEdit = Get-HintText (Get-PanelHints 5 0 'hello' 0 $false @() $true $true)
+      $hEdit = Get-HintText (Get-PanelHints 5 0 $true 0 $false @() $true $true)
       Check 'unit' 'an edit in progress lists only the editor keys' ((($hEdit -match 'Save') -and ($hEdit -match 'Newline')) -and (-not ($hEdit -match 'Paste'))) $hEdit
 
       # The self-painted list freezes its first rows. 10 visible rows of 10px, 3 frozen, so

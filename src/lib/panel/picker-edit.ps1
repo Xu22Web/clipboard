@@ -7,6 +7,10 @@
 #
 # Enter saves, Shift+Enter adds a line, Esc walks away. The save is one store write and the
 # row keeps its time and its marks - see Update-RecordText in lib/store.ps1.
+#
+# Only a plain text row can be edited. A picture and a file list have no text the box could
+# show, and a formatted entry has text the box cannot give back, so all three stay closed:
+# no F2 in the footer, no Edit in the context menu, and a refused F2 says why.
 
 # filled in by Show-Picker: @{ Form; List; Box; Ui; Font; Refresh; Note }
 $script:EditorCtx = $null
@@ -29,6 +33,21 @@ function Set-PickerEditHost($form, $lst, $txt, $ui, $font, $refresh, $note, $foc
   $script:EditorCtx = @{ Form = $form; List = $lst; Box = $txt; Ui = $ui; Font = $font; Refresh = $refresh; Note = $note; Focus = $focus }
   $form.Add_KeyDown({ param($s, $e) Invoke-PickerEditKey $e })
 }
+
+# Why a row cannot be edited: '' means it can. The three refusals are the content the box
+# cannot represent, so both the footer and the context menu ask here.
+function Get-RowEditBlock($rec) {
+  if ($null -eq $rec) { return 'Nothing selected' }
+  $payload = [string]$rec.Payload
+  if (Test-FilePayload $payload) { return 'A file list cannot be edited' }
+  if ((Get-Command Test-ImagePayload -ErrorAction SilentlyContinue) -and (Test-ImagePayload $payload)) {
+    return 'A picture cannot be edited'
+  }
+  if (-not [string]::IsNullOrEmpty([string]$rec.Rich)) { return 'A formatted entry cannot be edited' }
+  return ''
+}
+
+function Test-RowEditable($rec) { return ([string]::IsNullOrEmpty((Get-RowEditBlock $rec))) }
 
 # F2 from the panel. It runs as a second KeyDown handler, after the panel's own: a key the
 # panel does not use reaches this one untouched.
@@ -130,12 +149,9 @@ function Begin-RowEdit {
   if ($idx -lt 0 -or $idx -ge @($script:Filtered).Count) { & $ctx.Note 'Nothing selected'; return }
   $rec = $script:Filtered[$idx]
   if ($null -eq $rec) { return }
+  $block = Get-RowEditBlock $rec
+  if ($block) { & $ctx.Note $block; return }
   $payload = [string]$rec.Payload
-  # a picture is not text: editing it would silently turn the row into something else
-  if ((Get-Command Test-ImagePayload -ErrorAction SilentlyContinue) -and (Test-ImagePayload $payload)) {
-    & $ctx.Note 'A picture has no text to edit'
-    return
-  }
   # The card is the editor window: it covers the whole panel, so the search field and the
   # footer step aside while an entry is being edited and the text gets the full area.
   $cw = [int]$ctx.Form.ClientSize.Width
@@ -227,11 +243,7 @@ function Begin-RowEdit {
   $hint.ForeColor = $ctx.Ui.Dim
   $hint.BackColor = $ctx.Ui.Surface
   $hint.SetBounds($pad, ($ch - (Px 46)), ($cw - (2 * $pad) - (Px 200)), (Px 18))
-  if ([string]::IsNullOrEmpty([string]$rec.Rich)) {
-    $hint.Text = 'Enter saves   Shift+Enter newline   Esc cancels'
-  } else {
-    $hint.Text = 'Plain text only: saving drops the formatting   Enter saves   Esc cancels'
-  }
+  $hint.Text = 'Enter saves   Shift+Enter newline   Esc cancels'
 
   $save = New-EditAction 'Save' $true (Px 76) (Px 26)
   $save.SetBounds(($cw - $pad - (Px 76)), ($ch - (Px 46)), (Px 76), (Px 26))
@@ -267,23 +279,17 @@ function Begin-RowEdit {
   # there while the editor is open
 }
 
-# Esc and Enter both ask once before they throw something away: cancelling typed text, or
-# saving a formatted entry as plain text. Any other keystroke disarms them again.
+# Esc asks once before it throws typed text away; Enter never asks. Any other keystroke
+# disarms the first press again.
 function Request-RowEdit([bool]$save, $box) {
   $ctx = $script:EditorCtx
   if ($null -eq $ctx -or $null -eq $script:EditRow) { return }
   $rec = $script:EditRow.Rec
-  $changed = ([string]$box.Text -cne [string]$rec.Payload)
   if (-not $save) {
+    $changed = ([string]$box.Text -cne [string]$rec.Payload)
     if ((-not $changed) -or ($script:EditArm -eq 'cancel')) { Invoke-RowEditLater $false; return }
     $script:EditArm = 'cancel'
     & $ctx.Note 'Press Esc again to discard the change' ([int]$script:Timing['FootShort'])
-    return
-  }
-  $hasRich = -not [string]::IsNullOrEmpty([string]$rec.Rich)
-  if ($changed -and $hasRich -and ($script:EditArm -ne 'save')) {
-    $script:EditArm = 'save'
-    & $ctx.Note 'Saving drops the formatting: press Enter again to save' ([int]$script:Timing['FootWarn'])
     return
   }
   Invoke-RowEditLater $true
@@ -310,8 +316,6 @@ function Complete-RowEdit([bool]$save) {
   $state = $script:EditRow
   $text = [string]$state.Box.Text
   $payload = [string]$state.Payload
-  $hadRich = -not [string]::IsNullOrEmpty([string]$state.Rec.Rich)
-  $changed = ($text -cne $payload)
   if (-not $save) {
     Close-RowEdit
     & $ctx.Note 'Edit cancelled' ([int]$script:Timing['FootShort'])
@@ -345,6 +349,5 @@ function Complete-RowEdit([bool]$save) {
     } catch { }
   }
   if ($hit -lt 0) { & $ctx.Note 'Saved, but it no longer matches the search' ([int]$script:Timing['FootInfo']) }
-  elseif ($hadRich -and $changed) { & $ctx.Note 'Saved as plain text' ([int]$script:Timing['FootInfo']) }
   else { & $ctx.Note 'Saved' ([int]$script:Timing['FootInfo']) }
 }

@@ -27,7 +27,7 @@ function Update-PanelRegion($form) {
 # has no text to edit so F2 would only promise something the editor refuses, and Esc clears the
 # search before it closes the panel. The footer truncates from the right, so the keys that
 # change something come before the one that leaves.
-function Get-PanelHints([int]$rows, [int]$selected, [string]$payload, [int]$queryLen, [bool]$ctrlHeld, $ctrlKeys, [bool]$editing, [bool]$undoOn) {
+function Get-PanelHints([int]$rows, [int]$selected, [bool]$editable, [int]$queryLen, [bool]$ctrlHeld, $ctrlKeys, [bool]$editing, [bool]$undoOn) {
   # while the editor covers the list, only the editor's own keys work
   if ($editing) {
     return @(@('Enter', 'Save'), @('Shift+Enter', 'Newline'), @('Esc', 'Cancel'))
@@ -62,11 +62,8 @@ function Get-PanelHints([int]$rows, [int]$selected, [string]$payload, [int]$quer
   } else {
     $out.Add(@('Enter', 'Paste'))
     $out.Add(@('Ctrl+Enter', $copyLabel))
-    $picture = $false
-    if ($payload -and (Get-Command Test-ImagePayload -ErrorAction SilentlyContinue)) {
-      $picture = [bool](Test-ImagePayload $payload)
-    }
-    if (-not $picture) { $out.Add(@('F2', 'Edit')) }
+    # only a plain text row has anything the editor can show and write back
+    if ($editable) { $out.Add(@('F2', 'Edit')) }
   }
   $out.Add(@('Del', $delLabel))
   if ($queryLen -gt 0) { $out.Add(@('Esc', 'Clear')) } else { $out.Add(@('Esc', 'Close')) }
