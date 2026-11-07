@@ -19,19 +19,21 @@
     PasteKeys         = @{ Type = 'string'; Ref = [ref]$script:PasteKeys; Default = '^v'; Description = 'SendKeys sent after picking' }
     ModReleaseTimeout = @{ Type = 'int'; Ref = [ref]$script:ModReleaseTimeout; Default = 1200; Minimum = 0; Maximum = 60000; Description = 'ms to wait for the modifiers to be released' }
     PasteSettle       = @{ Type = 'int'; Ref = [ref]$script:PasteSettle; Default = 80; Minimum = 0; Maximum = 10000; Description = 'ms to wait before sending PasteKeys' }
-    MaxItems          = @{ Type = 'int'; Ref = [ref]$script:MaxItems; Default = 300; Minimum = 1; Maximum = 100000; Description = 'entry cap (rows a mark protects are exempt)' }
-    MaxBytes          = @{ Type = 'int'; Ref = [ref]$script:MaxBytes; Default = 204800; Minimum = 1; Maximum = 104857600; Description = 'per entry size cap' }
-    MaxTotal          = @{ Type = 'int'; Ref = [ref]$script:MaxTotal; Default = 4194304; Minimum = 1024; Maximum = 1073741824; Description = 'total store size cap in bytes' }
-    MaxMediaTotal     = @{ Type = 'int'; Ref = [ref]$script:MaxMediaTotal; Default = 134217728; Minimum = 0; Maximum = 2147483647; Description = 'size budget for images and formatted-text files in bytes, 0 = unlimited' }
-    CaptureImages     = @{ Type = 'bool'; Ref = [ref]$script:CaptureImages; Default = 1; Description = '1 = capture pictures from the clipboard' }
-    MaxImageBytes     = @{ Type = 'int'; Ref = [ref]$script:MaxImageBytes; Default = 16777216; Minimum = 1024; Maximum = 104857600; Description = 'per image cap in bytes; larger pictures are not captured' }
-    CaptureRich       = @{ Type = 'bool'; Ref = [ref]$script:CaptureRich; Default = 1; Description = '1 = remember the html / rtf of formatted text' }
-    MaxRichBytes      = @{ Type = 'int'; Ref = [ref]$script:MaxRichBytes; Default = 20971520; Minimum = 1024; Maximum = 67108864; Description = 'cap per block (html and rtf counted apart); a block over it is dropped on its own' }
-    MaxRichImages     = @{ Type = 'int'; Ref = [ref]$script:MaxRichImages; Default = 4194304; Minimum = 0; Maximum = 10485760; Description = 'inline a temp-file picture in the html when it is at most this large, 0 = never' }
+    MaxItems           = @{ Type = 'int'; Ref = [ref]$script:MaxItems; Default = 300; Minimum = 1; Maximum = 100000; Description = 'entry cap (rows a mark protects are exempt)' }
+    MaxTextBytes       = @{ Type = 'int'; Ref = [ref]$script:MaxTextBytes; Default = 204800; Minimum = 1; Maximum = 104857600; Description = 'per text entry cap in bytes; a larger payload is not saved' }
+    MaxTextTotalBytes  = @{ Type = 'int'; Ref = [ref]$script:MaxTextTotalBytes; Default = 4194304; Minimum = 1024; Maximum = 1073741824; Description = 'total size of the text entries in bytes' }
+    MaxMediaTotalBytes = @{ Type = 'int'; Ref = [ref]$script:MaxMediaTotalBytes; Default = 134217728; Minimum = 0; Maximum = 2147483647; Description = 'budget for the image and formatted-text files in bytes, 0 = unlimited' }
+    CaptureImages      = @{ Type = 'bool'; Ref = [ref]$script:CaptureImages; Default = 1; Description = '1 = capture pictures from the clipboard' }
+    MaxImageBytes      = @{ Type = 'int'; Ref = [ref]$script:MaxImageBytes; Default = 16777216; Minimum = 1024; Maximum = 104857600; Description = 'per image cap in bytes; larger pictures are not captured' }
+    CaptureRich        = @{ Type = 'bool'; Ref = [ref]$script:CaptureRich; Default = 1; Description = '1 = remember the html / rtf of formatted text' }
+    MaxHtmlBytes       = @{ Type = 'int'; Ref = [ref]$script:MaxHtmlBytes; Default = 20971520; Minimum = 1024; Maximum = 67108864; Description = 'cap for the html block in bytes; over it the html is dropped on its own' }
+    MaxRtfBytes        = @{ Type = 'int'; Ref = [ref]$script:MaxRtfBytes; Default = 20971520; Minimum = 1024; Maximum = 67108864; Description = 'cap for the rtf block in bytes; over it the rtf is dropped and the entry pastes as text' }
+    RtfImagesUpToBytes = @{ Type = 'int'; Ref = [ref]$script:RtfImagesUpToBytes; Default = 8388608; Minimum = 0; Maximum = 67108864; Description = 'an rtf above this size is laid out on the card with a marker where each picture was; the entry and the paste keep the pictures, 0 = never' }
+    InlineImageUpToBytes = @{ Type = 'int'; Ref = [ref]$script:InlineImageUpToBytes; Default = 4194304; Minimum = 0; Maximum = 10485760; Description = 'inline a temp-file picture the html points at when it is at most this large, 0 = never' }
     PasteRich         = @{ Type = 'bool'; Ref = [ref]$script:PasteRich; Default = 1; Description = '1 = paste the formatting back, 0 = always paste plain text' }
     PasteFilesAsText  = @{ Type = 'bool'; Ref = [ref]$script:PasteFilesAsText; Default = 1; Description = '1 = a file list also goes on the clipboard as text (paths), 0 = file list only' }
     AppRules          = @{ Type = 'apprule'; Ref = [ref]$script:AppRules; Default = ''; Description = 'per program paste behaviour: name:plain|rich|no-paste, separated by ; (a name is a process, * is the rest)' }
-    BlobThreshold     = @{ Type = 'int'; Ref = [ref]$script:BlobChars; Default = 32768; Minimum = 0; Maximum = 1048576; Description = 'payloads above this many chars live in data\blobs, 0 = never' }
+    BlobChars          = @{ Type = 'int'; Ref = [ref]$script:BlobChars; Default = 32768; Minimum = 0; Maximum = 1048576; Description = 'payloads above this many chars live in data\blobs, 0 = never' }
     Interval          = @{ Type = 'int'; Ref = [ref]$script:Interval; Default = 300; Minimum = 50; Maximum = 60000; Description = 'clipboard poll interval in ms' }
     NoPaste           = @{ Type = 'bool'; Ref = [ref]$script:NoPaste; Default = 0; Description = '1 = clipboard only, never inject a paste' }
     Balloon           = @{ Type = 'bool'; Ref = [ref]$script:ShowBalloon; Default = 1; Description = '1 = tray balloon on startup' }
@@ -47,7 +49,7 @@
     ShowTypeIcon      = @{ Type = 'bool'; Ref = [ref]$script:ShowTypeIcon; Default = 1; Description = '1 = show the row icon a plugin provides (none without one)' }
     ShowThumbnails    = @{ Type = 'bool'; Ref = [ref]$script:ShowThumbnails; Default = 1; Description = '1 = show a small picture in the icon slot of a picture or formatted-text row' }
     Highlight         = @{ Type = 'bool'; Ref = [ref]$script:HighlightOn; Default = 1; Description = '1 = highlight search matches' }
-    HighlightMaxBytes = @{ Type = 'int'; Ref = [ref]$script:HighlightMax; Default = 8192; Minimum = 0; Maximum = 1048576; Description = 'skip highlight above this size (0 = always)' }
+    HighlightMaxBytes  = @{ Type = 'int'; Ref = [ref]$script:HighlightMaxBytes; Default = 8192; Minimum = 0; Maximum = 1048576; Description = 'skip highlight above this many bytes (0 = always)' }
     ShowNewlineMarker = @{ Type = 'bool'; Ref = [ref]$script:ShowNewlineMarker; Default = 1; Description = '1 = show <NL> for line breaks, 0 = collapse to a space' }
     PreviewHover      = @{ Type = 'bool'; Ref = [ref]$script:PreviewHover; Default = 1; Description = '1 = hover preview card, 0 = no card at all' }
     PreviewDelay      = @{ Type = 'int'; Ref = [ref]$script:PreviewDelay; Default = 350; Minimum = 0; Maximum = 5000; Description = 'ms the cursor rests on a row before the card appears' }

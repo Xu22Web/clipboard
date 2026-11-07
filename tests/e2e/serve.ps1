@@ -67,6 +67,18 @@ try {
         }
         Check 'e2e' 'capture pipeline' ($seen -and ((Clip $e2eDir @('list', '-Count', '5')) -match [regex]::Escape($marker))) $marker
 
+        # copy -> delete -> copy the same text again: it has to come back. The loop compares
+        # clipboard sequence numbers, not payloads, so a text it saw before is not skipped.
+        [void](Clip $e2eDir @('del', '1'))
+        $gone = -not ((Clip $e2eDir @('list', '-Count', '5')) -match [regex]::Escape($marker))
+        [void](Set-Clip $marker)
+        $returned = $false
+        for ($i = 0; $i -lt 50 -and -not $returned; $i++) {
+          Start-Sleep -Milliseconds 200
+          if ((Clip $e2eDir @('list', '-Count', '5')) -match [regex]::Escape($marker)) { $returned = $true }
+        }
+        Check 'e2e' 'a deleted entry comes back when it is copied again' ($gone -and $returned) ('gone=' + [string]$gone + ' back=' + [string]$returned)
+
         [void](Clip $e2eDir @('pause'))
         $marker2 = 'e2e-paused-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
         [void](Set-Clip $marker2)

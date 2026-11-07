@@ -274,9 +274,9 @@ function Test-StoreFold {
   try {
     if ([int]$script:RecLines -gt ([int]$script:MaxItems * 2)) { return $true }
     if ([int]$script:RecGone -gt 0 -and (([int]$script:RecGone * 3) -ge [int]$script:RecLines)) { return $true }
-    if ($script:MaxTotal -gt 0) {
+    if ($script:MaxTextTotalBytes -gt 0) {
       $size = Get-StoreFileSize $StoreFile
-      if ($size -gt ([long]$script:MaxTotal * 2)) { return $true }
+      if ($size -gt ([long]$script:MaxTextTotalBytes * 2)) { return $true }
     }
   } catch { }
   return $false
@@ -383,8 +383,8 @@ function Select-QueryRows($entries, [string[]]$tokens) {
   return (Invoke-Query $entries (New-Query -Tokens @($tokens)))
 }
 
-# enforce MaxItems / MaxTotal / MaxMediaTotal in place; rows carrying a protected mark are
-# never dropped. Media sizes travel inside the payload and the reference, so this never
+# enforce MaxItems / MaxTextTotalBytes / MaxMediaTotalBytes in place; rows carrying a
+# protected mark are never dropped. Media sizes travel inside the payload and the reference, so this never
 # touches the disk. TrimDropped tells a caller whether the write that follows has orphaned
 # files worth reclaiming.
 function Trim-Records($list) {
@@ -406,15 +406,15 @@ function Trim-Records($list) {
     $prot = Test-AnyMark $r $protected
     if ($cut) { if ($prot) { $keep.Add($r) }; continue }
     $total += (Get-RecordBytes $r)
-    if ($total -gt $MaxTotal -and -not $prot) { $cut = $true; continue }
+    if ($total -gt $script:MaxTextTotalBytes -and -not $prot) { $cut = $true; continue }
     # images and sidecars have their own budget: a screenshot must not evict every text row.
     # Only a row that can carry media is measured - a plain text row would answer 0 anyway,
     # and the call is a parse of the payload reference.
     $mb = [long]0
-    if ($script:MaxMediaTotal -gt 0 -and ((Test-ImagePayload ([string]$r.Payload)) -or [string]$r.Rich)) {
+    if ($script:MaxMediaTotalBytes -gt 0 -and ((Test-ImagePayload ([string]$r.Payload)) -or [string]$r.Rich)) {
       if (Get-Command Get-RecordMediaBytes -ErrorAction SilentlyContinue) { $mb = [long](Get-RecordMediaBytes $r) }
     }
-    if ($mb -gt 0 -and ($media + $mb) -gt $script:MaxMediaTotal -and -not $prot) { continue }
+    if ($mb -gt 0 -and ($media + $mb) -gt $script:MaxMediaTotalBytes -and -not $prot) { continue }
     $media += $mb
     $keep.Add($r)
   }
@@ -430,7 +430,7 @@ function Add-Item([string]$text, $capture = $null) {
   }
   $size = [long]0
   try { $size = [long]$Utf8.GetByteCount($text) } catch { $size = 0 }
-  if ($size -gt $MaxBytes) { Write-Log ('skip oversize ' + $text.Length); return }
+  if ($size -gt $script:MaxTextBytes) { Write-Log ('skip oversize ' + $text.Length); return }
   # RS / US are the record delimiters: a payload carrying them would corrupt the store
   if (($text.IndexOf([char]30) -ge 0) -or ($text.IndexOf([char]31) -ge 0)) {
     $text = $text.Replace([char]30, ' ').Replace([char]31, ' ')

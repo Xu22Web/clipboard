@@ -90,7 +90,9 @@ function Write-ImageMedia([string]$payload, [byte[]]$png) {
 
 function Read-ImageBytes([string]$sha1) {
   if (-not $sha1) { return $null }
-  try { return [IO.File]::ReadAllBytes((Get-MediaPath $sha1 'png')) } catch { return $null }
+  # the comma keeps the array: `return $bytes` unrolls it into a pipeline of numbers, and
+  # every caller then pays for a 13-million element conversion on the way back
+  try { return ,([IO.File]::ReadAllBytes((Get-MediaPath $sha1 'png'))) } catch { return $null }
 }
 
 # ---- formatted text ---------------------------------------------------------
@@ -107,27 +109,33 @@ $script:RichTags = [ordered]@{ H = 'html'; T = 'rtf'; P = 'png'; D = 'dib'; E = 
 
 function ConvertTo-RtfBytes($rtf) {
   if ($null -eq $rtf) { return (New-Object byte[] 0) }
-  if ($rtf -is [byte[]]) { return $rtf }
+  # `return $bytes` is not enough: the pipeline unrolls an array, so every block that went
+  # through a function comes back as Object[]. Stringifying that writes the document as
+  # "123 92 114 ..." - the array is cast back, never joined.
+  if ($rtf -is [byte[]]) { return ,$rtf }
+  if ($rtf -is [Array]) {
+    try { return ,([byte[]]$rtf) } catch { return (New-Object byte[] 0) }
+  }
   $s = [string]$rtf
   if (-not $s) { return (New-Object byte[] 0) }
-  return [Text.Encoding]::Default.GetBytes($s)
+  return ,([Text.Encoding]::Default.GetBytes($s))
 }
 
 # the bytes one block gets from a capture: html and rtf sit under their own keys, the picture
 # blocks in a list, so a caller builds a capture without knowing the reference grammar
 function Get-RichBlockData($rich, [string]$tag) {
   $empty = New-Object byte[] 0
-  if ($null -eq $rich) { return $empty }
+  if ($null -eq $rich) { return ,$empty }
   if ($tag -ceq 'H') {
-    if ($null -ne $rich.Html) { return $rich.Html }
-    return $empty
+    if ($null -ne $rich.Html) { return ,$rich.Html }
+    return ,$empty
   }
-  if ($tag -ceq 'T') { return (ConvertTo-RtfBytes $rich.Rtf) }
+  if ($tag -ceq 'T') { return ,(ConvertTo-RtfBytes $rich.Rtf) }
   foreach ($b in @($rich.Blocks)) {
     if ($null -eq $b -or [string]$b.Tag -cne $tag) { continue }
-    if ($null -ne $b.Data) { return $b.Data }
+    if ($null -ne $b.Data) { return ,$b.Data }
   }
-  return $empty
+  return ,$empty
 }
 
 function New-RichRef($rich) {
@@ -189,19 +197,19 @@ function Read-RichBlock([string]$ref, [string]$tag) {
   if ($null -eq $r) { return $null }
   foreach ($b in $r.Blocks) {
     if ($b.Tag -cne $tag) { continue }
-    try { return [IO.File]::ReadAllBytes((Get-MediaPath $b.Sha1 $b.Ext)) } catch { return $null }
+    try { return ,([IO.File]::ReadAllBytes((Get-MediaPath $b.Sha1 $b.Ext))) } catch { return $null }
   }
   return $null
 }
 
-function Read-RichHtml([string]$ref) { return (Read-RichBlock $ref 'H') }
+function Read-RichHtml([string]$ref) { return ,(Read-RichBlock $ref 'H') }
 
 # the bytes are what the clipboard gets back; the string form is only for the preview card,
 # which hands the RTF to a RichTextBox
 function Read-RichRtfBytes([string]$ref) {
   $bytes = Read-RichBlock $ref 'T'
-  if ($null -eq $bytes) { return (New-Object byte[] 0) }
-  return $bytes
+  if ($null -eq $bytes) { return ,(New-Object byte[] 0) }
+  return ,$bytes
 }
 
 function Read-RichRtf([string]$ref) {

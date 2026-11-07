@@ -54,9 +54,9 @@ function Set-Text([string]$t) {
 }
 
 # the panel and `pick` register their own write so the daemon does not capture it again; the
-# row also moves to the top, exactly like the real file does
+# row also moves to the top, exactly like the real file does. Only the sequence number is
+# remembered - a payload copied again must still be captured
 function Set-LastCapture([string]$payload) {
-  $script:LastText = [string]$payload
   try { $script:LastSeq = [long]0 } catch { }
   if (Get-Command Touch-Record -ErrorAction SilentlyContinue) { [void](Touch-Record ([string]$payload)) }
 }

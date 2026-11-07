@@ -282,7 +282,8 @@ function Get-ImagePreviewBitmap([string]$sha1, [int]$maxW, [int]$maxH) {
 # \dibitmap for the layout only; the entry and the clipboard bytes are untouched.
 #
 # A bitmap is much bigger than the png it came from, so both sides are capped: a card must not
-# be able to stall the panel on a page full of screenshots.
+# be able to stall the panel on a page full of screenshots. A document past
+# RtfImagesUpToBytes keeps its layout but loses its pictures to a marker here.
 $script:CardRtfMaxPng = 4194304
 $script:CardRtfMaxDib = 25165824
 
@@ -350,15 +351,53 @@ function ConvertTo-CardRtf([string]$rtf) {
 # RTF is the only rich format Windows can lay out without a browser engine, so the card
 # renders it with an off-screen RichTextBox and keeps the bitmap. A document keeps its own
 # colours, so the paper stays light whatever the panel theme is.
-function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $paper) {
+# the size of the rtf a reference names, 0 when it carries none. The number sits in the
+# reference itself, so this costs a parse and no disk read.
+function Get-RichRtfSize([string]$ref) {
+  $r = Get-RichRef $ref
+  if ($null -eq $r) { return [long]0 }
+  foreach ($b in @($r.Blocks)) { if ([string]$b.Tag -ceq 'T') { return [long]$b.Bytes } }
+  return [long]0
+}
+
+# Three sizes, three cards: a document that fits is laid out with its pictures, a bigger
+# one is laid out with a marker where each picture was, and a document whose rtf was not
+# kept at all has nothing to lay out (the card shows its words).
+function Get-RichPreviewMode([long]$size) {
+  if ($size -le 0) { return 'none' }
+  if ($script:MaxRtfBytes -gt 0 -and $size -gt $script:MaxRtfBytes) { return 'text' }
+  if ($script:RtfImagesUpToBytes -gt 0 -and $size -gt $script:RtfImagesUpToBytes) { return 'plain' }
+  return 'full'
+}
+
+# every {\pict ...} group becomes a marker. The walk is in C# (Cb.Rtf): Word nests the hex
+# behind {\*\picprop ...} chains, which no regex can follow, and the same walk written in
+# PowerShell costs about two seconds per megabyte (22 s on a 13 MB document).
+function ConvertTo-PlaceholderRtf([string]$rtf, [string]$mark) {
+  if ([string]::IsNullOrEmpty($rtf) -or $rtf.Length -lt 16) { return $rtf }
+  if ($rtf.IndexOf('\pict', [StringComparison]::OrdinalIgnoreCase) -lt 0) { return $rtf }
+  try {
+    Load-Forms
+    Add-Native
+    return [Cb.Rtf]::StripPictures($rtf, $mark)
+  } catch { return $rtf }
+}
+
+function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $paper, [string]$mode = 'full') {
   if (-not $ref -or $maxW -lt 16 -or $maxH -lt 16) { return $null }
-  $key = 'r:' + $ref + ':' + [string]$maxW + 'x' + [string]$maxH
+  if ($mode -ceq 'none' -or $mode -ceq 'text') { return $null }
+  $key = 'r:' + $mode + ':' + $ref + ':' + [string]$maxW + 'x' + [string]$maxH
   $hit = Get-MediaCache $key
   if ($null -ne $hit) { return $hit }
   $rtf = Read-RichRtf $ref
   if (-not $rtf) { return $null }
-  # the layout engine cannot draw a png picture: re-spell it as a bitmap first
-  $rtf = ConvertTo-CardRtf $rtf
+  if ($mode -ceq 'plain') {
+    # the words and the layout, with a marker where each picture was
+    $rtf = ConvertTo-PlaceholderRtf $rtf '{\fs16 [image]}'
+  } else {
+    # the layout engine cannot draw a png picture: re-spell it as a bitmap first
+    $rtf = ConvertTo-CardRtf $rtf
+  }
   Load-Forms
   Add-Native
   if ($null -eq $paper) { $paper = [Drawing.Color]::White }

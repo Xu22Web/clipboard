@@ -1,8 +1,8 @@
 # lib/serve.ps1 - the resident process: capture loop, hotkey, tray icon, and the supervisor
 # that restarts the loop after a crash.
 
-# The suppression state (LastText / LastSeq) lives here because the capture loop compares
-# against it. Writing to it is lib/clip.ps1's job - see Set-LastCapture there.
+# The suppression state (LastSeq) lives here because the capture loop compares against it.
+# Writing to it is lib/clip.ps1's job - see Set-LastCapture there.
 
 function Start-Serve {
   $created = $false
@@ -113,7 +113,6 @@ function Invoke-ServeOnce {
   $hw.add_Hot({ try { Show-Picker } catch { Write-Log ('hotkey handler: ' + $_.Exception.Message) } })
 
   $script:LastSeq = [Cb.Win]::GetClipboardSequenceNumber()
-  $script:LastText = Get-ClipItem
   # resolved once: asking for the command on every poll costs more than the work it guards
   $hasTicks = $null -ne (Get-Command Invoke-PluginTicks -ErrorAction SilentlyContinue)
   $timer = New-Object Windows.Forms.Timer
@@ -142,10 +141,11 @@ function Invoke-ServeOnce {
       $t = [string]$cap.Text
       if ($null -ne $cap.Image) { $t = New-ImagePayload $cap.Image.Png $cap.Image.W $cap.Image.H $cap.Image.Fmt }
       if ([string]::IsNullOrEmpty($t)) { return }
-      if ($t -cne $script:LastText) {
-        $script:LastText = $t
-        Add-Item $t $cap
-      }
+      # Only "did the clipboard change?" is asked here (the sequence number). A payload is
+      # not compared: the same text copied again has to be captured again, or an entry that
+      # was deleted could never come back. What is already in the history is Add-Item's
+      # business - it moves a known payload to the top by itself.
+      Add-Item $t $cap
       $script:LastSeq = [Cb.Win]::GetClipboardSequenceNumber()
     })
   $timer.Start()

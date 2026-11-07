@@ -868,15 +868,15 @@ function Show-Picker {
     # one StringFormat set per process, shared with the drawing helpers in lib/panel/picker-draw.ps1
     $sfSet = New-PickerStringFormats
     $bgBrush = New-Object Drawing.SolidBrush $ui.Surface
-    # One brush per colour now lives in lib/panel/picker-draw.ps1: it outlives the panel, so
-    # reopening does not have to build the palette again.
+    # One brush per colour lives in lib/panel/picker-draw.ps1, so reopening builds nothing.
     $sfEll = $sfSet.Ellipsis
     $sfNone = $sfSet.None
     $sfRight = $sfSet.Right
     $sfCenter = $sfSet.Center
     $sfSeg = $sfSet.Seg
-    # the hover card (lib/panel/preview.ps1): geometry and brushes once per panel, never per hover
-    $pvCfg = New-PreviewConfig $ui $sfNone $fBody $fSmall
+    # the hover card (lib/panel/preview.ps1): geometry and brushes once per panel, never per
+    # hover; it ellipsizes like the rows, because a Win11 flyout never cuts text mid-glyph
+    $pvCfg = New-PreviewConfig $ui $sfEll $fBody $fSmall
 
     # draw one label in pieces so the matched tokens can be tinted; the tail is trimmed
     # with an ellipsis once the available width is exhausted (lib/panel/picker-draw.ps1)
@@ -1015,8 +1015,8 @@ function Show-Picker {
         $tb = Get-Brush $ink
         $hb = Get-Brush $ui.Accent
         $hi = $script:HighlightOn -and $script:Tokens.Count -gt 0 -and ($label.Length -le 400)
-        if ($hi -and $script:HighlightMax -gt 0) {
-          if ([int]$row.Bytes -gt $script:HighlightMax) { $hi = $false }
+        if ($hi -and $script:HighlightMaxBytes -gt 0) {
+          if ([int]$row.Bytes -gt $script:HighlightMaxBytes) { $hi = $false }
         }
         if ($hi) { Draw-Highlight $g $label $tr $script:Tokens $tb $hb }
         else { $g.DrawString($label, $fBody, $tb, $tr, $sfEll) }
@@ -1341,8 +1341,9 @@ function Show-Picker {
         $fg = [Cb.Win]::GetForegroundWindow()
         if ($fg -ne $form.Handle -and $fg -ne $prev) { $form.Close(); break }
       }
-      # a card waits for the cursor to rest, so sweeping the list never builds one
+      # a card waits for the cursor to rest; a page built off-thread lands on the next tick
       if ($script:PreviewHover -and $script:Hover -ge 0 -and $script:PvIdx -ne $script:Hover -and -not $cm.Visible -and ((Get-Date) - $script:PvAt).TotalMilliseconds -gt $script:PreviewDelay) { Show-HoverPreview }
+      [void](Step-PreviewCard $pv)
       # Idle ticks cost real CPU: 8 ms while something moves or the menu is open, else 20 ms.
       $busy = ($am -ne 0 -or $cm.Visible -or $script:PickerClose)
       Start-Sleep -Milliseconds $(if ($busy) { 8 } else { 20 })

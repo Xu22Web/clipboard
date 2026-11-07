@@ -28,11 +28,11 @@ function Set-Text([string]$t) {
 }
 
 # A write made from inside this process (the panel pasting an entry, or `pick` under a running
-# daemon) must not come back as a brand new capture: remember what went on the clipboard and
-# the sequence number that came with it. The capture loop in lib/serve.ps1 owns the state and
-# compares against it; registering a write belongs here, with the writes themselves.
+# daemon) must not come back as a brand new capture: remember the sequence number that came
+# with it. The capture loop in lib/serve.ps1 owns the state and compares against it; the
+# payload itself is deliberately not remembered - a text that is copied again has to be
+# captured again, even when this process put it on the clipboard a moment before.
 function Set-LastCapture([string]$payload) {
-  $script:LastText = [string]$payload
   try { $script:LastSeq = [Cb.Win]::GetClipboardSequenceNumber() } catch { }
   # A paste is also "this one again": the row moves to the top of the history so the next
   # panel shows it first. Touch-Record keeps its marks, its rich sidecar and its blob.
@@ -83,7 +83,8 @@ function Get-ClipCapture {
 # read raw and stored byte for byte - a .NET string decodes with the ANSI code page (UTF-8 html
 # becomes mojibake and the offsets stop pointing at the tags), which is what made Word and
 # Excel paste garbage. The html gets its temp-file pictures inlined first (see
-# Get-CfHtmlInlined). Each part has its own cap, so an oversized rtf no longer costs the html.
+# Get-CfHtmlInlined). Each part has its own cap, so an oversized rtf no longer costs the html;
+# an rtf over MaxRtfBytes is dropped and the entry pastes as text.
 function Get-RichCapture {
   $html = $null
   $rtf = $null
@@ -123,18 +124,21 @@ function Get-RichCapture {
       }
     } catch { }
   }
+  # The part has its own cap, so a large rtf cannot cost the html. Over MaxRtfBytes the rtf is
+  # not kept at all and the entry pastes as text; nothing is stripped here - the card decides
+  # what it is willing to lay out (see ConvertTo-CardRtf).
+  if ($null -ne $rtf -and $rtf.Length -eq 0) { $rtf = $null }
+  if ($null -ne $rtf -and $rtf.Length -gt $script:MaxRtfBytes) {
+    Write-Log ('formatted text rtf skipped: ' + [string]$rtf.Length + ' bytes')
+    $rtf = $null
+  }
   if ($null -ne $html -and $html.Length -gt 0) {
-    $html = Get-CfHtmlInlined $html $script:MaxRichImages $script:MaxRichBytes
-    if ($html.Length -gt $script:MaxRichBytes) {
+    $html = Get-CfHtmlInlined $html $script:InlineImageUpToBytes $script:MaxHtmlBytes
+    if ($html.Length -gt $script:MaxHtmlBytes) {
       Write-Log ('formatted text html skipped: ' + [string]$html.Length + ' bytes')
       $html = $null
     }
   } else { $html = $null }
-  if ($null -ne $rtf -and $rtf.Length -eq 0) { $rtf = $null }
-  if ($null -ne $rtf -and $rtf.Length -gt $script:MaxRichBytes) {
-    Write-Log ('formatted text rtf skipped: ' + [string]$rtf.Length + ' bytes')
-    $rtf = $null
-  }
   $blocks = New-Object System.Collections.Generic.List[object]
   foreach ($one in @(@{ Tag = 'P'; Data = $png }, @{ Tag = 'D'; Data = $dib }, @{ Tag = 'E'; Data = $emf })) {
     if ($null -eq $one.Data -or $one.Data.Length -lt 8) { continue }

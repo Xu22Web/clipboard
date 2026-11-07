@@ -100,7 +100,7 @@ $script:ShowTypeIcon = $true
 # a picture or formatted-text row shows a small copy of its first picture in the icon slot
 $script:ShowThumbnails = $true
 $script:HighlightOn = $true
-$script:HighlightMax = 8192
+$script:HighlightMaxBytes = 8192
 $script:ShowNewlineMarker = $true
 $script:UndoOn = $true
 $script:DpiAware = $true
@@ -125,20 +125,28 @@ $script:PasteKeys = '^v'
 $script:HotkeyFallbacks = ''
 $script:ModReleaseTimeout = 1200
 $script:PasteSettle = 80
+# Size settings are named <Max|Inline> + <object> + <unit>: Text is the plain payload, Image
+# one picture, Html / Rtf one block of a formatted copy, Media the files those own. The unit is
+# in the name because two of these are counted in characters and the rest in bytes.
 $script:MaxItems = 300
-$script:MaxBytes = 204800
-$script:MaxTotal = 4194304
+$script:MaxTextBytes = 204800
+$script:MaxTextTotalBytes = 4194304
 # media (image files, html/rtf sidecars) has its own budget: a 4 MB text total would evict
 # every screenshot, so the two are counted apart and trimmed apart
-$script:MaxMediaTotal = 134217728
+$script:MaxMediaTotalBytes = 134217728
 $script:CaptureImages = $true
 $script:MaxImageBytes = 16777216
 $script:CaptureRich = $true
-# per block cap: the html and the rtf are measured apart, so a large rtf cannot cost the html.
+# the html and the rtf are measured apart, so a large rtf cannot cost the html.
 # 20 MB of rtf carries about 10 MB of picture (the hex spelling doubles every byte)
-$script:MaxRichBytes = 20971520
+$script:MaxHtmlBytes = 20971520
+$script:MaxRtfBytes = 20971520
 # a picture the html points at is inlined only when it is at most this large, 0 = never
-$script:MaxRichImages = 4194304
+$script:InlineImageUpToBytes = 4194304
+# an rtf above this size keeps its words and layout but loses every picture (each one becomes
+# an [image not saved] marker), so a big document still pastes without a long stall. 0 = never
+# drop them; above MaxRtfBytes the rtf is not kept at all.
+$script:RtfImagesUpToBytes = 8388608
 $script:PasteRich = $true
 # a file list also goes on the clipboard as text, so an address bar or a terminal gets the paths
 $script:PasteFilesAsText = $true

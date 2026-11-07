@@ -570,12 +570,12 @@ try {
     Check 'unit' 'store trims to MaxItems' ($items.Count -eq 2) ($items -join '|')
     $MaxItems = $savedMax
 
-    $savedBytes = $MaxBytes
-    $MaxBytes = 3
+    $savedBytes = $script:MaxTextBytes
+    $script:MaxTextBytes = 3
     $before = @(Get-Records).Count
     Add-Item 'toolong'
     Check 'unit' 'store skips oversize entry' (@(Get-Records).Count -eq $before) ''
-    $MaxBytes = $savedBytes
+    $script:MaxTextBytes = $savedBytes
 
     $before = @(Get-Records).Count
     $script:ExcludePattern = '^SECRET'
@@ -717,7 +717,7 @@ try {
     Save-Records @($back[1])
     $leftBlobs = @(Get-ChildItem -LiteralPath (Get-BlobDir) -Filter '*.txt' -ErrorAction SilentlyContinue)
     Check 'unit' 'a dropped record takes its blob with it' ($leftBlobs.Count -eq 0) ([string]$leftBlobs.Count + ' left')
-    # BlobThreshold is a setting: 0 means every payload stays inline
+    # BlobChars is a setting: a lower value pushes more payloads into data\blobs
     $savedBlob = $script:BlobChars
     $script:BlobChars = 100
     $inlineList = New-Object System.Collections.Generic.List[object]
@@ -725,12 +725,12 @@ try {
     Save-Records $inlineList.ToArray()
     $inlineRaw = [IO.File]::ReadAllText($StoreFile, $Utf8)
     $inlineBlobs = @(Get-ChildItem -LiteralPath (Get-BlobDir) -Filter '*.txt' -ErrorAction SilentlyContinue)
-    Check 'unit' 'BlobThreshold decides what leaves the file' ((-not $inlineRaw.Contains('zzzz')) -and $inlineBlobs.Count -eq 1) ([string]$inlineBlobs.Count + ' blob(s)')
+    Check 'unit' 'BlobChars decides what leaves the file' ((-not $inlineRaw.Contains('zzzz')) -and $inlineBlobs.Count -eq 1) ([string]$inlineBlobs.Count + ' blob(s)')
     $script:BlobChars = $savedBlob
     # the four new settings are real schema entries with the shipped defaults
     $sch = $script:IniSchema
-    Check 'unit' 'preview and blob settings carry defaults' (($sch['PreviewHover'].Default -eq 1) -and ($sch['PreviewDelay'].Default -eq 350) -and ($sch['PreviewChars'].Default -eq 6000) -and ($sch['BlobThreshold'].Default -eq 32768)) ''
-    Check 'unit' 'media settings carry defaults' (($sch['CaptureImages'].Default -eq 1) -and ($sch['MaxImageBytes'].Default -eq 16777216) -and ($sch['CaptureRich'].Default -eq 1) -and ($sch['MaxRichBytes'].Default -eq 20971520) -and ($sch['MaxRichImages'].Default -eq 4194304) -and ($sch['PasteRich'].Default -eq 1) -and ($sch['MaxMediaTotal'].Default -eq 134217728)) ''
+    Check 'unit' 'preview and blob settings carry defaults' (($sch['PreviewHover'].Default -eq 1) -and ($sch['PreviewDelay'].Default -eq 350) -and ($sch['PreviewChars'].Default -eq 6000) -and ($sch['BlobChars'].Default -eq 32768)) ''
+    Check 'unit' 'media settings carry defaults' (($sch['CaptureImages'].Default -eq 1) -and ($sch['MaxImageBytes'].Default -eq 16777216) -and ($sch['CaptureRich'].Default -eq 1) -and ($sch['MaxHtmlBytes'].Default -eq 20971520) -and ($sch['MaxRtfBytes'].Default -eq 20971520) -and ($sch['RtfImagesUpToBytes'].Default -eq 8388608) -and ($sch['InlineImageUpToBytes'].Default -eq 4194304) -and ($sch['PasteRich'].Default -eq 1) -and ($sch['MaxMediaTotalBytes'].Default -eq 134217728)) ''
 
     # ------------------------------------------------------- export and import
     # the shapes first: a document this build writes has to be one it reads
@@ -948,7 +948,24 @@ try {
     Check 'unit' 'a picture over the cap is left alone' (([BitConverter]::ToString($kept)) -eq ([BitConverter]::ToString($Utf8.GetBytes($inHtml)))) ''
     $noInline = Get-CfHtmlInlined ($Utf8.GetBytes($inHtml)) 0 0
     Check 'unit' 'inlining can be switched off' (([BitConverter]::ToString($noInline)) -eq ([BitConverter]::ToString($Utf8.GetBytes($inHtml)))) ''
+    # Word writes an <img> fallback and a VML <v:imagedata src="file:...">. The inliner
+    # rewrites every src that names a file, not just the <img> ones, so the VML path survives
+    # the temp folder being deleted as well - a shape is what Word draws from.
+    $vmlHtml = New-CfHtmlFixture ('<p>vml</p><v:shape><v:imagedata src="' + $picUrl + '"/></v:shape>')
+    $vmlInlined = $Utf8.GetString((Get-CfHtmlInlined ($Utf8.GetBytes($vmlHtml)) 2097152 0))
+    Check 'unit' 'a vml picture is inlined too' (($vmlInlined -notmatch 'file:') -and ($vmlInlined -match 'v:imagedata src="data:image/png;base64,')) ''
     Remove-Item -LiteralPath $tmpPic -Force
+
+    # the bytes of a formatted block have to stay bytes end to end: an Object[] from the
+    # pipeline used to be stringified into "123 92 114 ..." and written as that text
+    $rtfPic = '{\rtf1\ansi{\fonttbl{\f0 Arial;}}\f0 hello {\pict\pngblip\picw2\pich2 89504e47}world}'
+    $rtfBytes = $Utf8.GetBytes($rtfPic)
+    $cutRich = @{ Html = $null; Rtf = $rtfBytes; Blocks = @() }
+    $cutRef = New-RichRef $cutRich
+    [void](Write-RichMedia $cutRef $cutRich)
+    $cutSha = (@((Get-RichRef $cutRef).Blocks))[0].Sha1
+    $cutBack = [IO.File]::ReadAllBytes((Get-MediaPath $cutSha 'rtf'))
+    Check 'unit' 'an rtf block is written as bytes' (([BitConverter]::ToString($cutBack)) -eq ([BitConverter]::ToString($rtfBytes))) ''
 
     # store round trip: the extra field carries the reference, the bytes stay out of the file
     $blockRec = New-Record 'with a picture' $now ''
@@ -1157,6 +1174,67 @@ try {
     }
     Check 'unit' 'the card draws the picture of a formatted entry' ($redPixels -gt 100) ([string]$redPixels + ' coloured pixels')
     Clear-MediaCache
+    # three sizes, three cards: laid out with its pictures, laid out with a marker where each
+    # picture was, or the words alone when the rtf was not kept at all
+    Check 'unit' 'the preview mode follows the rtf size' (((Get-RichPreviewMode 0) -eq 'none') -and ((Get-RichPreviewMode 1000) -eq 'full') -and ((Get-RichPreviewMode 9000000) -eq 'plain') -and ((Get-RichPreviewMode 30000000) -eq 'text')) ''
+    # a formatted entry is never shown as a picture: only one without any rtf (an Excel copy)
+    # has nothing else to show
+    Check 'unit' 'a formatted entry never stands in as a picture' ((Test-RichPictureStandIn 'none') -and (-not (Test-RichPictureStandIn 'full')) -and (-not (Test-RichPictureStandIn 'plain')) -and (-not (Test-RichPictureStandIn 'text'))) ''
+    $plainRtf = ConvertTo-PlaceholderRtf $cardRtf '{\fs16 [image]}'
+    Check 'unit' 'a plain card keeps the words and marks the pictures' (($plainRtf -notmatch '\\pict') -and ($plainRtf -match 'before') -and ($plainRtf -match '\[image\]')) ([string]$plainRtf.Length + ' chars')
+    Check 'unit' 'an rtf without pictures needs no placeholder pass' ((ConvertTo-PlaceholderRtf '{\rtf1\ansi words}' 'x') -ceq '{\rtf1\ansi words}') ''
+    # Word nests the hex behind a picprop chain; a regex cannot follow that, the brace walk can
+    $deepPic = '{\rtf1\ansi a {\*\shppict{\pict{\*\picprop{\sp{\sn shapeType}{\sv 75}}}89504e47}} b}'
+    $deepPlain = ConvertTo-PlaceholderRtf $deepPic 'M'
+    Check 'unit' 'a deeply nested picture is stripped too' (($deepPlain -notmatch '\\pict') -and ($deepPlain -match 'shppict') -and ($deepPlain -match ' b')) $deepPlain
+    $plainShot = Get-RichPreviewBitmap $cardRef 380 200 $cardFont ([Drawing.Color]::White) 'plain'
+    Check 'unit' 'a plain card is still laid out' ($null -ne $plainShot) ([string]$cardRtf.Length + ' chars')
+    Clear-MediaCache
+    Check 'unit' 'the rtf size comes from the reference' (((Get-RichRtfSize $cardRef) -eq $Utf8.GetBytes($cardRtf).Length) -and ((Get-RichRtfSize 'H:' + ('a' * 40) + ':10') -eq 0)) ([string](Get-RichRtfSize $cardRef))
+    # a rendered card is kept on disk, so the next hover (or the next session) is a file read
+    $cachePath = Get-PreviewCachePath $cardRef 380 200
+    # the card cache is derived data: it keeps a week, a file count and a byte budget, and the
+    # oldest go first when either budget is passed
+    $cacheDir = Get-PreviewCacheDir
+    $savedMaxFiles = $script:PreviewCacheMaxFiles
+    $savedMaxBytes = $script:PreviewCacheMaxBytes
+    $script:PreviewCacheMaxFiles = 2
+    $script:PreviewCacheMaxBytes = 1048576
+    foreach ($n in 1..4) {
+      $tp = Join-Path $cacheDir ('t' + $n + '.png')
+      [IO.File]::WriteAllBytes($tp, $png)
+      (Get-Item -LiteralPath $tp).LastWriteTimeUtc = [DateTime]::UtcNow.AddMinutes(-$n)
+    }
+    Clear-OldPreviewCache
+    Check 'unit' 'the card cache keeps only the newest few' (@(Get-ChildItem -LiteralPath $cacheDir -Filter 't*.png' -ErrorAction SilentlyContinue).Count -eq 2) ([string]@(Get-ChildItem -LiteralPath $cacheDir -Filter 't*.png' -ErrorAction SilentlyContinue).Count)
+    $stalePath = Join-Path $cacheDir 'tstale.png'
+    [IO.File]::WriteAllBytes($stalePath, $png)
+    (Get-Item -LiteralPath $stalePath).LastWriteTimeUtc = [DateTime]::UtcNow.AddDays(-9)
+    Clear-OldPreviewCache
+    Check 'unit' 'a week-old card is dropped' (-not (Test-Path -LiteralPath $stalePath)) ''
+    foreach ($tf in @(Get-ChildItem -LiteralPath $cacheDir -Filter 't*.png' -ErrorAction SilentlyContinue)) { Remove-Item -LiteralPath $tf.FullName -Force }
+    $script:PreviewCacheMaxFiles = $savedMaxFiles
+    $script:PreviewCacheMaxBytes = $savedMaxBytes
+    $probeCard = New-Object Drawing.Bitmap 40, 20
+    $probeCard.Save($cachePath, [Drawing.Imaging.ImageFormat]::Png)
+    $probeCard.Dispose()
+    $backCard = Read-PreviewCache $cachePath
+    Check 'unit' 'a cached card reads back' (($null -ne $backCard) -and ($backCard.Width -eq 40) -and ($backCard.Height -eq 20)) ''
+    if ($null -ne $backCard) { $backCard.Dispose() }
+    Remove-Item -LiteralPath $cachePath -Force
+    Check 'unit' 'a card with no job and no fade has nothing to step' (-not (Step-PreviewCard (New-PreviewState))) ''
+    # a flyout fades in: the alpha ramps up over PreviewFade and stays whole afterwards
+    $fadeState = New-PreviewState
+    $fadeState.FadeAt = Get-Date
+    $fadeMid = Get-PreviewAlpha $fadeState
+    $fadeState.FadeAt = (Get-Date).AddSeconds(-2)
+    $fadeEnd = Get-PreviewAlpha $fadeState
+    $fadeState.FadeAt = $null
+    Check 'unit' 'the card fades in and stays whole' (($fadeMid -lt 255) -and ($fadeMid -ge 0) -and ($fadeEnd -eq 255) -and ((Get-PreviewAlpha $fadeState) -eq 255)) ([string]$fadeMid)
+    $fg = New-Object Drawing.Font 'Segoe UI', 9
+    $fadeCfg = New-PreviewConfig @{ Surface = [Drawing.Color]::FromArgb(32, 32, 32); Border = [Drawing.Color]::FromArgb(22, 255, 255, 255); Text = [Drawing.Color]::White; Dim = [Drawing.Color]::FromArgb(170, 170, 170) } (New-PickerStringFormats).Ellipsis $fg $fg
+    # a Win11 flyout never cuts text mid-glyph: the card has to ellipsize like the rows do
+    Check 'unit' 'the card ellipsizes instead of clipping' ($fadeCfg.Sf.Trimming -eq [Drawing.StringTrimming]::EllipsisCharacter) ''
 
     # a big picture: the card scales it down once and keeps a small copy beside it
     $bigBmp = New-Object Drawing.Bitmap 1600, 900
@@ -1194,22 +1272,23 @@ try {
     $rSha = (Get-RichRef $rref).Sha1
     Check 'unit' 'dropping formatted text removes both sidecars' ((-not (Test-Path -LiteralPath (Get-MediaPath $rSha 'html'))) -and (-not (Test-Path -LiteralPath (Get-MediaPath $rSha 'rtf')))) ''
 
-    # the media budget is counted apart from MaxTotal: pictures go first, text rows never do
-    $savedMediaTotal = $script:MaxMediaTotal
+    # the media budget is counted apart from MaxTextTotalBytes: pictures go first, text rows
+    # never do
+    $savedMediaTotal = $script:MaxMediaTotalBytes
     [void](Write-ImageMedia $p1 $png)
-    $script:MaxMediaTotal = [long]10
+    $script:MaxMediaTotalBytes = [long]10
     $budget = New-Object System.Collections.Generic.List[object]
     $budget.Add($imgRec)
     $budget.Add((New-Record 'a' $now ''))
     Trim-Records $budget
     Check 'unit' 'the media budget drops a picture over the cap' (($budget.Count -eq 1) -and ([string]$budget[0].Payload -eq 'a')) ([string]$budget.Count)
-    $script:MaxMediaTotal = [long]($png.Length + 10)
+    $script:MaxMediaTotalBytes = [long]($png.Length + 10)
     $budget2 = New-Object System.Collections.Generic.List[object]
     $budget2.Add($imgRec)
     $budget2.Add((New-Record 'a' $now ''))
     Trim-Records $budget2
     Check 'unit' 'the media budget keeps a picture under the cap' ($budget2.Count -eq 2) ([string]$budget2.Count)
-    $script:MaxMediaTotal = $savedMediaTotal
+    $script:MaxMediaTotalBytes = $savedMediaTotal
 
     # a file whose header is not the current layout is not parsed, not overwritten and not
     # backed up by the reader: `migrate` is the only thing that may touch it

@@ -169,6 +169,41 @@ namespace Cb {
       return trimmed;
     }
   }
+  // Every {\pict ...} group of an RTF becomes a marker, whatever it nests - Word writes the
+  // hex behind {\*\picprop{\sp{\sn shapeType}...}} chains, which no regex can follow without
+  // risking a backtracking stall on a 13 MB document. A brace counter is linear and exact.
+  public static class Rtf {
+    public static string StripPictures(string text, string mark) {
+      if (string.IsNullOrEmpty(text)) { return text; }
+      int n = text.Length;
+      System.Text.StringBuilder sb = new System.Text.StringBuilder(n);
+      int i = 0;
+      int hits = 0;
+      while (i < n) {
+        char c = text[i];
+        if (c == '{' && i + 6 <= n && string.CompareOrdinal(text, i, "{\\pict", 0, 6) == 0) {
+          int depth = 0;
+          int j = i;
+          while (j < n) {
+            char d = text[j];
+            if (d == '\\') { j += 2; continue; }
+            if (d == '{') { depth++; }
+            else if (d == '}') { depth--; if (depth == 0) { break; } }
+            j++;
+          }
+          if (j < n) {
+            sb.Append(mark);
+            hits++;
+            i = j + 1;
+            continue;
+          }
+        }
+        sb.Append(c);
+        i++;
+      }
+      return hits == 0 ? text : sb.ToString();
+    }
+  }
   // RTF into a bitmap: a RichTextBox lays a document out into a device context through
   // EM_FORMATRANGE, which works while the control is not on screen at all. DrawToBitmap on
   // an unparented control renders nothing, so the preview card (lib/media.ps1) uses this.

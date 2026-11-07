@@ -61,7 +61,7 @@ function Get-CfHtmlInlined([byte[]]$html, [int]$maxImageBytes, [int]$maxTotalByt
   if ($inlined -eq 0) { return $html }
   $bytes = $strict.GetBytes($text.Substring(0, $headAt) + $body)
   if ($maxTotalBytes -gt 0 -and $bytes.Length -gt $maxTotalBytes) {
-    Write-Log ('html inlining skipped: ' + [string]$bytes.Length + ' bytes over MaxRichBytes')
+    Write-Log ('html inlining skipped: ' + [string]$bytes.Length + ' bytes over MaxHtmlBytes')
     return $html
   }
   return (Set-CfHtmlOffsets $bytes)
@@ -170,11 +170,12 @@ function Get-CfHtmlImgSrc([string]$tag) {
   return [string]$m.Groups[3].Value
 }
 
-# What a picture that is not there any more leaves behind. A picture over MaxRichImages is not
-# inlined, and an html block stored with file: paths points at the temp folder the source app
-# owned - both are gone by paste time, and the target would draw an empty frame, which reads as
-# a broken paste. A dashed frame of the picture's footprint says what happened instead, so the
-# sentence around it still makes sense and the reader knows something was cut.
+# What a picture that is not there any more leaves behind. A picture over
+# InlineImageUpToBytes is not inlined, and an html block stored with file: paths points at the
+# temp folder the source app owned - both are gone by paste time, and the target would draw an
+# empty frame, which reads as a broken paste. A dashed frame of the picture's footprint says
+# what happened instead, so the sentence around it still makes sense and the reader knows
+# something was cut.
 function Get-CfHtmlPlaceholder([string]$tag) {
   $w = 0
   $h = 0
