@@ -168,6 +168,13 @@ if (Test-Path -LiteralPath $schemaPluginDir) {
   }
 }
 
+# The pages under docs\ plugin and theme describe a plugin or a theme, so they follow the
+# same choice: a package ships the pages of what it can run and nothing else.
+$pageKeep = @{ plugin = @{}; theme = @{} }
+foreach ($pair in @(@('plugin', $pluginFiles), @('theme', $themeFiles))) {
+  foreach ($f in @($pair[1])) { $pageKeep[$pair[0]][[IO.Path]::GetFileNameWithoutExtension([string]$f)] = $true }
+}
+
 # ---------------------------------------------------------------- stage
 $stageRoot = Join-Path $env:TEMP ('clipboard-build-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 $stage = Join-Path $stageRoot $name
@@ -306,7 +313,18 @@ try {
       if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $stage -Force }
     }
     $docs = Join-Path $root 'docs'
-    if (Test-Path -LiteralPath $docs) { Copy-Item -LiteralPath $docs -Destination $stage -Recurse -Force }
+    if (Test-Path -LiteralPath $docs) {
+      Copy-Item -LiteralPath $docs -Destination $stage -Recurse -Force
+      foreach ($sec in @(@{ Dir = 'plugin'; Keep = $pageKeep['plugin'] }, @{ Dir = 'theme'; Keep = $pageKeep['theme'] })) {
+        $dir = Join-Path (Join-Path $stage 'docs') $sec.Dir
+        if (-not (Test-Path -LiteralPath $dir)) { continue }
+        foreach ($page in @(Get-ChildItem -LiteralPath $dir -Filter '*.md' -File)) {
+          if ($sec.Keep.ContainsKey([IO.Path]::GetFileNameWithoutExtension($page.Name))) { continue }
+          Remove-Item -LiteralPath $page.FullName -Force
+        }
+        if (@(Get-ChildItem -LiteralPath $dir -Force).Count -eq 0) { Remove-Item -LiteralPath $dir -Recurse -Force }
+      }
+    }
   }
 
   # a package never carries the user's history, settings or build leftovers

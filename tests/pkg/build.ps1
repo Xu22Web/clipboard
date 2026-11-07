@@ -125,6 +125,23 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
     [IO.File]::WriteAllLines($buildCfg, @(('OutDir=' + $pkgOut2), 'Verify=0', 'Plugins=nosuchplugin'), $Utf8)
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
     Check 'int' 'unknown plugin name stops the build' (($bout -join ' ') -match 'nosuchplugin') (($bout | Select-Object -Last 1) -as [string])
+
+    # a page documents one plugin or one theme: with Plugins= / Themes= set, docs\ carries
+    # only the pages of what the package can run
+    $pkgOut3 = Join-Path $tmpRoot 'pkg3'
+    [IO.File]::WriteAllLines($buildCfg, @(('OutDir=' + $pkgOut3), 'Verify=0', 'IncludeDocs=1', 'Cbx=0', 'Plugins=transform', 'Themes=win11-light'), $Utf8)
+    $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
+    $pkgDir3 = Join-Path $pkgOut3 ('clipboard-' + $programVersion)
+    if (Test-Path -LiteralPath $pkgDir3) {
+      Check 'int' 'a shipped plugin keeps its page under docs' (Test-Path -LiteralPath (Join-Path $pkgDir3 'docs\plugin\transform.md')) ''
+      Check 'int' 'an unshipped plugin leaves its page out' (-not (Test-Path -LiteralPath (Join-Path $pkgDir3 'docs\plugin\item-marks.md'))) ''
+      Check 'int' 'a shipped theme keeps its page under docs' (Test-Path -LiteralPath (Join-Path $pkgDir3 'docs\theme\win11-light.md')) ''
+      Check 'int' 'an unshipped theme leaves its page out' (-not (Test-Path -LiteralPath (Join-Path $pkgDir3 'docs\theme\win11-dark.md'))) ''
+      Check 'int' 'the pictures stay with a trimmed package' (Test-Path -LiteralPath (Join-Path $pkgDir3 'docs\screenshot-dark.png')) ''
+    } else {
+      Check 'int' 'a shipped plugin keeps its page under docs' $false (($bout | Select-Object -Last 1) -as [string])
+    }
+    Remove-Item -LiteralPath $pkgOut3 -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $pkgOut -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $pkgOut2 -Recurse -Force -ErrorAction SilentlyContinue
 

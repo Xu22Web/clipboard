@@ -20,7 +20,7 @@ Windows 10 / 11 的剪贴板历史工具，纯 PowerShell 5.1 实现，无第三
 - 后台轮询剪贴板并去重，捕获文本、文件列表、图片与带格式文本（含图文混排）；条目过大或不适合保存的内容按配置跳过（[图片与带格式文本](#图片与带格式文本)）
 - 容量可控：条数、单条大小、文本总量、媒体预算各自独立，超出时由旧到新丢弃，受保护标记的行不被裁剪（[配置](#配置)）
 - 面板为 Win11 Fluent 风格自绘界面：虚拟列表只画可见行，置顶行在顶部冻结，长文本按行宽省略，搜索命中高亮，悬停 0.35 秒弹出预览卡片（文本 / 图片 / 排版），深浅两套主题
-- 键盘与鼠标完备：方向键 / `Home` `End` / `PgUp` `PgDn` / 滚轮、`Ctrl+1..0` 数字快选、`Del` 删除、`Ctrl+Z` 撤销、`F2` 就地改文本；右键菜单作用于光标所在行（`Paste` / `Copy only` / `Edit` / `Delete` / `Clear history`），插件可注册条目
+- 键盘与鼠标完备：方向键 / `Home` `End` / `PgUp` `PgDn` / 滚轮、`Ctrl+1..0` 数字快选、`Del` 删除、`Ctrl+Z` 撤销、`F2` 就地改纯文本条目；右键菜单作用于光标所在行（`Paste` / `Copy only` / `Edit` / `Delete` / `Clear history`，`Edit` 只对纯文本条目出现），插件可注册条目
 - 常驻进程带托盘菜单（显示 / 暂停 / 恢复 / 清空 / 退出），崩溃后自动重启；可选开机自启与桌面快捷方式（[开机自启与桌面快捷方式](#开机自启与桌面快捷方式)）
 - 置顶 / 收藏 / 高亮 / 类型分析 / 按类型打开 / 粘贴改写 / 过期清理由插件提供，默认全部启用（[插件](#插件)）
 - 所有设置都在 `clipboard.ini`：`config init` 写出带注释的模板，`config set` 逐键校验后写入（[配置](#配置)）
@@ -120,7 +120,7 @@ cli cbx          # 把 lib\cbx.cs 编成 src\cbx.exe（可选的编译版客户�
 | `Ctrl+Enter` | 只写入剪贴板，不自动粘贴 |
 | `Ctrl+1..9` / `Ctrl+0` | 选取**当前可见**的第 1~9 / 10 行；每行行尾有 `Ctrl+1` … `Ctrl+0` 键帽提示（按住 `Ctrl` 时高亮），与小键盘位置一致（第 10 行是 `0`），滚动后从 `1` 重新编号 |
 | `Del` / `Ctrl+Z` | 删除选中项 / 撤销上一次删除 |
-| `F2` | 就地改写选中条目的文本：面板整体切为编辑窗口（描边圆角，覆盖搜索框与底栏，宽高与面板相同），左上为 `Editing entry`，右上为光标行 / 总行数 / 字符数与 `modified` 标记，左下为按键提示，右下为 `Cancel` / `Save`。`Enter` 保存、`Shift+Enter` 换行、`Esc` 取消；改动过文本时再按一次 `Esc` 才放弃，带格式文本再按一次 `Enter` 才保存为纯文本。保存被拒时编辑窗口与输入内容保留，原因写在窗口内的错误行。编辑期间面板快捷键（`Del` / `Ctrl+A` / `Ctrl+1..0` / `Ctrl+Z`）不生效，按键只作用于文本框。保存成功后光标回到该行；时间与标记不变，格式随旧文本一起丢掉。右键菜单的 `Edit` 同效 |
+像我车一点远星看的,我帮你看着大家出去穿入就穿着作用了。<zh-CN>这个还是要经济一对的一次啊,这两个图你吃啊。<zh-CN>那么吗?<zh-CN>我把这边补了钱不懂, 可以算了,借卧龙官方期间的抖音一号感谢沃龙啊,起发港就可以厕所吗?<zh-CN>还是要弄好吗?<zh-CN>我知道不但是厕所弄他, 他要下来的这个门是开的吧, 有盒,我把大家可以尝试一下啊,你去几年都加车光给香,没有分子,吃不了大的,说你们没有这样的话,我不相对啊,那我想拿到位的话就为了保留的火拉吃爆发的,左边下了这边,我了住口一个在外面, 他们这往右了呢,它是我说太清楚的,毛居多进来虽然开毛刺倒,这不是很难开,你在画着不止上先就行,这个人家这个世界指标等不少,很多不少。<zh-CN>字符数与 `modified` 标记，左下为按键提示，右下为 `Cancel` / `Save`。`Enter` 保存、`Shift+Enter` 换行、`Esc` 取消；改动过文本时再按一次 `Esc` 才放弃。保存被拒时编辑窗口与输入内容保留，原因写在窗口内的错误行。编辑期间面板快捷键（`Del` / `Ctrl+A` / `Ctrl+1..0` / `Ctrl+Z`）不生效，按键只作用于文本框。保存成功后光标回到该行，时间与标记不变。只适用于纯文本条目：图片、文件列表与带格式条目底栏不列 `F2`、右键菜单不出现 `Edit`，直接按 `F2` 时底栏说明原因。右键菜单的 `Edit` 同效 |
 | `Ctrl+点击` / `Shift+点击` / `Ctrl+A` | 多选：`Ctrl` 逐个加或减，`Shift` 取一段，`Ctrl+A` 全选当前结果 |
 | `Del`（多选时） | 一次删除所有选中项；带受保护标记的行会保留，并说明是哪个标记挡住的 |
 | `Ctrl+Enter`（多选时） | 按列表顺序用换行拼接后复制（图片与文件条目没有文本，会统计在提示里） |
@@ -166,7 +166,7 @@ cli cbx          # 把 lib\cbx.cs 编成 src\cbx.exe（可选的编译版客户�
 
 插件可通过 `PanelKeys` 注册面板按键：`item-marks` 提供 `Ctrl+P` / `Ctrl+S` / `Ctrl+H`，`entry-actions` 提供 `Ctrl+O`，均列在 `clipboard help` 的 Panel keys 并根据来源插件标注。
 
-底部提示为描边按键胶囊，**按当前能做什么列出**，不是一张固定表：选中一行文本时是 `Enter` Paste · `Ctrl+Enter` Copy · `F2` Edit · `Del` Delete · `Esc` Close；选中图片时没有 `F2`（图片没有文本可改）；多选时换成 `Ctrl+Enter` Copy N · `Del` Delete N（批量不粘贴、也不编辑单行）；搜索框有词时最后一项变成 `Esc` Clear；按住 `Ctrl` 时变为 `1-9,0` Pick · `Enter` Copy · `Z` Undo（`Undo=0` 时不列；多选时显示 Copy N；启用 `item-marks` 时另有 `P` Pin / `S` Star / `H` Highlight，启用 `entry-actions` 时另有 `O` Open）；列表为空时只显示 `Esc` Close；**编辑中只剩 `Enter` Save · `Shift+Enter` Newline · `Esc` Cancel**。删除、置顶、清空后短暂显示结果，被拒绝的操作（如置顶已达上限）在同处说明原因；保存失败时提示以 `[!]` 开头并停留更久。
+底部提示为描边按键胶囊，**按当前能做什么列出**，不是一张固定表：选中一行纯文本时是 `Enter` Paste · `Ctrl+Enter` Copy · `F2` Edit · `Del` Delete · `Esc` Close；选中图片、文件列表或带格式条目时没有 `F2`（编辑器只能改纯文本）；多选时换成 `Ctrl+Enter` Copy N · `Del` Delete N（批量不粘贴、也不编辑单行）；搜索框有词时最后一项变成 `Esc` Clear；按住 `Ctrl` 时变为 `1-9,0` Pick · `Enter` Copy · `Z` Undo（`Undo=0` 时不列；多选时显示 Copy N；启用 `item-marks` 时另有 `P` Pin / `S` Star / `H` Highlight，启用 `entry-actions` 时另有 `O` Open）；列表为空时只显示 `Esc` Close；**编辑中只剩 `Enter` Save · `Shift+Enter` Newline · `Esc` Cancel**。删除、置顶、清空后短暂显示结果，被拒绝的操作（如置顶已达上限）在同处说明原因；保存失败时提示以 `[!]` 开头并停留更久。
 
 ## 配置
 
@@ -664,7 +664,7 @@ src/                    程序本体（打包只读这个目录）
   lib/panel/picker.ps1      历史面板：窗体、过滤、列表、按键、右键菜单、粘贴
   lib/panel/picker-geom.ps1 面板纯计算：行数、数字快选、窗口位置、命中高亮
   lib/panel/picker-draw.ps1 可复用绘制：按键胶囊、搜索命中着色（只要 Graphics + 参数）
-  lib/panel/picker-edit.ps1 就地编辑：F2 或右键 Edit 把列表区换成编辑卡片（标题、行号/字符数状态、错误行、Save/Cancel），回车保存 / Esc 取消
+  lib/panel/picker-edit.ps1 就地编辑：F2 或右键 Edit 把面板换成编辑卡片（标题、行号/字符数状态、错误行、Save/Cancel），回车保存 / Esc 取消；只对纯文本条目开放
   lib/panel/pinlist.ps1     自绘列表控件 Cb.PinList：只画可见行，置顶行不随滚动
   lib/panel/preview.ps1     悬停预览卡片：复用窗口，渲染文本 / 图片 / 富文本
   lib/panel/anim.ps1        过渡动画的数值层（缓动 / 插值，不碰窗口）
@@ -889,7 +889,7 @@ cli build -Config other.ini     # 换一份配置
 | `Minify` | `1` | `1` = 按语法树压缩脚本（删注释 / 缩进 / 空行） |
 | `Rename` | `1` | `1` = 同时重命名内部函数（全项目一套映射）与局部变量（每文件一套）；`0` = 只压缩不改名 |
 | `Verify` | `1` | `1` = 打包后拿产物再跑一遍 CLI 测试，不通过就删掉产物并失败 |
-| `IncludeDocs` | `1` | `1` = 把 `README.md`、`LICENSE`、`docs\` 也放进产物 |
+| `IncludeDocs` | `1` | `1` = 把 `README.md`、`LICENSE`、`docs\` 也放进产物（`docs\plugin` / `docs\theme` 只带本次打包的插件与主题的说明页） |
 | `Overwrite` | `0` | `1` = 覆盖同版本已存在的目录 |
 | `Plugins` | 空 | 只打这些插件（逗号分隔，名字 = `src\plugins\` 下的文件名去 `.ps1`）；空 = 全部 |
 | `Themes` | 空 | 只打这些主题（同上）；空 = 全部 |
@@ -938,10 +938,10 @@ Themes=win11-dark
 |---|---|
 | `clipboard.ps1`、`clipboard.cmd`、`clipboard`（Git Bash 壳） | `src\data\`（历史与日志） |
 | `cbx.exe`（`Cbx=1` 时编译产出的可选客户端） | `src\cbx.exe`（开发副本的编释物，不入库） |
-| `lib\`（33 个必需模块，另含可选加载层 `themes.ps1` / `proxy.ps1` 与插件三件套）、`utils\`（13 个纯工具）、`schema\`（2 个文件 schema + 所选插件的 `schema\plugins\*.ps1`）、所选 `plugins\`（含 `.md`）、所选 `themes\`（ini 与 `.md`） | `src\clipboard.ini`（用户设置） |
+| `lib\`（33 个必需模块，另含可选加载层 `themes.ps1` / `proxy.ps1` 与插件三件套）、`utils\`（13 个纯工具）、`schema\`（2 个文件 schema + 所选插件的 `schema\plugins\*.ps1`）、所选 `plugins\`（`.ps1`）、所选 `themes\`（`.ini`） | `src\clipboard.ini`（用户设置） |
 | `README.md`、`LICENSE`、`docs\`（截图与插件、主题说明页，`IncludeDocs=1` 时） | `tests\`、`scripts\`、`build.ini`、`package.ini`、`dist\`、`.git` |
 
-> `Plugins=` / `Themes=` 里写了不存在的名字会直接失败并指出是哪个；说明页不在 `plugins\` / `themes\` 下，而是随 `docs\` 一起进包（`IncludeDocs=0` 时不含文档）。
+> `Plugins=` / `Themes=` 里写了不存在的名字会直接失败并指出是哪个；说明页不在 `plugins\` / `themes\` 下，而是随 `docs\` 一起进包，且只带本次打包的插件与主题（`IncludeDocs=0` 时不含文档）。
 
 > 拿到产物后：`clipboard.cmd config init` 生成带注释的 `clipboard.ini`，`clipboard.cmd migrate` 升级旧格式历史，再 `clipboard.cmd install` 建开机自启与桌面快捷方式（`install.bat` 把这三步串在一起）。`clipboard` 这个 Git Bash 启动器在 zip 中会丢可执行位，用 `sh ./clipboard` 即可（或 `chmod +x clipboard`）。
 
