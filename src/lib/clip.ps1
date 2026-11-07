@@ -53,41 +53,26 @@ function Get-ClipCapture {
   Load-Forms
   for ($i = 0; $i -lt 10; $i++) {
     try {
-      # The text and the rich sidecar are separate reads of one clipboard, so the owner can
-      # change it between them: the text would then come from one copy and the html from the
-      # next one, and the list (payload) and the preview card (sidecar) would disagree. The
-      # sequence number is the only way to notice, and a changed number means "read again".
-      $seq = 0
-      try { $seq = [Cb.Win]::GetClipboardSequenceNumber() } catch { $seq = 0 }
-      $cap = @{ Text = ''; Rich = $null; Image = $null }
       if ([Windows.Forms.Clipboard]::ContainsFileDropList()) {
         $col = [Windows.Forms.Clipboard]::GetFileDropList()
         if ($null -ne $col -and $col.Count -gt 0) {
           $parts = New-Object System.Collections.Generic.List[string]
           foreach ($p in $col) { $parts.Add($p) }
-          $cap = @{ Text = ($FILESIG + ($parts -join "`n")); Rich = $null; Image = $null }
+          return @{ Text = ($FILESIG + ($parts -join "`n")); Rich = $null; Image = $null }
         }
-      } elseif ([Windows.Forms.Clipboard]::ContainsText()) {
+      }
+      if ([Windows.Forms.Clipboard]::ContainsText()) {
         $t = [Windows.Forms.Clipboard]::GetText([Windows.Forms.TextDataFormat]::UnicodeText)
         $rich = $null
         if ($script:CaptureRich) {
           try { $rich = Get-RichCapture } catch { $rich = $null }
         }
-        $cap = @{ Text = $t; Rich = $rich; Image = $null }
-      } elseif ($script:CaptureImages) {
-        $img = Get-ImageCapture
-        if ($null -ne $img) { $cap = @{ Text = ''; Rich = $null; Image = $img } }
+        return @{ Text = $t; Rich = $rich; Image = $null }
       }
-      if ($seq -ne 0) {
-        $after = 0
-        try { $after = [Cb.Win]::GetClipboardSequenceNumber() } catch { $after = $seq }
-        if ($after -ne $seq) {
-          Write-Log 'capture: clipboard changed while reading, reading again'
-          Start-Sleep -Milliseconds 40
-          continue
-        }
-      }
-      return $cap
+      if (-not $script:CaptureImages) { return @{ Text = ''; Rich = $null; Image = $null } }
+      $img = Get-ImageCapture
+      if ($null -ne $img) { return @{ Text = ''; Rich = $null; Image = $img } }
+      return @{ Text = ''; Rich = $null; Image = $null }
     } catch { Start-Sleep -Milliseconds 50 }
   }
   return $null

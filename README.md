@@ -745,7 +745,7 @@ src/                    程序本体（打包只读这个目录）
 
 | 关键字 | 含义 |
 |---|---|
-| `capture:` | 每次成功捕获：形状（文本字符数 / 图片尺寸 / html + rtf + 各图片块的大小）与读取耗时；`capture: clipboard changed while reading, reading again` 表示文本与富文本两次读取之间剪贴板被改写，已整条重读 |
+| `capture:` | 每次成功捕获：形状（文本字符数 / 图片尺寸 / html + rtf + 各图片块的大小）与读取耗时 |
 | `picker: open` | 面板打开耗时及分段：`records`（读历史）、`widgets`（窗体与控件）、`bind`（布局与列表填充）、`items`（条数） |
 | `picker: warm` | 常驻进程启动后在后台预建一次面板（随后丢弃），同一套分段；下一次 `open` 应明显变短 |
 | `card:` | 预览卡片后台渲染完成：模式（`full` / `plain`）、尺寸与耗时 |
