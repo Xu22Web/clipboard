@@ -73,6 +73,8 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
       Check 'int' 'uninstall script purges the data folder' (($uninstText -match 'uninstall purge') -and ($uninstText -match '\bstop\b') -and ($uninstText -match 'clipboard\.ps1')) ''
       Check 'int' 'the batch scripts stay plain ASCII' (($instHigh -eq 0) -and ($uninstHigh -eq 0)) ([string]$instHigh + '/' + [string]$uninstHigh)
       Check 'int' 'package keeps plugins and themes' ((Test-Path -LiteralPath (Join-Path $pkgDir 'plugins\item-marks.ps1')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'themes\win11-dark.ini'))) ''
+      # the pages are documentation: they travel with docs\, not with the plugin folder
+      Check 'int' 'package ships the plugin and theme pages under docs' ((Test-Path -LiteralPath (Join-Path $pkgDir 'docs\plugin\item-marks.md')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'docs\theme\win11-dark.md'))) ''
       Check 'int' 'package leaves history, tooling and metadata out' ((@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|scripts)([\\/]|$)' }).Count -eq 0) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir 'build.ini')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir 'package.ini'))) (@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|scripts)' }) -join ', ')
 
       # the point of the build: same scripts, smaller, still parsing
@@ -116,7 +118,7 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
       Check 'int' 'Plugins= ships only the listed plugin' ((Test-Path -LiteralPath (Join-Path $pkgDir2 'plugins\transform.ps1')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir2 'plugins\item-marks.ps1'))) ''
       Check 'int' 'Themes= ships only the listed theme' ((Test-Path -LiteralPath (Join-Path $pkgDir2 'themes\win11-light.ini')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir2 'themes\win11-dark.ini'))) ''
       Check 'int' 'IncludeDocs=0 drops the readme' (-not (Test-Path -LiteralPath (Join-Path $pkgDir2 'README.md'))) ''
-      Check 'int' 'plugin page travels with its plugin' (Test-Path -LiteralPath (Join-Path $pkgDir2 'plugins\transform.md')) ''
+      Check 'int' 'IncludeDocs=0 drops the docs folder' (-not (Test-Path -LiteralPath (Join-Path $pkgDir2 'docs'))) ''
     } else {
       Check 'int' 'Plugins= ships only the listed plugin' $false (($bout | Select-Object -Last 1) -as [string])
     }

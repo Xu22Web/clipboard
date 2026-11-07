@@ -20,12 +20,11 @@ Windows 10 / 11 的剪贴板历史工具，纯 PowerShell 5.1 实现，无第三
 - 后台轮询剪贴板并去重，捕获文本、文件列表、图片与带格式文本（含图文混排）；条目过大或不适合保存的内容按配置跳过（[图片与带格式文本](#图片与带格式文本)）
 - 容量可控：条数、单条大小、文本总量、媒体预算各自独立，超出时由旧到新丢弃，受保护标记的行不被裁剪（[配置](#配置)）
 - 面板为 Win11 Fluent 风格自绘界面：虚拟列表只画可见行，置顶行在顶部冻结，长文本按行宽省略，搜索命中高亮，悬停 0.35 秒弹出预览卡片（文本 / 图片 / 排版），深浅两套主题
-- 键盘与鼠标完备：方向键 / `Home` `End` / `PgUp` `PgDn` / 滚轮、`Ctrl+1..0` 数字快选、`Del` 删除、`Ctrl+Z` 撤销、`F2` 就地改文本；右键菜单作用于光标所在行，插件可注册条目
+- 键盘与鼠标完备：方向键 / `Home` `End` / `PgUp` `PgDn` / 滚轮、`Ctrl+1..0` 数字快选、`Del` 删除、`Ctrl+Z` 撤销、`F2` 就地改文本；右键菜单作用于光标所在行（`Paste` / `Copy only` / `Edit` / `Delete` / `Clear history`），插件可注册条目
 - 常驻进程带托盘菜单（显示 / 暂停 / 恢复 / 清空 / 退出），崩溃后自动重启；可选开机自启与桌面快捷方式（[开机自启与桌面快捷方式](#开机自启与桌面快捷方式)）
 - 置顶 / 收藏 / 高亮 / 类型分析 / 按类型打开 / 粘贴改写 / 过期清理由插件提供，默认全部启用（[插件](#插件)）
 - 所有设置都在 `clipboard.ini`：`config init` 写出带注释的模板，`config set` 逐键校验后写入（[配置](#配置)）
 - 历史文件带格式版本号，`clipboard migrate` 负责升级（[数据版本与迁移](#数据版本与迁移)）
-
 
 ## 环境要求
 
@@ -95,7 +94,7 @@ cli cbx          # 把 lib\cbx.cs 编成 src\cbx.exe（可选的编译版客户�
 | | `version` | 输出程序版本与数据格式版本 |
 | | `help` | 帮助（插件命令按插件名分组列在后面） |
 
-`clipboard help` 的分组与之对应：`[daemon]` `[history]` `[config]` `[theme]` `[setup]`，加上每个已加载插件的 `[plugin: <name>]`；没有设置类的命令行开关，所有取值都在 `clipboard.ini`。
+`clipboard help` 的分组与之对应：`[daemon]` `[history]` `[config]` `[theme]` `[setup]`，加上每个已加载插件的 `[plugin: <name>]`。
 
 ### 导出、导入与备份
 
@@ -121,7 +120,7 @@ cli cbx          # 把 lib\cbx.cs 编成 src\cbx.exe（可选的编译版客户�
 | `Ctrl+Enter` | 只写入剪贴板，不自动粘贴 |
 | `Ctrl+1..9` / `Ctrl+0` | 选取**当前可见**的第 1~9 / 10 行；每行行尾有 `Ctrl+1` … `Ctrl+0` 键帽提示（按住 `Ctrl` 时高亮），与小键盘位置一致（第 10 行是 `0`），滚动后从 `1` 重新编号 |
 | `Del` / `Ctrl+Z` | 删除选中项 / 撤销上一次删除 |
-| `F2` | 就地改写选中条目的文本：编辑框盖住列表，`Enter` 保存、`Shift+Enter` 换行、`Esc` 放弃；时间与标记不变，格式随旧文本一起丢掉 |
+| `F2` | 就地改写选中条目的文本：面板整体切为编辑窗口（描边圆角，覆盖搜索框与底栏，宽高与面板相同），左上为 `Editing entry`，右上为光标行 / 总行数 / 字符数与 `modified` 标记，左下为按键提示，右下为 `Cancel` / `Save`。`Enter` 保存、`Shift+Enter` 换行、`Esc` 取消；改动过文本时再按一次 `Esc` 才放弃，带格式文本再按一次 `Enter` 才保存为纯文本。保存被拒时编辑窗口与输入内容保留，原因写在窗口内的错误行。编辑期间面板快捷键（`Del` / `Ctrl+A` / `Ctrl+1..0` / `Ctrl+Z`）不生效，按键只作用于文本框。保存成功后光标回到该行；时间与标记不变，格式随旧文本一起丢掉。右键菜单的 `Edit` 同效 |
 | `Ctrl+点击` / `Shift+点击` / `Ctrl+A` | 多选：`Ctrl` 逐个加或减，`Shift` 取一段，`Ctrl+A` 全选当前结果 |
 | `Del`（多选时） | 一次删除所有选中项；带受保护标记的行会保留，并说明是哪个标记挡住的 |
 | `Ctrl+Enter`（多选时） | 按列表顺序用换行拼接后复制（图片与文件条目没有文本，会统计在提示里） |
@@ -159,11 +158,15 @@ cli cbx          # 把 lib\cbx.cs 编成 src\cbx.exe（可选的编译版客户�
 
 输入法输入需要真实的键盘焦点（Win32 无双焦点，`SetFocus` 必定激活目标窗口），因此面板不在打开时接管，而是在输入法处于中文组字模式（`IME_CMODE_NATIVE`）且收到可打印键时交接：卸载钩子、临时去掉 `WS_EX_NOACTIVATE`、用 `AttachThreadInput` 附加前台线程后调用 `SetForegroundWindow`，确认成为前台后重放该键与本批剩余按键；失败则不重放并重装钩子。纯英文 / 数字输入不触发交接，`Ctrl+Space` 等输入法切换键一律放行。取不到键盘钩子时，面板从打开起即为接管模式。
 
+编辑窗口打开时，钩子的按键投递与输入法交接都以编辑框为目标，搜索框不接受输入；关闭编辑窗口后焦点回到搜索框。
+
 粘贴前确认原窗口已回到前台（最多重试 24 次）；确认失败则不注入按键，保留面板并提示按 `Ctrl+V`。
+
+钩子只在面板打开期间存在，面板关闭即停止拦截。它只取面板自己要用的键：可打印字符（字母、数字与小键盘、空格、标点）、方向键与 `PgUp` `PgDn` `Home` `End`、`Delete`、`F2`、`Backspace` `Tab` `Enter` `Esc`，以及面板会响应的 `Ctrl` 组合（`Ctrl+A`、`Ctrl+Z`、`Ctrl+Enter`、`Ctrl+0..9` 与插件注册的键）。其余按键交给系统：所有 `Alt` / `Win` 组合、`Ctrl+Space`（输入法切换）、`Ctrl+Shift+Esc`（任务管理器）、面板不处理的 `Ctrl` 快捷键（如 `Ctrl+C` / `Ctrl+S`）、`F1` 与 `F3`–`F12`、`Insert`。
 
 插件可通过 `PanelKeys` 注册面板按键：`item-marks` 提供 `Ctrl+P` / `Ctrl+S` / `Ctrl+H`，`entry-actions` 提供 `Ctrl+O`，均列在 `clipboard help` 的 Panel keys 并根据来源插件标注。
 
-底部提示为描边按键胶囊，**按当前能做什么列出**，不是一张固定表：选中一行文本时是 `Enter` Paste · `Ctrl+Enter` Copy · `F2` Edit · `Del` Delete · `Esc` Close；选中图片时没有 `F2`（图片没有文本可改）；多选时换成 `Ctrl+Enter` Copy N · `Del` Delete N（批量不粘贴、也不编辑单行）；搜索框有词时最后一项变成 `Esc` Clear；按住 `Ctrl` 时变为 `1-9,0` Pick · `Enter` Copy · `Z` Undo（多选时显示 Copy N，启用 `item-marks` 时另有 `P` Pin / `S` Star / `H` Mark）；列表为空时只显示 `Esc` Close。删除、置顶、清空后短暂显示结果，被拒绝的操作（如置顶已达上限）在同处说明原因。
+底部提示为描边按键胶囊，**按当前能做什么列出**，不是一张固定表：选中一行文本时是 `Enter` Paste · `Ctrl+Enter` Copy · `F2` Edit · `Del` Delete · `Esc` Close；选中图片时没有 `F2`（图片没有文本可改）；多选时换成 `Ctrl+Enter` Copy N · `Del` Delete N（批量不粘贴、也不编辑单行）；搜索框有词时最后一项变成 `Esc` Clear；按住 `Ctrl` 时变为 `1-9,0` Pick · `Enter` Copy · `Z` Undo（`Undo=0` 时不列；多选时显示 Copy N；启用 `item-marks` 时另有 `P` Pin / `S` Star / `H` Highlight，启用 `entry-actions` 时另有 `O` Open）；列表为空时只显示 `Esc` Close；**编辑中只剩 `Enter` Save · `Shift+Enter` Newline · `Esc` Cancel**。删除、置顶、清空后短暂显示结果，被拒绝的操作（如置顶已达上限）在同处说明原因；保存失败时提示以 `[!]` 开头并停留更久。
 
 ## 配置
 
@@ -232,12 +235,12 @@ cli cbx          # 把 lib\cbx.cs 编成 src\cbx.exe（可选的编译版客户�
 
 ### INI 约定
 
-仓库内的 ini 使用同一套语法（`package.ini`、`build.ini`、`clipboard.ini`、`themes\*.ini`），并共用同一份实现：`utils\ini.ps1` 负责文本与数据结构，`utils\inifile.ps1` 负责读文件与缓存，`utils\schema.ps1` 负责校验——程序、`cli` 与 `cli build` 都调它们，规则不会两边跑偏。
+仓库内的 ini 使用同一套语法（`package.ini`、`build.ini`、`clipboard.ini`、`themes\*.ini`），并共用同一份实现：`utils\ini.ps1` 负责文本与数据结构，`utils\inifile.ps1` 负责读文件与缓存，`utils\schema.ps1` 负责校验——程序、`cli` 与 `cli build` 都调用它们，规则只有一份。
 
 - 一行一个 `Key=Value`；`#` 或 `;` 开头**整行**为注释，行尾没有注释（值里的 `#` 属于值本身，如 `Accent=#5AC8FA`）；值不加引号，两端空白会被去掉；同一个键写两次以最后一次为准。
 - `[section]` 把后续键归入该段：`[scripts]` 下的 `Dev=...` 与顶层的 `scripts.Dev=...` 是同一个键，`[item-marks]` 下的 `MaxPins=50` 与 `item-marks.MaxPins=50` 同理。段头必须整行只有 `[名字]`，后面不能跟注释。
 - 段名小写，键名大驼峰；两者都不区分大小写，`config set`、`cli` 接受任意写法。
-- 解析结果按文件缓存（键为路径，比较大小与写入时间），同一进程内重复读取不再扫盘解析；写入只改对应行并作废该文件的缓存，不重建整个文件。
+- 解析结果按文件缓存（键为路径，比较大小与写入时间），同一进程内重复读取直接命中缓存；写入只改对应行并作废该文件的缓存，不重建整个文件。
 
 | 文件 | 用途 | 段 |
 |---|---|---|
@@ -293,25 +296,24 @@ cli cbx          # 把 lib\cbx.cs 编成 src\cbx.exe（可选的编译版客户�
 - **粘贴时再落回文件**：Word / Excel / PowerPoint **不认 CF_HTML 里的 `data:` URI**，它们只按照 `<img>` 指向的文件取图（这也是它们自己写剪贴板的方式）。因此粘贴前会把 `data:` 图片解出来写成 `%TEMP%\clipboard-paste\<sha1>.<ext>`，HTML 里的 `src` 换回 `file:///` 并重算偏移 —— 否则文字能贴上，而每个图位都是空白框（预览卡片看着正常，因为它直接用存下的位图块画，不走 HTML）。同一张图只写一份；超过 24 小时的残留文件在下次粘贴时清掉。
 - **留不住的图给个占位**：`<img>` 指向的临时文件若届时还在，就先拷进 `%TEMP%\clipboard-paste\` 再改写（源目录被删也不影响）；**文件已经不在**（超过 `InlineImageUpToBytes` 没被内联、或整块 HTML 以 `file:` 路径存下）时，这个图位换成一个虚线框占位：宽高沿用原图 `width` / `height`（夹在 96–360 px 宽之间），灰色虚线框里写着 `[ image not saved ]`。这样粘出去的文字与版式仍然完整，接收方能看出"这里原本有张图，只是没保存"，而不是一个空洞的裂图框。远程 `http(s):` 图片原样保留，目标自己去取。
 - **图片块随行**：同一次复制里源应用额外提供的位图 / 图元文件也一起存下，粘贴时一并还原；目标程序自己会挑它偏好的那种。只有**本来就没有 RTF** 的条目（如 Excel 只给 HTML 与图元文件）才用第一张图片当缩略图；带 RTF 的文档即使排版失败也只显示文字，不会退化成一张图（`Test-RichPictureStandIn`）。
-- **卡片里的图片**：悬停卡片用离屏 `RichTextBox` 排版 RTF，而这个排版引擎**不画 `\pngblip`（PNG 图片）**——偏偏 Word / Excel 复制时的图片就是这种写法，所以卡片只能显示文字。因此排版前会把 `\pngblip` 就地改写成 `\dibitmap0`（`ConvertTo-CardRtf`，只影响显示，不动存储与剪贴板字节）；单张超过 4 MB、或一次排版累计超过 24 MB 的图片不再改写，以免卡片卡住面板，改在原位置留一个 `[image]` 小标记——图片仍然留在条目里、粘贴照旧可用，卡片只说明"这里有一张没能画出来的图"，不会只剩一段莫名其妙的空白。
 
 超过 `InlineImageUpToBytes`（默认 4 MB）的图不会被内联，日志里记一行 `html image not inlined`。这类图仍然能被预览（它存在源临时目录时就已拷进 `data\media`），但**源目录消失后只能粘出占位框**：想要图文混排长期可粘，把这个值调大（上限 10 MB），例如 `clipboard config set InlineImageUpToBytes 10485760`。
 
 RTF 只有一条存储规则：超过 `MaxRtfBytes`（默认 20 MB）时完全不保存 RTF，条目退化为纯文本粘贴（HTML 与图片块不受影响，日志 `formatted text rtf skipped`）；小于它的一律原样保存，图形粘回去与复制时一致。
 
-预览卡片按 RTF 大小分三档，三档都只影响**显示**，存储与粘贴始终是原内容：
+预览卡片按 RTF 大小分三档，三档都只影响**显示**，存储与粘贴始终是原内容。卡片用离屏 `RichTextBox` 排版，该引擎不绘制 `\pngblip`（PNG 图片，Word / Excel 复制时的写法），因此排版前把它就地改写成 `\dibitmap0`（`ConvertTo-CardRtf`，不动存储与剪贴板字节）；单张超过 4 MB 或一次排版累计超过 24 MB 的图片不再改写，以免卡住面板，改在原位置留 `[image]` 标记：
 
 | RTF 大小 | 卡片 |
 |---|---|
 | ≤ `RtfImagesUpToBytes`（8 MB） | 真实排版：`\pngblip` 就地改写成 `\dibitmap0` 后画出；单张 >4 MB 或一次累计 >24 MB 的图退化为 `[image]` 标记 |
-| ≤ `MaxRtfBytes`（20 MB） | 仍排版文字与版式，每个图位画 `[image]` 标记——只做一次 .NET 正则，不解析十六进制图片 |
+| ≤ `MaxRtfBytes`（20 MB） | 仍排版文字与版式，每个图位画一个灰斜体的 `[image]` 标记——只做一次花括号扫描，不解析十六进制图片 |
 | > `MaxRtfBytes`（20 MB） | RTF 不保存，卡片显示条目文字（`Get-RichPreviewMode` 返回 `text`） |
 
-排版不占用面板线程：第一次悬停先出文字卡片，**标题行**显示 `- rendering the preview...`（不往正文里塞一行，否则会看起来像条目内容），排版在独立 runspace 里算完后就地换成页面（实测 13 MB 文档的占位版首次约 0.5 s、6 MB 带图版约 1 s、同进程第二个作业约 0.2 s）。结果按「模式 + 引用 + 尺寸」缓存成 `%TEMP%\clipboard-preview\<sha1>.png`，再悬停或重启后约 10 ms 读回。
+排版不占用面板线程：第一次悬停先出文字卡片，**标题行**显示 `- rendering the preview...`（不往正文里塞一行，否则会与条目正文混淆），排版在独立 runspace 里算完后就地换成页面（实测 13 MB 文档的占位版首次约 0.5 s、6 MB 带图版约 1 s、同进程第二个作业约 0.2 s）。结果按「模式 + 引用 + 尺寸」缓存成 `%TEMP%\clipboard-preview\<sha1>.png`，再悬停或重启后约 10 ms 读回。
 
 缓存放在临时目录而不是 `data\`：它完全可重建 —— 文件被系统或清理工具删掉后，下一次悬停只是重新渲染一次（就是首次悬停的路径），历史与粘贴完全不受影响。同时它仍然有预算：**一周未用**的文件会被删，目录限制在 **200 个 / 32 MB**，超出时先删最旧的；每次写入后与**每次打开面板**各整理一次（不是每次悬停）。文件名里带一个渲染版本标签，卡片画法改了旧图会被忽略而不是被误用。
 
-卡片观感按 Win11 Flyout 对齐：8 px 圆角、1 px `Border` 描边、正文 14 px / 题注 12 px、行高 20 px，文字溢出用省略号而不是硬裁切；文档页自身带 4 px 圆角与 1 px 描边，不和卡片底面粘成一块白板。出现时做 140 ms 淡入——alpha 画在绘制层（bitmap + 颜色矩阵），**不动窗口 `Opacity`**，那会变成 layered window 并破坏“面板从不抢焦点”；`Animations=0` 时直接显示。半透明底板（Acrylic）与投影同样受这条限制，因此保持不透明加描边。
+卡片观感按 Win11 Flyout 对齐：8 px 圆角、1 px `Border` 描边、正文 14 px / 题注 12 px、行高 20 px，文字溢出用省略号而不是硬裁切；文档页自身带 4 px 圆角与 1 px 描边，与卡片底面区分。出现时做 140 ms 淡入——alpha 画在绘制层（bitmap + 颜色矩阵），**不动窗口 `Opacity`**，那会变成 layered window 并破坏“面板从不抢焦点”；`Animations=0` 时直接显示。半透明底板（Acrylic）与投影同样受这条限制，因此保持不透明加描边。
 
 分别关闭：`clipboard config set CaptureImages 0` / `clipboard config set CaptureRich 0`；只粘纯文本：`clipboard config set PasteRich 0`。
 
@@ -329,7 +331,7 @@ AppRules=windowsterminal.exe:plain;code.exe:rich;*:no-paste
 |---|---|
 | `plain` | 即使这条记录带格式也只粘纯文本 |
 | `rich` | 按 `PasteRich` 走（默认就带格式），写出来是为了让规则表自己说明意图 |
-| `no-paste` | 只把内容写回剪贴板，不发 `PasteKeys`，省得终端里的 `Ctrl+V` 被当成别的意思 |
+| `no-paste` | 只把内容写回剪贴板，不发 `PasteKeys`，避免终端把 `Ctrl+V` 解释为其它操作 |
 | `*` | 兜底：没被上面任何一条命中的程序用它 |
 
 - 程序名写进程名，`.exe` 可省，大小写不敏感；`;` 或 `,` 分隔，空格随意。
@@ -344,8 +346,8 @@ AppRules=windowsterminal.exe:plain;code.exe:rich;*:no-paste
 
 | 主题 | 配色 | 说明页 |
 |---|---|---|
-| `win11-dark` | Windows 11 Fluent 深色，默认主题（也是参考布局） | [win11-dark.md](src/themes/win11-dark.md) |
-| `win11-light` | Windows 11 Fluent 浅色，布局相同，底色反相 | [win11-light.md](src/themes/win11-light.md) |
+| `win11-dark` | Windows 11 Fluent 深色，默认主题（也是参考布局） | [win11-dark.md](docs/theme/win11-dark.md) |
+| `win11-light` | Windows 11 Fluent 浅色，布局相同，底色反相 | [win11-light.md](docs/theme/win11-light.md) |
 
 ```powershell
 clipboard themes                        # 列出可用主题（* = 当前生效）
@@ -419,12 +421,12 @@ BadgeBg BadgeText KeyCapBg KeyCapBorder Mark Warn
 
 | 插件 | 功能 | 启用 |
 |---|---|---|
-| [`item-marks`](src/plugins/item-marks.md) | 置顶 / 收藏 / 高亮：`pin` `unpin` `star` `unstar` `highlight` `unhighlight` `marks`，面板 `Ctrl+P` `Ctrl+S` `Ctrl+H`，右键三项；高亮修改文字与背景色，不改变左侧选择条；粘性置顶默认开启（置顶行冻结在列表顶部，受行数上限约束），达到上限后拒绝置顶并说明原因 | `Plugins=item-marks` |
-| [`entry-actions`](src/plugins/entry-actions.md) | 类型分析与打开：`kind` / `kinds` 输出类型、格式与预览，`open` 按类型打开（链接 / 路径 / 文件列表 / 图片），面板 `Ctrl+O`，右键 “Open link or path”；行图标由该插件提供 | `Plugins=entry-actions` |
-| [`transform`](src/plugins/transform.md) | 粘贴前改写文本：纯文本 / 全大写 / 小写 / 驼峰 / 蛇形 / 烤肉串 / 标题式；右键按 `transform.Modes` 逐项列出 `Transform as <模式>` | `Plugins=transform` |
-| [`retention`](src/plugins/retention.md) | 过期清理：按天数删除旧条目，受保护标记的行不清理 | `Plugins=retention` |
+| [`item-marks`](docs/plugin/item-marks.md) | 置顶 / 收藏 / 高亮：`pin` `unpin` `star` `unstar` `highlight` `unhighlight` `marks`，面板 `Ctrl+P` `Ctrl+S` `Ctrl+H`，右键三项；高亮修改文字与背景色，不改变左侧选择条；粘性置顶默认开启（置顶行冻结在列表顶部，受行数上限约束），达到上限后拒绝置顶并说明原因 | `Plugins=item-marks` |
+| [`entry-actions`](docs/plugin/entry-actions.md) | 类型分析与打开：`kind` / `kinds` 输出类型、格式与预览，`open` 按类型打开（链接 / 路径 / 文件列表 / 图片），面板 `Ctrl+O`，右键 “Open link or path”；行图标由该插件提供 | `Plugins=entry-actions` |
+| [`transform`](docs/plugin/transform.md) | 粘贴前改写文本：纯文本 / 全大写 / 小写 / 驼峰 / 蛇形 / 烤肉串 / 标题式；右键按 `transform.Modes` 逐项列出 `Transform as <模式>` | `Plugins=transform` |
+| [`retention`](docs/plugin/retention.md) | 过期清理：按天数删除旧条目，受保护标记的行不清理 | `Plugins=retention` |
 
-各插件的命令、设置项、主题项见其说明页。
+各插件的命令、设置项、主题项见 `docs\plugin\<插件名>.md`。
 
 ```ini
 # 默认值：全部插件逐个列出，顺序即加载顺序
@@ -433,21 +435,6 @@ Plugins=entry-actions,item-marks,retention,transform
 # 只留部分功能：删掉不需要的名字即可
 Plugins=item-marks,entry-actions
 ```
-
-| 层 | 位置 | 职责 |
-|---|---|---|
-| 入口 | `clipboard.ps1` | 参数绑定、`$Root`、必需模块清单、运行时路径（ini / store / log 位置）、`Invoke-Main` |
-| 装配 | `lib/dispatch.ps1` | `Invoke-Main` 分成两半：`Initialize-Main`（`Apply-Config` + 按 `Plugins=` 装配插件）与 `Invoke-Dispatch`（执行一个命令），后者被命令代理复用 |
-| 场景 | `lib/panel/picker.ps1`、`lib/panel/pinlist.ps1`、`lib/panel/picker-draw.ps1`、`lib/panel/picker-edit.ps1`、`lib/panel/preview.ps1`、`lib/panel/anim.ps1`、`lib/panel/keyhook.ps1`、`lib/serve.ps1`、`lib/config.ps1`、`lib/config-template.ps1`、`lib/shortcut.ps1`、`lib/usage.ps1` | 面板窗与交互、自绘列表、可复用的绘制件、就地编辑条目、悬停预览卡片、过渡动画、键盘钩子、常驻进程、设置命令面与写出的模板、快捷方式、帮助 |
-| 领域 | `lib/clip.ps1`、`lib/store.ps1`、`lib/marks.ps1`、`lib/ordering.ps1`、`lib/media.ps1`、`lib/cfhtml.ps1`、`lib/migrate.ps1`、`lib/entry.ps1`、`lib/modifiers.ps1`、`lib/panel/picker-geom.ps1` | 剪贴板读写、历史记录存储、标记语义、行序与冻结行数、图片与富文本附件、CF_HTML 往返、数据格式迁移、条目分类与文案、修饰键状态、面板纯计算 |
-| 基础 | `lib/native.ps1` | 平台层（P/Invoke、WinForms 类型、程序集、字体探测、DPI） |
-| 工具 | `utils/log.ps1`、`utils/time.ps1`、`utils/format.ps1`、`utils/dpi.ps1` | 纯函数：日志写入、epoch 与相对时间、字节计数、像素缩放与圆角路径（不碰剪贴板、不碰历史） |
-| ini | `utils/ini.ps1`、`utils/inifile.ps1`、`utils/schema.ps1` | 文本→文档、按 key 增删改查、文件导入与缓存、schema 加载/校验/单值转换（不知道任何一个具体的键） |
-| 描述 | `schema/clipboard.ps1`、`schema/theme.ps1`、`schema/plugins/*.ps1` | 每个 ini 文件、每个插件的键表：类型、范围、默认值、说明、驱动变量 |
-| 底 | `lib/base.ps1`、`lib/theme-stub.ps1` | 常量与全部默认值；内置配色与主题空实现（`lib/themes.ps1` 覆盖它们） |
-| 加载层 | `lib/plugin/plugins.ps1`、`lib/plugin/plugin-settings.ps1`、`lib/plugin/plugin-marks.ps1` | 插件运行时（白名单 / 命令 / 右键项 / 按键 / 行图标 / 钩子）、插件设置面、标记含义（保护 / 置顶 / `clear` 保留 / 打印用词） |
-| 加载层 | `lib/themes.ps1` | 主题发现 / 校验 / 颜色解析 / `Apply-Theme`（缺失时 `theme-stub` 的内置配色接管） |
-| 扩展 | `plugins/*.ps1` + `schema/plugins/*.ps1` | 插件文件只声明行为（命令、右键项、面板按键、行图标、标记）；它的键表在自带的 schema 文件里 |
 
 插件契约：一个 `.ps1` 文件 `return` / 直接输出一个哈希表。
 
@@ -539,14 +526,14 @@ clipboard config set entry-actions.Reveal 0
 
 - `Type` 与基础 schema 一致：`bool` / `int`（配 `Minimum`/`Maximum`）/ `enum`（配 `Enum`）/ `regex` / `hotkey` / `list` / `string`；非法值会被拒绝（`config set`）或在加载时回退默认并写日志。
 - 插件代码里用 `Get-PluginSetting 'entry-actions' 'Reveal'` 读当前生效值（已合并 ini 与默认值）；外观项用 `Get-PluginTheme`。
-- 插件未在 `Plugins=` 中列名时，它的键**不生效**：`config get` 会提示先把插件加回 `Plugins=`，插件命令与 `help` 也看不到；但 `config init` 仍会把它的设置键写进模板，便于先看清有哪些旋钮。
+- 插件未在 `Plugins=` 中列名时，它的键**不生效**：`config get` 会提示先把插件加回 `Plugins=`，插件命令与 `help` 也看不到；但 `config init` 仍会把它的设置键写进模板，便于先查看可配置项。
 
 注意事项：
 
-- 插件默认全部加载：`Plugins=` 在模板中逐个列出所有插件，删除某个名字后其文件不会被执行；名字写错时提示 `[!] plugin not found: xxx`，基础功能不受影响。
+- 插件名字写错时提示 `[!] plugin not found: xxx`，基础功能不受影响。
 - 脚本块必须自包含：可以调用基础函数（`Get-Records`、`Get-EntryKind`、`Write-Log`、`Format-Item`），但不能引用插件文件作用域的变量，该作用域在命令执行时已销毁，捕获到的值为 `$null`。多个脚本块需共享逻辑时，把逻辑作为哈希表的一个键（如 `KindOf = { ... }`），通过 `& (Get-PluginData '<插件名>' 'KindOf') $arg` 调用。
 - 同一逻辑只实现一次：钩子、命令、右键项、面板按键常需同一行为，应抽成插件的共享块分别调用；内置四个插件均为此结构（`KindOf` / `CanOpen` / `OpenPayload` / `Sniff`、`Apply`、`Sweep`、`PinOne`）。
-- 使用基础层提供的接口，不直接读取内部状态：行装饰用 `RowDecor`、图标用 `Get-RowGlyph`、标记用 `Test-Mark` / `Get-ProtectedMarks` / `Get-SortMark`、批量修改用 `Update-Records`。
+- 使用基础层提供的接口，不直接读取内部状态：行装饰用 `RowDecor`、图标用 `Get-RowGlyph`、标记用 `Test-Mark` / `Get-ProtectedMarks` / `Get-SortMark`、批量修改用 `Update-Records`（改标记与附属块走追加；修改 payload 等于换身份，须保证新文本不与已有条目相同）。
 - 插件文件保持纯 ASCII：PowerShell 5.1 将无 BOM 的 UTF-8 按 ANSI 解码，中文会导致语法错误。
 - 单个插件抛出异常时只记录一行日志，不影响其它插件与基础命令。
 
@@ -571,7 +558,7 @@ clipboard config set entry-actions.Reveal 0
 
 ## 命令代理（常驻进程代跑命令）
 
-每条命令都要起一个 PowerShell 进程，而其中约 1.5 s 花在解析本程序上；已经跑着的常驻进程早就付过这笔钱。所以能交给它的命令会走一条命名管道，由常驻进程直接执行：
+每条命令都要启动一个 PowerShell 进程，其中约 1.5 s 用于解析本程序；常驻进程已完成这部分解析。可代理的命令因此通过命名管道交给常驻进程执行：
 
 | 项 | 说明 |
 |---|---|
@@ -584,23 +571,23 @@ clipboard config set entry-actions.Reveal 0
 | 关闭 | `-NoProxy` 开关，或环境变量 `CLIPBOARD_NO_PROXY=1` |
 | 时限 | 只执行短命令：命令在常驻进程的 UI 线程上跑，与捕获循环、面板同一个线程，因此不会并发改状态 |
 
-实测（本机，沙箱常驻，各 4 次取均值）：`clipboard list` 由 2.9 s 降到 1.34 s、`status` 由 3.7 s 降到 1.36 s、`version` 由 2.1 s 降到 1.26 s。剩下约 1.2 s 全是 `powershell.exe` 自身启动（`-Sta` + 引擎初始化），纯脚本方案压不下去。
+实测（本机，沙箱常驻，各 4 次取均值）：`clipboard list` 由 2.9 s 降到 1.34 s、`status` 由 3.7 s 降到 1.36 s、`version` 由 2.1 s 降到 1.26 s。剩下约 1.2 s 全是 `powershell.exe` 自身启动（`-Sta` + 引擎初始化），纯脚本方案无法进一步降低。
 
 服务端在 `lib/proxy.ps1`，`serve` 场景里由 50 ms 的定时器轮询待连接请求；客户端在入口装载模块**之前**就决定要不要代理，且只加载 `lib\proxy.ps1` 一个文件（不解析 ini、不算路径），因此不必为一个被代理的命令解析整套模块。
 
-### 编译版客户端（可选，再快约五倍）
+### 编译版客户端（可选）
 
 上面那 1.2 s 里没有任何一行是本程序的——全是 `powershell.exe` 自己的启动。所以 `clipboard.cmd` 会在启动 PowerShell **之前**先试一个编译好的客户端（`cbx.exe`，源码 `lib/cbx.cs`，系统自带的 .NET Framework 编译器即可生成）：
 
 | 项 | 说明 |
 |---|---|
 | 谁调用它 | 只有 `clipboard.cmd`（`.cmd` 层）。`clipboard.ps1` 内部不调，那时 PowerShell 已经启动了，省不下任何东西 |
-| 回退约定 | 退出码 `100` = 「没掌到」（无常驻 / 另一份拷贝 / 命令不该代理），此时批处理接着跑 `powershell -File clipboard.ps1`，输出和行为与没有它时一致；其它退出码原样透传 |
+| 回退约定 | 退出码 `100` = 未接管（无常驻进程 / 另一份拷贝 / 该命令不代理），此时批处理接着跑 `powershell -File clipboard.ps1`，输出和行为与没有它时一致；其它退出码原样透传 |
 | 参数 | 不发脚本，只发命令名与位置参数；`-Count` / `-Purge` / `-All` / `-Media` / `-Replace` 会被识别，其余开关（`-NoProxy` / `-Library` 等）直接回退给脚本解析 |
 | 编码 | 进程之间只走 UTF-8 的 JSON 帧，中文、emoji、多行文本往返无损（存储层字节级校验过）；`put` 无文本时从 stdin 读，与脚本客户端一致 |
 | 怎么生成 | `cli cbx` 写入 `src\cbx.exe`（不入库）；`cli build` 默认把它编进产物，`build.ini` 的 `Cbx=0` 可关掉 |
 
-实测（本机，沙箱常驻，`clipboard.cmd list`，各 5 次）：**有 exe 321 ms（最快 251 ms）**，没有 exe 1314 ms。也就是说从冷启动 2.9 s 到 0.25 s 左右，差了约十倍；其中约 100 ms 是 cmd 与 exe 自身的启动，再往下要换的就是整个宿主了。
+实测（本机，沙箱常驻，`clipboard.cmd list`，各 5 次）：有 exe 321 ms（最快 251 ms），没有 exe 1314 ms；其中约 100 ms 是 cmd 与 exe 自身启动。
 
 常驻与数据目录的对应关系也在这里收紧了：`status` 的 `resident` 行与 `config set` 之后的自动重启，只认**服务于当前数据目录**的那个常驻（判断依据是它写在自己 `data\` 下的 `hotkey.txt`，退出时写成 `(stopped)`），因此另装一份、或跑测试沙箱时不会误报或误重启。
 
@@ -635,7 +622,7 @@ tests/unit/unit.ps1     结构与单元测试（进程内 dot-source）
 tests/cli/*.ps1         命令行分件：transfer / capture / config / marks
 tests/pkg/build.ps1     打包
 tests/e2e/serve.ps1     真实常驻进程、真实剪贴板
-docs/                   界面截图
+docs/                   界面截图与插件、主题说明页（plugin\ / theme\）
 dist/                   打包产物（不入库）
 
 src/                    程序本体（打包只读这个目录）
@@ -677,7 +664,7 @@ src/                    程序本体（打包只读这个目录）
   lib/panel/picker.ps1      历史面板：窗体、过滤、列表、按键、右键菜单、粘贴
   lib/panel/picker-geom.ps1 面板纯计算：行数、数字快选、窗口位置、命中高亮
   lib/panel/picker-draw.ps1 可复用绘制：按键胶囊、搜索命中着色（只要 Graphics + 参数）
-  lib/panel/picker-edit.ps1 就地编辑：F2 把选中行换成输入框，回车保存 / Esc 取消
+  lib/panel/picker-edit.ps1 就地编辑：F2 或右键 Edit 把列表区换成编辑卡片（标题、行号/字符数状态、错误行、Save/Cancel），回车保存 / Esc 取消
   lib/panel/pinlist.ps1     自绘列表控件 Cb.PinList：只画可见行，置顶行不随滚动
   lib/panel/preview.ps1     悬停预览卡片：复用窗口，渲染文本 / 图片 / 富文本
   lib/panel/anim.ps1        过渡动画的数值层（缓动 / 插值，不碰窗口）
@@ -689,9 +676,7 @@ src/                    程序本体（打包只读这个目录）
   lib/plugin/plugin-settings.ps1 插件设置面（schema\plugins 的 Properties → ini 段，ThemeProperties → 主题段）
   lib/plugin/plugin-marks.ps1    标记含义（保护 / 置顶 / clear 保留 / 打印用词）
   plugins/*.ps1           插件（item-marks / entry-actions / transform / retention；默认全部加载）
-  plugins/*.md            每个插件的说明页
   themes/*.ini            主题（win11-dark 默认 / win11-light）
-  themes/*.md             每个主题的说明页
 
   utils/ini.ps1           文本 → 文档（Read-IniDoc）与文档上的按 key 增删改查（纯函数）
   utils/inifile.ps1       导入一个 ini 文件（按路径缓存，文件大小 + 写入时间失效）与写回单个键
@@ -730,9 +715,26 @@ src/                    程序本体（打包只读这个目录）
 
 因此 `version` 只解析十八个文件，`list` 约三十个，只有会画面板的命令才付出 `picker` / `preview` / `media-render` 的代价；`-Library`（测试用）加载全部。三条 `struct` 契约守着这张表：调度器认识的每个命令都在表里、表里没有不存在的命令、表里引用的每个模块文件都在磁盘上。
 
-命令启动时间的大头就是这些文件的解析：一次进程启动约 3.4 s，其中 PowerShell 自身 0.46 s、模块与插件层约 1.5 s、`schema\clipboard.ps1` 的形状校验 0.18 s（只在 `-Library` 时做）、主题解析约 0.3 s（只有绘制命令做）。
+命令启动时间的主要部分是这些文件的解析：PowerShell 自身约 0.46 s、模块与插件层约 1.5 s、`schema\clipboard.ps1` 的形状校验约 0.18 s（只在 `-Library` 时做）、主题解析约 0.3 s（只有绘制命令做）。
 
 写入位置由 `clipboard.ini` 的 `DataDir=` 决定，留空则使用脚本旁的 `data\`（相对路径相对脚本目录）；`config` 的 `data dir` 与 `status` 的 `store file` 显示实际生效位置。程序不写入 `%LOCALAPPDATA%` 或其它用户目录：位置不可写时报错并以退出码 1 结束，不回退到其它位置。除 `install`（快捷方式）与 `restore`（注册表项）外不写注册表。
+
+### 日志
+
+`data\clipboard.log`，UTF-8，一行一个事件（`MM-dd HH:mm:ss` 前缀），写失败不会抛异常。文件超过 64 KB 时保留最新的一半再继续追加。
+
+排性能问题或「粘贴没图」这类报告时，值得按关键字翻的几行：
+
+| 关键字 | 含义 |
+|---|---|
+| `capture:` | 每次成功捕获：形状（文本字符数 / 图片尺寸 / html + rtf + 各图片块的大小）与读取耗时 |
+| `card:` | 预览卡片后台渲染完成：模式（`full` / `plain`）、尺寸与耗时 |
+| `clipboard:` | 一次粘贴实际写回剪贴板的内容：正文字符数 + 各块大小 |
+| `store: folded` | 历史折叠（整份重写 + 回收孤儿）：折叠后行数与耗时 |
+| `formatted text rtf skipped` / `html image not inlined` | 命中尺寸限制而被丢掉的块 / 没有内联的图 |
+| `paste skipped` / `sendkeys fail` | 没能夺回前台因而未注入粘贴 / 注入失败 |
+
+这些行都只在**状态变化时**产生（每次复制、每次首次渲染、每次粘贴），不随轮询或悬停频率增长。
 
 ### 历史文件格式
 
@@ -744,10 +746,12 @@ CBHIST RS <数据版本> RS <flags> US <epoch 秒> US <extra> US <payload> RS <f
 
 - 头部两项：固定标记 `CBHIST` 与数据格式版本（当前为 `1`）
 - **记录按时间从旧到新排列**，因此一次捕获只是在文件末尾追加一行。读取时按时间倒序取值，并按 payload 去重——同一段文本被再次捕获时，**最后写下的那一行胜出**，旧行随之可见地消失
-- 删除也只是一行：类型字符为 `x` 的记录是**墓碑**（`x US <epoch> US US <payload>`），读取时同一 payload 的墓碑出现在更新的位置，这一行以及它更旧的所有副本一并消失。因此删除不必整份重写，也剪断了「删掉又被旧副本复活」的路径
+- 删除也只是一行：类型字符为 `x` 的记录是**墓碑**（`x US <epoch> US US <payload>`），读取时同一 payload 的墓碑出现在更新的位置，这一行以及它更旧的所有副本一并消失。墓碑沿用被删记录的 `epoch`，因此撤销删除只需再追加一条同 `epoch` 的正常行（后写者胜）；删除与撤销都不必整份重写
 - 改标记（置顶 / 收藏 / 插件的任何标记）同样是追加：带新标记的同一 payload、同一时间戳再写一行，行序不变，成本是一行而不是一次全文替换
-- 行数超过 `MaxItems` 的两倍、墓碑占到三分之一、或文件超过 `MaxTextTotalBytes` 两倍时**折叠**一次：把去重后的列表（含 `MaxItems` / `MaxTextTotalBytes` / `MaxMediaTotalBytes` 裁剪与孤儿媒体 / 块回收）重写回文件，所以长会话不会让文件无限变大。改正文、批量删除后的重排仍走整份重写
-- 实测（365 条 / 611 KB，`MaxItems` 300）：捕获 3 KB 文本 9.5 ms、置顶 2.4 ms、取消置顶 2.5 ms、删除 11.5 ms；同样的写操作在改造前是整份重写 36.9 ms。冷读（解析 + 排序）49.8 ms，单词过滤约 5 ms
+- 改正文同样是追加：先写旧 payload 的墓碑，再写新文本的行（时间与标记不变，富文本附属块清空），共两行
+- 时间戳是排序键，写入时保持递增：取当前时间，若不大于库中最大的时间戳则用后者加一。因此同一秒内的多条记录各有时间戳、后写下的排在最前，系统时钟回拨也不会让新记录排到旧墓碑之后。仅在旧数据里出现共享时间戳时，改正文与撤销改用整份重写，以保证行留在原位
+- 行数超过 `MaxItems` 的两倍、墓碑占到三分之一、或文件超过 `MaxTextTotalBytes` 两倍时**折叠**一次：把去重后的列表（含 `MaxItems` / `MaxTextTotalBytes` / `MaxMediaTotalBytes` 裁剪与孤儿媒体 / 块回收）重写回文件，所以长会话不会让文件无限变大。清空、导入、迁移与折叠本身仍走整份重写
+- 实测（365 条 / 611 KB，`MaxItems` 300）：捕获 3 KB 文本 9.5 ms、置顶 2.4 ms、取消置顶 2.5 ms、删除 11.5 ms；冷读（解析 + 排序）49.8 ms，单词过滤约 5 ms
 - `flags` = 一个类型字符（`t` 文本 / `f` 文件列表 / `i` 图片）后跟若干单字符标记；标记含义由插件声明，基础层只存不改，例如 `tps` 为文本条目加 `p`、`s` 两个标记
 - `extra` 为空，或写富文本附件的块清单：`H:<sha1>:<字节>`、`T:`（RTF）、`P:`（PNG）、`D:`（设备无关位图）、`E:`（图元文件），用 `|` 连接；`payload` 为条目本体
 - 分隔符：`RS` = `0x1E`，`US` = `0x1F`；类型签名字符为 `0x01`（文件列表）与 `0x03`（图片）
@@ -803,9 +807,9 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 
 也可以直接调用：`powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run.ps1`。
 
-一个分件一个文件、一个进程、一个沙箱，彼此看不到对方；并行度由 `test.ini` 的 `[run] Workers` 决定（默认 8，本机实测刻度见该文件注释），结果由驱动合并成一张表。全量约 740 项（非 e2e 718 + e2e 22），本机 12 逻辑核上非 e2e 约 145 s。
+一个分件一个文件、一个进程、一个沙箱，彼此看不到对方；并行度由 `test.ini` 的 `[run] Workers` 决定（默认 8，本机实测刻度见该文件注释），结果由驱动合并成一张表。全量约 700 项，其中端到端 22 项。
 
-断言只写两类：**守回归**（每条对应一个真实踩过的问题，例如「字节数组被管道展开后存成一页数字」）与**守契约**（对外行为、文件格式、命令行输出）。不复述常量（默认值、路径形状、行高数值）、不断言私有实现细节、同一行为不写第二条等价断言——宁可少一条，也不让一套断言只能靠记住它才能改。
+断言只写两类：**守回归**（每条对应一个实际缺陷，例如「字节数组被管道展开后存成一页数字」）与**守契约**（对外行为、文件格式、命令行输出）。不复述常量（默认值、路径形状、行高数值）、不断言私有实现细节、同一行为不写第二条等价断言——宁可少一条断言，不留需要额外记忆才能修改的用例。
 
 分件分三条泳道：`unit` / `e2e` 都要驱动**真实**剪贴板，两者排队互斥，但可以与命令行分件同时跑；命令行分件各用各的假剪贴板，只受 `Workers` 限制。驱动先启动 `unit`，坏函数几秒内就能让整轮失败；打包副本（`-Source` 指向非 `src\`）里假剪贴板失效，命令行分件自动改为一次一个，打包分件仍照常并行。
 
@@ -813,11 +817,11 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 
 | 分件 | 所在 | 覆盖内容 |
 |---|---|---|
-| 结构 | `tests/unit/unit.ps1`（总是执行） | 分层契约：46 个必需模块（`lib\` 33 + `utils\` 13）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 220 行且 `$Root` 只算一次、单模块 ≤ 1400 行；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
+| 结构 | `tests/unit/unit.ps1`（总是执行） | 分层契约：46 个必需模块（`lib\` 33 + `utils\` 13）与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot`/`$PSCommandPath`、无重名顶层函数（`theme-stub` ↔ `themes` 的覆盖是唯一例外）、载荷类型只通过 `base.ps1` 的谓词判断、行几何与面板计时只从常量表读取、入口 ≤ 220 行且 `$Root` 只算一次；模块按职责划分，不按行数拆分；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 文件的大小写约定。产物模式只校验可解析 / 无 param / 无自引用 / 无重名，因为尺寸与 `$Root` 那行已被改名 |
 | 单元 | `tests/unit/unit.ps1`（同上，dot-source 后逐函数） | 纯函数与存储层：热键解析、条目文案、ini 读写与单值校验、`Apply-Config` 与配置诊断、记录读写与版本识别、迁移引擎（拒绝无步骤 / 备份 / `-Purge` 归档）、图片与富文本的编解码与媒体回收、CF_HTML 片段解析、真实剪贴板的图片与格式往返、标记与保护规则、面板几何与命中计算、条目分类与行图标、主题发现与 `[metrics]` 重置、插件白名单。通过 `-Library` dot-source 主脚本，不触发命令分发 |
 | 命令行 | `tests/cli/history.ps1`、`transfer.ps1`、`settings.ps1`、`config.ps1`、`template.ps1`、`marks.ps1`、`pins.ps1`、`plugins.ps1`（并行） | 每条 CLI 能力都起子进程验证：`put` / `get` / `list` / `pick` / `del` / `clear` / `pause` / `resume` / `status` / `version` / `migrate` / `themes` / `config get` / `config set` / `config init` / `backup` / `restore`、主题切换与非法主题名拒绝、插件白名单与各插件命令、错误插件名提示、只读命令不生成 ini、设置开关被参数绑定拒绝、`cli` 命令列表 |
 | 打包 | `tests/pkg/build.ps1`（并行） | 进包内容、`install.bat`、包内版本为常量且与 `package.ini` 一致、`Plugins=` / `Themes=` 裁剪、`Overwrite=0` 拒绝覆盖、未知插件名报错 |
-| 端到端 | `tests/e2e/serve.ps1`（独占剪贴板泳道） | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不再捕获 → `stop` 后干净退出且没有重启 |
+| 端到端 | `tests/e2e/serve.ps1`（独占剪贴板泳道） | 拉起真实常驻进程 → 校验热键注册 → 复制内容验证捕获链路 → 暂停后不捕获 → `stop` 后干净退出且没有重启 |
 | 代理 | `tests/e2e/proxy.ps1`（同上泳道） | 沙箱常驻进程 + 命名管道：代理结果与 `-NoProxy` 逐字节一致、确实更快、`status` 在常驻进程里说自己正在运行、`put` 与 stdin 两条路径、直连命令不被代理、`stop` 之后静默回退 |
 
 全部在 `%TEMP%` 下的沙箱副本（脚本 + `lib` + `utils` + `schema` + `plugins` + `themes`）中运行，不修改 `data/` 与 `clipboard.ini`；真实剪贴板在开始前备份、结束后还原。任一项失败时退出码为 1。
@@ -830,7 +834,7 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 
 | 命令 | 作用 |
 |---|---|
-| `cli dev` | 停止残留常驻进程，启动 `src\clipboard.ps1 serve`，被加载的文件变化后重启；`dev` 退出（`Ctrl+C` / 异常）时一并停掉它启动的常驻进程 |
+| `cli dev` | 停止残留常驻进程，启动 `src\clipboard.ps1 serve`，被加载的文件变化后重启；`dev` 退出（`Ctrl+C` / 异常 / 常驻进程被外部停止）时一并停掉它启动的常驻进程 |
 | `cli test` | 运行自测（开关见上一节） |
 | `cli bench` | 在临时副本里计时捕获、保存、解析与过滤，用于改动前后对比 |
 | `cli shot` | 重新生成 `docs\screenshot-dark.png` 与 `screenshot-light.png` |
@@ -841,14 +845,32 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 
 `cli bench` 在 `%TEMP%` 下复制一份 `src\` 并把 `DataDir` 指向临时目录，所以在常驻进程运行时也能跑：输出 `clipboard status` / `clipboard list` 的冷启动、2 KB 与 200 KB 文本的捕获、保存、解析、单词过滤七项耗时（`-Records` 改库规模，`-Json` / `-Out <文件>` 便于改动前后对比）。面板打开与粘贴注入需要真实桌面，不在其中。
 
-`cli dev` 只有一种模式：常驻进程一直在跑，文件一变就重启。
+`cli dev` 只有一种模式：常驻进程一直在跑，文件一变就重启；常驻进程被外部停止（托盘退出、`clipboard stop`）时，循环随之结束。`config set` 引起的自动重启会短暂释放互斥量，不触发退出。
 
-- 监视范围是程序真正会读的文件：`src` 下全部 `.ps1`（入口、`lib\`、`utils\`）、`themes\*.ini`、`plugins\`、`src\clipboard.cmd` 以及 `package.ini`（版本号）。`clipboard.ini` 不在范围内：常驻进程会写窗口尺寸与位置，盯它会导致自己重启自己。
+- 监视范围是程序真正会读的文件：`src` 下全部 `.ps1`（入口、`lib\`、`utils\`）、`themes\*.ini`、`plugins\`、`src\clipboard.cmd` 以及 `package.ini`（版本号）。`clipboard.ini` 不在范围内：常驻进程会写窗口尺寸与位置，监视它会触发自我重启。
 - 新增与删除也算变化，所以新建 `lib\foo.ps1` 并补上加载行后只需保存一次；入口里的 dot-source 行会被解析，指向不存在文件的引用会打印 `[!] missing: ...`。
-- 变化按路径逐行列出（`[+]` 新增、`[-]` 删除、`[~]` 修改），并等待文件写完，通过正常的 stop 事件停掉常驻进程再启动；启动不成功会明确提示，下一次变化重试。
-- `Ctrl+C` 结束循环**并停掉它启动的常驻进程**，不会留一个继续抓剪贴板的后台进程；同一条 `finally` 也覆盖循环内的异常。终端窗口被直接杀掉时进程来不及清理，这种情况需要手动 `clipboard stop`。
+- 变化按路径逐行列出（`[+]` 新增、`[-]` 删除、`[~]` 修改）；连续一个轮询周期（`-Interval`，默认 600 ms）无新变化后才通过正常的 stop 事件停掉常驻进程再启动，一次保存分多步写入或连写多个文件只重启一次；启动不成功会明确提示，下一次变化重试。
+- `Ctrl+C` 结束循环**并停掉它启动的常驻进程**，不留下继续捕获剪贴板的后台进程；同一条 `finally` 也覆盖循环内的异常。终端窗口被直接杀掉时进程来不及清理，这种情况需要手动 `clipboard stop`。
 
 `cli shot` 在 `%TEMP%` 下复制一份 `src\`，写入示例历史（固定时间、一条置顶、一条收藏），启动常驻进程并通过显示事件打开面板，再用 `CopyFromScreen` 截取面板区域；仓库的 `data\` 与 `clipboard.ini` 不参与。
+
+### 文档维护
+
+`README.md` 是唯一的对外文档（插件、主题的说明页在 `docs\plugin\`、`docs\theme\`）。每次改动交付前按下表判断是否需要同步，判断结果随改动一并说明：
+
+| 改动 | 处理 |
+|---|---|
+| 命令、设置键、标记、文件布局、目录结构、插件或主题契约 | 必须同步；表格取值要与 `clipboard help`、`clipboard config`、`src\schema\clipboard.ps1` 一致 |
+| 默认值、取值范围、尺寸或数量上限、超时、文件格式、退出码 | 必须同步对应表格与段落 |
+| 纯内部重构、性能微调、日志措辞、测试增删 | 不写 |
+| 单次排查过程、临时取舍、一次性的本机实测数据、对话中的零碎要求 | 不写；长期有效的结论写进代码注释 |
+
+写法约束：
+
+- 只写行为、键名、取值、限制与契约，不写实现过程与权衡经过。
+- 同一事实只在一处说明，其余用链接指向该处；能并入现有表格的不新开段落与小标题。
+- 客观陈述，不使用比喻、拟人化表达与评价性形容词。
+- 新增小节前先确认现有段落无法承载；预计超过约 40 行时，优先并入现有表格或列表。
 
 ## 打包分发
 
@@ -904,9 +926,9 @@ Themes=win11-dark
 - 变量名需从 `VariablePath.UserPath` 读取。`VariablePath.UnqualifiedPath` 在本机运行时对 `$x` 与 `$script:x` 均返回空串，据此做映射会导致部分变量未改名，`$MaxItems` 与 `$script:MaxItems` 成为两个变量。
 - 函数返回空集合（如 `HashSet`）时会被 PowerShell 展开为 `$null`，调用方 `.Contains()` 会报错；需 `return , $set` 包一层或在调用处用 `@()`。
 
-实测（本仓库）：脚本总量 `480947 → 261330` 字节，约 `46%` 更小；`lib\base.ps1` −74%、
-`clipboard.ps1` −57%、`lib\picker.ps1` −44%、`lib\plugins.ps1` −54%，C# 段收益最大的两个
-是 `lib\native.ps1` −39% 与 `lib\keyhook.ps1` −47%（压缩前后都能通过 `Add-Type`）。
+实测（本仓库）：脚本总量约缩小 `46%`；`lib\base.ps1` −74%、
+`clipboard.ps1` −57%、`lib\panel\picker.ps1` −44%、`lib\plugin\plugins.ps1` −54%，C# 段收益最大的两个
+是 `lib\native.ps1` −39% 与 `lib\panel\keyhook.ps1` −47%（压缩前后都能通过 `Add-Type`）。
 
 > `Verify=1` 用于验证重命名后的产物：包内函数名与变量名均已改变，只有运行真实 CLI 测试才能确认行为不变。`-Source` 指向产物时单元组跳过（它按名字调用内部函数），集成与端到端照常运行。
 
@@ -916,10 +938,10 @@ Themes=win11-dark
 |---|---|
 | `clipboard.ps1`、`clipboard.cmd`、`clipboard`（Git Bash 壳） | `src\data\`（历史与日志） |
 | `cbx.exe`（`Cbx=1` 时编译产出的可选客户端） | `src\cbx.exe`（开发副本的编释物，不入库） |
-| `lib\`（28 个模块：24 必需 + `themes.ps1` 与插件三件套共 4 个可选加载层）、`utils\`（9 个纯工具）、`schema\`（2 个文件 schema + 所选插件的 `schema\plugins\*.ps1`）、所选 `plugins\`（含 `.md`）、所选 `themes\`（ini 与 `.md`） | `src\clipboard.ini`（用户设置） |
-| `README.md`、`LICENSE`、`docs\`（截图，`IncludeDocs=1` 时） | `tests\`、`scripts\`、`build.ini`、`package.ini`、`dist\`、`.git` |
+| `lib\`（33 个必需模块，另含可选加载层 `themes.ps1` / `proxy.ps1` 与插件三件套）、`utils\`（13 个纯工具）、`schema\`（2 个文件 schema + 所选插件的 `schema\plugins\*.ps1`）、所选 `plugins\`（含 `.md`）、所选 `themes\`（ini 与 `.md`） | `src\clipboard.ini`（用户设置） |
+| `README.md`、`LICENSE`、`docs\`（截图与插件、主题说明页，`IncludeDocs=1` 时） | `tests\`、`scripts\`、`build.ini`、`package.ini`、`dist\`、`.git` |
 
-> `Plugins=` / `Themes=` 里写了不存在的名字会直接失败并指出是哪个；被选中的插件/主题会连同自己的 `.md` 一起进包（`lib\` 是基础层，永远随包走）。
+> `Plugins=` / `Themes=` 里写了不存在的名字会直接失败并指出是哪个；说明页不在 `plugins\` / `themes\` 下，而是随 `docs\` 一起进包（`IncludeDocs=0` 时不含文档）。
 
 > 拿到产物后：`clipboard.cmd config init` 生成带注释的 `clipboard.ini`，`clipboard.cmd migrate` 升级旧格式历史，再 `clipboard.cmd install` 建开机自启与桌面快捷方式（`install.bat` 把这三步串在一起）。`clipboard` 这个 Git Bash 启动器在 zip 中会丢可执行位，用 `sh ./clipboard` 即可（或 `chmod +x clipboard`）。
 
@@ -934,7 +956,7 @@ Themes=win11-dark
 | `ci.yml` | 推到 `master`、PR、手动 | 打印 PowerShell 版本 → `cli test -Unit -Integration` → `cli build`（`Verify=1`，产物复测） |
 | `release.yml` | 推 `v*` tag、手动 | 校验 tag 与 `package.ini` 的版本一致 → 跑测试 → 打包成 `clipboard-<version>.zip` → 生成 `SHA256SUMS.txt` → 发布 Release |
 
-- 结构组校验文件布局与纯 ASCII（PowerShell 5.1 按 GBK 解码无 BOM 的 UTF-8，脚本里有中文就会炸），单元组按名字调用内部函数，集成组起子进程跑每一条 CLI 能力——三者都在 `ci.yml` 里，每次推送都会跑。
+- 结构组校验文件布局与纯 ASCII（PowerShell 5.1 按 GBK 解码无 BOM 的 UTF-8，脚本中出现中文即报语法错误），单元组按名字调用内部函数，集成组起子进程跑每一条 CLI 能力——三者都在 `ci.yml` 里，每次推送都会跑。
 - 端到端组（常驻进程 / 全局热键 / 剪贴板接管）需要真实桌面，托管 runner 不保证有交互式会话，所以在 `ci.yml` 里单独一个 job 且不阻塞合并，只作参考信号；要确认这一层请在本机跑 `cli test -E2E`。
 - 发版只改 `package.ini` 的 `Version=`，然后 `git tag v<version>` 并推送 tag；版本号与 tag 对不上时 workflow 在第一步就失败，不会发出一个版本号对不上的包。手动触发 `release.yml` 时按 `package.ini` 发同名 Release，已存在就覆盖资产。
 
@@ -964,7 +986,7 @@ Themes=win11-dark
 
 ### 恢复系统自带的 Win+V
 
-工具不再提供探测或修复命令：Win+V 能不能用只取决于三件事（`HKCU` 的 `EnableClipboardHistory`、策略 `AllowClipboardHistory`、`cbdhsvc` 每用户服务实例），`clipboard status` 在**不满足时**多打一行 `win+v : [!] <原因>`，满足时没有这一行。文件层面的缺失（如 `TextInputHost.exe`）无法通过脚本修复。
+工具不提供探测或修复命令：Win+V 能不能用只取决于三件事（`HKCU` 的 `EnableClipboardHistory`、策略 `AllowClipboardHistory`、`cbdhsvc` 每用户服务实例），`clipboard status` 在**不满足时**多打一行 `win+v : [!] <原因>`，满足时没有这一行。文件层面的缺失（如 `TextInputHost.exe`）无法通过脚本修复。
 
 ## 许可
 

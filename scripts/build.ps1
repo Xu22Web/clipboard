@@ -148,9 +148,6 @@ foreach ($kind in @(@{ Dir = 'plugins'; Ext = '.ps1'; Names = $pluginNames }, @{
       $file = Join-Path $srcDir ($n + $kind.Ext)
       if (-not (Test-Path -LiteralPath $file)) { Fail ('not found in ' + $kind.Dir + ': ' + $n) }
       $picked += $file
-      # an item's own page travels with it
-      $doc = Join-Path $srcDir ($n + '.md')
-      if (Test-Path -LiteralPath $doc) { $picked += $doc }
     }
   }
   if ($kind.Dir -eq 'plugins') { $pluginFiles = $picked } else { $themeFiles = $picked }
