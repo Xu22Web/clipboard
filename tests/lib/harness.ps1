@@ -68,6 +68,8 @@ function Clip([string]$sandbox, [string[]]$cliArgs) {
   $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', (Join-Path $sandbox 'clipboard.ps1')) + $cliArgs
   return (& powershell @a 2>&1 | Out-String)
 }
+# One command per process, never a batch: `-Media` and the plugin verbs are read from the real
+# command line, and `& clipboard.ps1 ...` inside a warm process does not answer the same way.
 
 function Test-MutexFree([string]$name) {
   try {
@@ -87,7 +89,7 @@ function Set-Clip([string]$value) {
   return $false
 }
 
-function Start-TestPart([string]$Source = '') {
+function Start-TestPart([string]$Source = '', [switch]$ClipShared) {
   $here = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
   $repoRoot = Split-Path -Parent $here
   $defaultSource = Join-Path $repoRoot 'src'
@@ -101,6 +103,9 @@ function Start-TestPart([string]$Source = '') {
   $script:Harness.ClipPs1 = Join-Path $script:Harness.SrcRoot 'clipboard.ps1'
   if (-not (Test-Path -LiteralPath $script:Harness.ClipPs1)) { Write-Error ('cannot find ' + $script:Harness.ClipPs1); exit 2 }
   $script:Harness.TmpRoot = Join-Path $env:TEMP ('clipboard-tests-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+  # run.ps1 passes this when another part of the same run drives the real clipboard
+  $script:Harness.ClipShared = [bool]$ClipShared
+  $script:clipShared = [bool]$ClipShared
   New-Item -ItemType Directory -Path $script:Harness.TmpRoot -Force | Out-Null
   $script:Harness.Utf8 = New-Object System.Text.UTF8Encoding $false
   # the number package.ini declares; a package carries it as a constant, so both agree

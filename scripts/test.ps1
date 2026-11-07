@@ -6,8 +6,9 @@
       cli test -Unit                 only the in-process unit part
       cli test -Integration          only the command line parts
       cli test -E2E                  only the resident / clipboard part
-      cli test -Part cli              one part by name (transfer, capture, config, marks, build,
-                                     unit, serve)
+      cli test -Part history          one part by name (history, transfer, settings, config,
+                                     template, marks, pins, plugins, build, unit, serve)
+      cli test -Changed              only the parts a change since HEAD can break
       cli test -Workers 6            more parts at a time
       cli test -Serial               one after another
       cli test -Source dist\clipboard-0.1.0
@@ -25,6 +26,7 @@ param(
   [string]$Part = '',
   [int]$Workers = 0,
   [switch]$Serial,
+  [switch]$Changed,
   [switch]$Verbose_Log
 )
 
@@ -44,6 +46,7 @@ if ($Source) { $cli += @('-Source', $Source) }
 if ($Part) { $cli += @('-Part', $Part) }
 if ($Workers -gt 0) { $cli += @('-Workers', [string]$Workers) }
 if ($Serial) { $cli += '-Serial' }
+if ($Changed) { $cli += '-Changed' }
 if ($Verbose_Log) { $cli += '-Verbose_Log' }
 & powershell @cli
 $code = $LASTEXITCODE

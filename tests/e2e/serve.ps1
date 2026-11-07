@@ -18,6 +18,11 @@ param(
 $script:Harness.Part = 'e2e'
 Start-TestPart -Source $Source
 $e2eDir = New-Sandbox 'e2e'
+# the resident keeps its log and store open while it runs, so a read can lose the race
+function Read-TextSafe([string]$path) {
+  try { if (Test-Path -LiteralPath $path) { return [IO.File]::ReadAllText($path) } } catch { }
+  return ''
+}
 # the resident records whatever lands on the clipboard, so the machine clipboard is saved
 # around the run and given back afterwards
 $clipBak = ''
@@ -30,43 +35,61 @@ try {
     }
     else {
       $child = $null
+      $log = Join-Path $e2eDir 'data\clipboard.log'
       try {
         $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', (Join-Path $e2eDir 'clipboard.ps1'), 'serve')
         $child = Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList $argList -PassThru
 
+        # wait on the log instead of polling `status`: reading a file is free, and every
+        # `status` here would be another three second process
         $up = $false
-        for ($i = 0; $i -lt 30 -and -not $up; $i++) {
-          Start-Sleep -Milliseconds 500
-          if ((Clip $e2eDir @('status')) -match 'resident    : running') { $up = $true }
+        for ($i = 0; $i -lt 80 -and -not $up; $i++) {
+          Start-Sleep -Milliseconds 250
+          if ((Read-TextSafe $log) -match 'serve start') { $up = $true }
         }
         Check 'e2e' 'daemon starts' $up ''
 
+        # one status, three answers
         $s = Clip $e2eDir @('status')
+        Check 'e2e' 'resident reports running' ($s -match 'resident    : running') (@($s -split "`n" | Where-Object { $_ -match 'resident' }) -join '')
         Check 'e2e' 'hotkey registered' ($s -match 'active key  : Ctrl\+Alt\+V') (@($s -split "`n" | Where-Object { $_ -match 'active key' }) -join '')
         Check 'e2e' 'store lives in the sandbox' ($s -match [regex]::Escape((Join-Path $e2eDir 'data'))) ''
 
+        # the resident polls the clipboard on its own clock, and this part shares the machine
+        # with the command line parts: wait on the store file (free) instead of guessing a sleep
+        $store = Join-Path $e2eDir 'data\history.dat'
         $marker = 'e2e-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
         [void](Set-Clip $marker)
-        Start-Sleep -Milliseconds 1600
-        Check 'e2e' 'capture pipeline' ((Clip $e2eDir @('list', '-Count', '5')) -match [regex]::Escape($marker)) $marker
+        $seen = $false
+        for ($i = 0; $i -lt 50 -and -not $seen; $i++) {
+          Start-Sleep -Milliseconds 200
+          if ((Read-TextSafe $store).Contains($marker)) { $seen = $true }
+        }
+        Check 'e2e' 'capture pipeline' ($seen -and ((Clip $e2eDir @('list', '-Count', '5')) -match [regex]::Escape($marker))) $marker
 
         [void](Clip $e2eDir @('pause'))
         $marker2 = 'e2e-paused-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
         [void](Set-Clip $marker2)
-        Start-Sleep -Milliseconds 1600
-        Check 'e2e' 'pause stops capture' (-not ((Clip $e2eDir @('list', '-Count', '5')) -match [regex]::Escape($marker2))) $marker2
+        # a pause means "nothing is written", so wait the same window and look for the marker
+        # that must not be there
+        $leaked = $false
+        for ($i = 0; $i -lt 15 -and -not $leaked; $i++) {
+          Start-Sleep -Milliseconds 200
+          if ((Read-TextSafe $store).Contains($marker2)) { $leaked = $true }
+        }
+        Check 'e2e' 'pause stops capture' (-not $leaked) $marker2
         [void](Clip $e2eDir @('resume'))
 
         [void](Clip $e2eDir @('stop'))
         $down = $false
-        for ($i = 0; $i -lt 25 -and -not $down; $i++) {
-          Start-Sleep -Milliseconds 400
-          if ((Clip $e2eDir @('status')) -match 'resident    : not running') { $down = $true }
+        for ($i = 0; $i -lt 80 -and -not $down; $i++) {
+          Start-Sleep -Milliseconds 250
+          if ($child.HasExited) { $down = $true }
+          elseif ((Read-TextSafe $log) -match 'serve stop \(stop\)') { $down = $true }
         }
-        Check 'e2e' 'daemon stops' $down ''
+        Check 'e2e' 'daemon stops' ($down -and ((Clip $e2eDir @('status')) -match 'resident    : not running')) ''
 
-        $log = Join-Path $e2eDir 'data\clipboard.log'
-        $logText = if (Test-Path -LiteralPath $log) { [IO.File]::ReadAllText($log) } else { '' }
+        $logText = Read-TextSafe $log
         Check 'e2e' 'clean shutdown logged' (($logText -match 'serve stop \(stop\)') -and ($logText -match 'supervisor exit')) ''
         Check 'e2e' 'no restart loop' (-not ($logText -match 'serve restart #')) ''
       }

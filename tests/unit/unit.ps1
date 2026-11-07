@@ -300,6 +300,46 @@ try {
     $entryLines = @([IO.File]::ReadAllLines($entryPath)).Count
     Check 'struct' 'entry file stays an entry point' ($entryLines -le 200) ([string]$entryLines + ' lines')
 
+    # the entry loads only the module groups a command can reach. A command the dispatcher
+    # knows and the table does not would reach the default group and fail at run time, so the
+    # two lists have to line up; the group lists in turn have to name files that exist.
+    $entryText = [IO.File]::ReadAllText($entryPath)
+    $dispatchText = [IO.File]::ReadAllText((Join-Path $srcRoot 'lib\dispatch.ps1'))
+    $dispatched = @([regex]::Matches($dispatchText, "(?m)^  '([a-z0-9-]+)' \{") | ForEach-Object { $_.Groups[1].Value })
+    $groupBlock = ($entryText -split '\$groupModules = @\{')[1]
+    if ($groupBlock) { $groupBlock = ($groupBlock -split "\r?\n\}")[0] } else { $groupBlock = '' }
+    $tableBlock = ($entryText -split '\$commandGroups = @\{')[1]
+    if ($tableBlock) { $tableBlock = ($tableBlock -split "\r?\n\}")[0] } else { $tableBlock = '' }
+    $tableKeys = @([regex]::Matches($tableBlock, "(?m)^  '([a-z0-9-]+)'") | ForEach-Object { $_.Groups[1].Value })
+    $groupNames = @([regex]::Matches($groupBlock, '(?m)^  ([a-z]+)\s+=') | ForEach-Object { $_.Groups[1].Value })
+    # ui and serve are answered by the panel branch of the entry, everything else by the table
+    $unmapped = @($dispatched | Where-Object { $tableKeys -notcontains $_ -and @('ui', 'serve') -notcontains $_ })
+    Check 'struct' 'every dispatched command is in the module table' ($dispatched.Count -ge 15 -and $unmapped.Count -eq 0) (($unmapped -join ', ') + ' / ' + $dispatched.Count + ' commands')
+    $unknownCommand = @($tableKeys | Where-Object { $dispatched -notcontains $_ })
+    Check 'struct' 'the module table names no unknown command' ($tableKeys.Count -ge 15 -and $unknownCommand.Count -eq 0) ($unknownCommand -join ', ')
+    $usedGroups = @($tableBlock -split "'" | Where-Object { $groupNames -contains $_ } | Select-Object -Unique)
+    Check 'struct' 'the module table names groups that exist' ($groupNames.Count -ge 4 -and $usedGroups.Count -ge 1) (($groupNames -join ', ') + ' / used ' + ($usedGroups -join ', '))
+    $groupFiles = @([regex]::Matches($groupBlock, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -match '^[a-z]' })
+    $missingGroupFile = @($groupFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $srcRoot ($_ + '.ps1'))) })
+    Check 'struct' 'every module in a group exists' ($groupFiles.Count -ge 15 -and $missingGroupFile.Count -eq 0) (($missingGroupFile -join ', ') + ' / ' + $groupFiles.Count + ' modules')
+
+    # the renamer replaces a variable by its parsed extent, and a splat's extent starts at
+    # the '@': rebuilding it as `$name` turns `f @h` into `f $h`, a positional argument
+    $minifyPath = Join-Path $repoRoot 'scripts\minify.ps1'
+    if (Test-Path -LiteralPath $minifyPath) {
+      . $minifyPath
+      $tmpIn = Join-Path ([IO.Path]::GetTempPath()) ('splat-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.ps1')
+      $tmpOut = $tmpIn + '.min.ps1'
+      try {
+        [IO.File]::WriteAllText($tmpIn, ("function f { param(`$x, `$y) `$x }" + "`r`n`r`n" + "`$h = @{ x = 1; y = 2 }" + "`r`n`r`n" + "f @h" + "`r`n"), $Utf8)
+        [void](Invoke-MinifyFile -Path $tmpIn -OutPath $tmpOut)
+        $min = [IO.File]::ReadAllText($tmpOut)
+        Check 'struct' 'the renamer keeps a splat a splat' ($min -match '(?m)^f @[A-Za-z_]') $min.Trim()
+      } finally {
+        Remove-Item -LiteralPath $tmpIn, $tmpOut -Force -ErrorAction SilentlyContinue
+      }
+    }
+
     # the tooling lives outside src\: package.ini declares the commands, cli runs them
     $tooling = @('package.ini', 'cli.ps1', 'cli.cmd', 'cli', 'build.ini',
       'scripts\build.ps1', 'scripts\minify.ps1', 'scripts\dev.ps1', 'scripts\test.ps1', 'scripts\shot.ps1')
