@@ -1065,7 +1065,7 @@ function Show-Picker([switch]$Warm) {
       Update-Preview $pv $script:Filtered[$script:Hover] $at.Y $pvCfg $form.Bounds
       $script:PvIdx = $script:Hover
     }
-    $lst.Add_SelectedIndexChanged({ if (-not $lst.IsDisposed) { Set-AnimSelection $script:Anim $lst.SelectedIndex } })
+    $lst.Add_SelectedIndexChanged({ if (-not $lst.IsDisposed) { Set-AnimSelection $script:Anim $lst.SelectedIndex; $footL.Invalidate() } })
     $lst.Add_MouseMove({
         param($s, $e)
         if ($lst.IsDisposed) { return }
@@ -1093,7 +1093,10 @@ function Show-Picker([switch]$Warm) {
     $lst.Add_DoubleClick({ if ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex } })
     # Ctrl toggles a row, Shift takes a run, a plain click starts over - the rules live in
     # lib/select.ps1 so they can be tested without a window
-    $lst.Add_RowClicked({ param($sn, $ev) Update-Selection $script:Sel $lst ([int]$lst.ClickRow) ([bool]$lst.ClickHadControl) ([bool]$lst.ClickHadShift) })
+    # the footer lists what the selected row allows (F2 only for a plain text row), so every
+    # path that changes the selection has to repaint it: the list redraws itself, the footer is
+    # its own control and would otherwise keep the hints of the row selected before
+    $lst.Add_RowClicked({ param($sn, $ev) Update-Selection $script:Sel $lst ([int]$lst.ClickRow) ([bool]$lst.ClickHadControl) ([bool]$lst.ClickHadShift); $footL.Invalidate() })
     $lst.Add_MouseUp({ param($s, $e) if ($e.Button -eq 'Left') { Sync-Sb; Focus-Search } })
 
     $footTimer = New-Object Windows.Forms.Timer
