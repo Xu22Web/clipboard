@@ -653,7 +653,10 @@ try {
     $afterPin = @(Get-Records)
     $afterPinText = ($afterPin | ForEach-Object { [string]$_.Payload }) -join ','
     Check 'unit' 'a mark change appends a line' ($linesAfterPin -eq ($linesBeforePin + 1)) ([string]$linesBeforePin + ' -> ' + [string]$linesAfterPin)
-    Check 'unit' 'a marked row keeps its place' ($afterPinText -ceq $beforePin) ($afterPinText + ' vs ' + $beforePin)
+    # the row keeps its payload, its time and its marks, but not its slot: the sort mark floats
+    # it to the top of the list, which is the run the panel freezes. A write that left it where
+    # it was made the pin invisible until the next full parse.
+    Check 'unit' 'a pinned row floats to the top' ($afterPinText -ceq 'm-two,m-three,m-one') ($afterPinText + ' vs m-two,m-three,m-one')
     $markedRow = @($afterPin | Where-Object { [string]$_.Payload -ceq 'm-two' })
     Check 'unit' 'the appended version carries the mark' (($markedRow.Count -eq 1) -and (Test-Mark $markedRow[0] 'p')) ''
     # the older line holds a copy of the row, so the two must not become two rows

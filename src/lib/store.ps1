@@ -224,18 +224,35 @@ function Get-RecordLine($r) {
 
 # A tick is the sort key, so writing one has to keep it growing: a burst of captures inside
 # one second, or a wall clock that steps back, would otherwise file a row behind the tombstone
-# or behind the older copy it is meant to replace. The list a caller holds is newest first, so
-# the head carries the largest tick and the check costs one comparison.
+# or behind the older copy it is meant to replace. Every row is checked: the list a caller
+# holds is ordered for the panel, where the rows a mark floats to the top come first, so its
+# head is not necessarily the newest row.
 function Get-NextTick($rows) {
   $tick = [long](Get-Epoch)
   foreach ($r in $rows) {
-    if ($null -ne $r) {
-      $head = [long]$r.Time
-      if ($head -ge $tick) { $tick = $head + 1 }
-    }
-    break
+    if ($null -eq $r) { continue }
+    $t = [long]$r.Time
+    if ($t -ge $tick) { $tick = $t + 1 }
   }
   return $tick
+}
+
+# Newest first by tick, the later line winning a tie: the order Get-Records rebuilds after
+# reading the file, applied to the list a writer already holds. Two int arrays sorted in one
+# call, because a Comparison delegate over the same rows costs an order of magnitude more.
+function Sort-ListByTick($list) {
+  $n = $list.Count
+  if ($n -le 1) { return ,$list }
+  $keys = New-Object long[] $n
+  $idx = New-Object int[] $n
+  for ($i = 0; $i -lt $n; $i++) {
+    $keys[$i] = ([long]$list[$i].Time * -1048576) - $i
+    $idx[$i] = $i
+  }
+  [Array]::Sort($keys, $idx)
+  $out = New-Object System.Collections.Generic.List[object]
+  for ($i = 0; $i -lt $n; $i++) { $out.Add($list[$idx[$i]]) }
+  return ,$out
 }
 
 # One line at the end of the store. The file carries its rows oldest first, so a capture costs
@@ -279,6 +296,12 @@ function Append-Record($record, [switch]$InPlace) {
         if ($InPlace.IsPresent -and (-not $record.Gone)) { $list.Add($record) }
       }
       if ((-not $front) -and (-not $found) -and (-not $record.Gone)) { $list.Add($record) }
+      # The cache has to read like a full parse, which applies two rules: newest first by tick,
+      # and sort-marked rows in front of the rest. Applying only the second one left a row that
+      # had just been unpinned where the pin had lifted it. Nothing else re-parses the file
+      # while the process lives, so this is the only place the two rules can be kept.
+      $list = Sort-ListByTick $list
+      $list = Sort-Records $list
       # a capture goes in front, so the list can now be one row too long
       if ($front) { $list = Limit-Records $list }
       $stamp = Get-StoreFileStamp $StoreFile
