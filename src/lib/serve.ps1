@@ -53,6 +53,12 @@ function Start-Serve {
 function Invoke-ServeOnce {
   $script:PickerOpen = $false
   $evt = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, $EventName)
+  # Clients that hand their command to this process instead of starting their own: the
+  # listener exists for the whole scene, and every request runs on this thread, so it walks
+  # the same state the capture loop and the panel use.
+  $script:ProxyListener = $null
+  try { $script:ProxyListener = New-ProxyListener }
+  catch { Write-Log ('proxy listener: ' + $_.Exception.Message) }
 
   $stored = @(Get-Records)
   if ($MaxItems -ge 1 -and $stored.Count -gt $MaxItems) {
@@ -112,8 +118,7 @@ function Invoke-ServeOnce {
   $hasTicks = $null -ne (Get-Command Invoke-PluginTicks -ErrorAction SilentlyContinue)
   $timer = New-Object Windows.Forms.Timer
   $timer.Interval = $Interval
-  $timer.Add_Tick({
-      if ($script:StopEvt.WaitOne(0)) { $script:ExitKind = 'stop'; [Windows.Forms.Application]::ExitThread(); return }
+  $timer.Add_Tick({      if ($script:StopEvt.WaitOne(0)) { $script:ExitKind = 'stop'; [Windows.Forms.Application]::ExitThread(); return }
       if ($evt.WaitOne(0)) { Show-Picker; return }
 
       # plugin background work (expiry sweeps and the like); throttled inside
@@ -144,6 +149,15 @@ function Invoke-ServeOnce {
       $script:LastSeq = [Cb.Win]::GetClipboardSequenceNumber()
     })
   $timer.Start()
+  # the proxy runs on its own, faster clock: a command should not wait for the capture
+  # interval, and serving one is a connect plus a few milliseconds of work
+  $proxyTimer = New-Object Windows.Forms.Timer
+  $proxyTimer.Interval = 50
+  $proxyTimer.Add_Tick({
+      if (-not $script:ProxyListener) { return }
+      try { $script:ProxyListener = Step-ProxyListener $script:ProxyListener $Root } catch { Write-Log ('proxy: ' + $_.Exception.Message) }
+    })
+  $proxyTimer.Start()
 
   $shown = if ($reg) { $script:Hot } else { '(not registered, polling ' + $Hotkey + ')' }
   Write-Host ('clipboard resident   hotkey=' + $shown + '   store=' + $StoreFile)
@@ -152,6 +166,10 @@ function Invoke-ServeOnce {
   catch { Write-Log ('run error: ' + $_.Exception.Message) }
   finally {
     Write-Log 'serve exit'
+    try { $proxyTimer.Stop() } catch { }
+    try { $proxyTimer.Dispose() } catch { }
+    Close-ProxyListener $script:ProxyListener
+    $script:ProxyListener = $null
     try { $timer.Stop() } catch { }
     try { $timer.Dispose() } catch { }
     try { if ($script:Tray) { $script:Tray.Visible = $false; $script:Tray.Dispose() } } catch { }

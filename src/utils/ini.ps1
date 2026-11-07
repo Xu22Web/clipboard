@@ -16,7 +16,7 @@
 # file that sets a key twice reads like the browser reading a stylesheet.
 function Read-IniDoc([string[]]$lines) {
   $map = @{}
-  $keys = New-Object System.Collections.Generic.List[string]
+  $keys = [System.Collections.Generic.List[string]]::new()
   $section = ''
   foreach ($raw in $lines) {
     $l = ([string]$raw).Trim()
@@ -59,7 +59,7 @@ function Test-IniDocKey($doc, [string]$key) {
 # write one key: an existing key keeps its position, a new one is appended
 function Set-IniDocValue($doc, [string]$key, [string]$value) {
   if (-not $doc.Map.ContainsKey($key)) {
-    $list = New-Object System.Collections.Generic.List[string]
+    $list = [System.Collections.Generic.List[string]]::new()
     foreach ($k in @($doc.Keys)) { $list.Add([string]$k) }
     $list.Add($key)
     $doc.Keys = $list.ToArray()
@@ -79,7 +79,7 @@ function Add-IniDocValue($doc, [string]$key, [string]$value) {
 function Remove-IniDocValue($doc, [string]$key) {
   if (-not $doc.Map.ContainsKey($key)) { return $false }
   $doc.Map.Remove($key)
-  $list = New-Object System.Collections.Generic.List[string]
+  $list = [System.Collections.Generic.List[string]]::new()
   foreach ($k in @($doc.Keys)) { if ([string]$k -ne $key) { $list.Add([string]$k) } }
   $doc.Keys = $list.ToArray()
   return $true
@@ -87,7 +87,7 @@ function Remove-IniDocValue($doc, [string]$key) {
 
 # every key under a group ("item-marks"), or every key when the prefix is empty
 function Select-IniDocKeys($doc, [string]$prefix = '') {
-  $out = New-Object System.Collections.Generic.List[string]
+  $out = [System.Collections.Generic.List[string]]::new()
   if ($null -eq $doc) { return $out.ToArray() }
   $head = ''
   if ($prefix) { $head = $prefix.TrimEnd('.') + '.' }
@@ -103,7 +103,7 @@ function Select-IniDocKeys($doc, [string]$prefix = '') {
 # flat form - so this is for inspecting or rebuilding a file, not for editing one in place
 # (utils/inifile.ps1 rewrites a single line and keeps the original text).
 function ConvertTo-IniText($doc) {
-  $out = New-Object System.Collections.Generic.List[string]
+  $out = [System.Collections.Generic.List[string]]::new()
   if ($null -eq $doc) { return $out.ToArray() }
   foreach ($k in @($doc.Keys)) { $out.Add(([string]$k + '=' + [string]$doc.Map[$k])) }
   return $out.ToArray()

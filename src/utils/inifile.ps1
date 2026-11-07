@@ -26,7 +26,7 @@ function Import-Ini([string]$path) {
     try { $info.Refresh() } catch { $info = $null }
   }
   if ($null -eq $info) {
-    try { $info = New-Object IO.FileInfo $full } catch { $info = $null }
+    try { $info = [IO.FileInfo]::new($full) } catch { $info = $null }
   }
   $stamp = 'unreadable'
   if ($null -ne $info) {
@@ -57,6 +57,25 @@ function Import-IniValue([string]$path, [string]$key) {
   return (Get-IniDocValue (Import-Ini $path) $key)
 }
 
+# Where the store lives: DataDir= from clipboard.ini, else <root>\data. A relative DataDir
+# resolves against the tool root and a bare drive ("D:") is completed to "D:\".
+#
+# $null means DataDir is not a usable path - the caller decides what to say about it. The
+# entry and lib/proxy.ps1 both need this exact answer (the proxy names its pipe after it), so
+# it is written once, here, instead of being spelled out in each of them.
+function Resolve-StoreDir([string]$root, $iniMap) {
+  $raw = ''
+  if ($iniMap -and $iniMap.ContainsKey('DataDir')) { $raw = ([string]$iniMap['DataDir']).Trim() }
+  if (-not $raw) { return (Join-Path $root 'data') }
+  $path = $raw
+  if (-not [IO.Path]::IsPathRooted($path)) { $path = Join-Path $root $path }
+  try {
+    $path = [IO.Path]::GetFullPath($path).TrimEnd([char]92, [char]47)
+    if ($path -match '^[A-Za-z]:$') { $path += '\' }
+  } catch { return $null }
+  return $path
+}
+
 # forget a parse; called by the writer below, and usable after a file was rewritten by
 # something other than this module
 function Clear-IniImport([string]$path) {
@@ -74,7 +93,7 @@ function Export-IniValue([string]$path, [string]$key, [string]$value) {
   try { $full = [IO.Path]::GetFullPath($path) } catch { }
   $dir = Split-Path -Parent $full
   if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-  $lines = New-Object System.Collections.Generic.List[string]
+  $lines = [System.Collections.Generic.List[string]]::new()
   if (Test-Path -LiteralPath $full) {
     foreach ($l in [IO.File]::ReadAllLines($full, [Text.Encoding]::UTF8)) { $lines.Add($l) }
   }
@@ -131,7 +150,7 @@ function Export-IniValue([string]$path, [string]$key, [string]$value) {
     }
   }
   $tmp = $full + '.tmp'
-  $utf8 = New-Object System.Text.UTF8Encoding $false
+  $utf8 = [System.Text.UTF8Encoding]::new($false)
   [IO.File]::WriteAllText($tmp, (($lines -join [Environment]::NewLine) + [Environment]::NewLine), $utf8)
   Move-Item -LiteralPath $tmp -Destination $full -Force
   Clear-IniImport $full

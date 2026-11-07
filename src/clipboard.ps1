@@ -34,7 +34,9 @@ param(
   [switch]$All,
   [switch]$Media,
   [switch]$Replace,
-  [switch]$Library
+  [switch]$Library,
+  # skip the resident and always run the command in this process (same as CLIPBOARD_NO_PROXY=1)
+  [switch]$NoProxy
 )
 
 $ErrorActionPreference = 'Stop'
@@ -79,7 +81,7 @@ $groupModules = @{
 # write entries, so they get the store group.
 $commandGroups = @{
   'version'   = @()
-  'status'    = @('store')
+  'status'    = @('store', 'config')
   'list'      = @('store')
   'get'       = @('store')
   'put'       = @('store')
@@ -107,7 +109,30 @@ elseif ($commandGroups.ContainsKey($Command)) { $wantGroups = @($commandGroups[$
 $requiredModules = New-Object System.Collections.Generic.List[string]
 foreach ($m in $baseModules) { $requiredModules.Add($m) }
 foreach ($g in $wantGroups) { foreach ($m in $groupModules[$g]) { $requiredModules.Add($m) } }
+
+#region command proxy
+# The resident process has already parsed all of this. When it is up and the command is one
+# it may answer, hand the command over: one pipe connect instead of a 2.5 s start. Anything
+# unexpected - no resident, an older one, a command that moves settings or the store - falls
+# through to the loop below, which is exactly what happened before this block existed. `put`
+# with no text on the command line reads stdin here rather than in the dispatcher, so a
+# refused attempt can still fall through: by then the pipe is drained, and the process that
+# runs the command for real would have seen nothing.
+if (-not $Library -and $Command -eq 'put' -and [string]::IsNullOrEmpty($Value)) {
+  try { $Value = [Console]::In.ReadToEnd() } catch { $Value = '' }
+  $Value = $Value -replace '(\r\n|\n|\r)$', ''
+}
+$loadedModules = @{}
+if (-not $Library -and -not $NoProxy -and $env:CLIPBOARD_NO_PROXY -ne '1') {
+  # only the proxy itself: it needs no ini and no path, so the fast path never parses one
+  . (Join-Path $Root 'lib\proxy.ps1')
+  $loadedModules['lib\proxy'] = $true
+  Invoke-ProxyAttempt $Root $commandGroups $Command $Value $Sub $Arg $Count $PSBoundParameters
+}
+#endregion
+
 foreach ($module in $requiredModules) {
+  if ($loadedModules.ContainsKey($module)) { continue }
   $modulePath = Join-Path $Root ($module + '.ps1')
   if (-not (Test-Path -LiteralPath $modulePath)) {
     Write-Host ('[x] missing: ' + $modulePath)
@@ -136,20 +161,15 @@ if (Test-Path -LiteralPath $pluginModule) {
 # outside those two folders (no %LOCALAPPDATA% fallback).
 $IniPath = Join-Path $Root 'clipboard.ini'
 $iniMap = Read-Ini
-$dataRoot = ''
-if ($iniMap.ContainsKey('DataDir')) { $dataRoot = [string]$iniMap['DataDir'] }
-if ($dataRoot) {
-  if (-not [IO.Path]::IsPathRooted($dataRoot)) { $dataRoot = Join-Path $Root $dataRoot }
-  try {
-    $dataRoot = [IO.Path]::GetFullPath($dataRoot).TrimEnd([char]92, [char]47)
-    if ($dataRoot -match '^[A-Za-z]:$') { $dataRoot += '\' }
-  } catch {
-    if ($Library) { return }
-    Write-Host ('[x] invalid DataDir: ' + $dataRoot)
-    exit 1
-  }
+# Resolve-StoreDir reads DataDir= out of the ini and makes sure the directory is writable.
+# It runs on the one-shot path only: a proxied command never gets this far, and the resident
+# resolved its own store once, at start.
+$StoreDir = Resolve-StoreDir $Root $iniMap
+if (-not $StoreDir) {
+  if ($Library) { return }
+  Write-Host ('[x] invalid DataDir: ' + [string]$iniMap['DataDir'])
+  exit 1
 }
-$StoreDir = if ($dataRoot) { $dataRoot } else { Join-Path $Root 'data' }
 # Only the data folder has to be writable; the settings file may live anywhere and is
 # never created just because the tool started.
 try {

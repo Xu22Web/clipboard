@@ -311,15 +311,11 @@ function Set-ConfigKey([string]$key, [string]$value) {
   Write-Host ('     ' + $IniPath)
   return $true
 }
-# restart the resident so new settings take effect without a manual stop/start
+# restart the resident so new settings take effect without a manual stop/start. Only the
+# resident that serves this data folder: another install (or a test sandbox) holding the
+# machine-wide mutex must not be stopped by a `config set` here.
 function Restart-ResidentIfRunning {
-  $alive = $false
-  try {
-    $m = New-Object System.Threading.Mutex($false, $MutexName)
-    if ($m.WaitOne(0)) { $m.ReleaseMutex() } else { $alive = $true }
-    $m.Dispose()
-  } catch { }
-  if (-not $alive) { Write-Host '     resident is not running, nothing to reload'; return }
+  if (-not (Test-ResidentOwnsStore)) { Write-Host '     resident is not running, nothing to reload'; return }
   try {
     $se = [System.Threading.EventWaitHandle]::OpenExisting($StopName)
     [void]$se.Set()

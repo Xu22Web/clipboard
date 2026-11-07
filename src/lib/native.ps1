@@ -504,3 +504,20 @@ function Get-WinVState {
   }
   return ''
 }
+
+# Is the resident that holds the machine-wide mutex serving *this* store? A second copy of the
+# tool - another install, a test sandbox - keeps its own data folder, so the mutex alone says
+# nothing: the hotkey file the resident writes into its own data\ is what tells them apart,
+# and '(stopped)' is what its supervisor leaves behind on the way out.
+function Test-ResidentOwnsStore {
+  $alive = $false
+  try {
+    $m = New-Object System.Threading.Mutex($false, $MutexName)
+    if ($m.WaitOne(0)) { $m.ReleaseMutex() } else { $alive = $true }
+    $m.Dispose()
+  } catch { }
+  if (-not $alive) { return $false }
+  $marker = Join-Path $StoreDir 'hotkey.txt'
+  if (-not (Test-Path -LiteralPath $marker)) { return $false }
+  try { return (([IO.File]::ReadAllText($marker)).Trim() -ne '(stopped)') } catch { return $false }
+}

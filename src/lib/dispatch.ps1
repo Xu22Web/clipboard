@@ -4,19 +4,14 @@
 # The switches arrive as parameters instead of being read from the caller's scope, so this
 # module can be reasoned about (and tested) on its own. Apply-Config runs first: a command
 # must see the values from clipboard.ini, and a plugin must see its own settings resolved.
+#
+# The work is split in two on purpose. Initialize-Main is the assembly - settings, plugins,
+# plugin settings - and it runs once per process. Invoke-Dispatch is the command itself, and
+# it is what the resident runs again for every request it answers over the proxy pipe
+# (lib/proxy.ps1): the assembly is already done there, and only the command has to repeat.
 
-function Invoke-Main {
-  param(
-    [string]$Command = '',
-    [string]$Value,
-    [string]$Sub,
-    [string]$Arg,
-    [int]$Count = 0,
-    [switch]$Purge,
-    [switch]$All,
-    [switch]$Media,
-    [switch]$Replace
-  )
+function Initialize-Main($Call) {
+  $Command = [string]$Call.Command
 # Only the two that put a panel on screen need the palette. Everything else - put, get,
 # list, del, status, config, help - would pay ~250 ms to load System.Drawing for colours it
 # never draws, and another ~300 ms to read the theme file, so it skips the theme altogether.
@@ -45,6 +40,27 @@ if (@($script:PluginList).Count -gt 0 -and (Get-Command Load-Plugins -ErrorActio
   if (Get-Command Get-PluginMissingNames -ErrorAction SilentlyContinue) { $missing = @(Get-PluginMissingNames) }
   if ($missing.Count -gt 0) { Write-Log ('plugin not found: ' + ($missing -join ', ')) }
 }
+}
+
+# One command, with everything it needs already in place. $Call carries the four positional
+# values, the count, the four switches and the names that were actually bound - `config set
+# key ""` and `config set key` are different commands, and the second one must not be turned
+# into the first by a round trip through a pipe.
+function Invoke-Dispatch($Call) {
+  $Command = [string]$Call.Command
+  $Value = $Call.Value
+  $Sub = $Call.Sub
+  $Arg = $Call.Arg
+  $Count = 0
+  if ($null -ne $Call.Count) { $Count = [int]$Call.Count }
+  $Purge = [bool]$Call.Purge
+  $All = [bool]$Call.All
+  $Media = [bool]$Call.Media
+  $Replace = [bool]$Call.Replace
+  $bound = @{}
+  foreach ($n in @($Call.Bound)) { if ($n) { $bound[[string]$n] = $true } }
+  $script:BoundParams = $bound
+  $script:AnsweringAsResident = [bool]$Call.Resident
 # One pass over clipboard.ini now that every key is registered: an unknown key, a value the
 # schema rejects and a theme name that has no file are collected instead of only logged by
 # whichever loader happened to trip over them. `status` shows the count, `config` shows the
@@ -169,7 +185,7 @@ switch ($Command.ToLower()) {
     else { Write-Host 'index out of range' }
   }
   'clear' {
-    $keep = @(Get-ClearKeepMarks -All:$All.IsPresent)
+    $keep = @(Get-ClearKeepMarks -All:$All)
     Clear-Store $keep
     $left = @(Get-Records)
     # report what survived, and for every protected mark say which verb removes it
@@ -193,12 +209,8 @@ switch ($Command.ToLower()) {
   }
   'resume' { if (Test-Path -LiteralPath $Paused) { Remove-Item -LiteralPath $Paused -Force }; Write-Host '[ok] capture resumed' }
   'status' {
-    $alive = $false
-    try {
-      $m = New-Object System.Threading.Mutex($false, $MutexName)
-      if ($m.WaitOne(0)) { $m.ReleaseMutex() } else { $alive = $true }
-      $m.Dispose()
-    } catch { }
+    $alive = [bool]$script:AnsweringAsResident
+    if (-not $alive) { $alive = Test-ResidentOwnsStore }
     Write-Host ('version     : ' + $script:Version)
     Write-Host ('resident    : ' + $(if ($alive) { 'running' } else { 'not running' }))
     $recs = @(Get-Records)
@@ -308,7 +320,7 @@ switch ($Command.ToLower()) {
     Install-Autostart -Policy $pol
   }
   'uninstall' {
-    $doPurge = $Purge.IsPresent -or ($Value -and $Value.ToLower() -eq 'purge')
+    $doPurge = $Purge -or ($Value -and $Value.ToLower() -eq 'purge')
     Remove-Autostart -Purge:$doPurge
   }
   default {
@@ -323,4 +335,34 @@ switch ($Command.ToLower()) {
     Show-Usage
   }
 }
+}
+
+# The one-shot path: assemble, then run. The entry calls this; the resident calls the two
+# halves separately, because it assembled once when it started.
+function Invoke-Main {
+  param(
+    [string]$Command = '',
+    [string]$Value,
+    [string]$Sub,
+    [string]$Arg,
+    [int]$Count = 0,
+    [switch]$Purge,
+    [switch]$All,
+    [switch]$Media,
+    [switch]$Replace
+  )
+  $Call = @{
+    Command = $Command
+    Value   = $Value
+    Sub     = $Sub
+    Arg     = $Arg
+    Count   = $Count
+    Purge   = [bool]$Purge
+    All     = [bool]$All
+    Media   = [bool]$Media
+    Replace = [bool]$Replace
+    Bound   = @($PSBoundParameters.Keys)
+  }
+  Initialize-Main $Call
+  Invoke-Dispatch $Call
 }
