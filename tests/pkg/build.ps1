@@ -109,9 +109,11 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
     Check 'int' 'Overwrite=0 keeps the existing folder' (($bout -join ' ') -match 'already exists') (($bout | Select-Object -Last 1) -as [string])
 
-    # Plugins= / Themes= trim the package; an unknown name stops the build
+    # Plugins= / Themes= trim the package; an unknown name stops the build.
+    # Minify=0 and Cbx=0: these builds are only about which files travelled, so the rewrite
+    # and the compiler would each cost more than the whole check
     $pkgOut2 = Join-Path $tmpRoot 'pkg2'
-    [IO.File]::WriteAllLines($buildCfg, @(('OutDir=' + $pkgOut2), 'Verify=0', 'IncludeDocs=0', 'Plugins=transform', 'Themes=win11-light'), $Utf8)
+    [IO.File]::WriteAllLines($buildCfg, @(('OutDir=' + $pkgOut2), 'Verify=0', 'Minify=0', 'Cbx=0', 'IncludeDocs=0', 'Plugins=transform', 'Themes=win11-light'), $Utf8)
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
     $pkgDir2 = Join-Path $pkgOut2 ('clipboard-' + $programVersion)
     if (Test-Path -LiteralPath $pkgDir2) {
@@ -127,9 +129,9 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
     Check 'int' 'unknown plugin name stops the build' (($bout -join ' ') -match 'nosuchplugin') (($bout | Select-Object -Last 1) -as [string])
 
     # a page documents one plugin or one theme: with Plugins= / Themes= set, docs\ carries
-    # only the pages of what the package can run
+    # only the pages of what the package can run. Again no rewrite and no compiler
     $pkgOut3 = Join-Path $tmpRoot 'pkg3'
-    [IO.File]::WriteAllLines($buildCfg, @(('OutDir=' + $pkgOut3), 'Verify=0', 'IncludeDocs=1', 'Cbx=0', 'Plugins=transform', 'Themes=win11-light'), $Utf8)
+    [IO.File]::WriteAllLines($buildCfg, @(('OutDir=' + $pkgOut3), 'Verify=0', 'Minify=0', 'Cbx=0', 'IncludeDocs=1', 'Plugins=transform', 'Themes=win11-light'), $Utf8)
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
     $pkgDir3 = Join-Path $pkgOut3 ('clipboard-' + $programVersion)
     if (Test-Path -LiteralPath $pkgDir3) {

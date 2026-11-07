@@ -38,12 +38,9 @@ jobs:
         shell: pwsh
         # 结构组校验文件布局与纯 ASCII（PowerShell 5.1 按 GBK 读无 BOM 的 UTF-8 中文，
         # 所以脚本必须全 ASCII），单元组按名字调用内部函数，集成组起子进程跑每条 CLI 能力。
+        # 这里不打包：产物只在发版时生成（release.yml 的 Package 步骤跑 cli build，自带
+        # Verify=1 复测），提交阶段只验证源码。
         run: .\cli.ps1 test -Unit -Integration
-
-      - name: Package and verify
-        shell: pwsh
-        # build.ini 默认 Verify=1：压缩改名之后拿产物再跑一遍 CLI 套件，行为变了就失败。
-        run: .\cli.ps1 build
 
   e2e:
     # 端到端要真实桌面：注册全局热键、接管剪贴板、启动常驻进程。托管 runner 没有交互式

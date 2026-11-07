@@ -953,7 +953,7 @@ Themes=win11-dark
 
 | workflow | 触发 | 步骤 |
 |---|---|---|
-| `ci.yml` | 推到 `master`、PR、手动（端到端 job 只在手动时跑） | 打印 PowerShell 版本 → `cli test -Unit -Integration` → `cli build`（`Verify=1`，产物复测） |
+| `ci.yml` | 推到 `master`、PR、手动（端到端 job 只在手动时跑） | 打印 PowerShell 版本 → `cli test -Unit -Integration`；提交不打包，产物只在发版时生成 |
 | `release.yml` | 推 `v*` tag、手动 | 校验 tag 与 `package.ini` 的版本一致 → 跑测试 → 打包成 `clipboard-<version>.zip` → 生成 `SHA256SUMS.txt` → 发布 Release |
 
 - 结构组校验文件布局与纯 ASCII（PowerShell 5.1 按 GBK 解码无 BOM 的 UTF-8，脚本中出现中文即报语法错误），单元组按名字调用内部函数，集成组起子进程跑每一条 CLI 能力——三者都在 `ci.yml` 里，每次推送都会跑。
