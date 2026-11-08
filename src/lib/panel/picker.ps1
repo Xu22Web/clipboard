@@ -27,7 +27,6 @@ function Show-Picker([switch]$Warm) {
       if ($wantIcon -and (Test-Font $wantIcon)) { $script:IconFamily = $wantIcon }
       elseif (Test-Font 'Segoe Fluent Icons') { $script:IconFamily = 'Segoe Fluent Icons' }
       elseif (Test-Font 'Segoe MDL2 Assets') { $script:IconFamily = 'Segoe MDL2 Assets' }
-      $script:HasMdl2 = [bool]$script:IconFamily
     }
     $prev = [Cb.Win]::GetForegroundWindow()
     $script:Entries = @(Get-Records)

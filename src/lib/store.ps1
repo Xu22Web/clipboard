@@ -434,12 +434,10 @@ function Select-QueryRows($entries, [string[]]$tokens) {
 }
 
 # enforce MaxItems / MaxTextTotalBytes / MaxMediaTotalBytes in place; rows carrying a
-# protected mark are never dropped. Media sizes travel inside the payload and the reference, so this never
-# touches the disk. TrimDropped tells a caller whether the write that follows has orphaned
-# files worth reclaiming.
+# protected mark are never dropped. Media sizes travel inside the payload and the reference, so
+# this never touches the disk: the write that follows reclaims what it orphaned.
 function Trim-Records($list) {
   $protected = @(Get-ProtectedMarks)
-  $before = $list.Count
   if ($list.Count -gt $MaxItems) {
     $over = $list.Count - $MaxItems
     $drop = New-Object System.Collections.Generic.List[object]
@@ -470,7 +468,6 @@ function Trim-Records($list) {
   }
   $list.Clear()
   foreach ($r in $keep) { $list.Add($r) }
-  $script:TrimDropped = [int]($before - $keep.Count)
 }
 
 function Add-Item([string]$text, $capture = $null) {
