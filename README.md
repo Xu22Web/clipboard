@@ -267,12 +267,12 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 | 字段 | 说明 |
 |---|---|
-| `Type` | `string` / `int` / `number` / `bool` / `list` / `enum` / `regex` / `color` / `hotkey` / `theme` / `any` |
+| `Type` | `string` / `int` / `number` / `bool` / `list` / `enum` / `regex` / `color` / `hotkey` / `theme` / `apprule` / `any` |
 | `Default` | 默认写法；`config init` 写它，读取失败时也回退到它 |
 | `Minimum` / `Maximum` | `int` / `number` 的上下界 |
 | `Enum` | `enum` 的合法值；`list` 时是允许的 token |
 | `Pattern` | `list` 中单个 token 的形状（默认字母、数字、`_ . -`） |
-| `Description` | 一句话说明，`config` 与 `config init` 输出使用 |
+| `Description` | 一句话说明，写成 `clipboard.ini` 中该键上方的注释（基础键与插件键都是） |
 | `Ref` | 值驱动的变量（`[ref]$script:X`） |
 | `Themeable` | `true` = 外观键，不是 ini 键 |
 | `Target` | 仅用于 `Sections`：段内值落到主题的哪张表（`Palette` / `Fonts` / `Metrics` / `Plugin`） |
@@ -501,7 +501,7 @@ clipboard config get entry-actions.Reveal
 clipboard config set entry-actions.Reveal 0
 ```
 
-- `Type` 与基础 schema 一致（`bool` / `int` / `enum` / `regex` / `hotkey` / `list` / `string`）；非法值被 `config set` 拒绝，或在加载时回退默认并写日志。
+- `Type` 与基础 schema 相同（`bool` / `int` / `color` / `enum` / `list` / `string`）；非法值被 `config set` 拒绝，或在加载时回退默认并写日志。
 - 插件代码用 `Get-PluginSetting` 读取生效值，外观项用 `Get-PluginTheme`。
 - 插件未在 `Plugins=` 中列名时其键不生效，`config get` 会提示先启用该插件；`config init` 仍会写出其设置键以便查看。
 
@@ -622,7 +622,7 @@ src/                    程序本体（打包只读这个目录）
   lib/serve.ps1           常驻进程：捕获循环、热键、托盘、崩溃重启
   lib/shortcut.ps1        开机自启与桌面快捷方式的安装与卸载
   lib/config.ps1          config 命令面：应用设置、打印有效值、重启常驻
-  lib/config-template.ps1 写进文件的 clipboard.ini：注释模板、补键合并、reset
+  lib/config-template.ps1 写进文件的 clipboard.ini：行序与分组、补键合并、reset
   lib/usage.ps1           help 输出
   lib/dispatch.ps1        Invoke-Main：Initialize-Main（Apply-Config + 装配插件）→ Invoke-Dispatch
   lib/proxy.ps1           命令代理

@@ -3,135 +3,76 @@
 # the file says. lib/config.ps1 owns the command surface, lib/settings.ps1 owns reading a
 # value back.
 #
-# The template is hand-written on purpose: the comments say what a key is for in the words a
-# user reads, which a generated listing of the schema cannot do. The two paths that write it
-# share this one source, so `config init` and `config reset` can never drift apart.
+# What a key means and which value it starts with are read from schema\clipboard.ps1, so the
+# comment in the file, the `config` listing and the default in `config set` all come from one
+# place. What lives here is the layout: the prose at the top, which heading a key sits under,
+# and the order of the lines. `config init` (which only fills gaps) and `config reset` (which
+# replaces the file) share this one source, so the two can never drift apart.
 
-# every line of a fresh clipboard.ini, comments included. Shared by `config init` (which
-# only fills gaps) and `config reset` (which replaces the file), so the two can never drift.
-function Get-IniTemplateLines {
-  $t = @(
-    '# clipboard.ini - key=value lines, and one [section] per plugin.',
-    '# Restart the daemon after editing (clipboard stop, clipboard serve), or use config set.',
-    '# Every key below can also be written with:',
-    '#   clipboard config set <key> <value>        (plugin keys: config set <plugin>.<Key> <value>)',
-    '# write location, empty = <script dir>\data. relative paths resolve against the script dir.',
-    'DataDir=',
-    '# Hotkey: key may be A-Z 0-9 F1-F24 Insert Delete Home End PgUp PgDn Space.',
-    '# Default is Ctrl+Alt+V. Win+V would be nicer but Windows reserves it on most builds',
-    '# (RegisterHotKey fails); the tool then falls back to Alt+` / Win+Shift+V by itself.',
-    'Hotkey=Ctrl+Alt+V',
-    '# comma separated list tried in order when Hotkey is taken. empty = built-in chain:',
-    '# Ctrl+Alt+V, Win+V, Alt+`, Win+Shift+V',
-    'HotkeyFallbacks=',
-    '# ^v = Ctrl+V | ^+v = Ctrl+Shift+V (terminal) | +{INS} = Shift+Insert (mintty)',
-    'PasteKeys=^v',
-    '# ms to wait for the modifiers to be released before injecting the paste',
-    'ModReleaseTimeout=1200',
-    '# ms to wait after focusing the previous window before sending PasteKeys',
-    'PasteSettle=80',
-    '# entry cap; pinned entries are never trimmed away',
-    'MaxItems=300',
-    '# per text entry cap in bytes; a larger payload is not saved',
-    'MaxTextBytes=204800',
-    '# total size of the text entries in bytes; the oldest are dropped beyond it',
-    'MaxTextTotalBytes=4194304',
-    '# size budget for the image and the html / rtf sidecar files, in bytes (0 = unlimited).',
-    '# it is counted apart from MaxTextTotalBytes, so a screenshot cannot evict every text row',
-    'MaxMediaTotalBytes=134217728',
-    '# 1 = capture pictures (a Word selection carries text, so it stays a formatted entry)',
-    'CaptureImages=1',
-    '# per image cap in bytes; larger pictures are logged and skipped',
-    'MaxImageBytes=16777216',
-    '# 1 = remember the html / rtf of formatted text so it can be pasted back',
-    'CaptureRich=1',
-    '# the html and the rtf are capped apart, so a large rtf cannot cost the html',
-    'MaxHtmlBytes=20971520',
-    'MaxRtfBytes=20971520',
-    '# an rtf above this size is laid out on the card with a marker where each picture was',
-    '# (the entry and the paste keep the pictures), 0 = never',
-    'RtfImagesUpToBytes=8388608',
-    '# a picture the html points at is inlined when it is at most this large, 0 = never',
-    'InlineImageUpToBytes=4194304',
-    '# 1 = paste the formatting back, 0 = always paste plain text',
-    'PasteRich=1',
-    '# 1 = a file list also carries its paths as text, so a text box gets something',
-    'PasteFilesAsText=1',
-    '# per program paste behaviour, e.g. windowsterminal.exe:plain;code.exe:rich;*',
-    '# actions: plain / rich / no-paste; one rule per ; separated item',
-    'AppRules=',
-    '# payloads above this many characters are kept in data\blobs instead of this file,',
-    '# 0 = always inline (one self-contained history.dat)',
-    'BlobChars=32768',
-    '# clipboard poll interval in ms',
-    'Interval=300',
-    '# 1 = clipboard only, never inject a paste',
-    'NoPaste=0',
-    '# 1 = tray balloon on startup',
-    'Balloon=1',
-    '# the theme is a file name in themes\ (win11-dark.ini, win11-light.ini, ...)',
-    '# win11-dark is the default; an unknown name falls back to it',
-    'Theme=win11-dark',
-    '# regex: matching clipboard text is never saved',
-    'ExcludePattern=',
-    '',
-    '# ---- panel geometry (96 dpi baseline, scaled by the system DPI) ----',
-    '# width only: the height is derived from Rows and is never set directly',
-    'WindowWidth=700',
-    '# visible rows; the panel is Rows x 40 + 110 tall and always shows whole rows',
-    'Rows=10',
-    '# empty = centre the panel on the monitor of the window you came from',
-    'WindowLeft=',
-    'WindowTop=',
-    '# 1 = remember the width you dragged / the position you moved it to',
-    'SaveWindowWidth=0',
-    'SaveWindowPos=0',
-    '',
-    '# ---- panel behaviour ----',
-    '# 1 = relative time column (now / 5m / 3h / 2d / 10-24)',
-    'ShowTime=1',
-    '# 1 = show the row icon a plugin provides (there is none without one)',
-    'ShowTypeIcon=1',
-    '# 1 = show a small picture in the icon slot of a picture or formatted-text row',
-    'ShowThumbnails=1',
-    '# 1 = highlight the search matches',
-    'Highlight=1',
-    '# skip the highlight above this payload size in bytes, 0 = always highlight',
-    'HighlightMaxBytes=8192',
-    '# 1 = show <NL> for line breaks, 0 = collapse them into a single space',
-    'ShowNewlineMarker=1',
-    '# 1 = hover a row to preview its text beside the panel, 0 = no card at all',
-    'PreviewHover=1',
-    '# ms the cursor has to rest on a row before the card appears',
-    'PreviewDelay=350',
-    '# characters of an entry the card reads and shows (the rest is elided)',
-    'PreviewChars=6000',
-    '# wheel step in rows, 0 = follow the system setting',
-    'ScrollLines=0',
-    '# 1 = fade / grow transitions on hover, selection, scrollbar and search field, 0 = instant',
-    'Animations=1',
-    '# 1 = per-monitor DPI aware rendering, 0 = legacy rendering',
-    'DpiAware=1',
-    '',
-    '# ---- history ----',
-    '# entry cap, 0 = unlimited',
-    'MaxItems=300',
-    '# 1 = Ctrl+Z in the panel restores the last deleted entry',
-    'Undo=1',
-    '',
-    '# ---- install ----',
-    '# 1 = install creates the logon shortcut that runs serve',
-    'Autostart=1',
-    '# 1 = install creates the desktop shortcut that runs ui',
-    'DesktopShortcut=1',
-    '',
-    '# ---- plugins (see README.md) ----',
-    '# names to load, in load order; the default lists every plugin on disk',
-    '# e.g. Plugins=item-marks,entry-actions',
-    # the whole expression needs its own parentheses: inside an array literal a bare
-    # `-join ','` turns the comma into an element separator and the line comes out empty
-    ('Plugins=' + (@($script:PluginList) -join ','))
+# The shape of the file a user reads: a heading and the keys under it, in this order. A key
+# the schema knows but this table forgets fails loudly below, because `config init` comments
+# out whatever the template does not carry, and that would hide the user's value.
+$script:IniTemplateLayout = [ordered]@{
+  '' = @(
+    'DataDir', 'Hotkey', 'HotkeyFallbacks', 'PasteKeys', 'ModReleaseTimeout', 'PasteSettle',
+    'MaxTextBytes', 'MaxTextTotalBytes', 'MaxMediaTotalBytes', 'BlobChars',
+    'CaptureImages', 'MaxImageBytes', 'CaptureRich', 'MaxHtmlBytes', 'MaxRtfBytes',
+    'RtfImagesUpToBytes', 'InlineImageUpToBytes', 'PasteRich', 'PasteFilesAsText',
+    'AppRules', 'Interval', 'NoPaste', 'Balloon', 'Theme', 'ExcludePattern'
   )
+  'panel geometry (96 dpi baseline, scaled by the system DPI)' = @(
+    'WindowWidth', 'Rows', 'WindowLeft', 'WindowTop', 'SaveWindowWidth', 'SaveWindowPos'
+  )
+  'panel behaviour' = @(
+    'ShowTime', 'ShowTypeIcon', 'ShowThumbnails', 'Highlight', 'HighlightMaxBytes',
+    'ShowNewlineMarker', 'PreviewHover', 'PreviewDelay', 'PreviewChars', 'ScrollLines',
+    'Animations', 'DpiAware'
+  )
+  'history' = @('MaxItems', 'Undo')
+  'install' = @('Autostart', 'DesktopShortcut')
+  'plugins (see README.md)' = @('Plugins')
+}
+
+function Get-IniTemplateLines {
+  $t = New-Object System.Collections.Generic.List[string]
+  $t.Add('# clipboard.ini - key=value lines, and one [section] per plugin.')
+  $t.Add('# Restart the daemon after editing (clipboard stop, clipboard serve), or use config set.')
+  $t.Add('# Every key below can also be written with:')
+  $t.Add('#   clipboard config set <key> <value>        (plugin keys: config set <plugin>.<Key> <value>)')
+  $seen = @{}
+  foreach ($heading in @($script:IniTemplateLayout.Keys)) {
+    if ($heading) {
+      $t.Add('')
+      $t.Add('# ---- ' + $heading + ' ----')
+    }
+    foreach ($key in @($script:IniTemplateLayout[$heading])) {
+      if (-not $script:IniSchema.Contains($key)) {
+        throw ('the template lists a key the schema does not have: ' + $key)
+      }
+      $spec = $script:IniSchema[$key]
+      if ($spec.Contains('Description') -and [string]$spec['Description']) {
+        $t.Add('# ' + [string]$spec['Description'])
+      }
+      if ($key -eq 'Plugins') {
+        $t.Add($key + '=' + (@($script:PluginList) -join ','))
+      } else {
+        $dv = ''
+        if ($spec.Contains('Default')) { $dv = [string]$spec['Default'] }
+        $t.Add($key + '=' + $dv)
+      }
+      $seen[$key.ToLowerInvariant()] = $true
+    }
+  }
+  # every base key the schema knows has to be in the file: config init comments out whatever
+  # the template does not carry, so a missing line would turn a user's value into "[unknown]".
+  # Dotted names are plugin keys and get their own section below.
+  $missing = @()
+  foreach ($k in @($script:IniSchema.Keys)) {
+    $k = [string]$k
+    if ($k.Contains('.')) { continue }
+    if (-not $seen.ContainsKey($k.ToLowerInvariant())) { $missing += $k }
+  }
+  if ($missing.Count -gt 0) { throw ('the template does not cover: ' + ($missing -join ', ')) }
   # Settings declared by every plugin file on disk, loaded or not: the template documents
   # what exists, while help / the plugin commands / the panel follow the resolved Plugins=.
   # A plugin's keys are written as a section of its own - [item-marks] + MaxPins=50 - which

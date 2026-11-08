@@ -60,7 +60,7 @@
     Animations        = @{ Type = 'bool'; Ref = [ref]$script:Animations; Default = 1; Description = '1 = hover / selection / scrollbar transitions, 0 = instant' }
     Autostart         = @{ Type = 'bool'; Ref = [ref]$script:Autostart; Default = 1; Description = '1 = install creates the logon shortcut (serve)' }
     DesktopShortcut   = @{ Type = 'bool'; Ref = [ref]$script:DesktopShortcut; Default = 1; Description = '1 = install creates the desktop shortcut (ui)' }
-    Plugins           = @{ Type = 'list'; Default = ''; Description = 'comma separated plugin names to load (default: every plugin in the plugins folder)' }
+    Plugins           = @{ Type = 'list'; Default = ''; Description = 'comma separated names of the plugins to load, in load order (a bare Plugins= loads every file in the plugins folder)' }
   }
   # a plugin declares its own Settings and registers them as <plugin>.<Key> when it loads
   ExtraSections = @{ Type = 'any'; Description = 'plugin settings: <plugin>.<Key>, or [<plugin>] + <Key>' }

@@ -17,13 +17,13 @@
 # Property spec fields, JSON Schema names where one exists:
 #
 #   Type        required: string | int | number | bool | list | enum | regex | color |
-#               hotkey | theme | any
+#               hotkey | theme | apprule | any
 #   Default     the value the file is written with; every reader falls back to it
 #   Minimum     int / number lower bound
 #   Maximum     int / number upper bound
 #   Enum        for enum: the values allowed; for list: the tokens allowed
 #   Pattern     for list: the shape of one item (default: letters, digits, _ . -)
-#   Description one line, shown by `config`
+#   Description one line, written as the comment above the key in the ini template
 #   Ref         the variable the value drives ([ref]$script:X); Apply-Config writes through
 #               it, which is why it is a reference and not a name - the minifier renames
 #               script variables, a name string would survive and address nothing
