@@ -399,9 +399,6 @@ namespace Cb {
       }
     }
   }
-  public class FluentList : System.Windows.Forms.ListBox {
-    public FluentList() { DoubleBuffered = true; }
-  }
 
   // ---- the row surface (see lib/panel/pinlist.ps1 for why it exists) -------------------
   public class PinDrawEventArgs : EventArgs {

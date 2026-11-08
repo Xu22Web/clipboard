@@ -18,7 +18,8 @@
     'dev.Interval'  = @{ Type = 'int'; Minimum = 100; Maximum = 60000; Description = 'watcher poll interval in ms' }
     'dev.Includes'  = @{ Type = 'list'; Pattern = '^[A-Za-z0-9_.*?/\-]+$'; NonEmpty = $true; Description = 'globs to watch, relative to src\' }
     'dev.Excludes'  = @{ Type = 'list'; Pattern = '^[A-Za-z0-9_.*?/\-]+$'; Description = 'globs to leave out of Includes' }
-    'dev.Rebuild'   = @{ Type = 'bool'; Description = '1 = recompile lib\assembly\clipboard.dll when a .cs changed' }
+    'dev.Client'    = @{ Type = 'bool'; Description = '1 = compile src\client.exe before the first start and after a client.cs change' }
+    'dev.Assembly'  = @{ Type = 'bool'; Description = '1 = compile src\lib\assembly\clipboard.dll before the first start and after a .cs change' }
 
     'build.OutDir'      = @{ Type = 'string'; Description = 'output folder, relative to the repository root' }
     'build.Minify'      = @{ Type = 'bool'; Description = '1 = rewrite every .ps1 from its syntax tree' }

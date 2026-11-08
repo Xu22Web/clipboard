@@ -39,8 +39,8 @@ function Invoke-Cli([string[]]$cliArgs) {
 }
 
 # ---------------------------------------------------------------- settings
-# cli.ini [dev] holds Interval, Includes, Excludes and Rebuild. It is read with the tooling's
-# own ini parser, so a tool script never loads a module out of src\.
+# cli.ini [dev] holds Interval, Includes, Excludes, Client and Assembly. It is read with the
+# tooling's own ini parser, so a tool script never loads a module out of src\.
 . (Join-Path $root 'tools\utils\ini.ps1')
 . (Join-Path $root 'tools\utils\schema.ps1')
 . (Join-Path $root 'tools\utils\globs.ps1')
@@ -75,7 +75,26 @@ function Split-GlobList([string]$value) {
 if ($Interval -le 0) {
   $Interval = [int](Cfg 'Interval')
 }
-$rebuild = (Cfg 'Rebuild') -eq '1'
+$buildClient = (Cfg 'Client') -eq '1'
+$buildAssembly = (Cfg 'Assembly') -eq '1'
+
+# Both compiled products come from src\. They are built once before the loop starts and again
+# after a watched .cs file changed, so a start never pays for an in-process compile of the
+# C# and a stale dll never outlives a source edit.
+function Invoke-NativeBuild {
+  $jobs = @(
+    @{ On = $buildAssembly; Script = 'build-assembly.ps1'; Label = 'lib\assembly\clipboard.dll'; Out = (Join-Path $srcDir 'lib\assembly\clipboard.dll') },
+    @{ On = $buildClient; Script = 'build-client.ps1'; Label = 'client.exe'; Out = (Join-Path $srcDir 'client.exe') }
+  )
+  foreach ($job in $jobs) {
+    if (-not $job.On) { continue }
+    $script = Join-Path $root ('tools\' + $job.Script)
+    if (-not (Test-Path -LiteralPath $script)) { continue }
+    Write-Host ('[..] compiling ' + $job.Label)
+    $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Out $job.Out 2>&1
+    foreach ($line in @($log)) { Write-Host ('    ' + ([string]$line).Trim()) }
+  }
+}
 
 # What the loop watches: the include globs minus the exclude globs. Both are written relative
 # to src\ and read again on every poll, so a file that appears or disappears counts as a
@@ -238,6 +257,9 @@ function Start-Resident {
 function Start-DevLoop {
   if ($Interval -lt 100) { $Interval = 100 }
   Stop-Resident
+  # compile ahead of the first start: the resident holds the dll open, so this runs after it
+  # is gone and before anything loads the files
+  Invoke-NativeBuild
   $set = Get-WatchSet
   $stamps = Get-WatchStamps $set.Files
   $started = Start-Resident
@@ -305,16 +327,10 @@ function Start-DevLoop {
     # The resident holds lib\assembly\clipboard.dll open while it runs, so it has to be gone
     # before the assembly can be rewritten: stop first, compile, then start again.
     Stop-Resident
-    # The C# lives in src\lib\assembly. A dev run loads the assembly when it is newer than the
-    # source, so a C# edit has to recompile it before the restart; otherwise the restart
-    # compiles it in-process, which costs about a second per start.
-    if ($rebuild -and @($changes | Where-Object { $_ -match '\.cs$' }).Count -gt 0) {
-      $assemblyScript = Join-Path $root 'tools\build-assembly.ps1'
-      if (Test-Path -LiteralPath $assemblyScript) {
-        Write-Host '[..] the C# changed - rebuilding lib\assembly\clipboard.dll'
-        $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $assemblyScript -Out (Join-Path $srcDir 'lib\assembly\clipboard.dll') 2>&1
-        foreach ($line in @($log)) { Write-Host ('    ' + ([string]$line).Trim()) }
-      }
+    # A C# edit has to reach the compiled product before the restart; the same call rebuilds
+    # both, each one only when its cli.ini switch is on.
+    if (@($changes | Where-Object { $_ -match '\.cs$' }).Count -gt 0) {
+      Invoke-NativeBuild
     }
     $goneAt = $null
     if (Start-Resident) {

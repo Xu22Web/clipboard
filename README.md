@@ -56,7 +56,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 `install` 生成的快捷方式以 `-ExecutionPolicy RemoteSigned` 运行脚本，可覆盖目标机 `Restricted` / `AllSigned` 的评估结果；需要更宽松的策略时用 `install bypass`。
 
-打包产物含两个批处理，与 `clipboard.ps1` 同层：
+打包产物含两个批处理，与 `clipboard.ps1` 同层（源文件在仓库的 `scripts\`，打包时原样复制）：
 
 | 脚本 | 做的事 |
 |---|---|
@@ -541,14 +541,14 @@ clipboard config set entry-actions.Reveal 0
 | 回退约定 | 退出码 `100` = 未接管（无常驻进程、工具根不符、该命令不代理），此时批处理继续执行 `powershell -File clipboard.ps1`；其它退出码原样透传 |
 | 参数 | 只发命令名与位置参数；`-Count` / `-Purge` / `-All` / `-Media` / `-Replace` 会被识别，其余开关回退给脚本解析 |
 | 编码 | 进程之间使用 UTF-8 的 JSON 帧；`put` 无文本时从 stdin 读 |
-| 生成 | `cli client` 写入 `src\client.exe`（不入库）；`cli build` 在 `Client=1` 时编进产物 |
+| 生成 | `cli client` 写入 `src\client.exe`（不入库）；`cli build` 在 `Client=1` 时先编到 `src\client.exe`，再复制进产物；`cli dev` 在 `[dev] Client=1` 时于启动前编译同一文件 |
 
 `clipboard.dll` 由 `Add-Native`（`lib\native.ps1`）与 `Add-KeyHookType`（`lib\panel\keyhook.ps1`）通过 `Assembly.LoadFrom` 载入，载入成功即不再编译源码：
 
 | 项 | 说明 |
 |---|---|
 | 何时不使用 | 文件不存在，或 `lib\assembly` 下任一 `.cs` 的修改时间晚于它 |
-| 生成 | `cli assembly` 写入 `src\lib\assembly\clipboard.dll`（不入库）；`cli build` 在 `Assembly=1` 时编进产物；`Assembly=0` 或编译器不可用时，产物改为带上 `lib\assembly\*.cs` |
+| 生成 | `cli assembly` 写入 `src\lib\assembly\clipboard.dll`（不入库）；`cli build` 在 `Assembly=1` 时先编到同一路径，再复制进产物；`cli dev` 在 `[dev] Assembly=1` 时于启动前编译。`Assembly=0` 或编译器不可用时，产物改为带上 `lib\assembly\*.cs` |
 | 布局无关性 | 只读取文件，不依赖 GAC 或安装路径 |
 
 `status` 的 `resident` 行与 `config set` 之后的自动重启只认服务于当前数据目录的常驻进程（依据是它写在自身 `data\` 下的 `hotkey.txt`，退出时写成 `(stopped)`），另装一份或运行测试沙箱时不会误报。
@@ -570,7 +570,9 @@ clipboard config set entry-actions.Reveal 0
 package.ini             项目元数据与命令：Name / Version / [scripts] 下的命令名（cli 读取）
 cli  cli.cmd  cli.ps1   命令入口（sh / CMD / PowerShell），执行 package.ini 中的命令
 cli.ini                 工具配置：[dev] 监听与轮询、[build] 打包选项、[test] 并行度与分组
-tools/build.ps1         打包脚本（读 src\，输出 dist\clipboard-<version>\，并写 install.bat / uninstall.bat）
+scripts/install.bat     安装脚本：config init → migrate → install（打包时复制到产物根目录）
+scripts/uninstall.bat   卸载脚本：stop → uninstall purge（同上）
+tools/build.ps1         打包脚本（读 src\，输出 dist\clipboard-<version>\，并从 scripts\ 复制 install.bat / uninstall.bat）
 tools/build-client.ps1  编译 client.exe（可选）
 tools/build-assembly.ps1 编译 lib\assembly\clipboard.dll（可选）
 tools/dev.ps1           开发运行：启动常驻并监视被加载的文件
@@ -793,11 +795,12 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 
 `cli` / `cli.cmd` / `cli.ps1` 三个入口行为一致，均先把工作目录切到仓库根，再把余下参数追加到 `package.ini` 中对应的命令行。
 
-`cli dev` 只有一种模式：常驻进程持续运行，文件变化即重启；常驻进程被外部停止（托盘退出、`clipboard stop`）时循环结束；`config set` 引起的自动重启不触发退出。监视范围、轮询间隔以及 C# 改动后是否重编 `lib\assembly\clipboard.dll` 由 `cli.ini` 的 `[dev]` 段决定：
+`cli dev` 只有一种模式：常驻进程持续运行，文件变化即重启；常驻进程被外部停止（托盘退出、`clipboard stop`）时循环结束；`config set` 引起的自动重启不触发退出。监视范围、轮询间隔，以及启动前是否预编译 `client.exe` 与 `clipboard.dll` 由 `cli.ini` 的 `[dev]` 段决定：
 
 - `Includes` / `Excludes`：相对 `src\` 的通配，`**` 递归，`..` 可跳出 `src\`。新增与删除也算变化，入口 dot-source 行指向的缺失文件会打印 `[!] missing:`。
 - `Interval`：轮询间隔（毫秒，默认 600）。连续一个间隔无新变化后才重启，一次保存分多步写入只重启一次。
-- `Rebuild`：C# 变化时先重建类型库。重建前会先停止常驻进程，否则该文件被占用。
+- `Assembly`：启动前把 `lib\assembly\*.cs` 编成 `src\lib\assembly\clipboard.dll`，`.cs` 变化后重编；`0` = 不编，运行时按源码现编译。编译前会先停止常驻进程，否则该文件被占用。
+- `Client`：启动前把 `lib\client\client.cs` 编成 `src\client.exe`，`client.cs` 变化后重编；`0` = 不编，`clipboard.cmd` 回退到脚本客户端。
 - `Ctrl+C` 结束循环并停掉它启动的常驻进程。终端被直接杀掉时需手动 `clipboard stop`。
 
 `cli bench` 在 `%TEMP%` 下复制一份 `src\` 并把 `DataDir` 指向临时目录，因此可在常驻进程运行时使用：输出 `status` / `list` 冷启动、2 KB 与 200 KB 文本的捕获、保存、解析、单词过滤七项耗时（`-Records` 改库规模，`-Json` / `-Out` 便于对比）。面板打开与粘贴注入需要真实桌面，不在其中。
@@ -812,7 +815,7 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 
 ## 打包分发
 
-`cli build` 调用 `tools\build.ps1`：读取 `src\`，输出 `dist\clipboard-<version>\`。目录结构不变、产物仍是 PowerShell，但每个 `.ps1` 都按语法树重写（删注释与缩进、重命名内部函数与局部变量）。
+`cli build` 调用 `tools\build.ps1`：读取 `src\`，输出 `dist\clipboard-<version>\`。目录结构不变、产物仍是 PowerShell，但每个 `.ps1` 都按语法树重写（删注释与缩进、重命名内部函数与局部变量）；批处理、shell 启动器与主题 ini 只去注释与空行。
 
 ```powershell
 cli build                       # 用 cli.ini
@@ -824,7 +827,7 @@ cli build -Config other.ini     # 换一份配置
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `OutDir` | `dist` | 输出目录；相对路径按仓库根解析 |
-| `Minify` | `1` | `1` = 按语法树压缩脚本 |
+| `Minify` | `1` | `1` = 压缩脚本（按语法树）、批处理、shell 启动器与主题 ini（去注释与空行） |
 | `Rename` | `1` | `1` = 同时重命名内部函数与局部变量；`0` = 只压缩不改名 |
 | `Verify` | `1` | `1` = 打包后对产物运行一遍 CLI 测试，不通过则删掉产物并失败 |
 | `IncludeDocs` | `0` | `1` = 把 `README.md`、`LICENSE`、`docs\` 放进产物；`0` = 只带程序 |
@@ -832,9 +835,9 @@ cli build -Config other.ini     # 换一份配置
 | `Plugins` | `entry-actions,item-marks,retention,transform` | 只打这些插件（名字 = `src\plugins\` 下的文件名去 `.ps1`）；空 = 不带任何插件 |
 | `Themes` | `win11-dark,win11-light` | 只打这些主题，规则同上；空 = 不带任何主题 |
 | `Zip` | `0` | `1` = 另外再打一个 `clipboard-<version>.zip` |
-| `Client` | `1` | `1` = 编出产物里的 `client.exe`（需要 .NET Framework 自带的 csc；编译失败只警告） |
-| `Assembly` | `1` | `1` = 编出产物里的 `lib\assembly\clipboard.dll`；`0` = 改为带上 `lib\assembly\*.cs` |
-| `Includes` | 空 | 额外打包的文件，相对 `src\` 的通配；`.ps1` 与其他脚本一起压缩改名，其余原样复制 |
+| `Client` | `1` | `1` = 打包前先把 `lib\client\client.cs` 编成 `src\client.exe`，再复制进产物（需要 .NET Framework 自带的 csc；编译失败只警告） |
+| `Assembly` | `1` | `1` = 打包前先把 `lib\assembly\*.cs` 编成 `src\lib\assembly\clipboard.dll`，再复制进产物；`0` 或编译失败时改为带上 `lib\assembly\*.cs` |
+| `Includes` | 空 | 额外打包的文件，相对 `src\` 的通配；`.ps1` 与其他脚本一起压缩改名，`.ini` 去注释与空行，其余原样复制 |
 | `Excludes` | 空 | 从产物中剔除的文件，语法同上；最后执行 |
 
 ```ini
@@ -852,6 +855,8 @@ Themes=win11-dark
 产物目录名取自 `package.ini` 的 `Version=`（见[版本号](#版本号)）。
 
 压缩器按语法树处理：内部函数名与局部变量名换成短名（`param()` 名、`$script:` / `$env:` 变量、自动变量、成员名与哈希键不改）；删除注释（`#Requires` 保留）与缩进；同一语句块内相邻语句的换行合成 `;`；`-ErrorAction SilentlyContinue` 缩写为 `-ea 0`，已知枚举名换成数字；带内置别名的 cmdlet 换成别名。每一步后各解析一次，出现语法错误即中止；`Verify=1` 再对产物运行真实 CLI 测试。
+
+没有语法树可走的文件各用一条简单规则：`.bat` 删 `rem` 行与 `::` 行，`clipboard` 删 `#` 行但保留 shebang，`.ini` 删 `#` / `;` 开头的整行；三者都删空行，`echo.` 保留。产物里的主题因此只剩键值，改主题的格式说明见本文[主题](#主题)与 `docs\theme\*.md`。
 
 > `-Source` 指向产物时单元组跳过（它按名字调用内部函数），集成与端到端照常运行。
 

@@ -1,15 +1,21 @@
 # tools\utils\ini.ps1 - the ini reader the tooling needs, and nothing else.
 #
 # src\utils\ini.ps1 + inifile.ps1 implement the whole layer for the program: the document
-# model, every operation on it, the parse cache and the line-preserving writer. The tooling
-# only ever asks one question - "what does this file say" - so this copy keeps the parser and
-# a one-shot reader, and drops the rest. Keeping it here is what lets a tool script run
-# without loading anything out of src\.
+# model (Lines, Map, Keys, Index, Sections), every operation on it, the parse cache and the
+# line-preserving writer. The tooling only ever asks one question - "what does this file say"
+# - so this copy keeps the parser and a one-shot reader, and returns a doc with Map and Keys.
+# The line index is left out on purpose: no tool script edits an ini file, and cli.ini is
+# written by hand. Keeping the copy here is what lets a tool script run without loading
+# anything out of src\.
 #
-# The rules are the program's rules, because a cli.ini written by hand and a clipboard.ini
-# the program writes have to read the same way: one "Key=Value" per line, "#" or ";"
-# comments, and a "[section]" line prefixing the keys that follow it.
+# The rules are the program's rules - one "Key=Value" per line, "#" or ";" comments, a
+# "[section]" line prefixing the keys that follow it, the last value of a repeated key wins at
+# the first position - because a cli.ini written by hand and a clipboard.ini the program writes
+# have to read the same way. tests\unit\unit.ps1 runs both readers over the same sample and
+# compares values and key order, so a rule added to one side only fails there.
 
+# the same parse as src\utils\ini.ps1, minus the line index: Map and Keys are what a tool asks
+# for, and both come out in the same shape
 function Read-IniDoc([string[]]$lines) {
   $map = @{}
   $keys = [System.Collections.Generic.List[string]]::new()

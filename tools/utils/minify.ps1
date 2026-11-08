@@ -15,6 +15,9 @@
                       in fewer characters
     5. alias pass     a cmdlet that ships with a short alias (Get-Command -> gcm,
                       Where-Object -> ?) keeps its meaning and loses characters
+    6. prose pass     a batch file, the shell wrapper or a theme ini has no syntax tree: its
+                      comment lines and blank lines go, every command, key and the shebang
+                      stays
 
   Never renamed: parameters (they are passed by name: -Library, -Count, -NoInject), any
   variable with a scope/drive qualifier ($script:, $env:, $using:), PowerShell automatic
@@ -617,6 +620,46 @@ function Compress-ErrorAction([string]$text) {
   }
   if ($edits.Count -eq 0) { return $text }
   return (Apply-Edits $text $edits)
+}
+
+# A batch file has no syntax tree worth walking. What carries no meaning is a comment line
+# (rem at the start of a line, or ::) and a blank line; echo. stays, it prints a blank line.
+function Compress-Batch([string]$text) {
+  $out = New-Object System.Collections.Generic.List[string]
+  foreach ($line in ($text -split "`r?`n")) {
+    $t = $line.Trim()
+    if ($t -eq '') { continue }
+    if ($t -match '^(?i)rem(\s|$)' -or $t.StartsWith('::')) { continue }
+    $out.Add($line.TrimEnd())
+  }
+  return ($out -join "`r`n")
+}
+
+# An ini file is data under a paragraph of prose: a line that starts with # or ; carries no
+# value, and a blank line carries nothing. A colour is #RRGGBB after "Key=", so the test runs
+# on the whole line, never on what follows the equals sign.
+function Compress-Ini([string]$text) {
+  $out = New-Object System.Collections.Generic.List[string]
+  foreach ($line in ($text -split "`r?`n")) {
+    $t = $line.Trim()
+    if ($t -eq '') { continue }
+    if ($t.StartsWith('#') -or $t.StartsWith(';')) { continue }
+    $out.Add($line.TrimEnd())
+  }
+  return ($out -join "`r`n")
+}
+
+# A shell wrapper is one command under a paragraph of prose: the shebang survives, the rest of
+# the comments and every blank line go.
+function Compress-Shell([string]$text) {
+  $out = New-Object System.Collections.Generic.List[string]
+  foreach ($line in ($text -split "`r?`n")) {
+    $t = $line.Trim()
+    if ($t -eq '') { continue }
+    if ($t.StartsWith('#') -and -not $t.StartsWith('#!')) { continue }
+    $out.Add($line.TrimEnd())
+  }
+  return ($out -join "`n")
 }
 
 # Minify one file. $FunctionMap comes from New-FunctionMap, so all files agree.

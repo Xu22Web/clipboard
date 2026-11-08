@@ -16,8 +16,8 @@
   at run time (src\lib\base.ps1); the build replaces that block with a literal, so a package
   carries the version and reads no file.
 
-  Two batch files are written next to clipboard.ps1: install.bat (config init + migrate +
-  install) and uninstall.bat (stop + uninstall purge).
+  Two batch files from scripts\ are copied next to clipboard.ps1: install.bat (config init +
+  migrate + install) and uninstall.bat (stop + uninstall purge).
 
   What goes in: everything under src\ (the entry file, the two launchers, lib\ with its
   modules, utils\ with the pure helpers, the selected plugins and themes) plus (by default)
@@ -142,6 +142,31 @@ foreach ($f in @('clipboard.ps1', 'clipboard.cmd', 'clipboard')) {
 if (-not (Test-Path -LiteralPath (Join-Path $srcRoot 'lib'))) { Fail 'missing: src\lib\' }
 if (-not (Test-Path -LiteralPath (Join-Path $srcRoot 'utils'))) { Fail 'missing: src\utils\' }
 if (-not (Test-Path -LiteralPath (Join-Path $srcRoot 'schema'))) { Fail 'missing: src\schema\' }
+
+# ---------------------------------------------------------------- native products (ahead of time)
+# Both compiled products are written into src\ before anything is staged: the package carries
+# a copy instead of compiling into itself, so a source run and `cli dev` use the same binary
+# the release ships, and one compile serves the whole build. A compiler that is missing or a
+# dll that is open in a running resident leaves the file untouched: the package then takes the
+# slower path below instead of failing.
+$srcClient = Join-Path $srcRoot 'client.exe'
+$srcAssembly = Join-Path $srcRoot 'lib\assembly\clipboard.dll'
+if ($client -or $assembly) { Write-Step 'compiling the native products (src)' }
+if ($client) {
+  $compiler = Join-Path $root 'tools\build-client.ps1'
+  if (Test-Path -LiteralPath $compiler) {
+    $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $compiler -Out $srcClient 2>&1
+    foreach ($line in @($log)) { Write-Host ('    ' + ([string]$line).Trim()) }
+    if (-not (Test-Path -LiteralPath $srcClient)) { Write-Step '  (no client compiled: the package uses the PowerShell client)' }
+  }
+}
+if ($assembly) {
+  $compiler = Join-Path $root 'tools\build-assembly.ps1'
+  if (Test-Path -LiteralPath $compiler) {
+    $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $compiler -Out $srcAssembly 2>&1
+    foreach ($line in @($log)) { Write-Host ('    ' + ([string]$line).Trim()) }
+  }
+}
 
 $pluginFiles = @()
 $themeFiles = @()
@@ -290,48 +315,47 @@ try {
     }
   }
 
-  # everything else is copied as it is
-  foreach ($f in @('clipboard.cmd', 'clipboard')) {
-    Copy-Item -LiteralPath (Join-Path $srcRoot $f) -Destination $stage -Force
-  }
-  # a packaged copy is set up by double-clicking, so the two scripts sit next to
-  # clipboard.ps1 and only call commands the program already has
-  $installBat = @(
-    '@echo off',
-    'rem clipboard - write a commented clipboard.ini, upgrade an older history, then create',
-    'rem the two shortcuts.',
-    'setlocal',
-    'powershell -NoProfile -ExecutionPolicy Bypass -Sta -File "%~dp0clipboard.ps1" config init',
-    'powershell -NoProfile -ExecutionPolicy Bypass -Sta -File "%~dp0clipboard.ps1" migrate',
-    'powershell -NoProfile -ExecutionPolicy Bypass -Sta -File "%~dp0clipboard.ps1" install',
-    'echo.',
-    'echo done. the hotkey is the Hotkey= line in clipboard.ini.',
-    'pause',
-    'endlocal'
-  ) -join "`r`n"
-  $uninstallBat = @(
-    '@echo off',
-    'rem clipboard - stop the resident, remove the shortcuts, delete data\ and clipboard.ini.',
-    'setlocal',
-    'powershell -NoProfile -ExecutionPolicy Bypass -Sta -File "%~dp0clipboard.ps1" stop',
-    'timeout /t 2 /nobreak >nul',
-    'powershell -NoProfile -ExecutionPolicy Bypass -Sta -File "%~dp0clipboard.ps1" uninstall purge',
-    'echo.',
-    'echo done. data\ and clipboard.ini are gone.',
-    'pause',
-    'endlocal'
-  ) -join "`r`n"
+  # the two launchers carry the same kind of prose as the batch files: comments go when the
+  # package is minified, and every command stays. The batch file needs CRLF, the shell wrapper
+  # needs LF, so each one is written with its own line ending.
   $ascii = New-Object System.Text.ASCIIEncoding
-  [IO.File]::WriteAllText((Join-Path $stage 'install.bat'), ($installBat + "`r`n"), $ascii)
-  [IO.File]::WriteAllText((Join-Path $stage 'uninstall.bat'), ($uninstallBat + "`r`n"), $ascii)
-  Write-Step 'wrote install.bat and uninstall.bat'
+  foreach ($f in @('clipboard.cmd', 'clipboard')) {
+    $from = Join-Path $srcRoot $f
+    if (-not (Test-Path -LiteralPath $from)) { Fail ('missing: src\' + $f) }
+    $text = [IO.File]::ReadAllText($from)
+    if ($minify) {
+      if ($f -like '*.cmd') { $text = (Compress-Batch $text).TrimEnd() + "`r`n" }
+      else { $text = (Compress-Shell $text).TrimEnd() + "`n" }
+    }
+    [IO.File]::WriteAllText((Join-Path $stage $f), $text, $ascii)
+  }
+  # a packaged copy is set up by double-clicking, so the two scripts sit next to clipboard.ps1
+  # and only call commands the program already has. They live in scripts\ so that a wording
+  # change is an edit to a batch file, not to this script; they are copied to the package root
+  # because that is where %~dp0 has to point.
+  foreach ($bat in @('install.bat', 'uninstall.bat')) {
+    $from = Join-Path $root ('scripts\' + $bat)
+    if (-not (Test-Path -LiteralPath $from)) { Fail ('missing: scripts\' + $bat) }
+    $text = [IO.File]::ReadAllText($from)
+    $text = $text.Replace("`r`n", "`n").Replace("`n", "`r`n").TrimEnd()
+    if ($minify) { $text = Compress-Batch $text }
+    [IO.File]::WriteAllText((Join-Path $stage $bat), ($text + "`r`n"), $ascii)
+  }
+  Write-Step 'copied install.bat and uninstall.bat from scripts\'
+  # plugin files are scripts and already went through the minifier; a theme is data, and what
+  # carries no value in it is a comment line or a blank line
   foreach ($f in @($pluginFiles) + @($themeFiles)) {
     if ($f -like '*.ps1') { continue }
     $rel = $f.Substring($srcRoot.Length).TrimStart([char]92, [char]47)
     $target = Join-Path $stage $rel
     $parent = Split-Path -Parent $target
     if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-    Copy-Item -LiteralPath $f -Destination $target -Force
+    if ($minify -and $f -like '*.ini') {
+      $text = (Compress-Ini ([IO.File]::ReadAllText($f))).TrimEnd() + "`r`n"
+      [IO.File]::WriteAllText($target, $text, $ascii)
+    } else {
+      Copy-Item -LiteralPath $f -Destination $target -Force
+    }
   }
   # files cli.ini [build] Includes added beyond the ps1 scripts (data, not code)
   foreach ($f in @($extraCopies)) {
@@ -339,7 +363,12 @@ try {
     $target = Join-Path $stage $rel
     $parent = Split-Path -Parent $target
     if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-    Copy-Item -LiteralPath $f -Destination $target -Force
+    if ($minify -and $f -like '*.ini') {
+      $text = (Compress-Ini ([IO.File]::ReadAllText($f))).TrimEnd() + "`r`n"
+      [IO.File]::WriteAllText($target, $text, $ascii)
+    } else {
+      Copy-Item -LiteralPath $f -Destination $target -Force
+    }
   }
   # plugin schemas are data, not code: they are copied verbatim, and only for the plugins
   # that actually ship
@@ -393,26 +422,18 @@ try {
   # A compiled client turns a proxied command into a ~150 ms call instead of ~1 s, because it
   # is started before any PowerShell exists. clipboard.cmd falls back to the script when the
   # file is missing, so a machine without the .NET Framework compiler still gets a package.
-  # lib\assembly\clipboard.dll comes from the same compiler: src\lib\assembly compiled ahead
-  # of time (loading it costs milliseconds where a cold source compile costs ~1.2 s). Both are
-  # separate products with separate switches, but only the client can be left out entirely.
+  # Both files were built into src\ at the start of this run: staging only copies them, so the
+  # package never carries a binary that is newer than the sources on disk. A missing copy - no
+  # compiler, or the dll held open by a running resident - leaves the slower path in place.
   $clientOut = Join-Path $stage 'client.exe'
   $asmOut = Join-Path $stage 'lib\assembly\clipboard.dll'
-  if ($client -or $assembly) { Write-Step 'compiling the accelerators' }
-  if ($client) {
-    $clientScript = Join-Path $root 'tools\build-client.ps1'
-    if (Test-Path -LiteralPath $clientScript) {
-      $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $clientScript -Out $clientOut 2>&1
-      foreach ($line in @($log)) { Write-Host ('    ' + ([string]$line).Trim()) }
-      if (-not (Test-Path -LiteralPath $clientOut)) { Write-Step '  (no client compiled: the package uses the PowerShell client)' }
-    }
+  if ($client -and (Test-Path -LiteralPath $srcClient)) {
+    Copy-Item -LiteralPath $srcClient -Destination $clientOut -Force
   }
-  if ($assembly) {
-    $assemblyScript = Join-Path $root 'tools\build-assembly.ps1'
-    if (Test-Path -LiteralPath $assemblyScript) {
-      $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $assemblyScript -Out $asmOut 2>&1
-      foreach ($line in @($log)) { Write-Host ('    ' + ([string]$line).Trim()) }
-    }
+  if ($assembly -and (Test-Path -LiteralPath $srcAssembly)) {
+    $asmDir = Split-Path -Parent $asmOut
+    if (-not (Test-Path -LiteralPath $asmDir)) { New-Item -ItemType Directory -Path $asmDir -Force | Out-Null }
+    Copy-Item -LiteralPath $srcAssembly -Destination $asmOut -Force
   }
   # Without a compiled assembly the package has to carry the source: lib\native.ps1 and
   # lib\panel\keyhook.ps1 read lib\assembly\*.cs and compile them in-process, which is what
