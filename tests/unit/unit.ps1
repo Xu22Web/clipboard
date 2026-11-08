@@ -116,14 +116,14 @@ function New-FakeSandbox([string]$name) {
   return $dir
 }
 
-# ---------------------------------------------------------------- test.ini
-# test.ini (repository root) is the harness configuration, read with the parser the tool itself
+# ---------------------------------------------------------------- cli.ini
+# cli.ini (repository root) is the harness configuration, read with the parser the tool itself
 # uses: utils\ini.ps1 is pure, and the repository copy is loaded rather than $srcRoot, so this
 # also works when -Source points at a minified package whose function names are rewritten.
 $repoIniParser = Join-Path $defaultSource 'utils\ini.ps1'
 if (Test-Path -LiteralPath $repoIniParser) { . $repoIniParser }
 $script:TestIni = @{}
-$testIniPath = Join-Path $repoRoot 'test.ini'
+$testIniPath = Join-Path $repoRoot 'cli.ini'
 if ((Test-Path -LiteralPath $testIniPath) -and (Get-Command Read-IniDoc -ErrorAction SilentlyContinue)) {
   $script:TestIni = (Read-IniDoc ([IO.File]::ReadAllLines($testIniPath, [Text.Encoding]::UTF8))).Map
 }
@@ -132,7 +132,7 @@ if ((Test-Path -LiteralPath $testIniPath) -and (Get-Command Read-IniDoc -ErrorAc
 # does. (Sharing one process and running each call in a runspace looked like a 3.4 s -> 1.0 s
 # win, but a plugin loaded there calls back into the tool through a script block whose session
 # state is stale, so `pin` lost Set-RecordMark. Speed comes from running sandboxes side by side
-# instead - see the [run] section of test.ini.)
+# instead - see the [test] section of cli.ini.)
 function Clip([string]$sandbox, [string[]]$cliArgs) {
   $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', (Join-Path $sandbox 'clipboard.ps1')) + $cliArgs
   return (& powershell @a 2>&1 | Out-String)
@@ -343,9 +343,11 @@ try {
     }
 
     # the tooling lives outside src\: package.ini declares the commands, cli runs them
-    $tooling = @('package.ini', 'cli.ps1', 'cli.cmd', 'cli', 'build.ini',
-      'scripts\build.ps1', 'scripts\minify.ps1', 'scripts\dev.ps1', 'scripts\test.ps1', 'scripts\shot.ps1',
-      'scripts\build-cbx.ps1', 'src\lib\cbx.cs')
+    $tooling = @('package.ini', 'cli.ini', 'cli.ps1', 'cli.cmd', 'cli',
+      'tools\build.ps1', 'tools\dev.ps1', 'tools\test.ps1', 'tools\bench.ps1', 'tools\shot.ps1',
+      'tools\build-client.ps1', 'tools\build-assembly.ps1',
+      'tools\utils\minify.ps1', 'tools\utils\ini.ps1', 'tools\utils\globs.ps1', 'tools\utils\csc.ps1',
+      'src\lib\client\client.cs', 'src\lib\assembly\cb.native.cs', 'src\lib\assembly\cb.keyhook.cs')
     $missingTool = @()
     foreach ($tool in $tooling) {
       if (-not (Test-Path -LiteralPath (Join-Path $repoRoot $tool))) { $missingTool += $tool }
@@ -358,13 +360,13 @@ try {
     $sm = [regex]::Match($pkgText, '(?ms)^\s*\[scripts\]\s*$(.*?)(?=^\s*\[|\z)')
     if ($sm.Success) { $scriptBlock = $sm.Groups[1].Value }
     $noCmd = @()
-    foreach ($cmd in @('Dev', 'Build', 'Test', 'Shot', 'Cbx')) {
+    foreach ($cmd in @('Dev', 'Build', 'Client', 'Assembly', 'Test', 'Shot')) {
       if (-not ($scriptBlock -match ('(?m)^' + $cmd + '=\S'))) { $noCmd += $cmd }
     }
     Check 'struct' 'package.ini declares every command' (($pkgText -match '(?m)^Name=\S') -and ($pkgText -match '(?m)^Version=\d+\.\d+\.\d+') -and $noCmd.Count -eq 0) ($noCmd -join ', ')
     # every tracked ini follows the shared convention: lower case section names, PascalCase keys
     $badIni = @()
-    foreach ($iniRel in @('package.ini', 'build.ini', 'src\themes\win11-dark.ini', 'src\themes\win11-light.ini')) {
+    foreach ($iniRel in @('package.ini', 'cli.ini', 'src\themes\win11-dark.ini', 'src\themes\win11-light.ini')) {
       $iniFile = Join-Path $repoRoot $iniRel
       if (-not (Test-Path -LiteralPath $iniFile)) { $badIni += ($iniRel + ': missing'); continue }
       foreach ($line in [IO.File]::ReadAllLines($iniFile)) {
@@ -391,6 +393,11 @@ try {
     $showHits = ([regex]::Matches($pickerText, '(?m)^\s*\$form\.Show\(\)\s*$')).Count
     Check 'struct' 'panel is shown once, non-modally' ($showHits -eq 1) ([string]$showHits + ' call(s)')
     $winText = [IO.File]::ReadAllText((Join-Path $libPath 'native.ps1'))
+    # the platform C# lives in lib\assembly (a package ships only the compiled
+    # lib\assembly\clipboard.dll), so the check reads the repository source even when -Source
+    # points at a package
+    $winCs = Join-Path $defaultSource 'lib\assembly\cb.native.cs'
+    if (Test-Path -LiteralPath $winCs) { $winText += [IO.File]::ReadAllText($winCs) }
     Check 'struct' 'the panel form never activates' (($winText -match 'ShowWithoutActivation') -and ($winText -match '0x08000000')) 'no-activate override missing'
     Check 'struct' 'panel hands the foreground back when it closes' ($pickerText -match 'SetForegroundWindow\(\$prev\)') 'restore call missing'
     Check 'struct' 'panel installs and removes the key hook' (($pickerText -match 'Enable-KeyHook') -and ($pickerText -match 'Disable-KeyHook')) 'hook calls missing'

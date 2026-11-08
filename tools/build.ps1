@@ -1,17 +1,18 @@
 #Requires -Version 5.1
 <#
-  scripts\build.ps1 - package the tool the way a front-end build packages a bundle: the
+  tools\build.ps1 - package the tool the way a front-end build packages a bundle: the
   output is still plain PowerShell, but every .ps1 is rewritten from its syntax tree
   (comments and indentation gone, internal functions and local variables renamed), so the
   folder keeps the same shape and behaviour while being noticeably smaller. Nothing is
   compiled.
 
-      cli build                          settings from build.ini
+      cli build                          settings from cli.ini
       cli build -Config other.ini         a different settings file
 
-  build.ini holds the build options only: output folder, whether to minify and rename,
-  whether to verify the result by running the CLI suite against it, whether to also write a
-  zip. The version is not a build option: package.ini owns it. The development copy reads it
+  cli.ini holds the tooling settings: the [build] section is the output folder, whether to
+  minify and rename, whether to verify the result by running the CLI suite against it,
+  whether to also write a zip; [dev] and [test] belong to the other two commands. The
+  version is not a build option: package.ini owns it. The development copy reads it
   at run time (src\lib\base.ps1); the build replaces that block with a literal, so a package
   carries the version and reads no file.
 
@@ -20,7 +21,7 @@
 
   What goes in: everything under src\ (the entry file, the two launchers, lib\ with its
   modules, utils\ with the pure helpers, the selected plugins and themes) plus (by default)
-  the documentation. What never goes in: src\data\, src\clipboard.ini, tests\, scripts\,
+  the documentation. What never goes in: src\data\, src\clipboard.ini, tests\, tools\,
   dist\, .git - a package carries the program, not the history, the settings or the tooling.
   Reading only src\ is also what keeps the build from walking into its own output.
 #>
@@ -29,7 +30,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-# this file lives in scripts\: the repository root is one level up
+# this file lives in tools\: the repository root is one level up
 $root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 # the program lives in src\, the build tooling and the docs stay at the repo root
 $srcRoot = Join-Path $root 'src'
@@ -39,45 +40,47 @@ function Write-Step([string]$text) { Write-Host ('[..] ' + $text) }
 function Fail([string]$text) { Write-Host ('[x] ' + $text); exit 1 }
 
 # ---------------------------------------------------------------- settings
-# build.ini and package.ini are read by the layer the program itself uses
-# (src\utils\ini.ps1 + inifile.ps1): "Key=Value" per line, "#" or ";" comments, and a
-# "[section]" line grouping the keys that follow - so "[build]" + "OutDir=dist" is the same
-# key as "build.OutDir=dist".
-$iniTools = Join-Path $srcRoot 'utils'
-foreach ($tool in @('ini', 'inifile')) {
-  $toolPath = Join-Path $iniTools ($tool + '.ps1')
-  if (-not (Test-Path -LiteralPath $toolPath)) { Fail ('missing: ' + $toolPath) }
-  . $toolPath
-}
+# cli.ini and package.ini are read by the tooling's own copy of the ini parser
+# (tools\utils\ini.ps1): "Key=Value" per line, "#" or ";" comments, and a "[section]" line
+# grouping the keys that follow - so "[build]" + "OutDir=dist" is the same key as
+# "build.OutDir=dist". Nothing here loads a module out of src\: the tooling stands alone.
+$iniTools = Join-Path $root 'tools\utils\ini.ps1'
+if (-not (Test-Path -LiteralPath $iniTools)) { Fail ('missing: ' + $iniTools) }
+. $iniTools
 
-if (-not $Config) { $Config = Join-Path $root 'build.ini' }
+if (-not $Config) { $Config = Join-Path $root 'cli.ini' }
+if (-not (Test-Path -LiteralPath $Config)) { Fail ('missing settings file: ' + $Config) }
 $cfg = Import-IniMap $Config
-if (-not (Test-Path -LiteralPath $Config)) {
-  Write-Step ('no ' + (Split-Path -Leaf $Config) + ', using built-in defaults')
+
+# cli.ini is the only place a build setting may live: a missing key is a broken file, not a
+# default to fall back on, so the whole [build] section is checked once here. An empty value
+# is valid - Plugins= and Themes= mean "everything", Includes= and Excludes= mean "none".
+$requiredKeys = @('OutDir', 'Minify', 'Rename', 'Verify', 'IncludeDocs', 'Overwrite', 'Zip',
+  'Client', 'Assembly', 'Plugins', 'Themes', 'Includes', 'Excludes')
+$missingKeys = @()
+foreach ($key in $requiredKeys) {
+  if (-not $cfg.ContainsKey('build.' + $key) -and -not $cfg.ContainsKey($key)) { $missingKeys += $key }
+}
+if ($missingKeys.Count -gt 0) {
+  Fail ((Split-Path -Leaf $Config) + ' [build] is missing: ' + ($missingKeys -join ', '))
 }
 
-function Cfg([string]$key, [string]$fallback) {
+function Cfg([string]$key) {
   # a build key may be written inside [build] or with its dotted name at the top level.
   # The dotted name is built first: "@('build.' + $key, $key)" would join the two into one
   # string, because "," binds tighter than "+" inside an array literal.
-  $dotted = 'build.' + $key
-  foreach ($candidate in @($dotted, $key)) {
-    if (-not $cfg.ContainsKey($candidate)) { continue }
-    $v = [string]$cfg[$candidate]
-    if ($v -ne '') { return $v }
+  foreach ($candidate in @(('build.' + $key), $key)) {
+    if ($cfg.ContainsKey($candidate)) { return [string]$cfg[$candidate] }
   }
-  return $fallback
+  return ''
 }
 
-function CfgBool([string]$key, [bool]$fallback) {
-  $v = (Cfg $key '').ToLowerInvariant()
-  if (-not $v) { return $fallback }
-  return @('1', 'true', 'yes', 'on') -contains $v
+function CfgBool([string]$key) {
+  return @('1', 'true', 'yes', 'on') -contains (Cfg $key).ToLowerInvariant()
 }
 
 function CfgList([string]$key) {
-  $raw = Cfg $key ''
-  return @($raw -split '[,;\s]+' | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
+  return @((Cfg $key) -split '[,;\s]+' | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
 }
 
 # src\lib\base.ps1 keeps the version between two markers for the development run; a package
@@ -103,20 +106,26 @@ $version = ($version -replace '[^0-9A-Za-z\.\-_]', '')
 if ($version -notmatch '^\d+\.\d+\.\d+$') { Fail ('Version= in package.ini is not <major>.<minor>.<patch>: ' + $version) }
 
 $name = 'clipboard-' + $version
-$outSetting = Cfg 'OutDir' 'dist'
+$outSetting = Cfg 'OutDir'
+if (-not $outSetting) { Fail 'cli.ini [build] OutDir is empty' }
 $outDir = if ([IO.Path]::IsPathRooted($outSetting)) { $outSetting } else { Join-Path $root $outSetting }
 $dest = Join-Path $outDir $name
-$minify = CfgBool 'Minify' $true
-$rename = CfgBool 'Rename' $true
-$verify = CfgBool 'Verify' $true
-$includeDocs = CfgBool 'IncludeDocs' $true
-$overwrite = CfgBool 'Overwrite' $false
-$wantZip = CfgBool 'Zip' $false
+$minify = CfgBool 'Minify'
+$rename = CfgBool 'Rename'
+$verify = CfgBool 'Verify'
+$includeDocs = CfgBool 'IncludeDocs'
+$overwrite = CfgBool 'Overwrite'
+$wantZip = CfgBool 'Zip'
 # the native client is an accelerator, never a requirement: without a compiler the package
 # still works, one ~1 s slower per command
-$cbx = CfgBool 'Cbx' $true
+$client = CfgBool 'Client'
+$assembly = CfgBool 'Assembly'
 $pluginNames = CfgList 'Plugins'
 $themeNames = CfgList 'Themes'
+$includeGlobs = CfgList 'Includes'
+$excludeGlobs = CfgList 'Excludes'
+# the include and exclude lists use the same glob syntax as cli.ini [dev]
+. (Join-Path $root 'tools\utils\globs.ps1')
 
 Write-Step ('settings ' + $Config)
 Write-Step ('  version ' + $version + '   (package.ini)')
@@ -168,6 +177,18 @@ if (Test-Path -LiteralPath $schemaPluginDir) {
   }
 }
 
+# cli.ini [build] Excludes removes files from every set below, and the page list follows the
+# plugins that still ship. Includes then adds what the default set does not cover.
+$dropFiles = @{}
+if ($excludeGlobs.Count -gt 0) {
+  foreach ($glob in $excludeGlobs) {
+    foreach ($f in @(Expand-Glob $srcRoot $glob)) { $dropFiles[$f] = $true }
+  }
+  $pluginFiles = @($pluginFiles | Where-Object { -not $dropFiles.ContainsKey($_) })
+  $themeFiles = @($themeFiles | Where-Object { -not $dropFiles.ContainsKey($_) })
+  $pluginSchemas = @($pluginSchemas | Where-Object { -not $dropFiles.ContainsKey($_) })
+}
+
 # The pages under docs\ plugin and theme describe a plugin or a theme, so they follow the
 # same choice: a package ships the pages of what it can run and nothing else.
 $pageKeep = @{ plugin = @{}; theme = @{} }
@@ -192,11 +213,31 @@ try {
   $scriptFiles += @(Get-ChildItem -LiteralPath (Join-Path $srcRoot 'schema') -Filter '*.ps1' -File | ForEach-Object { $_.FullName })
   $scriptFiles += @($pluginFiles | Where-Object { $_ -like '*.ps1' })
 
+  # cli.ini [build] Includes adds what the default set does not carry: a .ps1 joins the
+  # scripts that are minified and renamed with the rest, anything else is copied as it is.
+  # Excludes already ran over the plugins and themes; it runs again here last of all.
+  $extraCopies = New-Object System.Collections.Generic.List[string]
+  foreach ($glob in $includeGlobs) {
+    foreach ($f in @(Expand-Glob $srcRoot $glob)) {
+      if ($dropFiles.ContainsKey($f)) { continue }
+      if ($f -like '*.ps1') {
+        if ($scriptFiles -notcontains $f) { $scriptFiles += $f }
+      } elseif (-not $extraCopies.Contains($f)) {
+        $extraCopies.Add($f)
+      }
+    }
+  }
+  if ($dropFiles.Count -gt 0) {
+    $beforeCount = $scriptFiles.Count
+    $scriptFiles = @($scriptFiles | Where-Object { -not $dropFiles.ContainsKey($_) })
+    Write-Step ('excluded ' + ($beforeCount - $scriptFiles.Count) + ' script(s) listed in cli.ini [build] Excludes')
+  }
+
   $map = @{}
   $scopeMaps = @{}
   $globalMap = @{}
   if ($minify) {
-    . (Join-Path $root 'scripts\minify.ps1')
+    . (Join-Path $root 'tools\utils\minify.ps1')
     if ($rename) {
       $map = New-FunctionMap $scriptFiles
       Write-Step ('internal functions renamed: ' + $map.Count)
@@ -298,6 +339,14 @@ try {
     if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
     Copy-Item -LiteralPath $f -Destination $target -Force
   }
+  # files cli.ini [build] Includes added beyond the ps1 scripts (data, not code)
+  foreach ($f in @($extraCopies)) {
+    $rel = $f.Substring($srcRoot.Length).TrimStart([char]92, [char]47)
+    $target = Join-Path $stage $rel
+    $parent = Split-Path -Parent $target
+    if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+    Copy-Item -LiteralPath $f -Destination $target -Force
+  }
   # plugin schemas are data, not code: they are copied verbatim, and only for the plugins
   # that actually ship
   foreach ($f in @($pluginSchemas)) {
@@ -328,7 +377,7 @@ try {
   }
 
   # a package never carries the user's history, settings or build leftovers
-  foreach ($leak in @('data', 'clipboard.ini', 'tests', 'scripts', 'build.ini', 'package.ini', 'src')) {
+  foreach ($leak in @('data', 'clipboard.ini', 'cli.ini', 'tests', 'tools', 'package.ini', 'src')) {
     $p = Join-Path $stage $leak
     if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force }
   }
@@ -350,19 +399,44 @@ try {
   # A compiled client turns a proxied command into a ~150 ms call instead of ~1 s, because it
   # is started before any PowerShell exists. clipboard.cmd falls back to the script when the
   # file is missing, so a machine without the .NET Framework compiler still gets a package.
-  # The same compiler produces lib\cb.dll: the two embedded C# blocks, compiled ahead of time
-  # (loading it costs milliseconds where a cold source compile costs ~1.2 s).
-  if ($cbx) {
-    $cbxScript = Join-Path $root 'scripts\build-cbx.ps1'
-    if (Test-Path -LiteralPath $cbxScript) {
-      Write-Step 'compiling the native client and the C# assembly'
-      $cbxOut = Join-Path $stage 'cbx.exe'
-      $asmOut = Join-Path $stage 'lib\cb.dll'
-      $cbxLog = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $cbxScript -Out $cbxOut -Asm $asmOut 2>&1
-      foreach ($line in @($cbxLog)) { Write-Host ('    ' + ([string]$line).Trim()) }
-      if (-not (Test-Path -LiteralPath $cbxOut)) { Write-Step '  (no client compiled: the package uses the PowerShell client)' }
-      if (-not (Test-Path -LiteralPath $asmOut)) { Write-Step '  (no assembly compiled: the package compiles the C# at run time)' }
+  # lib\assembly\clipboard.dll comes from the same compiler: src\lib\assembly compiled ahead
+  # of time (loading it costs milliseconds where a cold source compile costs ~1.2 s). Both are
+  # separate products with separate switches, but only the client can be left out entirely.
+  $clientOut = Join-Path $stage 'client.exe'
+  $asmOut = Join-Path $stage 'lib\assembly\clipboard.dll'
+  if ($client -or $assembly) { Write-Step 'compiling the accelerators' }
+  if ($client) {
+    $clientScript = Join-Path $root 'tools\build-client.ps1'
+    if (Test-Path -LiteralPath $clientScript) {
+      $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $clientScript -Out $clientOut 2>&1
+      foreach ($line in @($log)) { Write-Host ('    ' + ([string]$line).Trim()) }
+      if (-not (Test-Path -LiteralPath $clientOut)) { Write-Step '  (no client compiled: the package uses the PowerShell client)' }
     }
+  }
+  if ($assembly) {
+    $assemblyScript = Join-Path $root 'tools\build-assembly.ps1'
+    if (Test-Path -LiteralPath $assemblyScript) {
+      $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $assemblyScript -Out $asmOut 2>&1
+      foreach ($line in @($log)) { Write-Host ('    ' + ([string]$line).Trim()) }
+    }
+  }
+  # Without a compiled assembly the package has to carry the source: lib\native.ps1 and
+  # lib\panel\keyhook.ps1 read lib\assembly\*.cs and compile them in-process, which is what
+  # makes the accelerator optional. A package with neither cannot open its panel at all, so
+  # Assembly=0 (or a machine without csc) means "ship the source instead", not "ship nothing".
+  if (-not (Test-Path -LiteralPath $asmOut)) {
+    $csSrc = Join-Path $srcRoot 'lib\assembly'
+    $shipped = 0
+    if (Test-Path -LiteralPath $csSrc) {
+      $csDst = Join-Path $stage 'lib\assembly'
+      if (-not (Test-Path -LiteralPath $csDst)) { New-Item -ItemType Directory -Path $csDst -Force | Out-Null }
+      foreach ($f in @(Get-ChildItem -LiteralPath $csSrc -Filter '*.cs' -File)) {
+        Copy-Item -LiteralPath $f.FullName -Destination $csDst -Force
+        $shipped++
+      }
+    }
+    if ($shipped -eq 0) { Fail 'no clipboard.dll and no C# source: the package could not open its panel' }
+    Write-Step ('  no clipboard.dll: shipped ' + $shipped + ' C# source file(s) to compile at run time')
   }
 
   # ------------------------------------------------------------ publish

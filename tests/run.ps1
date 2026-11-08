@@ -23,7 +23,7 @@
       cli test                        every part
       cli test -Unit                  one part, by name
       cli test -Part cli,history      several parts, by name
-      cli test -Workers 6             more at a time (test.ini [run] Workers is the default)
+      cli test -Workers 6             more at a time (cli.ini [test] Workers is the default)
       cli test -Serial                one after another
 #>
 [CmdletBinding()]
@@ -46,10 +46,10 @@ $ErrorActionPreference = 'Stop'
 $testsRoot = $PSCommandPath | Split-Path -Parent
 $repoRoot = Split-Path -Parent $testsRoot
 
-# test.ini is read with the parser the tool itself uses
+# cli.ini is read with the parser the tool itself uses
 . (Join-Path $repoRoot 'src\utils\ini.ps1')
 $cfg = @{}
-$iniPath = Join-Path $repoRoot 'test.ini'
+$iniPath = Join-Path $repoRoot 'cli.ini'
 if (Test-Path -LiteralPath $iniPath) {
   $cfg = (Read-IniDoc ([IO.File]::ReadAllLines($iniPath, [Text.Encoding]::UTF8))).Map
 }
@@ -101,7 +101,7 @@ function Get-ChangedParts([string[]]$Given) {
     elseif ($p -match '^src\\lib\\plugin\\') { $names = @('unit', 'config', 'marks', 'pins') }
     elseif ($p -match '^src\\schema\\') { $names = @('unit', 'settings', 'config') }
     elseif ($p -match '^src\\') { $names = $script:AllParts }
-    elseif ($p -match '^scripts\\' -or $p -match '^(build|package)\.ini$') { $names = @('build') }
+    elseif ($p -match '^tools\\' -or $p -match '^(cli|package)\.ini$') { $names = @('build') }
     else { $names = $script:AllParts }
     foreach ($n in $names) { if (-not $picked.Contains($n)) { $picked.Add($n) } }
   }
@@ -109,14 +109,14 @@ function Get-ChangedParts([string[]]$Given) {
 }
 
 if (-not ($Unit -or $Integration -or $E2E)) {
-  # no switch given: test.ini decides which groups the plain run covers
-  $groups = Split-List (Get-Cfg 'run.Groups' 'unit,integration,e2e')
+  # no switch given: cli.ini decides which groups the plain run covers
+  $groups = Split-List (Get-Cfg 'test.Groups' 'unit,integration,e2e')
   $Unit = ($groups -contains 'unit')
   $Integration = ($groups -contains 'integration')
   $E2E = ($groups -contains 'e2e')
 }
 if (-not $Integration) { $Unit = [bool]$Unit; $E2E = [bool]$E2E }
-if ($Workers -le 0) { $Workers = [int](Get-Cfg 'run.Workers' '8') }
+if ($Workers -le 0) { $Workers = [int](Get-Cfg 'test.Workers' '8') }
 if ($Workers -lt 1) { $Workers = 1 }
 $wanted = Split-List $Part
 if ($Changed) {

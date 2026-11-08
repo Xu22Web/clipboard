@@ -53,8 +53,8 @@ $pkgVersion = PkgValue 'version'
 
 function Show-Commands {
   $title = $pkgName
-  if ($pkgVersion) { $title = $title + ' ' + $pkgVersion }
-  Write-Host $title
+  if ($pkgVersion) { $title = $title + '@' + $pkgVersion }
+  Write-Host $title -ForegroundColor Cyan
   Write-Host ''
   if ($order.Count -eq 0) {
     Write-Host 'no scripts.<name>= lines in package.ini'
@@ -64,7 +64,8 @@ function Show-Commands {
   Write-Host ''
   # the command is typed in any case, so the list shows it in lower case
   foreach ($name in $order) {
-    Write-Host ('  {0,-8} {1}' -f $name.ToLowerInvariant(), [string]$pkg['scripts.' + $name])
+    Write-Host ('  {0,-8} ' -f $name.ToLowerInvariant()) -NoNewline -ForegroundColor Cyan
+    Write-Host ([string]$pkg['scripts.' + $name])
   }
 }
 
@@ -83,7 +84,28 @@ if (-not $line) {
 }
 
 if ($Rest -and $Rest.Count -gt 0) { $line = $line + ' ' + ($Rest -join ' ') }
+# The script gets a PowerShell of its own, and that start plus its first output is a second
+# or two of blank terminal. The two lines npm prints before a script runs say what is about to
+# happen and what will actually be executed, so the wait is never unexplained; a non-zero exit
+# gets a closing line as well, because the script's own output may not make it obvious.
+$shown = $wanted
+if ($Rest -and $Rest.Count -gt 0) { $shown = $shown + ' ' + ($Rest -join ' ') }
+$title = $pkgName
+if ($pkgVersion) { $title = $title + '@' + $pkgVersion }
+$sw = [Diagnostics.Stopwatch]::StartNew()
+# The same two lines npm prints, then a blank line: the header stays quiet and the colour only
+# marks the command name, so what the script prints is what the eye lands on.
+Write-Host '> ' -NoNewline -ForegroundColor DarkGray
+Write-Host $title -NoNewline
+Write-Host (' ' + $shown) -ForegroundColor Cyan
+Write-Host ('> ' + $line) -ForegroundColor DarkGray
+Write-Host ''
+$global:LASTEXITCODE = 0
 Invoke-Expression $line
+$sw.Stop()
 $code = $LASTEXITCODE
 if ($null -eq $code) { $code = 0 }
+if ($code -ne 0) {
+  Write-Host ('[x] ' + $shown + ' exited with code ' + $code + ' after ' + [string][int]$sw.Elapsed.TotalSeconds + ' s') -ForegroundColor Red
+}
 exit $code

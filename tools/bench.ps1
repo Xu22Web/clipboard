@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 <#
-  scripts\bench.ps1 - time the paths that run on every capture, save, and keystroke.
+  tools\bench.ps1 - time the paths that run on every capture, save, and keystroke.
 
       cli bench                     the table
       cli bench -Json               the same numbers as JSON
@@ -38,9 +38,10 @@ try {
   New-Item -ItemType Directory -Path $sandboxData -Force | Out-Null
   # the folder itself, so the copy lands as <sandbox>\src
   Copy-Item -LiteralPath $source -Destination $sandbox -Recurse -Force
-  # the development build reads its version from build.ini one level up
-  $buildIni = Join-Path $root 'build.ini'
-  if (Test-Path -LiteralPath $buildIni) { Copy-Item -LiteralPath $buildIni -Destination (Join-Path $sandbox 'build.ini') -Force }
+  # the development build reads its version from package.ini one level up; cli.ini comes
+  # along so the sandbox sees the same tooling settings as the repository
+  $toolIni = Join-Path $root 'cli.ini'
+  if (Test-Path -LiteralPath $toolIni) { Copy-Item -LiteralPath $toolIni -Destination (Join-Path $sandbox 'cli.ini') -Force }
   # a data folder of its own: the history, media and blobs of this run live here
   $ini = 'DataDir=' + $sandboxData
   [IO.File]::WriteAllText((Join-Path $sandboxSrc 'clipboard.ini'), $ini + "`r`n", (New-Object Text.UTF8Encoding $false))

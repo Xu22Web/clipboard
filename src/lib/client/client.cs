@@ -1,11 +1,15 @@
-// lib/cbx.cs - the compiled client half of the command proxy.
+// lib\client\client.cs - the compiled client half of the command proxy.
 //
 // A command line costs about 2.5 s, and roughly 1 s of that is one PowerShell start even when
 // the resident answers over the pipe (lib/proxy.ps1). This client costs about 150 ms: it is
 // started by clipboard.cmd before any PowerShell exists, builds the same request frame the
 // PowerShell client builds, and prints the answer.
 //
-// It is optional by design. clipboard.cmd only tries it when cbx.exe sits next to
+// It is the only file here that builds an executable: tools\build-client.ps1 compiles it into
+// client.exe, while tools\build-assembly.ps1 turns lib\assembly\*.cs into
+// lib\assembly\clipboard.dll.
+//
+// It is optional by design. clipboard.cmd only tries it when client.exe sits next to
 // clipboard.ps1, and it treats exit code 100 as "nothing happened, run PowerShell instead", so
 // a copy without the executable behaves exactly as it did before.
 //
@@ -17,12 +21,17 @@ using System.IO.Pipes;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
+using System.Threading;
 
-static class Cbx
+static class Client
 {
   // "not proxied": the caller has to run the command the slow way
   const int Fallback = 100;
-  const int ConnectMs = 120;
+  // A local named pipe either accepts at once or has no listener at all, so the wait only
+  // covers a resident that is busy serving the previous request. Forty milliseconds keeps
+  // that, and a machine with no resident running pays 80 ms less on every command before it
+  // falls back to PowerShell.
+  const int ConnectMs = 40;
   const int IOMs = 2000;
   const int FrameLimit = 1048576;
 
@@ -162,9 +171,30 @@ static class Cbx
     return sb.ToString();
   }
 
+  // The daemon holds this mutex for exactly as long as it runs (base.ps1: $MutexName), so it
+  // answers "is there anyone to talk to" without touching the pipe. A mutex whose owner died
+  // reports abandoned, which still means try the pipe.
+  static bool ResidentUp()
+  {
+    try
+    {
+      bool created = false;
+      using (Mutex m = new Mutex(false, "Local\\clipboard.daemon", out created))
+      {
+        bool free = false;
+        try { free = m.WaitOne(0); }
+        catch (AbandonedMutexException) { return true; }
+        if (free) { m.ReleaseMutex(); return false; }
+        return true;
+      }
+    }
+    catch { return true; }
+  }
+
   // one connect, one request, one reply; null when the resident is not there
   static string Session(string request)
   {
+    if (!ResidentUp()) { return null; }
     string name = PipeName();
     using (NamedPipeClientStream client = new NamedPipeClientStream(".", name, PipeDirection.InOut))
     {

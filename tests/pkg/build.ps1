@@ -22,13 +22,28 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
     # scripts\build.ps1 is driven by a settings file and rewrites the scripts from their
     # syntax tree, never packing the history
     $pkgOut = Join-Path $tmpRoot 'pkg'
-    $build = Join-Path $repoRoot 'scripts\build.ps1'
+    $build = Join-Path $repoRoot 'tools\build.ps1'
     $buildCfg = Join-Path $tmpRoot 'build-test.ini'
-    Check 'int' 'build script ships under scripts\\' (Test-Path -LiteralPath $build) ''
-    Check 'int' 'build options ship with the repo' (Test-Path -LiteralPath (Join-Path $repoRoot 'build.ini')) ''
-    Check 'int' 'minifier ships under scripts\\' (Test-Path -LiteralPath (Join-Path $repoRoot 'scripts\minify.ps1')) ''
+    Check 'int' 'build script ships under tools\\' (Test-Path -LiteralPath $build) ''
+    Check 'int' 'build options ship with the repo' (Test-Path -LiteralPath (Join-Path $repoRoot 'cli.ini')) ''
+    Check 'int' 'minifier ships under tools\\utils\\' (Test-Path -LiteralPath (Join-Path $repoRoot 'tools\utils\minify.ps1')) ''
     Check 'int' 'package.ini ships with the repo' (Test-Path -LiteralPath (Join-Path $repoRoot 'package.ini')) ''
-    [IO.File]::WriteAllLines($buildCfg, @(('OutDir=' + $pkgOut), 'Verify=0', 'Minify=1', 'Rename=1', 'IncludeDocs=1', 'Overwrite=1'), $Utf8)
+    # every [build] key has to be present: the build reads cli.ini and refuses to invent a
+    # default, so each case starts from the whole section and overrides what it tests
+    $buildDefaults = @('Minify=1', 'Rename=1', 'Verify=0', 'IncludeDocs=1', 'Overwrite=1', 'Zip=0',
+      'Client=0', 'Assembly=0', 'Plugins=', 'Themes=', 'Includes=', 'Excludes=')
+    function Write-BuildCfg([string]$outDir, [string[]]$override) {
+      $lines = @('OutDir=' + $outDir) + $buildDefaults
+      foreach ($line in @($override)) {
+        $key = $line.Split('=')[0]
+        $kept = @()
+        foreach ($l in $lines) { if (-not $l.StartsWith($key + '=')) { $kept += $l } }
+        $kept += $line
+        $lines = $kept
+      }
+      [IO.File]::WriteAllLines($buildCfg, $lines, $Utf8)
+    }
+    Write-BuildCfg $pkgOut @('Client=1', 'Assembly=1')
     # the package folder is named after the version package.ini declares
     Check 'int' 'package.ini carries the version for the package name' ($programVersion -match '^\d+\.\d+\.\d+$') ([string]$programVersion)
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
@@ -42,16 +57,23 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
       $launcher = Join-Path $pkgDir 'clipboard.cmd'
       $launcherText = ''
       if (Test-Path -LiteralPath $launcher) { $launcherText = [IO.File]::ReadAllText($launcher) }
-      Check 'int' 'the launcher tries the compiled client first' ($launcherText -match 'cbx\.exe') $launcherText.Trim()
-      $cbxFile = Join-Path $pkgDir 'cbx.exe'
-      if (Test-Path -LiteralPath $cbxFile) {
-        $null = (& $cbxFile $pkgDir 'version' 2>&1)
-        $cbxRc = $LASTEXITCODE
+      Check 'int' 'the launcher tries the compiled client first' ($launcherText -match 'client\.exe') $launcherText.Trim()
+      $clientFile = Join-Path $pkgDir 'client.exe'
+      if (Test-Path -LiteralPath $clientFile) {
+        $null = (& $clientFile $pkgDir 'version' 2>&1)
+        $clientRc = $LASTEXITCODE
         # no resident is listening for this package, so "not proxied" is the right answer
-        Check 'int' 'the compiled client in the package runs' ($cbxRc -eq 100) ('exit ' + [string]$cbxRc)
+        Check 'int' 'the compiled client in the package runs' ($clientRc -eq 100) ('exit ' + [string]$clientRc)
       } else {
         Skip 'int' 'the compiled client in the package runs' 'no C# compiler on this machine'
       }
+      # The type library is either compiled ahead of time or shipped as source, never both and
+      # never neither: lib\native.ps1 needs one of the two to open the panel.
+      $asmDir = Join-Path $pkgDir 'lib\assembly'
+      $asmFile = Join-Path $asmDir 'clipboard.dll'
+      $asmSource = @(Get-ChildItem -LiteralPath $asmDir -Filter '*.cs' -File -ErrorAction SilentlyContinue)
+      $asmBuilt = Test-Path -LiteralPath $asmFile
+      Check 'int' 'package carries the assembly or its source, never both' ($asmBuilt -xor ($asmSource.Count -gt 0)) ('dll=' + [string]$asmBuilt + ' cs=' + [string]$asmSource.Count)
       # a packaged copy is installed from the folder: the two batch files sit next to
       # clipboard.ps1 and only call commands the program has
       $installBat = Join-Path $pkgDir 'install.bat'
@@ -75,7 +97,7 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
       Check 'int' 'package keeps plugins and themes' ((Test-Path -LiteralPath (Join-Path $pkgDir 'plugins\item-marks.ps1')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'themes\win11-dark.ini'))) ''
       # the pages are documentation: they travel with docs\, not with the plugin folder
       Check 'int' 'package ships the plugin and theme pages under docs' ((Test-Path -LiteralPath (Join-Path $pkgDir 'docs\plugin\item-marks.md')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'docs\theme\win11-dark.md'))) ''
-      Check 'int' 'package leaves history, tooling and metadata out' ((@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|scripts)([\\/]|$)' }).Count -eq 0) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir 'build.ini')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir 'package.ini'))) (@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|scripts)' }) -join ', ')
+      Check 'int' 'package leaves history, tooling and metadata out' ((@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|scripts)([\\/]|$)' }).Count -eq 0) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir 'cli.ini')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir 'package.ini'))) (@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|scripts)' }) -join ', ')
 
       # the point of the build: same scripts, smaller, still parsing
       # (compare against the repository sources, not $srcRoot: with -Source the latter is
@@ -105,15 +127,15 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
       Check 'int' 'a package reports the package.ini version' (($o3 -join ' ') -match ('clipboard\s+' + [regex]::Escape($programVersion))) (($o3 -join ' ') -as [string]).Trim()
     }
     # Overwrite=0 refuses to replace an existing package
-    [IO.File]::WriteAllLines($buildCfg, @(('OutDir=' + $pkgOut), 'Verify=0', 'Overwrite=0'), $Utf8)
+    Write-BuildCfg $pkgOut @('Overwrite=0')
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
     Check 'int' 'Overwrite=0 keeps the existing folder' (($bout -join ' ') -match 'already exists') (($bout | Select-Object -Last 1) -as [string])
 
     # Plugins= / Themes= trim the package; an unknown name stops the build.
-    # Minify=0 and Cbx=0: these builds are only about which files travelled, so the rewrite
-    # and the compiler would each cost more than the whole check
+    # Minify=0 and Client=0/Assembly=0: these builds are only about which files travelled, so
+    # the rewrite and the compiler would each cost more than the whole check
     $pkgOut2 = Join-Path $tmpRoot 'pkg2'
-    [IO.File]::WriteAllLines($buildCfg, @(('OutDir=' + $pkgOut2), 'Verify=0', 'Minify=0', 'Cbx=0', 'IncludeDocs=0', 'Plugins=transform', 'Themes=win11-light'), $Utf8)
+    Write-BuildCfg $pkgOut2 @('Minify=0', 'IncludeDocs=0', 'Plugins=transform', 'Themes=win11-light')
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
     $pkgDir2 = Join-Path $pkgOut2 ('clipboard-' + $programVersion)
     if (Test-Path -LiteralPath $pkgDir2) {
@@ -124,14 +146,14 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
     } else {
       Check 'int' 'Plugins= ships only the listed plugin' $false (($bout | Select-Object -Last 1) -as [string])
     }
-    [IO.File]::WriteAllLines($buildCfg, @(('OutDir=' + $pkgOut2), 'Verify=0', 'Plugins=nosuchplugin'), $Utf8)
+    Write-BuildCfg $pkgOut2 @('Plugins=nosuchplugin')
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
     Check 'int' 'unknown plugin name stops the build' (($bout -join ' ') -match 'nosuchplugin') (($bout | Select-Object -Last 1) -as [string])
 
     # a page documents one plugin or one theme: with Plugins= / Themes= set, docs\ carries
     # only the pages of what the package can run. Again no rewrite and no compiler
     $pkgOut3 = Join-Path $tmpRoot 'pkg3'
-    [IO.File]::WriteAllLines($buildCfg, @(('OutDir=' + $pkgOut3), 'Verify=0', 'Minify=0', 'Cbx=0', 'IncludeDocs=1', 'Plugins=transform', 'Themes=win11-light'), $Utf8)
+    Write-BuildCfg $pkgOut3 @('Minify=0', 'IncludeDocs=1', 'Plugins=transform', 'Themes=win11-light')
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
     $pkgDir3 = Join-Path $pkgOut3 ('clipboard-' + $programVersion)
     if (Test-Path -LiteralPath $pkgDir3) {

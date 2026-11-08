@@ -4,6 +4,6 @@ _*.ps1
 _*.txt
 src/data/
 src/clipboard.ini
-src/cbx.exe
-src/lib/cb.dll
+src/client.exe
+src/lib/assembly/clipboard.dll
 dist/

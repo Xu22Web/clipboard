@@ -103,18 +103,18 @@ try {
         # The compiled client is what a user actually goes through: clipboard.cmd starts it
         # before any PowerShell exists, so a proxied command costs a native start. It is
         # optional, so a machine that cannot build one skips this instead of failing.
-        $cbx = Get-CbxExe
-        if (-not $cbx) {
-          Skip 'e2e' 'clipboard.cmd answers through the compiled client' 'no compiler and no prebuilt cbx.exe'
+        $client = Get-ClientExe
+        if (-not $client) {
+          Skip 'e2e' 'clipboard.cmd answers through the compiled client' 'no compiler and no prebuilt client.exe'
         } else {
-          Copy-Item -LiteralPath $cbx -Destination (Join-Path $dir 'cbx.exe') -Force
+          Copy-Item -LiteralPath $client -Destination (Join-Path $dir 'client.exe') -Force
           Copy-Item -LiteralPath (Join-Path $script:Harness.SrcRoot 'clipboard.cmd') -Destination $dir -Force
           $line = '"' + (Join-Path $dir 'clipboard.cmd') + '" list'
           $o = (& cmd.exe '/c' $line 2>&1 | Out-String)
           Check 'e2e' 'clipboard.cmd answers through the compiled client' ($o -match 'proxy-') $o.Trim()
           # and the same file without the exe keeps working: that is the fallback the batch file
           # is written around, not an error path
-          Remove-Item -LiteralPath (Join-Path $dir 'cbx.exe') -Force
+          Remove-Item -LiteralPath (Join-Path $dir 'client.exe') -Force
           $o = (& cmd.exe '/c' $line 2>&1 | Out-String)
           Check 'e2e' 'clipboard.cmd still answers without the exe' ($o -match 'proxy-') $o.Trim()
         }
