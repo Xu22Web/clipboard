@@ -56,7 +56,14 @@ function Get-PanelHints([int]$rows, [int]$selected, [bool]$editable, [int]$query
     $pairs.Add(@('Ctrl+Enter', $copyLabel))
     # undo is only worth a chip while the setting allows it
     if ($undoOn) { $pairs.Add(@('Ctrl+Z', 'Undo')) }
-    foreach ($pk in @($ctrlKeys)) { $pairs.Add(@('Ctrl+' + [string]$pk.Key, [string]$pk.Hint)) }
+    foreach ($pk in @($ctrlKeys)) {
+      # the text is built first: inside one expression the comma binds to the right of the
+      # "Ctrl+" + key addition, so the pair arrived as a single string "Ctrl+O Open" and the
+      # chip drew both words inside one key cap
+      $label = 'Ctrl+' + [string]$pk.Key
+      $hint = [string]$pk.Hint
+      $pairs.Add(@($label, $hint))
+    }
     return $pairs.ToArray()
   }
   $out = New-Object System.Collections.Generic.List[object]

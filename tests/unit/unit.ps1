@@ -2281,11 +2281,13 @@ try {
       $hCtrl = Get-HintText (Get-PanelHints 5 3 $true 0 $true @() $false $true)
       Check 'unit' 'the Ctrl footer counts a batch too' (($hCtrl -match 'Copy 3') -and ($hCtrl -match 'Undo')) $hCtrl
       # one key/action pair per chip: a flattened first pair drew [Ctrl+Enter Copy] as one chip
-      $ctrlPairs = @(Get-PanelHints 5 3 $true 0 $true @() $false $true)
+      $ctrlPairs = @(Get-PanelHints 5 3 $true 0 $true @(@{ Key = 'O'; Hint = 'Open' }) $false $true)
       $shapeOk = $ctrlPairs.Count -gt 0
       foreach ($p in $ctrlPairs) {
         if ($p -isnot [array] -or @($p).Count -ne 2) { $shapeOk = $false }
       }
+      $pluginChip = @($ctrlPairs | Where-Object { @($_)[0] -eq 'Ctrl+O' })
+      if ($pluginChip.Count -ne 1 -or [string](@($pluginChip[0])[1]) -ne 'Open') { $shapeOk = $false }
       Check 'unit' 'every Ctrl hint is one key/action pair' $shapeOk ((@($ctrlPairs | ForEach-Object { @($_).Count }) -join ','))
       $hNoUndo = Get-HintText (Get-PanelHints 5 0 $true 0 $true @() $false $false)
       Check 'unit' 'the Ctrl footer drops undo while it is off' (-not ($hNoUndo -match 'Undo')) $hNoUndo
