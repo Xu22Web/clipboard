@@ -199,7 +199,7 @@ cli cbx          # 编出两个可选文件：src\cbx.exe 与 src\lib\cb.dll
 | `CaptureRich` | `1` | `1` = 记住带格式文本的 HTML / RTF（含随复制一起来的图片块） |
 | `MaxHtmlBytes` | `20971520` | 只算 HTML 块的上限（字节）；超出就丢 HTML，RTF 不受影响 |
 | `MaxRtfBytes` | `20971520` | 只算 RTF 块的上限（字节）；超出就不保存 RTF（条目按纯文本粘贴）。RTF 里的图是十六进制，20 MB 的 RTF 约装得下 10 MB 的图 |
-| `RtfImagesUpToBytes` | `8388608` | 预览卡片用：RTF 超过该字节数时卡片仍排版文字与版式，但每个图位画一个与图片同尺寸的圆角占位块（不解析图片）；存储与粘贴不受影响；`0` = 不限制 |
+| `RtfImagesUpToBytes` | `8388608` | 预览卡片用：RTF 超过该字节数时卡片仍排版文字与版式，但每个图位画一个固定尺寸的圆角占位块（不解析图片）；存储与粘贴不受影响；`0` = 不限制 |
 | `InlineImageUpToBytes` | `4194304` | HTML 里引用本机临时文件的图片，单张不超这个字节数就内联进 HTML（`data:` URI）；`0` = 不内联 |
 | `PasteRich` | `1` | `1` = `pick` / 回车粘贴时把格式一起写回剪贴板，`0` = 只粘纯文本 |
 | `PasteFilesAsText` | `1` | `1` = 文件条目粘贴时同时写入路径文本（地址栏、终端、编辑器才有内容），`0` = 只写文件列表 |
@@ -310,8 +310,8 @@ RTF 只有一条存储规则：超过 `MaxRtfBytes`（默认 20 MB）时完全�
 
 | RTF 大小 | 卡片 |
 |---|---|
-| ≤ `RtfImagesUpToBytes`（8 MB） | 真实排版：`\pngblip` 就地改写成 `\dibitmap0` 后画出；单张 >4 MB 或一次累计 >24 MB 的图退化为 `[image]` 标记 |
-| ≤ `MaxRtfBytes`（20 MB） | 仍排版文字与版式，每个图位按 `\picwgoal` / `\pichgoal` 画一个同尺寸的圆角占位块——只做一次花括号扫描，不解析十六进制图片 |
+| ≤ `RtfImagesUpToBytes`（8 MB） | 真实排版：`\pngblip` 就地改写成 `\dibitmap0` 后画出；单张 >4 MB 或一次累计 >24 MB 的图退化为固定尺寸（宽 180、高 6 行）的圆角占位块 |
+| ≤ `MaxRtfBytes`（20 MB） | 仍排版文字与版式，每个图位画同样的圆角占位块——只做一次花括号扫描，不解析十六进制图片 |
 | > `MaxRtfBytes`（20 MB） | RTF 不保存，卡片显示条目文字（`Get-RichPreviewMode` 返回 `text`） |
 
 排版不占用面板线程：第一次悬停先出文字卡片，**标题行**显示 `- rendering the preview...`（不往正文里塞一行，否则会与条目正文混淆），排版在独立 runspace 里算完后就地换成页面（实测 13 MB 文档的占位版首次约 0.5 s、6 MB 带图版约 1 s、同进程第二个作业约 0.2 s）。结果按「模式 + 引用 + 尺寸」缓存成 `%TEMP%\clipboard-preview\<sha1>.png`，再悬停或重启后约 10 ms 读回。

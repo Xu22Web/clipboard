@@ -286,6 +286,18 @@ function Get-ImagePreviewBitmap([string]$sha1, [int]$maxW, [int]$maxH) {
 # RtfImagesUpToBytes keeps its layout but loses its pictures to a marker here.
 $script:CardRtfMaxPng = 4194304
 $script:CardRtfMaxDib = 25165824
+# The marker a picture becomes when the layout will not draw it. It sits inside a single-cell
+# table so the layout reserves a real rectangle for it - 2700 twips (180 px at 96 dpi) wide and
+# five text lines tall - instead of letting the block painted afterwards sit on top of the
+# paragraphs that follow. The block is one fixed size: reading each picture's own \picwgoal
+# costs a second walk over a multi-megabyte document and buys a few pixels on a card that is
+# never the real page.
+$script:CardPicToken = '@cbimg@'
+$script:CardPicWidth = 180
+$script:CardPicRows = 6
+# The marker gets a paragraph of its own followed by empty ones: the block painted over it is
+# that tall, so the paragraphs around a picture stay where the layout put them.
+$script:CardPicCell = "\par" + $script:CardPicToken + ("\par" * $script:CardPicRows)
 
 function ConvertTo-CardRtf([string]$rtf) {
   if ([string]::IsNullOrEmpty($rtf) -or $rtf.Length -lt 16) { return $rtf }
@@ -299,7 +311,7 @@ function ConvertTo-CardRtf([string]$rtf) {
   # or an encoding that does not decode - is still part of the entry and still pastes back.
   # Leaving it as \pngblip would draw nothing at all, so the block becomes a short marker:
   # the card then shows that a picture belongs there instead of an unexplained blank strip.
-  $note = '{\fs16 [image]}'
+  $note = $script:CardPicCell
   # back to front: a replacement changes the length, and every later index would move
   for ($i = $hits.Count - 1; $i -ge 0; $i--) {
     $hit = $hits[$i]
@@ -417,7 +429,7 @@ function New-TonedColor($c, [int]$delta) {
 # A picture the layout refuses to draw keeps its place as a block of the size it asked for,
 # painted over the marker that stands in for it. Fluent's own media placeholder is the model:
 # 6 px corners, a fill one step off the paper, a hairline stroke and one quiet word.
-function Draw-CardImagePlaceholders($g, $box, [int]$maxW, $paper, $sizes, [string]$token) {
+function Draw-CardImagePlaceholders($g, $box, [int]$maxW, $paper, [string]$token) {
   if ($null -eq $g -or $null -eq $box -or -not $token) { return }
   $text = [string]$box.Text
   if (-not $text -or $text.IndexOf($token, [StringComparison]::Ordinal) -lt 0) { return }
@@ -445,17 +457,14 @@ function Draw-CardImagePlaceholders($g, $box, [int]$maxW, $paper, $sizes, [strin
       $at = $text.IndexOf($token, $start, [StringComparison]::Ordinal)
       if ($at -lt 0) { break }
       $pt = $box.GetPositionFromCharIndex($at)
-      $w = 0
-      $h = 0
-      $si = $k * 2
-      if ($sizes.Count -gt ($si + 1)) { $w = [int]$sizes[$si]; $h = [int]$sizes[$si + 1] }
-      if ($w -le 0 -and $h -le 0) { $w = [Math]::Min(200, $avail); $h = 120 }
-      elseif ($w -le 0) { $w = [int]($h * 1.5) }
-      elseif ($h -le 0) { $h = [int]($w * 0.66) }
-      if ($w -gt $avail) { $h = [int][Math]::Round($h * $avail / [Math]::Max(1, $w)); $w = $avail }
-      if ($h -gt 320) { $w = [int][Math]::Round($w * 320 / [Math]::Max(1, $h)); $h = 320 }
-      if ($w -lt 40) { $w = 40 }
-      if ($h -lt 28) { $h = 28 }
+      $w = [Math]::Min($script:CardPicWidth, $avail)
+      # the block is exactly the room the marker reserved, measured in the font the document
+      # is laid out with: a fixed pixel height would either cover the next paragraph or leave
+      # a band of nothing depending on the document's own font size
+      $h = [int]$box.Font.Height * $script:CardPicRows
+      if ($h -gt 320) { $h = 320 }
+      if ($w -lt 60) { $w = 60 }
+      if ($h -lt 34) { $h = 34 }
       $path = New-RoundPath ([int]$pt.X) ([int]$pt.Y) $w $h (Px 6)
       $g.FillPath($brush, $path)
       $g.DrawPath($pen, $path)
@@ -484,35 +493,21 @@ function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $pap
   if ($null -ne $hit) { return $hit }
   $rtf = Read-RichRtf $ref
   if (-not $rtf) { return $null }
-  $picSizes = @()
   $token = ''
   if ($mode -ceq 'plain') {
-    # the words and the layout, with a block where each picture was. The block keeps the size
-    # the picture asked for, so a page that cannot draw its images still reads as a page.
-    try { $picSizes = @([Cb.Rtf]::PictureSizes($rtf)) } catch { $picSizes = @() }
-    $token = '@cbimg@'
+    # the words and the layout, with a block where each picture was. The marker stays in the
+    # flow (so the paragraphs keep their breaks) and the block is painted over it afterwards.
+    $token = $script:CardPicToken
     $rtf = ConvertTo-PlaceholderRtf $rtf '@cbp@'
-    # A block is taller than the text line it starts on, so the marker gets the empty
-    # paragraphs that hold that room open - without them the block would be painted over the
-    # paragraph that follows the picture.
-    $lineH = 18
-    $k = 0
-    while ($k -lt 200) {
-      $at = $rtf.IndexOf('@cbp@', [StringComparison]::Ordinal)
-      if ($at -lt 0) { break }
-      $h = 0
-      if ($picSizes.Count -gt ($k * 2 + 1)) { $h = [int]$picSizes[$k * 2 + 1] }
-      if ($h -le 0) { $h = 120 }
-      $rooms = [Math]::Max(0, [int][Math]::Ceiling($h / $lineH) - 1)
-      $rtf = $rtf.Substring(0, $at) + $token + ("\par" * $rooms) + $rtf.Substring($at + 5)
-      $k++
-    }
+    $rtf = $rtf.Replace('@cbp@', $script:CardPicCell)
     $gray = Add-RtfGrayColor $rtf
     $mark = '{\fs18\i ' + $token + '}'
     if ($gray.Index -gt 0) { $mark = '{\fs18\i\cf' + [string]$gray.Index + ' ' + $token + '}' }
     $rtf = $gray.Text.Replace($token, $mark)
   } else {
-    # the layout engine cannot draw a png picture: re-spell it as a bitmap first
+    # the layout engine cannot draw a png picture: re-spell it as a bitmap. A picture past the
+    # bitmap budget becomes the same marker the plain card uses, so both cards show a block.
+    $token = $script:CardPicToken
     $rtf = ConvertTo-CardRtf $rtf
   }
   Load-Forms
@@ -537,8 +532,8 @@ function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $pap
     $g.Clear($paper)
     [void][Cb.Rich]::RenderTo($box, $g, $maxW, $maxH)
     # before the crop: a placeholder taller than the words has to count as ink
-    if ($mode -ceq 'plain' -and $token -and $picSizes.Count -gt 0) {
-      try { Draw-CardImagePlaceholders $g $box $maxW $paper $picSizes $token }
+    if ($token) {
+      try { Draw-CardImagePlaceholders $g $box $maxW $paper $token }
       catch { Write-Log ('card placeholder failed: ' + $_.Exception.Message) }
     }
     $g.Dispose()

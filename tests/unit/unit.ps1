@@ -1149,12 +1149,12 @@ try {
     $script:CardRtfMaxPng = 64
     $cardCapped = ConvertTo-CardRtf $cardRtf
     $script:CardRtfMaxPng = $savedCardPng
-    Check 'unit' 'a picture too big for the card leaves a marker' ((-not ($cardCapped -match '\\pngblip')) -and ($cardCapped -match '\[image\]')) ([string]$cardCapped.Length + ' chars')
+    Check 'unit' 'a picture too big for the card leaves a block marker' ((-not ($cardCapped -match '\\pngblip')) -and ($cardCapped -match '\@cbimg\@')) ([string]$cardCapped.Length + ' chars')
     $savedCardDib = $script:CardRtfMaxDib
     $script:CardRtfMaxDib = 64
     $cardBudget = ConvertTo-CardRtf $cardRtf
     $script:CardRtfMaxDib = $savedCardDib
-    Check 'unit' 'the layout budget leaves a marker as well' ((-not ($cardBudget -match '\\pngblip')) -and ($cardBudget -match '\[image\]')) ''
+    Check 'unit' 'the layout budget leaves a block marker as well' ((-not ($cardBudget -match '\\pngblip')) -and ($cardBudget -match '\@cbimg\@')) ''
     $cardRef = New-RichRef @{ Html = $null; Rtf = $Utf8.GetBytes($cardRtf) }
     [void](Write-RichMedia $cardRef @{ Html = $null; Rtf = $Utf8.GetBytes($cardRtf) })
     Clear-MediaCache
