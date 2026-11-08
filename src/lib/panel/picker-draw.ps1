@@ -49,12 +49,15 @@ function Get-PanelHints([int]$rows, [int]$selected, [bool]$editable, [int]$query
   if ($ctrlHeld) {
     # Ctrl is held while these show; each chip spells the whole combination out, core ones
     # first, because the footer truncates and the plugin keys are the optional ones
-    $pairs = @(@('Ctrl+1-9,0', 'Pick'))
-    $pairs += ,@('Ctrl+Enter', $copyLabel)
+    # a list, not "@(@(pair))": a one-element array of arrays is flattened by the array
+    # subexpression, and the first chip then came out as two loose strings
+    $pairs = New-Object System.Collections.Generic.List[object]
+    $pairs.Add(@('Ctrl+1-9,0', 'Pick'))
+    $pairs.Add(@('Ctrl+Enter', $copyLabel))
     # undo is only worth a chip while the setting allows it
-    if ($undoOn) { $pairs += ,@('Ctrl+Z', 'Undo') }
-    foreach ($pk in @($ctrlKeys)) { $pairs += ,@('Ctrl+' + [string]$pk.Key, [string]$pk.Hint) }
-    return $pairs
+    if ($undoOn) { $pairs.Add(@('Ctrl+Z', 'Undo')) }
+    foreach ($pk in @($ctrlKeys)) { $pairs.Add(@('Ctrl+' + [string]$pk.Key, [string]$pk.Hint)) }
+    return $pairs.ToArray()
   }
   $out = New-Object System.Collections.Generic.List[object]
   if ($multi) {
@@ -171,9 +174,12 @@ function Draw-KeyChips($g, [int]$x, [int]$cy, $pairs, $keyColor, $actionColor, [
   $chipH = Px $script:Metric['ChipHeight']
   $big = New-Object Drawing.SizeF -ArgumentList @(1000, 100)
   # a caller that returns one pair from a function gets it flattened by PowerShell's list
-  # handling, so ['Esc','Close'] arrives instead of [['Esc','Close']]. Re-pair flat strings.
+  # handling, so ['Esc','Close'] arrives instead of [['Esc','Close']]. Re-pair flat strings,
+  # and only when every entry is a string: a list that already holds pairs must be left alone.
   $list = @($pairs)
-  if ($list.Count -gt 0 -and $list[0] -is [string]) {
+  $flat = ($list.Count -gt 0)
+  foreach ($entry in $list) { if ($entry -isnot [string]) { $flat = $false; break } }
+  if ($flat) {
     $repaired = @()
     for ($i = 0; ($i + 1) -lt $list.Count; $i += 2) { $repaired += ,@([string]$list[$i], [string]$list[$i + 1]) }
     $list = $repaired
