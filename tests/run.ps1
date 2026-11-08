@@ -20,10 +20,11 @@
   behind each other; everything else runs beside them. The cli parts share nothing, so they
   are only limited by -Workers.
 
-      cli test                        every part
+      cli test                        every part, one per logical processor
       cli test -Unit                  one part, by name
       cli test -Part cli,history      several parts, by name
-      cli test -Workers 6             more at a time (cli.ini [test] Workers is the default)
+      cli test -Workers 6             fewer at a time (cli.ini [test] Workers is the default,
+                                      0 = one per logical processor)
       cli test -Serial                one after another
 #>
 [CmdletBinding()]
@@ -122,7 +123,9 @@ if (-not ($Unit -or $Integration -or $E2E)) {
   $E2E = ($groups -contains 'e2e')
 }
 if (-not $Integration) { $Unit = [bool]$Unit; $E2E = [bool]$E2E }
-if ($Workers -le 0) { $Workers = [int](Get-Cfg 'test.Workers' '8') }
+if ($Workers -le 0) { $Workers = [int](Get-Cfg 'test.Workers' '0') }
+# a missing key or 0 means one worker per logical processor; the part count is the ceiling
+if ($Workers -le 0) { $Workers = [Environment]::ProcessorCount }
 if ($Workers -lt 1) { $Workers = 1 }
 $wanted = Split-List $Part
 if ($Changed) {

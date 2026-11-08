@@ -769,7 +769,7 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 
 也可直接调用 `powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run.ps1`。
 
-一个分件一个文件、一个进程、一个沙箱；并行度由 `cli.ini` 的 `[test] Workers` 决定（默认 8），结果由驱动合并成一张表。全量 700 项以上，其中端到端 22 项。
+一个分件一个文件、一个进程、一个沙箱；并行度默认按逻辑处理器数（`cli.ini` 的 `[test] Workers` 缺省即可，写 `1` 为串行，写其它值为该并发数，命令行 `cli test -Workers N` 可对单次运行覆盖）；结果由驱动合并成一张表。全量 700 项以上，其中端到端 22 项。
 
 断言只写两类：守回归（对应实际缺陷）与守契约（对外行为、文件格式、命令行输出）。不复述常量、不断言私有实现细节、同一行为不写第二条等价断言。
 

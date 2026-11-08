@@ -1,8 +1,9 @@
 # tools\utils\schema.ps1 - validate a settings file against a schema in tools\schema\.
 #
-# The tooling never falls back to a built-in default: a key that is missing, unknown or of the
-# wrong type stops the command with the list of problems. That is the point of the tables - a
-# typo in a hand-written file must not become "the command quietly did something else".
+# A key that is missing, unknown or of the wrong type stops the command with the list of
+# problems, so a typo in a hand-written file never becomes "the command quietly did something
+# else". A spec marked Optional is the exception: the command that reads it has a fallback of
+# its own, and leaving the key out is a documented choice rather than a mistake.
 #
 # Two files use this: cli.ini (tools\schema\cli.ps1) and package.ini (tools\schema\package.ps1).
 # A schema is a hashtable with Name, Keys and optionally DynamicKeys:
@@ -109,14 +110,17 @@ function Test-ToolConfigMap($schema, $map, [string]$fileName, [string]$section =
   }
   foreach ($k in @($schema['Keys'].Keys)) {
     if ($prefix -and -not ([string]$k).StartsWith($prefix)) { continue }
+    $spec = $schema['Keys'][$k]
     $raw = ''
     if ($map.ContainsKey($k)) { $raw = [string]$map[$k] }
     elseif ($map.ContainsKey($k.Substring($k.IndexOf('.') + 1))) { $raw = [string]$map[$k.Substring($k.IndexOf('.') + 1)] }
     else {
+      # an optional key may be left out: the command that reads it has a fallback of its own
+      if ($spec.Contains('Optional') -and [bool]$spec['Optional']) { continue }
       $out.Add(('missing key: ' + $k))
       continue
     }
-    $r = Convert-ToolSchemaValue $schema['Keys'][$k] $raw
+    $r = Convert-ToolSchemaValue $spec $raw
     if (-not $r.Ok) { $out.Add(($k + '=' + $raw + '  (' + $r.Error + ')')) }
   }
   # a dynamic key is not required to exist, but the ones that do must have a valid value

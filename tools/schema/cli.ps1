@@ -6,9 +6,10 @@
 # unknown key or a value of the wrong type stops the command instead of falling back to a
 # silent default.
 #
-# Required is the default: every key must be present. A list key says for itself whether it
-# may be empty: NonEmpty marks the ones where an empty value would mean "nothing at all"
-# (the build would ship no file), so it stops the command instead.
+# A key must be present unless its spec says Optional: the command that reads it then has a
+# fallback of its own (test.Workers left out means one worker per logical processor). A list
+# key says for itself whether it may be empty: NonEmpty marks the ones where an empty value
+# would mean "nothing at all" (the build would ship no file), so it stops the command instead.
 
 @{
   Name        = 'cli'
@@ -32,6 +33,6 @@
     'build.Excludes'    = @{ Type = 'list'; Pattern = '^[A-Za-z0-9_.*?/\-]+$'; Description = 'files to leave out of the package' }
 
     'test.Groups'  = @{ Type = 'list'; Enum = @('unit', 'integration', 'e2e'); NonEmpty = $true; Description = 'groups a plain run covers' }
-    'test.Workers' = @{ Type = 'int'; Minimum = 1; Maximum = 64; Description = 'sandboxes that may run side by side' }
+    'test.Workers' = @{ Type = 'int'; Minimum = 0; Maximum = 64; Optional = $true; Description = 'sandboxes that may run side by side; left out or 0 = one per logical processor' }
   }
 }

@@ -9,7 +9,7 @@
       cli test -Part history          one part by name (history, transfer, settings, config,
                                      template, marks, pins, plugins, build, unit, serve)
       cli test -Changed              only the parts a change since HEAD can break
-      cli test -Workers 6            more parts at a time
+      cli test -Workers 6            fewer parts at a time (default: one per logical processor)
       cli test -Serial               one after another
       cli test -Source dist\clipboard-0.1.0
                                      run the command line parts against a packaged copy
