@@ -200,6 +200,69 @@ namespace Cb {
   // hex behind {\*\picprop{\sp{\sn shapeType}...}} chains, which no regex can follow without
   // risking a backtracking stall on a 13 MB document. A brace counter is linear and exact.
   public static class Rtf {
+    // The size each {\pict ...} block asks for, in pixels at 96 dpi, as w,h pairs in the same
+    // order StripPictures replaces them. \picwgoal/\pichgoal are twips (1/20 point), \picw and
+    // \pich are pixels; a block that states neither comes back as 0,0 and the card falls back
+    // to a default block. The walk is the same brace counter as StripPictures, so a marker and
+    // its size cannot get out of step.
+    public static int[] PictureSizes(string text) {
+      if (string.IsNullOrEmpty(text)) { return new int[0]; }
+      System.Collections.Generic.List<int> sizes = new System.Collections.Generic.List<int>();
+      int n = text.Length;
+      int i = 0;
+      while (i < n) {
+        char c = text[i];
+        if (c == '{' && i + 6 <= n && string.CompareOrdinal(text, i, "{\\pict", 0, 6) == 0) {
+          int depth = 0;
+          int j = i;
+          while (j < n) {
+            char d = text[j];
+            if (d == '\\') { j += 2; continue; }
+            if (d == '{') { depth++; }
+            else if (d == '}') { depth--; if (depth == 0) { break; } }
+            j++;
+          }
+          if (j < n) {
+            string block = text.Substring(i, j - i + 1);
+            int w = SizeOf(block, "\\picwgoal", "\\picw", 15);
+            int h = SizeOf(block, "\\pichgoal", "\\pich", 15);
+            sizes.Add(w);
+            sizes.Add(h);
+            i = j + 1;
+            continue;
+          }
+        }
+        i++;
+      }
+      return sizes.ToArray();
+    }
+
+    // twips are twip/divisor pixels at 96 dpi (1 pt = 20 twips = 4/3 px), while \picw is
+    // already a pixel count - the divisor says which control word answered
+    private static int SizeOf(string block, string goal, string plain, int divisor) {
+      int v = GoalValue(block, goal);
+      if (v > 0) { return v / divisor; }
+      return GoalValue(block, plain);
+    }
+
+    // first occurrence of the control word that is followed by a number, so "\picw" does not
+    // answer from inside "\picwgoal"
+    private static int GoalValue(string block, string word) {
+      int at = 0;
+      while (true) {
+        at = block.IndexOf(word, at, System.StringComparison.OrdinalIgnoreCase);
+        if (at < 0) { return 0; }
+        int p = at + word.Length;
+        int start = p;
+        while (p < block.Length && (block[p] == '-' || (block[p] >= '0' && block[p] <= '9'))) { p++; }
+        if (p > start) {
+          int v;
+          if (int.TryParse(block.Substring(start, p - start), out v)) { return v; }
+        }
+        at = start;
+      }
+    }
+
     public static string StripPictures(string text, string mark) {
       if (string.IsNullOrEmpty(text)) { return text; }
       int n = text.Length;

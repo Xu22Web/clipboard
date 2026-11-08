@@ -405,6 +405,77 @@ function Add-RtfGrayColor([string]$rtf) {
   return @{ Text = $text; Index = 2 }
 }
 
+# one step away from the paper colour, clamped: a block has to read as a surface on the card,
+# not as a second colour
+function New-TonedColor($c, [int]$delta) {
+  $r = [Math]::Min(255, [Math]::Max(0, [int]$c.R + $delta))
+  $g2 = [Math]::Min(255, [Math]::Max(0, [int]$c.G + $delta))
+  $b = [Math]::Min(255, [Math]::Max(0, [int]$c.B + $delta))
+  return [Drawing.Color]::FromArgb(255, $r, $g2, $b)
+}
+
+# A picture the layout refuses to draw keeps its place as a block of the size it asked for,
+# painted over the marker that stands in for it. Fluent's own media placeholder is the model:
+# 6 px corners, a fill one step off the paper, a hairline stroke and one quiet word.
+function Draw-CardImagePlaceholders($g, $box, [int]$maxW, $paper, $sizes, [string]$token) {
+  if ($null -eq $g -or $null -eq $box -or -not $token) { return }
+  $text = [string]$box.Text
+  if (-not $text -or $text.IndexOf($token, [StringComparison]::Ordinal) -lt 0) { return }
+  $luma = (([int]$paper.R + [int]$paper.G + [int]$paper.B) / 3)
+  $step = $(if ($luma -lt 128) { 14 } else { -10 })
+  $fill = New-TonedColor $paper $step
+  $edge = New-TonedColor $paper ($step * 2)
+  $ink = New-TonedColor $paper $(if ($luma -lt 128) { 96 } else { -84 })
+  $pad = [int](Px 10)
+  $avail = $maxW - ($pad * 2)
+  if ($avail -lt 40) { $avail = $maxW }
+  $font = $null
+  try { $font = New-Object Drawing.Font($box.Font.FontFamily, [Math]::Max(7, [single]$box.Font.Size - 1)) } catch { $font = $null }
+  $brush = New-Object Drawing.SolidBrush $fill
+  $inkBrush = New-Object Drawing.SolidBrush $ink
+  $pen = New-Object Drawing.Pen $edge, 1
+  $fmt = New-Object Drawing.StringFormat
+  $fmt.Alignment = [Drawing.StringAlignment]::Center
+  $fmt.LineAlignment = [Drawing.StringAlignment]::Center
+  $fmt.FormatFlags = [Drawing.StringFormatFlags]::NoWrap
+  try {
+    $start = 0
+    $k = 0
+    while ($true) {
+      $at = $text.IndexOf($token, $start, [StringComparison]::Ordinal)
+      if ($at -lt 0) { break }
+      $pt = $box.GetPositionFromCharIndex($at)
+      $w = 0
+      $h = 0
+      $si = $k * 2
+      if ($sizes.Count -gt ($si + 1)) { $w = [int]$sizes[$si]; $h = [int]$sizes[$si + 1] }
+      if ($w -le 0 -and $h -le 0) { $w = [Math]::Min(200, $avail); $h = 120 }
+      elseif ($w -le 0) { $w = [int]($h * 1.5) }
+      elseif ($h -le 0) { $h = [int]($w * 0.66) }
+      if ($w -gt $avail) { $h = [int][Math]::Round($h * $avail / [Math]::Max(1, $w)); $w = $avail }
+      if ($h -gt 320) { $w = [int][Math]::Round($w * 320 / [Math]::Max(1, $h)); $h = 320 }
+      if ($w -lt 40) { $w = 40 }
+      if ($h -lt 28) { $h = 28 }
+      $path = New-RoundPath ([int]$pt.X) ([int]$pt.Y) $w $h (Px 6)
+      $g.FillPath($brush, $path)
+      $g.DrawPath($pen, $path)
+      $path.Dispose()
+      if ($null -ne $font) {
+        $rect = New-Object Drawing.RectangleF -ArgumentList @([single]$pt.X, [single]$pt.Y, [single]$w, [single]$h)
+        $g.DrawString('image', $font, $inkBrush, $rect, $fmt)
+      }
+      $start = $at + $token.Length
+      $k++
+    }
+  } finally {
+    $brush.Dispose()
+    $inkBrush.Dispose()
+    $pen.Dispose()
+    $fmt.Dispose()
+    if ($null -ne $font) { $font.Dispose() }
+  }
+}
+
 function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $paper, [string]$mode = 'full') {
   if (-not $ref -or $maxW -lt 16 -or $maxH -lt 16) { return $null }
   if ($mode -ceq 'none' -or $mode -ceq 'text') { return $null }
@@ -413,14 +484,32 @@ function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $pap
   if ($null -ne $hit) { return $hit }
   $rtf = Read-RichRtf $ref
   if (-not $rtf) { return $null }
+  $picSizes = @()
+  $token = ''
   if ($mode -ceq 'plain') {
-    # the words and the layout, with a quiet marker where each picture was. The marker is
-    # substituted after the colour table exists, because it names the entry it needs.
-    $token = '@cbp@'
-    $rtf = ConvertTo-PlaceholderRtf $rtf $token
+    # the words and the layout, with a block where each picture was. The block keeps the size
+    # the picture asked for, so a page that cannot draw its images still reads as a page.
+    try { $picSizes = @([Cb.Rtf]::PictureSizes($rtf)) } catch { $picSizes = @() }
+    $token = '@cbimg@'
+    $rtf = ConvertTo-PlaceholderRtf $rtf '@cbp@'
+    # A block is taller than the text line it starts on, so the marker gets the empty
+    # paragraphs that hold that room open - without them the block would be painted over the
+    # paragraph that follows the picture.
+    $lineH = 18
+    $k = 0
+    while ($k -lt 200) {
+      $at = $rtf.IndexOf('@cbp@', [StringComparison]::Ordinal)
+      if ($at -lt 0) { break }
+      $h = 0
+      if ($picSizes.Count -gt ($k * 2 + 1)) { $h = [int]$picSizes[$k * 2 + 1] }
+      if ($h -le 0) { $h = 120 }
+      $rooms = [Math]::Max(0, [int][Math]::Ceiling($h / $lineH) - 1)
+      $rtf = $rtf.Substring(0, $at) + $token + ("\par" * $rooms) + $rtf.Substring($at + 5)
+      $k++
+    }
     $gray = Add-RtfGrayColor $rtf
-    $mark = '{\fs18\i [image]}'
-    if ($gray.Index -gt 0) { $mark = '{\fs18\i\cf' + [string]$gray.Index + ' [image]}' }
+    $mark = '{\fs18\i ' + $token + '}'
+    if ($gray.Index -gt 0) { $mark = '{\fs18\i\cf' + [string]$gray.Index + ' ' + $token + '}' }
     $rtf = $gray.Text.Replace($token, $mark)
   } else {
     # the layout engine cannot draw a png picture: re-spell it as a bitmap first
@@ -447,6 +536,11 @@ function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $pap
     $g = [Drawing.Graphics]::FromImage($full)
     $g.Clear($paper)
     [void][Cb.Rich]::RenderTo($box, $g, $maxW, $maxH)
+    # before the crop: a placeholder taller than the words has to count as ink
+    if ($mode -ceq 'plain' -and $token -and $picSizes.Count -gt 0) {
+      try { Draw-CardImagePlaceholders $g $box $maxW $paper $picSizes $token }
+      catch { Write-Log ('card placeholder failed: ' + $_.Exception.Message) }
+    }
     $g.Dispose()
     $g = $null
     # a two line note must not get a full page: crop to the rows that carry ink
