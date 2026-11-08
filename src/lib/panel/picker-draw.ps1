@@ -181,8 +181,10 @@ function Draw-KeyChips($g, [int]$x, [int]$cy, $pairs, $keyColor, $actionColor, [
   foreach ($p in $list) {
     $key = [string]$p[0]
     $act = [string]$p[1]
-    $kw = [single]$g.MeasureString($key, $font, $big, $formats.Seg).Width
-    $aw = [single]$g.MeasureString($act, $font, $big, $formats.Seg).Width
+    # measured with the format the text is drawn with: GenericTypographic leaves out the
+    # padding GDI+ adds around a drawn string, and a rect that narrow cuts the last character
+    $kw = [single]$g.MeasureString($key, $font, $big, $formats.None).Width
+    $aw = [single]$g.MeasureString($act, $font, $big, $formats.None).Width
     $chipW = [int]($kw + (Px 14))
     if (($x + $chipW + (Px 6) + $aw) -gt $limit) { return }
     $chipY = $cy - [int]($chipH / 2)
