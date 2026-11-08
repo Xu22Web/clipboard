@@ -83,6 +83,8 @@ function Show-Usage {
   Write-Host '    Ctrl+Enter           copy only, do not inject a paste'
   Write-Host '    F2                   edit the text of the selected entry in place'
   Write-Host '    Ctrl+1-9 / Ctrl+0    pick one of the visible rows'
+  Write-Host '    Ctrl+A               select every row in the result'
+  Write-Host '    Home / End           first row / last row'
   Write-Host '    Del                  delete'
   Write-Host '    Ctrl+Z               undo the last delete'
   Write-Host '    Esc                  clear the search, a second Esc closes'
