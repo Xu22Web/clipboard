@@ -286,20 +286,52 @@ function Get-ImagePreviewBitmap([string]$sha1, [int]$maxW, [int]$maxH) {
 # RtfImagesUpToBytes keeps its layout but loses its pictures to a marker here.
 $script:CardRtfMaxPng = 4194304
 $script:CardRtfMaxDib = 25165824
-# The marker a picture becomes when the layout will not draw it. It sits inside a single-cell
-# table so the layout reserves a real rectangle for it - 2700 twips (180 px at 96 dpi) wide and
-# five text lines tall - instead of letting the block painted afterwards sit on top of the
-# paragraphs that follow. The block is one fixed size: reading each picture's own \picwgoal
-# costs a second walk over a multi-megabyte document and buys a few pixels on a card that is
-# never the real page.
+# The marker a picture becomes when the layout will not draw it. The full card keeps one fixed
+# block - 180 px wide, six text lines tall - because it would have to decode a picture before it
+# could know its size. The plain card asks Cb.Rtf.PadPictures for the size each \pict states and
+# reserves exactly that room, so every block lands on empty space instead of on the words.
+# The marker a picture becomes when the layout will not draw it. Both cards size the block from
+# the picture itself - the plain card reads what each \pict states, the full card reads the
+# pixels it decoded or the png header when the picture was too big to decode - and reserve
+# exactly that room, so a block lands on empty space instead of on the words. The width is
+# capped and the fixed block stays the answer when nothing says how big the picture is.
 $script:CardPicToken = '@cbimg@'
 $script:CardPicWidth = 180
 $script:CardPicRows = 6
-# The marker gets a paragraph of its own followed by empty ones: the block painted over it is
-# that tall, so the paragraphs around a picture stay where the layout put them.
+# The fallback for a picture that never says its size: one marker paragraph followed by the
+# empty ones the painted block covers.
 $script:CardPicCell = "\par" + $script:CardPicToken + ("\par" * $script:CardPicRows)
 
-function ConvertTo-CardRtf([string]$rtf) {
+# The pixel size a png states in its own header, or $null when the bytes are not a png. A
+# picture past the bitmap budget is never decoded, so its header is the only thing that can tell
+# the card what shape the picture has.
+function Get-PngPixelSize($bytes) {
+  if ($null -eq $bytes -or $bytes.Length -lt 24) { return $null }
+  if ($bytes[0] -ne 137 -or $bytes[1] -ne 80 -or $bytes[2] -ne 78 -or $bytes[3] -ne 71) { return $null }
+  $w = ([long]$bytes[16] * 16777216) + ([long]$bytes[17] * 65536) + ([long]$bytes[18] * 256) + [long]$bytes[19]
+  $h = ([long]$bytes[20] * 16777216) + ([long]$bytes[21] * 65536) + ([long]$bytes[22] * 256) + [long]$bytes[23]
+  if ($w -lt 1 -or $h -lt 1) { return $null }
+  return @([int]$w, [int]$h)
+}
+
+# A block shaped like the picture: as wide as it may be, as many text lines tall as that width
+# needs. Counted in the card's own line height, so the marker paragraph that reserves the room
+# and the rectangle painted over it cannot drift apart.
+function New-CardBlock([int]$picW, [int]$picH, [int]$lineHeight, [int]$maxWidth, [int]$minWidth, [int]$defaultRows, [string]$token) {
+  $w = $maxWidth
+  $rows = $defaultRows
+  if ($picW -gt 0 -and $picH -gt 0 -and $lineHeight -gt 0) {
+    if ($picW -lt $w) { $w = $picW }
+    if ($w -lt $minWidth) { $w = $minWidth }
+    $rows = [int][Math]::Ceiling((([double]$picH * $w) / $picW) / $lineHeight)
+    if ($rows -lt 1) { $rows = 1 }
+    if ($rows -gt 24) { $rows = 24 }
+  }
+  if ($w -lt $minWidth) { $w = $minWidth }
+  return @{ Text = ("\par" + $token + ("\par" * $rows)); Width = $w; Rows = $rows }
+}
+
+function ConvertTo-CardRtf([string]$rtf, [string]$token = '', [int]$lineHeight = 0, [int]$maxWidth = 0, [int]$minWidth = 60, [int]$defaultRows = 6, $boxes = $null) {
   if ([string]::IsNullOrEmpty($rtf) -or $rtf.Length -lt 16) { return $rtf }
   if ($rtf.IndexOf('\pngblip', [StringComparison]::OrdinalIgnoreCase) -lt 0) { return $rtf }
   $hits = @([regex]::Matches($rtf, '(?s)\{\\pict\\pngblip([^{}]*)\}'))
@@ -307,6 +339,12 @@ function ConvertTo-CardRtf([string]$rtf) {
   $sb = New-Object Text.StringBuilder $rtf
   $total = 0
   $placed = 0
+  # the caller knows the card's font, so a block can keep the shape of its picture; without
+  # those numbers the fixed block is still a correct answer and the callers that only want the
+  # text pass none.
+  $sized = ($lineHeight -gt 0 -and $maxWidth -gt 0)
+  if (-not $token) { $token = $script:CardPicToken }
+  $found = New-Object System.Collections.Generic.List[int]
   # A picture the layout will not take - too big on its own, over the running bitmap budget,
   # or an encoding that does not decode - is still part of the entry and still pastes back.
   # Leaving it as \pngblip would draw nothing at all, so the block becomes a short marker:
@@ -317,6 +355,8 @@ function ConvertTo-CardRtf([string]$rtf) {
     $hit = $hits[$i]
     $replacement = $note
     $src = $null
+    $markW = 0
+    $markH = 0
     try {
       # the block is control words and one hex run; c, d, e, f are hex digits too, so the
       # control words have to go first or '\picw' would be read as data
@@ -328,6 +368,8 @@ function ConvertTo-CardRtf([string]$rtf) {
         if ($null -ne $png -and $png.Length -ge 8 -and $png.Length -le $script:CardRtfMaxPng) {
           $ms = New-Object IO.MemoryStream (,$png)
           $src = [Drawing.Image]::FromStream($ms)
+          $markW = $src.Width
+          $markH = $src.Height
           $bmpMs = New-Object IO.MemoryStream
           $src.Save($bmpMs, [Drawing.Imaging.ImageFormat]::Bmp)
           $all = $bmpMs.ToArray()
@@ -343,6 +385,10 @@ function ConvertTo-CardRtf([string]$rtf) {
               $replacement = '{\pict\dibitmap0 ' + $newHex + '}'
             }
           }
+        } elseif ($null -ne $png) {
+          # too big to decode, so the header answers instead: the block still knows the shape
+          $sz = Get-PngPixelSize $png
+          if ($null -ne $sz) { $markW = $sz[0]; $markH = $sz[1] }
         }
       }
     } catch {
@@ -350,11 +396,20 @@ function ConvertTo-CardRtf([string]$rtf) {
     } finally {
       if ($null -ne $src) { try { $src.Dispose() } catch { } }
     }
-    if ($replacement -eq $note) { $placed++ }
+    if ($replacement -eq $note) {
+      if ($sized) {
+        $block = New-CardBlock $markW $markH $lineHeight $maxWidth $minWidth $defaultRows $token
+        $replacement = $block.Text
+        $found.Insert(0, $block.Rows)
+        $found.Insert(0, $block.Width)
+      }
+      $placed++
+    }
     [void]$sb.Remove($hit.Index, $hit.Length)
     [void]$sb.Insert($hit.Index, $replacement)
   }
   if ($placed -gt 0) { Write-Log ('card pictures drawn as a placeholder: ' + [string]$placed) }
+  if ($null -ne $boxes) { $boxes.Value = $found.ToArray() }
   $newText = $sb.ToString()
   if ($newText -ceq $rtf) { return $rtf }
   return $newText
@@ -380,19 +435,6 @@ function Get-RichPreviewMode([long]$size) {
   if ($script:MaxRtfBytes -gt 0 -and $size -gt $script:MaxRtfBytes) { return 'text' }
   if ($script:RtfImagesUpToBytes -gt 0 -and $size -gt $script:RtfImagesUpToBytes) { return 'plain' }
   return 'full'
-}
-
-# every {\pict ...} group becomes a marker. The walk is in C# (Cb.Rtf): Word nests the hex
-# behind {\*\picprop ...} chains, which no regex can follow, and the same walk written in
-# PowerShell costs about two seconds per megabyte (22 s on a 13 MB document).
-function ConvertTo-PlaceholderRtf([string]$rtf, [string]$mark) {
-  if ([string]::IsNullOrEmpty($rtf) -or $rtf.Length -lt 16) { return $rtf }
-  if ($rtf.IndexOf('\pict', [StringComparison]::OrdinalIgnoreCase) -lt 0) { return $rtf }
-  try {
-    Load-Forms
-    Add-Native
-    return [Cb.Rtf]::StripPictures($rtf, $mark)
-  } catch { return $rtf }
 }
 
 # The marker wants the quiet grey the panel uses for secondary text, and an rtf only knows the
@@ -429,7 +471,7 @@ function New-TonedColor($c, [int]$delta) {
 # A picture the layout refuses to draw keeps its place as a block of the size it asked for,
 # painted over the marker that stands in for it. Fluent's own media placeholder is the model:
 # 6 px corners, a fill one step off the paper, a hairline stroke and one quiet word.
-function Draw-CardImagePlaceholders($g, $box, [int]$maxW, $paper, [string]$token) {
+function Draw-CardImagePlaceholders($g, $box, [int]$maxW, $paper, [string]$token, $boxes = $null, [int]$maxH = 0) {
   if ($null -eq $g -or $null -eq $box -or -not $token) { return }
   $text = [string]$box.Text
   if (-not $text -or $text.IndexOf($token, [StringComparison]::Ordinal) -lt 0) { return }
@@ -457,11 +499,22 @@ function Draw-CardImagePlaceholders($g, $box, [int]$maxW, $paper, [string]$token
       $at = $text.IndexOf($token, $start, [StringComparison]::Ordinal)
       if ($at -lt 0) { break }
       $pt = $box.GetPositionFromCharIndex($at)
-      $w = [Math]::Min($script:CardPicWidth, $avail)
+      # asking the layout where a marker sits is the expensive half of this loop - it walks the
+      # document from the top every time - and a block below the card can never be seen
+      if ($maxH -gt 0 -and $pt.Y -ge $maxH) { break }
+      # a block the rtf sized for us: the width it asked for and the lines it reserved, so the
+      # rectangle lands exactly on the empty room instead of being an approximation
+      $w = $script:CardPicWidth
+      $rows = $script:CardPicRows
+      if ($null -ne $boxes -and ($k * 2) + 1 -lt $boxes.Length) {
+        if ([int]$boxes[$k * 2] -gt 0) { $w = [int]$boxes[$k * 2] }
+        if ([int]$boxes[($k * 2) + 1] -gt 0) { $rows = [int]$boxes[($k * 2) + 1] }
+      }
+      $w = [Math]::Min($w, $avail)
       # the block is exactly the room the marker reserved, measured in the font the document
       # is laid out with: a fixed pixel height would either cover the next paragraph or leave
       # a band of nothing depending on the document's own font size
-      $h = [int]$box.Font.Height * $script:CardPicRows
+      $h = [int]$box.Font.Height * $rows
       if ($h -gt 320) { $h = 320 }
       if ($w -lt 60) { $w = 60 }
       if ($h -lt 34) { $h = 34 }
@@ -493,23 +546,9 @@ function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $pap
   if ($null -ne $hit) { return $hit }
   $rtf = Read-RichRtf $ref
   if (-not $rtf) { return $null }
-  $token = ''
-  if ($mode -ceq 'plain') {
-    # the words and the layout, with a block where each picture was. The marker stays in the
-    # flow (so the paragraphs keep their breaks) and the block is painted over it afterwards.
-    $token = $script:CardPicToken
-    $rtf = ConvertTo-PlaceholderRtf $rtf '@cbp@'
-    $rtf = $rtf.Replace('@cbp@', $script:CardPicCell)
-    $gray = Add-RtfGrayColor $rtf
-    $mark = '{\fs18\i ' + $token + '}'
-    if ($gray.Index -gt 0) { $mark = '{\fs18\i\cf' + [string]$gray.Index + ' ' + $token + '}' }
-    $rtf = $gray.Text.Replace($token, $mark)
-  } else {
-    # the layout engine cannot draw a png picture: re-spell it as a bitmap. A picture past the
-    # bitmap budget becomes the same marker the plain card uses, so both cards show a block.
-    $token = $script:CardPicToken
-    $rtf = ConvertTo-CardRtf $rtf
-  }
+  # both cards end up with the same marker token; each mode decides separately what the marker
+  # paragraph reserves, once the card's own line height is known
+  $token = $script:CardPicToken
   Load-Forms
   Add-Native
   if ($null -eq $paper) { $paper = [Drawing.Color]::White }
@@ -517,6 +556,9 @@ function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $pap
   $full = $null
   $g = $null
   $out = $null
+  # each mode fills this with a width,rows pair per block, in document order, so the rectangle
+  # painted afterwards is exactly the room the marker paragraph reserved
+  $boxes = @()
   try {
     $box.BorderStyle = 'None'
     $box.DetectUrls = $false
@@ -526,6 +568,37 @@ function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $pap
     if ($null -ne $font) { $box.Font = $font }
     # a handle is all the layout needs: the control never has to be on screen
     [void]$box.Handle
+    if ($mode -ceq 'plain') {
+      # a picture keeps its proportions: the block is as wide and as many text lines tall as
+      # the rtf asked for, and the marker paragraph reserves exactly that room, so the words
+      # around a picture stay where the layout put them.
+      try {
+        $gap = [int](Px 10)
+        $avail0 = $maxW - ($gap * 2)
+        if ($avail0 -lt 40) { $avail0 = $maxW }
+        $band = [Math]::Min($script:CardPicWidth, $avail0)
+        $rtf = [Cb.Rtf]::PadPictures($rtf, $token, [int]$box.Font.Height, $band, 60, $script:CardPicRows, [ref]$boxes)
+        $gray = Add-RtfGrayColor $rtf
+        $mark = '{\fs18\i ' + $token + '}'
+        if ($gray.Index -gt 0) { $mark = '{\fs18\i\cf' + [string]$gray.Index + ' ' + $token + '}' }
+        $rtf = $gray.Text.Replace($token, $mark)
+      } catch {
+        Write-Log ('card placeholder failed: ' + $_.Exception.Message)
+      }
+    } else {
+      # the layout engine cannot draw a png picture: re-spell it as a bitmap, and a picture past
+      # the bitmap budget becomes the same block the plain card uses. Its shape comes from the
+      # pixels that were already decoded, or from the png header when it was too big to decode.
+      try {
+        $gap = [int](Px 10)
+        $avail0 = $maxW - ($gap * 2)
+        if ($avail0 -lt 40) { $avail0 = $maxW }
+        $band = [Math]::Min($script:CardPicWidth, $avail0)
+        $rtf = ConvertTo-CardRtf $rtf $token ([int]$box.Font.Height) $band 60 $script:CardPicRows ([ref]$boxes)
+      } catch {
+        Write-Log ('card block failed: ' + $_.Exception.Message)
+      }
+    }
     try { $box.Rtf = $rtf } catch { return $null }
     $full = New-Object Drawing.Bitmap $maxW, $maxH, ([Drawing.Imaging.PixelFormat]::Format32bppRgb)
     $g = [Drawing.Graphics]::FromImage($full)
@@ -533,7 +606,7 @@ function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $pap
     [void][Cb.Rich]::RenderTo($box, $g, $maxW, $maxH)
     # before the crop: a placeholder taller than the words has to count as ink
     if ($token) {
-      try { Draw-CardImagePlaceholders $g $box $maxW $paper $token }
+      try { Draw-CardImagePlaceholders $g $box $maxW $paper $token $boxes $maxH }
       catch { Write-Log ('card placeholder failed: ' + $_.Exception.Message) }
     }
     $g.Dispose()

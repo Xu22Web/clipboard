@@ -1177,9 +1177,7 @@ try {
     # a formatted entry is never shown as a picture: only one without any rtf (an Excel copy)
     # has nothing else to show
     Check 'unit' 'a formatted entry never stands in as a picture' ((Test-RichPictureStandIn 'none') -and (-not (Test-RichPictureStandIn 'full')) -and (-not (Test-RichPictureStandIn 'plain')) -and (-not (Test-RichPictureStandIn 'text'))) ''
-    $plainRtf = ConvertTo-PlaceholderRtf $cardRtf '{\fs16 [image]}'
-    Check 'unit' 'a plain card keeps the words and marks the pictures' (($plainRtf -notmatch '\\pict') -and ($plainRtf -match 'before') -and ($plainRtf -match '\[image\]')) ([string]$plainRtf.Length + ' chars')
-    Check 'unit' 'an rtf without pictures needs no placeholder pass' ((ConvertTo-PlaceholderRtf '{\rtf1\ansi words}' 'x') -ceq '{\rtf1\ansi words}') ''
+    $plainShot = Get-RichPreviewBitmap $cardRef 380 200 $cardFont ([Drawing.Color]::White) 'plain'
     # the marker is grey like the panel's secondary text: the colour is appended to the
     # document's own table (or a table is made), so no existing \cfN index moves
     $grayNew = Add-RtfGrayColor '{\rtf1\ansi words}'
@@ -1188,8 +1186,10 @@ try {
     Check 'unit' 'an existing colour table keeps its indexes' (($grayOld.Index -eq 3) -and ($grayOld.Text -match '\\blue0;\\red140')) $grayOld.Text
     # Word nests the hex behind a picprop chain; a regex cannot follow that, the brace walk can
     $deepPic = '{\rtf1\ansi a {\*\shppict{\pict{\*\picprop{\sp{\sn shapeType}{\sv 75}}}89504e47}} b}'
-    $deepPlain = ConvertTo-PlaceholderRtf $deepPic 'M'
-    Check 'unit' 'a deeply nested picture is stripped too' (($deepPlain -notmatch '\\pict') -and ($deepPlain -match 'shppict') -and ($deepPlain -match ' b')) $deepPlain
+    $deepBoxes = @()
+    Add-Native
+    $deepPlain = [Cb.Rtf]::PadPictures($deepPic, '@cbimg@', 17, 180, 60, 6, [ref]$deepBoxes)
+    Check 'unit' 'a deeply nested picture is padded too' (($deepPlain -notmatch '\\pict') -and ($deepPlain -match 'shppict') -and ($deepPlain -match ' b') -and ($deepBoxes.Length -eq 2)) $deepPlain
     $plainShot = Get-RichPreviewBitmap $cardRef 380 200 $cardFont ([Drawing.Color]::White) 'plain'
     Check 'unit' 'a plain card is still laid out' ($null -ne $plainShot) ([string]$cardRtf.Length + ' chars')
     Clear-MediaCache
