@@ -21,8 +21,9 @@
 
   Never renamed: parameters (they are passed by name: -Library, -Count, -NoInject), any
   variable with a scope/drive qualifier ($script:, $env:, $using:), PowerShell automatic
-  variables, member and hash keys (not variables at all), and anything reached through
-  Get-Command <name>.
+  variables, member and hash keys (not variables at all), anything reached through
+  Get-Command <name>, and any name written inside a string literal: a script block handed
+  to a runspace executes its own text, and the rename passes only rewrite syntax nodes.
 
   The result is still a .ps1 with the same behaviour; build.ps1 proves that by running
   the whole test suite against the minified copy before it accepts the package.
@@ -72,17 +73,51 @@ function Get-LookedUpNames($ast) {
   return $out
 }
 
-# Functions defined in one file that can be renamed safely.
-function Get-RenameableFunctions($ast, $protected) {
-  $out = New-Object System.Collections.Generic.List[string]
-  foreach ($f in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
-    $name = [string]$f.Name
-    if (-not $name) { continue }
-    if ($protected.Contains($name)) { continue }
-    if ($out -contains $name) { continue }
-    $out.Add($name)
+# The text of every string literal in a file: a here-string script block, a plugin block kept
+# as text, a message. The rename passes rewrite syntax nodes, so nothing here can be fixed up
+# afterwards - whatever a string names has to keep the name it was written with.
+function Get-StringValues($ast) {
+  $nodes = $ast.FindAll({
+      param($n)
+      $n -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+      $n -is [System.Management.Automation.Language.ExpandableStringExpressionAst]
+    }, $true)
+  foreach ($n in $nodes) {
+    # a bare command name (Get-Foo) and a bare-word argument parse as string constants too,
+    # but they are source the rename pass already rewrites: only a real literal says what the
+    # text keeps naming after the rewrite
+    if ($n.Parent -is [System.Management.Automation.Language.CommandAst]) { continue }
+    [string]$n.Value
   }
-  return $out
+}
+
+# Function names the strings of this file call, limited to names the project defines. The card
+# job is a here-string handed to a runspace: the map cannot rewrite its call, so a renamed
+# definition would leave it asking for a name nothing answers to any more.
+function Get-StringCallNames($ast, $names) {
+  $out = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
+  $all = New-Object System.Text.StringBuilder
+  foreach ($s in (Get-StringValues $ast)) { [void]$all.AppendLine($s) }
+  if ($all.Length -eq 0) { return , $out }
+  $text = $all.ToString()
+  foreach ($name in $names) {
+    if ($out.Contains($name)) { continue }
+    $pattern = '(?<![A-Za-z0-9_-])' + [regex]::Escape($name) + '(?![A-Za-z0-9_-])'
+    if ([regex]::IsMatch($text, $pattern)) { [void]$out.Add($name) }
+  }
+  return , $out
+}
+
+# Variables the strings of this file read ($x, ${x}, $script:x). A string keeps its text after
+# renaming, so the variable has to keep its name or the string reads nothing.
+function Get-StringVariableNames($ast) {
+  $out = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
+  foreach ($s in (Get-StringValues $ast)) {
+    foreach ($m in [regex]::Matches($s, '(?<![A-Za-z0-9_$])\$(?:script:)?([A-Za-z_][A-Za-z0-9_]*)')) {
+      [void]$out.Add($m.Groups[1].Value)
+    }
+  }
+  return , $out
 }
 
 # Parameter names of the whole file, at any nesting level: callers pass them by name.
@@ -100,14 +135,22 @@ function Get-ParameterNames($ast) {
 function New-FunctionMap([string[]]$paths) {
   $protected = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
   $names = New-Object System.Collections.Generic.List[string]
+  $asts = New-Object System.Collections.Generic.List[object]
   foreach ($path in $paths) {
     $text = [IO.File]::ReadAllText($path)
     $parsed = Get-ParsedScript $text
     if ($parsed.Errors.Count -gt 0) { throw ('cannot parse ' + $path + ': ' + $parsed.Errors[0].Message) }
-    foreach ($n in (Get-LookedUpNames $parsed.Ast)) { [void]$protected.Add($n) }
-    foreach ($f in (Get-RenameableFunctions $parsed.Ast $protected)) {
-      if (-not $names.Contains($f)) { $names.Add($f) }
+    $asts.Add($parsed.Ast)
+    foreach ($f in $parsed.Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+      $fn = [string]$f.Name
+      if ($fn -and -not $names.Contains($fn)) { $names.Add($fn) }
     }
+  }
+  # the string scan looks a name up in the whole project, so it runs once every file is read:
+  # a name looked up in file B must not be renamed because file A happened to define it first
+  foreach ($ast in $asts) {
+    foreach ($n in (Get-LookedUpNames $ast)) { [void]$protected.Add($n) }
+    foreach ($n in (Get-StringCallNames $ast $names)) { [void]$protected.Add($n) }
   }
   # a second pass: a name looked up in file B must not be renamed because file A used it.
   # The new names avoid every alias and command on the machine: "fl" would be Format-List
@@ -164,11 +207,13 @@ function Get-ScriptVariableName($variablePath) {
 function New-ScriptVariableMap([string[]]$paths) {
   $taken = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
   $plain = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
+  $quoted = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
   $names = New-Object System.Collections.Generic.List[string]
   $asts = @()
   foreach ($path in $paths) {
     $ast = (Get-ParsedScript ([IO.File]::ReadAllText($path))).Ast
     $asts += $ast
+    foreach ($q in (Get-StringVariableNames $ast)) { [void]$quoted.Add($q) }
     foreach ($v in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true)) {
       $vp = $v.VariablePath
       if ($vp.IsScript) {
@@ -186,6 +231,8 @@ function New-ScriptVariableMap([string[]]$paths) {
   $slot = 0
   foreach ($n in $names) {
     if ($plain.Contains($n)) { continue }
+    # a string that names it keeps the long name: a job handed the text reads it by that name
+    if ($quoted.Contains($n)) { continue }
     $candidate = 's' + (New-ShortName $slot)
     while ($taken.Contains($candidate)) { $slot++; $candidate = 's' + (New-ShortName $slot) }
     $slot++
@@ -205,9 +252,11 @@ function New-GlobalVariableMap([string[]]$paths) {
   # a name written as $script:x somewhere belongs to New-ScriptVariableMap (or is left alone
   # when the same name is read bare); renaming it here too would split it into two variables
   $scripted = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
+  $quoted = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
   foreach ($path in $paths) {
     $scanned = Get-ParsedScript ([IO.File]::ReadAllText($path))
     if ($scanned.Errors.Count -gt 0) { continue }
+    foreach ($q in (Get-StringVariableNames $scanned.Ast)) { [void]$quoted.Add($q) }
     foreach ($v in $scanned.Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true)) {
       if (-not $v.VariablePath.IsScript) { continue }
       $nm = Get-ScriptVariableName $v.VariablePath
@@ -243,6 +292,8 @@ function New-GlobalVariableMap([string[]]$paths) {
   $slot = 0
   foreach ($nm in $names) {
     if ($script:ReservedVariables -contains $nm) { continue }
+    # a string that names it keeps the long name: a job handed the text reads it by that name
+    if ($quoted.Contains($nm)) { continue }
     if ($scripted.Contains($nm)) {
       # also spelled $script:x somewhere: keep the spelling so both forms stay one variable
       $map[$nm] = $nm
@@ -718,6 +769,8 @@ function Invoke-MinifyFile {
     # local variables: one stable new name per original name, never colliding with a
     # name the file already uses
     $keep = Get-ParameterNames $ast
+    # a string that names a local keeps the name for the same reason as the other two maps
+    $quotedLocal = Get-StringVariableNames $ast
     # a plain $x and $script:x are the same variable at script scope: if the file uses the
     # qualified form anywhere, $x must keep its name or the two drift apart
     $qualified = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
@@ -739,6 +792,7 @@ function Invoke-MinifyFile {
       if (-not $name) { continue }
       if ($keep.Contains($name)) { continue }
       if ($qualified.Contains($name)) { continue }
+      if ($quotedLocal.Contains($name)) { continue }
       if ($script:ReservedVariables -contains $name) { continue }
       # a script-scope name keeps the one short name the whole project agreed on
       if ($GlobalVarMap.ContainsKey($name)) {

@@ -538,12 +538,13 @@ function Clear-OldPreviewCache {
 # The job body. A runspace of its own, so the parse of the library (about a second) and the
 # layout both happen off the panel thread; the result is handed back as a Bitmap, which needs
 # no serialisation because both runspaces live in one process. The C# layer is already
-# compiled in this process, so the copy compiles nothing.
+# compiled in this process, so the copy compiles nothing. The copy does not preset the native
+# flag: Add-Native checks the loaded assembly itself, and a copy started before this process
+# loaded it has to be able to load it.
 $script:CardJobScript = @'
 param($lib, $ref, $w, $h, $fontName, $fontSize, $paperArgb, $mode)
 if (-not $script:CardJobReady) {
   . $lib -Library
-  $script:NativeReady = $true
   Load-Forms
   $script:CardJobReady = $true
 }

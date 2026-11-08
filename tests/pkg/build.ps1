@@ -56,6 +56,22 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
     if (Test-Path -LiteralPath $pkgDir) {
       $names = @(Get-ChildItem -LiteralPath $pkgDir -Recurse -File | ForEach-Object { $_.FullName.Substring($pkgDir.Length) })
       Check 'int' 'package keeps the program files' ((Test-Path -LiteralPath (Join-Path $pkgDir 'clipboard.ps1')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'clipboard.cmd')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'lib\plugin\plugins.ps1')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'lib\panel\picker.ps1'))) ''
+      # A function named inside a here-string is text the rename pass cannot rewrite: the string
+      # keeps the spelling it was written with, so the package has to define that name as well.
+      $stringNames = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
+      foreach ($sf in @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'src') -Recurse -Filter '*.ps1' -File)) {
+        $st = [IO.File]::ReadAllText($sf.FullName)
+        foreach ($hm in [regex]::Matches($st, "(?s)@'(.+?)'@")) {
+          foreach ($cm in [regex]::Matches($hm.Groups[1].Value, '(?<![A-Za-z0-9_-])[A-Z][A-Za-z0-9]+-[A-Z][A-Za-z0-9]+')) {
+            [void]$stringNames.Add($cm.Value)
+          }
+        }
+      }
+      $pkgText = (@(Get-ChildItem -LiteralPath $pkgDir -Recurse -Filter '*.ps1' -File) | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }) -join "`n"
+      $lostNames = @($stringNames | Where-Object {
+          -not ($pkgText -match ('function\s+' + [regex]::Escape($_) + '(?![A-Za-z0-9_-])')) -and -not (Get-Command $_ -ErrorAction SilentlyContinue)
+        })
+      Check 'int' 'a function named inside a string keeps its name in the package' ($lostNames.Count -eq 0) ($lostNames -join ', ')
       # the launcher tries the compiled client before it starts PowerShell; the executable
       # itself is optional, so a machine without a compiler is a skip, not a failure
       $launcher = Join-Path $pkgDir 'clipboard.cmd'
