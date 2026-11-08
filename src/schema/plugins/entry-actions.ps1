@@ -1,8 +1,8 @@
 # schema/plugins/entry-actions.ps1 - the keys the entry-actions plugin adds.
 #
-# Properties      -> clipboard.ini keys, merged into the settings schema as
-#                    entry-actions.<Key> when the plugin loads
-# ThemeProperties -> theme-only look-and-feel (this plugin restyles nothing yet)
+# Properties -> clipboard.ini keys, merged into the settings schema as
+#               entry-actions.<Key> when the plugin loads. This plugin restyles nothing, so
+#               it declares no theme keys.
 @{
   Name            = 'entry-actions'
   File            = 'clipboard.ini'

@@ -257,7 +257,8 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 |---|---|---|
 | `Name` | 是 | schema 标识，也是文件名 |
 | `File` | 否 | 描述的 ini 文件 |
-| `Description` / `Version` | 否 | 一句话说明 / 键增删时递增的版本 |
+| `Description` | 否 | 一句话说明；插件 schema 不写它，插件简介写在插件文件里，由 `config` 显示 |
+| `Version` | 否 | 键增删时递增的版本 |
 | `Properties` | 是 | `[ordered]` 键 → 键规格；顶层键与段内键都在这里 |
 | `ThemeProperties` | 否 | 只能由主题重写的外观键 |
 | `Sections` | 否 | `[ordered]` 段名 → 段规格（主题的 `palette` / `fonts` / `metrics`） |

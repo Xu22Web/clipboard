@@ -24,6 +24,9 @@
 #     Init        = { ... }                       # once per process, after settings are read
 #   }
 #
+# Description is written here and nowhere else: a plugin schema declares keys, not prose, so
+# `config` prints this line above the plugin's group of settings.
+#
 # The base never learns what a mark means: it stores one character per mark in the record
 # flags and asks this layer for the rules (protected / sorts first / kept on clear) and
 # for the word to print. That is why adding a mark needs no change in clipboard.ps1.
