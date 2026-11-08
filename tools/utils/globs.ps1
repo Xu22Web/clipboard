@@ -2,9 +2,16 @@
 #
 # One syntax for every list: "*" and "?" match inside one file name, "**/" walks any number
 # of folders, and the text in front of the last "/" is the folder a pattern starts in.
-# Patterns are written relative to src\ - "../package.ini" steps out of it - which is how
-# cli.ini documents them. Both lists expand to absolute file paths, and a file matched by an
-# exclude glob is dropped from the include result.
+# Patterns are written relative to BaseUrl, the folder each section names - "." is the
+# repository root - so "src/**/*.ps1" and "../scripts/x.bat" both mean what they say. Both
+# lists expand to absolute file paths, and a file matched by an exclude glob is dropped from
+# the include result.
+
+# One list value into its entries: a comma, a semicolon or plain whitespace separates them,
+# and an empty entry is not a glob. Both tools read Includes and Excludes this way.
+function Split-GlobList([string]$value) {
+  return @($value -split '[,;\s]+' | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
+}
 
 function ConvertTo-GlobRegex([string]$glob) {
   $g = ($glob -replace '\\', '/').Trim()
@@ -75,4 +82,14 @@ function Expand-GlobList([string]$baseDir, [string[]]$includes, [string[]]$exclu
     }
   }
   return $out
+}
+
+# BaseUrl is written the way OutDir is: relative to the repository root, or absolute. Both
+# tools that read a glob list resolve it here, so a path means the same thing to the watcher
+# and to the package.
+function Resolve-BaseDir([string]$root, [string]$setting) {
+  $value = ([string]$setting).Trim()
+  if (-not $value) { return '' }
+  if ([IO.Path]::IsPathRooted($value)) { return $value }
+  return (Join-Path $root $value)
 }

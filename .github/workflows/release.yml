@@ -41,10 +41,10 @@ jobs:
         # 发版要 zip：cli.ini 默认 Zip=0，这里写一份完整配置（[build] 的键必须写全，
         # tools\build.ps1 对缺失的键直接报错），只改 Zip 与 Overwrite。
         run: |
-          @('OutDir=dist', 'Minify=1', 'Rename=1', 'Verify=1', 'IncludeDocs=0',
-            'Overwrite=1', 'Zip=1', 'Client=1', 'Assembly=1',
-            'Plugins=entry-actions,item-marks,retention,transform',
-            'Themes=win11-dark,win11-light', 'Includes=', 'Excludes=') |
+          @('OutDir=dist', 'BaseUrl=.', 'Minify=1', 'Rename=1', 'Verify=1',
+            'Overwrite=1', 'Zip=1',
+            'Includes=src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,scripts/**.bat',
+            'Excludes=') |
             Set-Content -LiteralPath build-release.ini -Encoding ascii
           .\cli.ps1 build -Config build-release.ini
           Remove-Item -LiteralPath build-release.ini -Force

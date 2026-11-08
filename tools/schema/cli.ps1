@@ -6,8 +6,9 @@
 # unknown key or a value of the wrong type stops the command instead of falling back to a
 # silent default.
 #
-# Required is the default: every key must be present. A list may be empty, which means "none"
-# - an empty Plugins= ships no plugin rather than every plugin.
+# Required is the default: every key must be present. A list key says for itself whether it
+# may be empty: NonEmpty marks the ones where an empty value would mean "nothing at all"
+# (the build would ship no file), so it stops the command instead.
 
 @{
   Name        = 'cli'
@@ -16,23 +17,18 @@
   Version     = 1
   Keys        = [ordered]@{
     'dev.Interval'  = @{ Type = 'int'; Minimum = 100; Maximum = 60000; Description = 'watcher poll interval in ms' }
-    'dev.Includes'  = @{ Type = 'list'; Pattern = '^[A-Za-z0-9_.*?/\-]+$'; NonEmpty = $true; Description = 'globs to watch, relative to src\' }
+    'dev.BaseUrl'   = @{ Type = 'string'; Description = 'folder the include and exclude globs are relative to' }
+    'dev.Includes'  = @{ Type = 'list'; Pattern = '^[A-Za-z0-9_.*?/\-]+$'; NonEmpty = $true; Description = 'globs to watch, relative to BaseUrl; a .cs here is compiled before the first start and after every save' }
     'dev.Excludes'  = @{ Type = 'list'; Pattern = '^[A-Za-z0-9_.*?/\-]+$'; Description = 'globs to leave out of Includes' }
-    'dev.Client'    = @{ Type = 'bool'; Description = '1 = compile src\client.exe before the first start and after a client.cs change' }
-    'dev.Assembly'  = @{ Type = 'bool'; Description = '1 = compile src\lib\assembly\clipboard.dll before the first start and after a .cs change' }
 
     'build.OutDir'      = @{ Type = 'string'; Description = 'output folder, relative to the repository root' }
+    'build.BaseUrl'     = @{ Type = 'string'; Description = 'folder the include and exclude globs are relative to' }
     'build.Minify'      = @{ Type = 'bool'; Description = '1 = rewrite every .ps1 from its syntax tree' }
     'build.Rename'      = @{ Type = 'bool'; Description = '1 = also rename internal functions and local variables' }
     'build.Verify'      = @{ Type = 'bool'; Description = '1 = run the CLI suite against the package' }
-    'build.IncludeDocs' = @{ Type = 'bool'; Description = '1 = also ship README.md, LICENSE and docs\' }
     'build.Overwrite'   = @{ Type = 'bool'; Description = '1 = replace an existing clipboard-<version> folder' }
     'build.Zip'         = @{ Type = 'bool'; Description = '1 = also write clipboard-<version>.zip' }
-    'build.Client'      = @{ Type = 'bool'; Description = '1 = compile client.exe into the package' }
-    'build.Assembly'    = @{ Type = 'bool'; Description = '1 = compile lib\assembly\clipboard.dll into the package' }
-    'build.Plugins'     = @{ Type = 'list'; Description = 'plugins to ship, empty = none' }
-    'build.Themes'      = @{ Type = 'list'; Description = 'themes to ship, empty = none' }
-    'build.Includes'    = @{ Type = 'list'; Pattern = '^[A-Za-z0-9_.*?/\-]+$'; Description = 'extra files to ship, relative to src\' }
+    'build.Includes'    = @{ Type = 'list'; Pattern = '^[A-Za-z0-9_.*?/\-]+$'; NonEmpty = $true; Description = 'the files to ship, as globs relative to BaseUrl: a .ps1 is minified, a .cs under a product folder is compiled, an .ini stripped of comments' }
     'build.Excludes'    = @{ Type = 'list'; Pattern = '^[A-Za-z0-9_.*?/\-]+$'; Description = 'files to leave out of the package' }
 
     'test.Groups'  = @{ Type = 'list'; Enum = @('unit', 'integration', 'e2e'); NonEmpty = $true; Description = 'groups a plain run covers' }

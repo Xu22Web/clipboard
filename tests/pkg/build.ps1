@@ -30,12 +30,12 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
     Check 'int' 'package.ini ships with the repo' (Test-Path -LiteralPath (Join-Path $repoRoot 'package.ini')) ''
     # every [build] key has to be present: the build reads cli.ini and refuses to invent a
     # default, so each case starts from the whole section and overrides what it tests
-    # an empty Plugins= / Themes= means "ship none", so the defaults name every file: the
-    # cases that trim the list override these two keys
-    $buildDefaults = @('Minify=1', 'Rename=1', 'Verify=0', 'IncludeDocs=1', 'Overwrite=1', 'Zip=0',
-      'Client=0', 'Assembly=0',
-      'Plugins=entry-actions,item-marks,retention,transform', 'Themes=win11-dark,win11-light',
-      'Includes=', 'Excludes=')
+    # the package is this one list, and the cases that trim it override this key. The assembly
+    # sources are in the list because a package cannot start without that product or its
+    # source; the client stays out of the default list so most cases skip a compile.
+    $allFiles = 'Includes=src/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,scripts/**.bat'
+    $withClient = 'Includes=src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,scripts/**.bat'
+    $buildDefaults = @('BaseUrl=.', 'Minify=1', 'Rename=1', 'Verify=0', 'Overwrite=1', 'Zip=0', $allFiles, 'Excludes=')
     function Write-BuildCfg([string]$outDir, [string[]]$override) {
       $lines = @('OutDir=' + $outDir) + $buildDefaults
       foreach ($line in @($override)) {
@@ -47,7 +47,7 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
       }
       [IO.File]::WriteAllLines($buildCfg, $lines, $Utf8)
     }
-    Write-BuildCfg $pkgOut @('Client=1', 'Assembly=1')
+    Write-BuildCfg $pkgOut @($withClient)
     # the package folder is named after the version package.ini declares
     Check 'int' 'package.ini carries the version for the package name' ($programVersion -match '^\d+\.\d+\.\d+$') ([string]$programVersion)
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
@@ -115,8 +115,6 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
       Check 'int' 'uninstall script purges the data folder' (($uninstText -match 'uninstall purge') -and ($uninstText -match '\bstop\b') -and ($uninstText -match 'clipboard\.ps1')) ''
       Check 'int' 'the batch scripts stay plain ASCII' (($instHigh -eq 0) -and ($uninstHigh -eq 0)) ([string]$instHigh + '/' + [string]$uninstHigh)
       Check 'int' 'package keeps plugins and themes' ((Test-Path -LiteralPath (Join-Path $pkgDir 'plugins\item-marks.ps1')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'themes\win11-dark.ini'))) ''
-      # the pages are documentation: they travel with docs\, not with the plugin folder
-      Check 'int' 'package ships the plugin and theme pages under docs' ((Test-Path -LiteralPath (Join-Path $pkgDir 'docs\plugin\item-marks.md')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'docs\theme\win11-dark.md'))) ''
       Check 'int' 'package leaves history, tooling and metadata out' ((@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|scripts)([\\/]|$)' }).Count -eq 0) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir 'cli.ini')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir 'package.ini'))) (@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|scripts)' }) -join ', ')
 
       # the point of the build: same scripts, smaller, still parsing
@@ -151,39 +149,39 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
     Check 'int' 'Overwrite=0 keeps the existing folder' (($bout -join ' ') -match 'already exists') (($bout | Select-Object -Last 1) -as [string])
 
-    # Plugins= / Themes= trim the package; an unknown name stops the build.
-    # Minify=0 and Client=0/Assembly=0: these builds are only about which files travelled, so
-    # the rewrite and the compiler would each cost more than the whole check
+    # the list is the package: a theme that is not named does not travel, a file named in
+    # Excludes does not travel, and a list that misses the entry point stops the build.
+    # Minify=0: these builds are only about which files travelled, so the rewrite would cost
+    # more than the whole check
     $pkgOut2 = Join-Path $tmpRoot 'pkg2'
-    Write-BuildCfg $pkgOut2 @('Minify=0', 'IncludeDocs=0', 'Plugins=transform', 'Themes=win11-light')
+    $oneTheme = 'Includes=src/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/win11-light.ini,scripts/**.bat'
+    Write-BuildCfg $pkgOut2 @('Minify=0', $oneTheme, 'Excludes=src/plugins/item-marks.ps1')
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
     $pkgDir2 = Join-Path $pkgOut2 ('clipboard-' + $programVersion)
     if (Test-Path -LiteralPath $pkgDir2) {
-      Check 'int' 'Plugins= ships only the listed plugin' ((Test-Path -LiteralPath (Join-Path $pkgDir2 'plugins\transform.ps1')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir2 'plugins\item-marks.ps1'))) ''
-      Check 'int' 'Themes= ships only the listed theme' ((Test-Path -LiteralPath (Join-Path $pkgDir2 'themes\win11-light.ini')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir2 'themes\win11-dark.ini'))) ''
-      Check 'int' 'IncludeDocs=0 drops the readme' (-not (Test-Path -LiteralPath (Join-Path $pkgDir2 'README.md'))) ''
-      Check 'int' 'IncludeDocs=0 drops the docs folder' (-not (Test-Path -LiteralPath (Join-Path $pkgDir2 'docs'))) ''
+      Check 'int' 'Excludes= drops the plugin it names' ((Test-Path -LiteralPath (Join-Path $pkgDir2 'plugins\transform.ps1')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir2 'plugins\item-marks.ps1'))) ''
+      Check 'int' 'the list decides which theme ships' ((Test-Path -LiteralPath (Join-Path $pkgDir2 'themes\win11-light.ini')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir2 'themes\win11-dark.ini'))) ''
+      Check 'int' 'a list without the documentation ships none' ((Test-Path -LiteralPath (Join-Path $pkgDir2 'README.md')) -eq $false -and (Test-Path -LiteralPath (Join-Path $pkgDir2 'docs')) -eq $false) ''
     } else {
-      Check 'int' 'Plugins= ships only the listed plugin' $false (($bout | Select-Object -Last 1) -as [string])
+      Check 'int' 'Excludes= drops the plugin it names' $false (($bout | Select-Object -Last 1) -as [string])
     }
-    Write-BuildCfg $pkgOut2 @('Plugins=nosuchplugin')
+    $noEntry = 'Includes=src/lib/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh'
+    Write-BuildCfg $pkgOut2 @('Minify=0', $noEntry)
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
-    Check 'int' 'unknown plugin name stops the build' (($bout -join ' ') -match 'nosuchplugin') (($bout | Select-Object -Last 1) -as [string])
+    Check 'int' 'a list without clipboard.ps1 stops the build' (($bout -join ' ') -match 'does not ship clipboard\.ps1') (($bout | Select-Object -Last 1) -as [string])
 
-    # a page documents one plugin or one theme: with Plugins= / Themes= set, docs\ carries
-    # only the pages of what the package can run. Again no rewrite and no compiler
+    # documentation is data like any other file: the list names it, the copy handler ships it
+    # unchanged, and a subfolder keeps its layout
     $pkgOut3 = Join-Path $tmpRoot 'pkg3'
-    Write-BuildCfg $pkgOut3 @('Minify=0', 'IncludeDocs=1', 'Plugins=transform', 'Themes=win11-light')
+    $withDocs = $allFiles + ',README.md,LICENSE,docs/**/*'
+    Write-BuildCfg $pkgOut3 @('Minify=0', $withDocs)
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
     $pkgDir3 = Join-Path $pkgOut3 ('clipboard-' + $programVersion)
     if (Test-Path -LiteralPath $pkgDir3) {
-      Check 'int' 'a shipped plugin keeps its page under docs' (Test-Path -LiteralPath (Join-Path $pkgDir3 'docs\plugin\transform.md')) ''
-      Check 'int' 'an unshipped plugin leaves its page out' (-not (Test-Path -LiteralPath (Join-Path $pkgDir3 'docs\plugin\item-marks.md'))) ''
-      Check 'int' 'a shipped theme keeps its page under docs' (Test-Path -LiteralPath (Join-Path $pkgDir3 'docs\theme\win11-light.md')) ''
-      Check 'int' 'an unshipped theme leaves its page out' (-not (Test-Path -LiteralPath (Join-Path $pkgDir3 'docs\theme\win11-dark.md'))) ''
-      Check 'int' 'the pictures stay with a trimmed package' (Test-Path -LiteralPath (Join-Path $pkgDir3 'docs\screenshot-dark.png')) ''
+      Check 'int' 'the list carries the docs it names' ((Test-Path -LiteralPath (Join-Path $pkgDir3 'README.md')) -and (Test-Path -LiteralPath (Join-Path $pkgDir3 'LICENSE'))) ''
+      Check 'int' 'a docs subfolder keeps its layout' ((Test-Path -LiteralPath (Join-Path $pkgDir3 'docs\plugin\transform.md')) -and (Test-Path -LiteralPath (Join-Path $pkgDir3 'docs\screenshot-dark.png'))) ''
     } else {
-      Check 'int' 'a shipped plugin keeps its page under docs' $false (($bout | Select-Object -Last 1) -as [string])
+      Check 'int' 'the list carries the docs it names' $false (($bout | Select-Object -Last 1) -as [string])
     }
     Remove-Item -LiteralPath $pkgOut3 -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $pkgOut -Recurse -Force -ErrorAction SilentlyContinue

@@ -4,17 +4,17 @@
 
       cli dev           start the resident, restart it whenever a watched file changes
 
-  "dev" always watches what the program reads - the entry point, the modules it loads
-  from lib\ and utils\, the theme files, the plugins and package.ini (the version) - and
-  there is no second mode. A file that appears or disappears counts as a change as well, so
-  a new lib\foo.ps1 is picked up together with the line that loads it. The loop first stops
-  a resident left over from an earlier run, starts src\clipboard.ps1 serve, and after a
-  change - once the tree has been quiet for a whole poll interval - stops it through its
-  normal stop event and starts it again, so the history, the
-  hotkey and the tray icon behave exactly as in a real run; a start that does not come up is
-  reported. Ctrl+C ends the loop and stops the resident with it; closing the resident from
-  outside (tray exit, `clipboard stop`) ends the loop as well, so dev never outlives the
-  process it is watching.
+  "dev" always watches what cli.ini [dev] Includes names - by default the entry point, the
+  modules it loads from lib\ and utils\, the theme files, the plugins, the C# sources and
+  package.ini (the version) - and there is no second mode. A file that appears or disappears
+  counts as a change as well, so a new lib\foo.ps1 is picked up together with the line that
+  loads it. The loop first stops a resident left over from an earlier run, starts the entry's
+  serve command, and after a change - once the tree has been quiet for a whole poll interval -
+  stops it through its normal stop event and starts it again, so the history, the hotkey and
+  the tray icon behave exactly as in a real run; a start that does not come up is reported.
+  Ctrl+C ends the loop and stops the resident with it; closing the resident from outside (tray
+  exit, the program's stop command) ends the loop as well, so dev never outlives the process it
+  is watching.
 #>
 [CmdletBinding()]
 param(
@@ -26,12 +26,19 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
-$entry = Join-Path $root 'src\clipboard.ps1'
+# the same two prefixes the build prints: [..] for a step, [x] for a failure
+. (Join-Path $root 'tools\utils\console.ps1')
 $srcDir = Join-Path $root 'src'
-if (-not (Test-Path -LiteralPath $entry)) {
-  Write-Host ('[x] missing: ' + $entry)
-  exit 1
+# package.ini owns the program name, and the name owns the entry: nothing here spells it out
+. (Join-Path $root 'tools\utils\ini.ps1')
+$pkg = Import-IniMap (Join-Path $root 'package.ini')
+$app = ''
+foreach ($candidate in @('package.Name', 'Name')) {
+  if ($pkg.ContainsKey($candidate) -and [string]$pkg[$candidate]) { $app = ([string]$pkg[$candidate]).Trim(); break }
 }
+if (-not $app) { Fail 'no Name= in package.ini' }
+$entry = Join-Path $srcDir ($app + '.ps1')
+if (-not (Test-Path -LiteralPath $entry)) { Fail ('missing: ' + $entry) }
 
 function Invoke-Cli([string[]]$cliArgs) {
   & powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $entry @cliArgs
@@ -39,16 +46,12 @@ function Invoke-Cli([string[]]$cliArgs) {
 }
 
 # ---------------------------------------------------------------- settings
-# cli.ini [dev] holds Interval, Includes, Excludes, Client and Assembly. It is read with the
-# tooling's own ini parser, so a tool script never loads a module out of src\.
-. (Join-Path $root 'tools\utils\ini.ps1')
+# cli.ini [dev] holds Interval, BaseUrl, Includes and Excludes. It is read with the tooling's
+# own ini parser, so a tool script never loads a module out of src\.
 . (Join-Path $root 'tools\utils\schema.ps1')
 . (Join-Path $root 'tools\utils\globs.ps1')
 $cfgFile = Join-Path $root 'cli.ini'
-if (-not (Test-Path -LiteralPath $cfgFile)) {
-  Write-Host ('[x] missing settings file: ' + $cfgFile)
-  exit 1
-}
+if (-not (Test-Path -LiteralPath $cfgFile)) { Fail ('missing settings file: ' + $cfgFile) }
 $cfg = Import-IniMap $cfgFile
 
 # cli.ini is the only place a dev setting may live: a missing key, an unknown key or a wrong
@@ -67,31 +70,25 @@ function Cfg([string]$key) {
   return ''
 }
 
-function Split-GlobList([string]$value) {
-  return @($value -split '[,;\s]+' | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
-}
-
 # -Interval overrides the file for a single run; without the switch the file decides
 if ($Interval -le 0) {
   $Interval = [int](Cfg 'Interval')
 }
-$buildClient = (Cfg 'Client') -eq '1'
-$buildAssembly = (Cfg 'Assembly') -eq '1'
 
-# Both compiled products come from src\. They are built once before the loop starts and again
-# after a watched .cs file changed, so a start never pays for an in-process compile of the
-# C# and a stale dll never outlives a source edit.
-function Invoke-NativeBuild {
-  $jobs = @(
-    @{ On = $buildAssembly; Script = 'build-assembly.ps1'; Label = 'lib\assembly\clipboard.dll'; Out = (Join-Path $srcDir 'lib\assembly\clipboard.dll') },
-    @{ On = $buildClient; Script = 'build-client.ps1'; Label = 'client.exe'; Out = (Join-Path $srcDir 'client.exe') }
-  )
-  foreach ($job in $jobs) {
-    if (-not $job.On) { continue }
-    $script = Join-Path $root ('tools\' + $job.Script)
-    if (-not (Test-Path -LiteralPath $script)) { continue }
-    Write-Host ('[..] compiling ' + $job.Label)
-    $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Out $job.Out 2>&1
+# Both compiled products come from src\. A .cs file in Includes is a promise: the loop builds
+# its product before the first start and again after every save, so the file the program runs
+# never outlives the source. Which folder produces what is a table in tools\utils\pipeline.ps1,
+# shared with the build, so neither tool names a folder itself.
+function Invoke-NativeBuild($products) {
+  foreach ($p in @($products)) {
+    if ($null -eq $p) { continue }
+    $compiler = Join-Path $root $p.Script
+    if (-not (Test-Path -LiteralPath $compiler)) { continue }
+    $out = Join-Path $srcDir $p.Out
+    $parent = Split-Path -Parent $out
+    if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+    Write-Step ('compiling ' + $p.Label)
+    $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $compiler -Out $out 2>&1
     foreach ($line in @($log)) { Write-Host ('    ' + ([string]$line).Trim()) }
   }
 }
@@ -102,6 +99,21 @@ function Invoke-NativeBuild {
 # size, window position) and watching it would restart the tool on its own writes.
 $includeGlobs = Split-GlobList (Cfg 'Includes')
 $excludeGlobs = Split-GlobList (Cfg 'Excludes')
+# every glob is written relative to BaseUrl, which this same file sets: "." keeps them at the
+# repository root, so a watch path reads like the one on disk (src\..., package.ini)
+$baseSetting = (Cfg 'BaseUrl').Trim()
+if (-not $baseSetting) { Fail 'cli.ini [dev] BaseUrl is empty' }
+$baseDir = Resolve-BaseDir $root $baseSetting
+if (-not (Test-Path -LiteralPath $baseDir)) { Fail ('cli.ini [dev] BaseUrl does not exist: ' + $baseSetting) }
+# a .cs in the list is what makes its product part of the loop
+. (Join-Path $root 'tools\utils\pipeline.ps1')
+$watched = @(Expand-GlobList $baseDir $includeGlobs $excludeGlobs)
+if ($watched.Count -eq 0) { Fail 'cli.ini [dev] Includes reaches no file' }
+$watchedProducts = @{}
+foreach ($f in $watched) {
+  $p = Get-ProductFor (Get-SourceRel $srcDir $f)
+  if ($null -ne $p) { $watchedProducts[$p.Dir] = $p }
+}
 
 # The entry point builds every module path from $libDir, so its dot-source lines resolve to
 # real files: following them gives the exact load list, the way a bundler follows imports.
@@ -139,7 +151,7 @@ function Get-DotSourceTargets([string]$file) {
 # edit, not a no-op.
 function Get-WatchSet {
   $files = @{}
-  foreach ($f in @(Expand-GlobList $srcDir $includeGlobs $excludeGlobs)) { $files[$f] = $true }
+  foreach ($f in @(Expand-GlobList $baseDir $includeGlobs $excludeGlobs)) { $files[$f] = $true }
   $missing = New-Object System.Collections.Generic.List[string]
   $seen = @{}
   $queue = New-Object System.Collections.Generic.Queue[string]
@@ -259,12 +271,12 @@ function Start-DevLoop {
   Stop-Resident
   # compile ahead of the first start: the resident holds the dll open, so this runs after it
   # is gone and before anything loads the files
-  Invoke-NativeBuild
+  Invoke-NativeBuild @($watchedProducts.Values)
   $set = Get-WatchSet
   $stamps = Get-WatchStamps $set.Files
   $started = Start-Resident
   if (-not $started) {
-    Write-Host '[x] the resident did not start - run src\clipboard.ps1 serve to see the error, the next change retries'
+    Write-Host ('[x] the resident did not start - run ' + (Format-WatchPath $entry) + ' serve to see the error, the next change retries')
   }
   Write-Host ('     watching ' + $stamps.Count + ' file(s), poll ' + $Interval + ' ms - Ctrl+C ends the loop and the resident')
   $reported = @{}
@@ -285,7 +297,7 @@ function Start-DevLoop {
       # another console - which leaves the mutex free for a moment while the new instance
       # starts - still needs the grace period below.
       if (-not (Test-ResidentProcess)) {
-        Write-Host '[..] the resident exited - leaving dev'
+        Write-Step 'the resident exited - leaving dev'
         return
       }
       # `config set` restarts the resident from another console, and a restart drops the
@@ -293,7 +305,7 @@ function Start-DevLoop {
       if ($null -eq $goneAt) {
         $goneAt = Get-Date
       } elseif (((Get-Date) - $goneAt).TotalSeconds -ge 5) {
-        Write-Host '[..] the resident exited - leaving dev'
+        Write-Step 'the resident exited - leaving dev'
         return
       }
     }
@@ -311,7 +323,7 @@ function Start-DevLoop {
     while ($true) {
       Start-Sleep -Milliseconds $Interval
       if ($sawUp -and -not (Test-ResidentUp)) {
-        Write-Host '[..] the resident exited - leaving dev'
+        Write-Step 'the resident exited - leaving dev'
         return
       }
       $set = Get-WatchSet
@@ -323,14 +335,22 @@ function Start-DevLoop {
     $stamps = $next
     $reported = @{}
     foreach ($c in $changes) { Write-Host $c }
-    Write-Host ('[..] ' + (Get-Date).ToString('HH:mm:ss') + ' restarting (' + $changes.Count + ' change(s))')
+    Write-Step ((Get-Date).ToString('HH:mm:ss') + ' restarting (' + $changes.Count + ' change(s))')
     # The resident holds lib\assembly\clipboard.dll open while it runs, so it has to be gone
     # before the assembly can be rewritten: stop first, compile, then start again.
     Stop-Resident
-    # A C# edit has to reach the compiled product before the restart; the same call rebuilds
-    # both, each one only when its cli.ini switch is on.
-    if (@($changes | Where-Object { $_ -match '\.cs$' }).Count -gt 0) {
-      Invoke-NativeBuild
+    # A C# edit has to reach its product before the restart: only the product whose source
+    # changed is rebuilt, and only when that source is in the list at all
+    $csChanges = @($changes | Where-Object { $_ -match '\.cs$' })
+    if ($csChanges.Count -gt 0) {
+      $touched = @()
+      foreach ($c in $csChanges) {
+        # the line reads "  [~] src\lib\assembly\cb.native.cs"; the table speaks "lib\assembly"
+        $full = Join-Path $root (($c -replace '^\s*\[.\]\s*', ''))
+        $p = Get-ProductFor (Get-SourceRel $srcDir $full)
+        if ($null -ne $p -and -not ($touched -contains $p)) { $touched += $p }
+      }
+      if ($touched.Count -gt 0) { Invoke-NativeBuild $touched }
     }
     $goneAt = $null
     if (Start-Resident) {
@@ -345,7 +365,7 @@ function Start-DevLoop {
 
 # one mode only: refuse an argument instead of starting a loop the caller did not ask for
 if ($Action -and $Action.ToLower() -ne 'watch') {
-  Write-Host ('[!] unknown argument: ' + $Action)
+  Write-Host ('[x] unknown argument: ' + $Action)
   Write-Host '    dev always watches - run cli dev with no argument'
   exit 1
 }
@@ -358,6 +378,6 @@ try {
 } finally {
   if (Test-ResidentUp) {
     Stop-Resident
-    Write-Host '[..] resident stopped'
+    Write-Step 'resident stopped'
   }
 }

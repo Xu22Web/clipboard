@@ -344,10 +344,11 @@ try {
     }
 
     # the tooling lives outside src\: package.ini declares the commands, cli runs them
-    $tooling = @('package.ini', 'cli.ini', 'cli.ps1', 'cli.cmd', 'cli',
+    $tooling = @('package.ini', 'cli.ini', 'cli.ps1', 'cli.cmd', 'cli.sh',
       'tools\build.ps1', 'tools\dev.ps1', 'tools\test.ps1', 'tools\bench.ps1', 'tools\shot.ps1',
       'tools\build-client.ps1', 'tools\build-assembly.ps1',
       'tools\utils\minify.ps1', 'tools\utils\ini.ps1', 'tools\utils\globs.ps1', 'tools\utils\csc.ps1',
+      'tools\utils\console.ps1', 'tools\utils\pipeline.ps1',
       'src\lib\client\client.cs', 'src\lib\assembly\cb.native.cs', 'src\lib\assembly\cb.keyhook.cs')
     $missingTool = @()
     foreach ($tool in $tooling) {

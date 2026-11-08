@@ -3,8 +3,9 @@
   tools\build.ps1 - package the tool the way a front-end build packages a bundle: the
   output is still plain PowerShell, but every .ps1 is rewritten from its syntax tree
   (comments and indentation gone, internal functions and local variables renamed), so the
-  folder keeps the same shape and behaviour while being noticeably smaller. Nothing is
-  compiled.
+  folder keeps the same shape and behaviour while being noticeably smaller. The two C#
+  products are compiled on the way in, so no .cs reaches the package when a compiler is
+  around.
 
       cli build                          settings from cli.ini
       cli build -Config other.ini         a different settings file
@@ -16,14 +17,16 @@
   at run time (src\lib\base.ps1); the build replaces that block with a literal, so a package
   carries the version and reads no file.
 
-  Two batch files from scripts\ are copied next to clipboard.ps1: install.bat (config init +
-  migrate + install) and uninstall.bat (stop + uninstall purge).
+  Two batch files from scripts\ are copied next to the program's entry: install.bat (config
+  init + migrate + install) and uninstall.bat (stop + uninstall purge).
 
-  What goes in: everything under src\ (the entry file, the two launchers, lib\ with its
-  modules, utils\ with the pure helpers, the selected plugins and themes) plus (by default)
-  the documentation. What never goes in: src\data\, src\clipboard.ini, tests\, tools\,
-  dist\, .git - a package carries the program, not the history, the settings or the tooling.
-  Reading only src\ is also what keeps the build from walking into its own output.
+  What goes in: the files cli.ini [build] Includes names, and only those. Nothing here knows
+  what a file is: tools\utils\pipeline.ps1 holds one table - a .ps1 is minified, a .cmd/.bat
+  compressed, a .sh compressed, an .ini stripped of its comments, a .cs under a product folder
+  compiled - and this script only walks the list. The default list is the program scripts, the
+  three launchers, the themes, the two batch helpers and the two product sources.
+  What never goes in: src\data\, src\<name>.ini, tests\, tools\, dist\, .git - a package
+  carries the program, not the history, the settings or the tooling.
 #>
 param(
   [string]$Config = ''
@@ -32,12 +35,27 @@ param(
 $ErrorActionPreference = 'Stop'
 # this file lives in tools\: the repository root is one level up
 $root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
+# every tool prints a step or a failure the same way
+. (Join-Path $root 'tools\utils\console.ps1')
 # the program lives in src\, the build tooling and the docs stay at the repo root
 $srcRoot = Join-Path $root 'src'
-if (-not (Test-Path -LiteralPath $srcRoot)) { Write-Host ('[x] missing: ' + $srcRoot); exit 1 }
+if (-not (Test-Path -LiteralPath $srcRoot)) { Fail ('missing: ' + $srcRoot) }
 
-function Write-Step([string]$text) { Write-Host ('[..] ' + $text) }
-function Fail([string]$text) { Write-Host ('[x] ' + $text); exit 1 }
+# Where a shipped file lands in the package: a file under src\ keeps the path it has there, a
+# file outside src\ keeps the path it has under the repository root, and the rows in
+# tools\utils\pipeline.ps1 name the few that belong at the package root instead.
+function Get-PackageRel([string]$file) {
+  $full = [IO.Path]::GetFullPath($file)
+  $srcFull = [IO.Path]::GetFullPath($srcRoot).TrimEnd([char]92, [char]47) + [IO.Path]::DirectorySeparatorChar
+  if ($full.StartsWith($srcFull, [StringComparison]::OrdinalIgnoreCase)) { return $full.Substring($srcFull.Length) }
+  $rootFull = [IO.Path]::GetFullPath($root).TrimEnd([char]92, [char]47) + [IO.Path]::DirectorySeparatorChar
+  if ($full.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) {
+    $rel = $full.Substring($rootFull.Length)
+    if (Test-Flatten $rel) { return (Split-Path -Leaf $full) }
+    return $rel
+  }
+  return (Split-Path -Leaf $full)
+}
 
 # ---------------------------------------------------------------- settings
 # cli.ini and package.ini are read by the tooling's own copy of the ini parser
@@ -55,8 +73,7 @@ $cfg = Import-IniMap $Config
 # cli.ini is the only place a build setting may live. It is checked against
 # tools\schema\cli.ps1 before anything else happens: a missing key, an unknown key, a value of
 # the wrong type or a number outside its range stops the build with the list of problems, so a
-# typo cannot turn into "the build quietly stopped minifying". An empty Plugins= or Themes= is
-# valid and means "ship none".
+# typo cannot turn into "the build quietly stopped minifying".
 . (Join-Path $root 'tools\utils\schema.ps1')
 $problems = @(Test-ToolConfigMap (Import-ToolSchema (Join-Path $root 'tools\schema\cli.ps1')) $cfg (Split-Path -Leaf $Config) 'build')
 if ($problems.Count -gt 0) {
@@ -79,15 +96,16 @@ function CfgBool([string]$key) {
 }
 
 function CfgList([string]$key) {
-  return @((Cfg $key) -split '[,;\s]+' | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
+  return @(Split-GlobList (Cfg $key))
 }
 
 # src\lib\base.ps1 keeps the version between two markers for the development run; a package
-# gets the number itself instead of code that reads package.ini.
-function Get-VersionPatchedText([string]$text, [string]$version) {
+# gets the number itself instead of code that reads package.ini. The rule that sends a file
+# here lives in tools\utils\pipeline.ps1, so $rel is whatever that path was.
+function Get-VersionPatchedText([string]$text, [string]$version, [string]$rel) {
   $begin = $text.IndexOf('#@version-begin')
   $end = $text.IndexOf('#@version-end')
-  if ($begin -lt 0 -or $end -lt $begin) { Fail 'src\lib\base.ps1 has no #@version-begin / #@version-end block' }
+  if ($begin -lt 0 -or $end -lt $begin) { Fail ($rel + ' carries no #@version-begin / #@version-end block') }
   $head = $text.Substring(0, $begin)
   $tail = $text.Substring($text.IndexOf("`n", $end) + 1)
   return ($head + "`$script:Version = '" + $version + "'`r`n" + $tail)
@@ -104,7 +122,12 @@ if (-not $version) { Fail 'no Version= in package.ini' }
 $version = ($version -replace '[^0-9A-Za-z\.\-_]', '')
 if ($version -notmatch '^\d+\.\d+\.\d+$') { Fail ('Version= in package.ini is not <major>.<minor>.<patch>: ' + $version) }
 
-$name = 'clipboard-' + $version
+$app = ''
+foreach ($candidate in @('package.Name', 'Name')) {
+  if ($pkg.ContainsKey($candidate) -and [string]$pkg[$candidate]) { $app = ([string]$pkg[$candidate]).Trim(); break }
+}
+if (-not $app) { Fail 'no Name= in package.ini' }
+$name = $app + '-' + $version
 $outSetting = Cfg 'OutDir'
 if (-not $outSetting) { Fail 'cli.ini [build] OutDir is empty' }
 $outDir = if ([IO.Path]::IsPathRooted($outSetting)) { $outSetting } else { Join-Path $root $outSetting }
@@ -112,145 +135,83 @@ $dest = Join-Path $outDir $name
 $minify = CfgBool 'Minify'
 $rename = CfgBool 'Rename'
 $verify = CfgBool 'Verify'
-$includeDocs = CfgBool 'IncludeDocs'
 $overwrite = CfgBool 'Overwrite'
 $wantZip = CfgBool 'Zip'
-# the native client is an accelerator, never a requirement: without a compiler the package
-# still works, one ~1 s slower per command
-$client = CfgBool 'Client'
-$assembly = CfgBool 'Assembly'
-$pluginNames = CfgList 'Plugins'
-$themeNames = CfgList 'Themes'
+# the include and exclude lists use the same glob syntax, and the same splitter, as [dev]
+. (Join-Path $root 'tools\utils\globs.ps1')
+# what to do with each file is one table, shared with the watcher
+. (Join-Path $root 'tools\utils\pipeline.ps1')
 $includeGlobs = CfgList 'Includes'
 $excludeGlobs = CfgList 'Excludes'
-# the include and exclude lists use the same glob syntax as cli.ini [dev]
-. (Join-Path $root 'tools\utils\globs.ps1')
+# every glob is written relative to BaseUrl, which this same file sets: "." keeps them at the
+# repository root, so a shipped path reads like the one on disk (src\..., scripts\...)
+$baseSetting = (Cfg 'BaseUrl').Trim()
+if (-not $baseSetting) { Fail 'cli.ini [build] BaseUrl is empty' }
+$baseDir = Resolve-BaseDir $root $baseSetting
+if (-not (Test-Path -LiteralPath $baseDir)) { Fail ('cli.ini [build] BaseUrl does not exist: ' + $baseSetting) }
 
 Write-Step ('settings ' + $Config)
 Write-Step ('  version ' + $version + '   (package.ini)')
 Write-Step ('  output  ' + $dest)
 Write-Step ('  minify  ' + $(if ($minify) { 'yes' } else { 'no' }) + '   rename ' + $(if ($rename) { 'yes' } else { 'no' }) + '   verify ' + $(if ($verify) { 'yes' } else { 'no' }) + '   zip ' + $(if ($wantZip) { 'yes' } else { 'no' }))
-Write-Step ('  docs    ' + $(if ($includeDocs) { 'yes' } else { 'no' }) + '   overwrite ' + $(if ($overwrite) { 'yes' } else { 'no' }))
-Write-Step ('  plugins ' + $(if ($pluginNames.Count) { $pluginNames -join ',' } else { 'none' }) + '   themes ' + $(if ($themeNames.Count) { $themeNames -join ',' } else { 'none' }))
+Write-Step ('  files   ' + [string]$includeGlobs.Count + ' glob(s)   overwrite ' + $(if ($overwrite) { 'yes' } else { 'no' }))
 
 if ((Test-Path -LiteralPath $dest) -and -not $overwrite) { Fail ('already exists: ' + $dest + '   (set Overwrite=1 to replace it)') }
 
-# ---------------------------------------------------------------- resolve inputs
-foreach ($f in @('clipboard.ps1', 'clipboard.cmd', 'clipboard')) {
-  if (-not (Test-Path -LiteralPath (Join-Path $srcRoot $f))) { Fail ('missing: src\' + $f) }
-}
-if (-not (Test-Path -LiteralPath (Join-Path $srcRoot 'lib'))) { Fail 'missing: src\lib\' }
-if (-not (Test-Path -LiteralPath (Join-Path $srcRoot 'utils'))) { Fail 'missing: src\utils\' }
-if (-not (Test-Path -LiteralPath (Join-Path $srcRoot 'schema'))) { Fail 'missing: src\schema\' }
+# ---------------------------------------------------------------- the file list
+# cli.ini [build] Includes is the package and Excludes removes from it: one expansion for both,
+# through the same call the watcher uses, so the two tools agree on what a glob means.
+$pkgFiles = @(Expand-GlobList $baseDir $includeGlobs $excludeGlobs)
+if ($pkgFiles.Count -eq 0) { Fail 'cli.ini [build] Includes reaches no file' }
+$dropped = @(Expand-GlobList $baseDir $includeGlobs @()).Count - $pkgFiles.Count
+if ($dropped -gt 0) { Write-Step ('excluded ' + [string]$dropped + ' file(s) listed in cli.ini [build] Excludes') }
+$scriptFiles = @($pkgFiles | Where-Object { $_ -like '*.ps1' })
 
-# ---------------------------------------------------------------- native products (ahead of time)
-# Both compiled products are written into src\ before anything is staged: the package carries
-# a copy instead of compiling into itself, so a source run and `cli dev` use the same binary
-# the release ships, and one compile serves the whole build. A compiler that is missing or a
-# dll that is open in a running resident leaves the file untouched: the package then takes the
-# slower path below instead of failing.
-$srcClient = Join-Path $srcRoot 'client.exe'
-$srcAssembly = Join-Path $srcRoot 'lib\assembly\clipboard.dll'
-if ($client -or $assembly) { Write-Step 'compiling the native products (src)' }
-if ($client) {
-  $compiler = Join-Path $root 'tools\build-client.ps1'
+# ---------------------------------------------------------------- products (ahead of time)
+# A .cs under a product folder means "compile this folder into one file": the list decides
+# which products exist and tools\utils\pipeline.ps1 says how. Compiling writes into src\ before
+# anything is staged, so a source run and `cli dev` use the same binary the release ships. A
+# compiler that is missing, or a dll held open by a running resident, leaves the product out:
+# its sources then travel instead and the program compiles them at run time.
+$productSources = @{}
+$plainFiles = New-Object System.Collections.Generic.List[string]
+foreach ($f in $pkgFiles) {
+  $p = Get-ProductFor (Get-PackageRel $f)
+  if ($null -eq $p) { $plainFiles.Add($f); continue }
+  if (-not $productSources.ContainsKey($p.Dir)) { $productSources[$p.Dir] = New-Object System.Collections.Generic.List[string] }
+  $productSources[$p.Dir].Add($f)
+}
+$productOut = @{}
+foreach ($p in @(Get-ProductList)) {
+  if (-not $productSources.ContainsKey($p.Dir)) { continue }
+  $built = Join-Path $srcRoot $p.Out
+  $compiler = Join-Path $root $p.Script
   if (Test-Path -LiteralPath $compiler) {
-    $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $compiler -Out $srcClient 2>&1
-    foreach ($line in @($log)) { Write-Host ('    ' + ([string]$line).Trim()) }
-    if (-not (Test-Path -LiteralPath $srcClient)) { Write-Step '  (no client compiled: the package uses the PowerShell client)' }
-  }
-}
-if ($assembly) {
-  $compiler = Join-Path $root 'tools\build-assembly.ps1'
-  if (Test-Path -LiteralPath $compiler) {
-    $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $compiler -Out $srcAssembly 2>&1
+    Write-Step ('compiling ' + $p.Label)
+    $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $compiler -Out $built 2>&1
     foreach ($line in @($log)) { Write-Host ('    ' + ([string]$line).Trim()) }
   }
-}
-
-$pluginFiles = @()
-$themeFiles = @()
-foreach ($kind in @(@{ Dir = 'plugins'; Ext = '.ps1'; Names = $pluginNames }, @{ Dir = 'themes'; Ext = '.ini'; Names = $themeNames })) {
-  $srcDir = Join-Path $srcRoot $kind.Dir
-  if (-not (Test-Path -LiteralPath $srcDir)) { Fail ('missing: src\' + $kind.Dir + '\') }
-  # the list is the package: an empty value ships none of them, it does not fall back to
-  # "every file in the folder". Adding a plugin to the package therefore means naming it.
-  $picked = @()
-  foreach ($n in @($kind.Names)) {
-    $file = Join-Path $srcDir ($n + $kind.Ext)
-    if (-not (Test-Path -LiteralPath $file)) { Fail ('not found in ' + $kind.Dir + ': ' + $n) }
-    $picked += $file
-  }
-  if ($kind.Dir -eq 'plugins') { $pluginFiles = $picked } else { $themeFiles = $picked }
-}
-
-# A plugin's keys are described by its own schema file (src\schema\plugins\<name>.ps1), so
-# the shipped schemas follow the shipped plugins: a package documents what it can run.
-$pluginSchemas = @()
-$schemaPluginDir = Join-Path $srcRoot 'schema\plugins'
-if (Test-Path -LiteralPath $schemaPluginDir) {
-  # the schema list follows the plugin list: an unshipped plugin ships no key table either
-  foreach ($n in @($pluginNames)) {
-    $file = Join-Path $schemaPluginDir ($n + '.ps1')
-    if (Test-Path -LiteralPath $file) { $pluginSchemas += $file }
+  if (Test-Path -LiteralPath $built) {
+    $productOut[$p.Out] = $built
+  } else {
+    Write-Step ('  no ' + $p.Label + ': its sources travel and the program compiles them')
+    foreach ($s in @($productSources[$p.Dir])) { $plainFiles.Add($s) }
   }
 }
-
-# cli.ini [build] Excludes removes files from every set below, and the page list follows the
-# plugins that still ship. Includes then adds what the default set does not cover.
-$dropFiles = @{}
-if ($excludeGlobs.Count -gt 0) {
-  foreach ($glob in $excludeGlobs) {
-    foreach ($f in @(Expand-Glob $srcRoot $glob)) { $dropFiles[$f] = $true }
+# a package that cannot start says so here, not when someone double-clicks it
+foreach ($p in @(Get-ProductList)) {
+  if (-not $p.Required) { continue }
+  if (-not ($productOut.ContainsKey($p.Out) -or $productSources.ContainsKey($p.Dir))) {
+    Fail ('cli.ini [build] Includes carries neither ' + $p.Dir + ' nor ' + $p.Out + ': a package cannot start without it')
   }
-  $pluginFiles = @($pluginFiles | Where-Object { -not $dropFiles.ContainsKey($_) })
-  $themeFiles = @($themeFiles | Where-Object { -not $dropFiles.ContainsKey($_) })
-  $pluginSchemas = @($pluginSchemas | Where-Object { -not $dropFiles.ContainsKey($_) })
-}
-
-# The pages under docs\ plugin and theme describe a plugin or a theme, so they follow the
-# same choice: a package ships the pages of what it can run and nothing else.
-$pageKeep = @{ plugin = @{}; theme = @{} }
-foreach ($pair in @(@('plugin', $pluginFiles), @('theme', $themeFiles))) {
-  foreach ($f in @($pair[1])) { $pageKeep[$pair[0]][[IO.Path]::GetFileNameWithoutExtension([string]$f)] = $true }
 }
 
 # ---------------------------------------------------------------- stage
-$stageRoot = Join-Path $env:TEMP ('clipboard-build-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$stageRoot = Join-Path $env:TEMP ($app + '-build-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 $stage = Join-Path $stageRoot $name
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 try {
   Write-Step ('staging ' + $name)
-
-  # the scripts that go through the minifier, in a stable order
-  $scriptFiles = @()
-  $scriptFiles += Join-Path $srcRoot 'clipboard.ps1'
-  $scriptFiles += @(Get-ChildItem -LiteralPath (Join-Path $srcRoot 'lib') -Filter '*.ps1' -File -Recurse | ForEach-Object { $_.FullName })
-  $scriptFiles += @(Get-ChildItem -LiteralPath (Join-Path $srcRoot 'utils') -Filter '*.ps1' -File | ForEach-Object { $_.FullName })
-  # the schema files are data, but they name the variables Apply-Config writes through, so
-  # they are renamed with the rest of the shared scope instead of being copied verbatim
-  $scriptFiles += @(Get-ChildItem -LiteralPath (Join-Path $srcRoot 'schema') -Filter '*.ps1' -File | ForEach-Object { $_.FullName })
-  $scriptFiles += @($pluginFiles | Where-Object { $_ -like '*.ps1' })
-
-  # cli.ini [build] Includes adds what the default set does not carry: a .ps1 joins the
-  # scripts that are minified and renamed with the rest, anything else is copied as it is.
-  # Excludes already ran over the plugins and themes; it runs again here last of all.
-  $extraCopies = New-Object System.Collections.Generic.List[string]
-  foreach ($glob in $includeGlobs) {
-    foreach ($f in @(Expand-Glob $srcRoot $glob)) {
-      if ($dropFiles.ContainsKey($f)) { continue }
-      if ($f -like '*.ps1') {
-        if ($scriptFiles -notcontains $f) { $scriptFiles += $f }
-      } elseif (-not $extraCopies.Contains($f)) {
-        $extraCopies.Add($f)
-      }
-    }
-  }
-  if ($dropFiles.Count -gt 0) {
-    $beforeCount = $scriptFiles.Count
-    $scriptFiles = @($scriptFiles | Where-Object { -not $dropFiles.ContainsKey($_) })
-    Write-Step ('excluded ' + ($beforeCount - $scriptFiles.Count) + ' script(s) listed in cli.ini [build] Excludes')
-  }
 
   $map = @{}
   $scopeMaps = @{}
@@ -260,10 +221,11 @@ try {
     if ($rename) {
       $map = New-FunctionMap $scriptFiles
       Write-Step ('internal functions renamed: ' + $map.Count)
-      # one scope for the main script and everything it dot-sources, one per plugin
-      $sharedFiles = @($scriptFiles | Where-Object { $_ -notlike (Join-Path $srcRoot 'plugins*') })
+      # one scope for the main script and everything it dot-sources, one per script the
+      # program calls by path (the table in tools\utils\pipeline.ps1 names that folder)
+      $sharedFiles = @($scriptFiles | Where-Object { -not (Test-OwnScope (Get-PackageRel $_)) })
       $shared = New-ScriptVariableMap $sharedFiles
-      foreach ($file in @($scriptFiles | Where-Object { $_ -like (Join-Path $srcRoot 'plugins*') })) {
+      foreach ($file in @($scriptFiles | Where-Object { Test-OwnScope (Get-PackageRel $_) })) {
         $scopeMaps[$file] = New-ScriptVariableMap @($file)
       }
       $scopeCount = $shared.Count
@@ -278,129 +240,93 @@ try {
     }
   }
 
+  # declared products land at their own package path, once, whatever else the list holds
+  foreach ($outRel in @($productOut.Keys)) {
+    $target = Join-Path $stage $outRel
+    $parent = Split-Path -Parent $target
+    if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+    Copy-Item -LiteralPath $productOut[$outRel] -Destination $target -Force
+  }
+
+  # Everything else goes through the table in tools\utils\pipeline.ps1: the handler for a path
+  # says how the file is rewritten, and the path it keeps in the package is the one it had
+  # under src\. A new kind of file is a row there, never a branch here.
+  $ascii = New-Object System.Text.ASCIIEncoding
   $before = 0
   $after = 0
   $rows = New-Object System.Collections.Generic.List[object]
-  $baseFile = Join-Path $srcRoot 'lib\base.ps1'
-  foreach ($file in $scriptFiles) {
-    $rel = $file.Substring($srcRoot.Length).TrimStart([char]92, [char]47)
+  foreach ($f in $plainFiles) {
+    $rel = Get-PackageRel $f
     $target = Join-Path $stage $rel
     $parent = Split-Path -Parent $target
     if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-    # The development copy reads the version from package.ini. A package carries the number
-    # itself, so it needs neither that file nor a code path that looks for it.
-    $input = $file
-    if ($file -eq $baseFile) {
-      $input = Join-Path $stageRoot 'verpatch\base.ps1'
-      New-Item -ItemType Directory -Path (Split-Path -Parent $input) -Force | Out-Null
-      [IO.File]::WriteAllText($input, (Get-VersionPatchedText ([IO.File]::ReadAllText($file)) $version))
+    $source = $f
+    $handler = Get-LibraryHandler $rel
+    if ($handler -eq 'version') {
+      # The development copy reads the version from package.ini. A package carries the number
+      # itself, so the block is replaced before the minifier sees the file.
+      $source = Join-Path $stageRoot ('verpatch\' + (Split-Path -Leaf $f))
+      New-Item -ItemType Directory -Path (Split-Path -Parent $source) -Force | Out-Null
+      [IO.File]::WriteAllText($source, (Get-VersionPatchedText ([IO.File]::ReadAllText($f)) $version $rel))
+      $handler = 'script'
     }
-    if ($minify) {
-      if ($rename) {
-        $vars = $scopeMaps['*']
-        if ($scopeMaps.ContainsKey($file)) { $vars = $scopeMaps[$file] }
-        $globals = $globalMap
-        if ($scopeMaps.ContainsKey($file)) { $globals = @{} }   # a plugin has a scope of its own
-        $r = Invoke-MinifyFile -Path $input -OutPath $target -FunctionMap $map -ScriptVarMap $vars -GlobalVarMap $globals
-      } else { $r = Invoke-MinifyFile -Path $input -OutPath $target -NoRename }
-      $r.Path = $file
-      $before += $r.Before
-      $after += $r.After
-      $rows.Add($r)
-    } else {
-      Copy-Item -LiteralPath $input -Destination $target -Force
-      $len = (Get-Item -LiteralPath $input).Length
-      $before += $len
-      $after += $len
+    switch ($handler) {
+      'script' {
+        if (-not $minify) {
+          Copy-Item -LiteralPath $source -Destination $target -Force
+          $len = (Get-Item -LiteralPath $source).Length
+          $before += $len
+          $after += $len
+          break
+        }
+        if ($rename) {
+          $vars = $scopeMaps['*']
+          if ($scopeMaps.ContainsKey($f)) { $vars = $scopeMaps[$f] }
+          $globals = $globalMap
+          if ($scopeMaps.ContainsKey($f)) { $globals = @{} }   # a plugin has a scope of its own
+          $r = Invoke-MinifyFile -Path $source -OutPath $target -FunctionMap $map -ScriptVarMap $vars -GlobalVarMap $globals
+        } else {
+          $r = Invoke-MinifyFile -Path $source -OutPath $target -NoRename
+        }
+        $r.Path = $f
+        $before += $r.Before
+        $after += $r.After
+        $rows.Add($r)
+      }
+      'batch' {
+        # CRLF: cmd.exe reads both, and a batch file written with LF alone breaks on some
+        # versions of the goto/label handling
+        $text = [IO.File]::ReadAllText($f).Replace("`r`n", "`n").Replace("`n", "`r`n").TrimEnd()
+        if ($minify) { $text = Compress-Batch $text }
+        [IO.File]::WriteAllText($target, ($text + "`r`n"), $ascii)
+      }
+      'shell' {
+        # the shell launchers need LF: sh would take the CR as part of the command
+        $text = [IO.File]::ReadAllText($f)
+        if ($minify) { $text = (Compress-Shell $text).TrimEnd() + "`n" }
+        [IO.File]::WriteAllText($target, $text, $ascii)
+      }
+      'ini' {
+        if ($minify) {
+          $text = (Compress-Ini ([IO.File]::ReadAllText($f))).TrimEnd() + "`r`n"
+          [IO.File]::WriteAllText($target, $text, $ascii)
+        } else { Copy-Item -LiteralPath $f -Destination $target -Force }
+      }
+      default { Copy-Item -LiteralPath $f -Destination $target -Force }
     }
   }
 
-  # the two launchers carry the same kind of prose as the batch files: comments go when the
-  # package is minified, and every command stays. The batch file needs CRLF, the shell wrapper
-  # needs LF, so each one is written with its own line ending.
-  $ascii = New-Object System.Text.ASCIIEncoding
-  foreach ($f in @('clipboard.cmd', 'clipboard')) {
-    $from = Join-Path $srcRoot $f
-    if (-not (Test-Path -LiteralPath $from)) { Fail ('missing: src\' + $f) }
-    $text = [IO.File]::ReadAllText($from)
-    if ($minify) {
-      if ($f -like '*.cmd') { $text = (Compress-Batch $text).TrimEnd() + "`r`n" }
-      else { $text = (Compress-Shell $text).TrimEnd() + "`n" }
-    }
-    [IO.File]::WriteAllText((Join-Path $stage $f), $text, $ascii)
-  }
-  # a packaged copy is set up by double-clicking, so the two scripts sit next to clipboard.ps1
-  # and only call commands the program already has. They live in scripts\ so that a wording
-  # change is an edit to a batch file, not to this script; they are copied to the package root
-  # because that is where %~dp0 has to point.
-  foreach ($bat in @('install.bat', 'uninstall.bat')) {
-    $from = Join-Path $root ('scripts\' + $bat)
-    if (-not (Test-Path -LiteralPath $from)) { Fail ('missing: scripts\' + $bat) }
-    $text = [IO.File]::ReadAllText($from)
-    $text = $text.Replace("`r`n", "`n").Replace("`n", "`r`n").TrimEnd()
-    if ($minify) { $text = Compress-Batch $text }
-    [IO.File]::WriteAllText((Join-Path $stage $bat), ($text + "`r`n"), $ascii)
-  }
-  Write-Step 'copied install.bat and uninstall.bat from scripts\'
-  # plugin files are scripts and already went through the minifier; a theme is data, and what
-  # carries no value in it is a comment line or a blank line
-  foreach ($f in @($pluginFiles) + @($themeFiles)) {
-    if ($f -like '*.ps1') { continue }
-    $rel = $f.Substring($srcRoot.Length).TrimStart([char]92, [char]47)
-    $target = Join-Path $stage $rel
-    $parent = Split-Path -Parent $target
-    if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-    if ($minify -and $f -like '*.ini') {
-      $text = (Compress-Ini ([IO.File]::ReadAllText($f))).TrimEnd() + "`r`n"
-      [IO.File]::WriteAllText($target, $text, $ascii)
-    } else {
-      Copy-Item -LiteralPath $f -Destination $target -Force
-    }
-  }
-  # files cli.ini [build] Includes added beyond the ps1 scripts (data, not code)
-  foreach ($f in @($extraCopies)) {
-    $rel = $f.Substring($srcRoot.Length).TrimStart([char]92, [char]47)
-    $target = Join-Path $stage $rel
-    $parent = Split-Path -Parent $target
-    if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-    if ($minify -and $f -like '*.ini') {
-      $text = (Compress-Ini ([IO.File]::ReadAllText($f))).TrimEnd() + "`r`n"
-      [IO.File]::WriteAllText($target, $text, $ascii)
-    } else {
-      Copy-Item -LiteralPath $f -Destination $target -Force
-    }
-  }
-  # plugin schemas are data, not code: they are copied verbatim, and only for the plugins
-  # that actually ship
-  foreach ($f in @($pluginSchemas)) {
-    $rel = $f.Substring($srcRoot.Length).TrimStart([char]92, [char]47)
-    $target = Join-Path $stage $rel
-    $parent = Split-Path -Parent $target
-    if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-    Copy-Item -LiteralPath $f -Destination $target -Force
-  }
-  if ($includeDocs) {
-    foreach ($f in @('README.md', 'LICENSE')) {
-      $src = Join-Path $root $f
-      if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $stage -Force }
-    }
-    $docs = Join-Path $root 'docs'
-    if (Test-Path -LiteralPath $docs) {
-      Copy-Item -LiteralPath $docs -Destination $stage -Recurse -Force
-      foreach ($sec in @(@{ Dir = 'plugin'; Keep = $pageKeep['plugin'] }, @{ Dir = 'theme'; Keep = $pageKeep['theme'] })) {
-        $dir = Join-Path (Join-Path $stage 'docs') $sec.Dir
-        if (-not (Test-Path -LiteralPath $dir)) { continue }
-        foreach ($page in @(Get-ChildItem -LiteralPath $dir -Filter '*.md' -File)) {
-          if ($sec.Keep.ContainsKey([IO.Path]::GetFileNameWithoutExtension($page.Name))) { continue }
-          Remove-Item -LiteralPath $page.FullName -Force
-        }
-        if (@(Get-ChildItem -LiteralPath $dir -Force).Count -eq 0) { Remove-Item -LiteralPath $dir -Recurse -Force }
-      }
+  # a folder that cannot start is worth saying out loud here rather than when someone
+  # double-clicks it: the three launchers are named after the program, so nothing is hard-coded
+  foreach ($ext in @('.ps1', '.cmd', '.sh')) {
+    $need = $app + $ext
+    if (-not (Test-Path -LiteralPath (Join-Path $stage $need))) {
+      Fail ('cli.ini [build] Includes does not ship ' + $need)
     }
   }
 
   # a package never carries the user's history, settings or build leftovers
-  foreach ($leak in @('data', 'clipboard.ini', 'cli.ini', 'tests', 'tools', 'package.ini', 'src')) {
+  foreach ($leak in @('data', ($app + '.ini'), 'cli.ini', 'tests', 'tools', 'package.ini', 'src')) {
     $p = Join-Path $stage $leak
     if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force }
   }
@@ -416,42 +342,6 @@ try {
     if ($before -gt 0) { $totalPct = [Math]::Round(100 * (1 - $after / $before), 1) }
     Write-Host ('  {0,-26} {1,8} -> {2,7}  ({3}%)' -f 'scripts total', $before, $after, $totalPct)
     Write-Host ''
-  }
-
-  # ------------------------------------------------------------ native client (optional)
-  # A compiled client turns a proxied command into a ~150 ms call instead of ~1 s, because it
-  # is started before any PowerShell exists. clipboard.cmd falls back to the script when the
-  # file is missing, so a machine without the .NET Framework compiler still gets a package.
-  # Both files were built into src\ at the start of this run: staging only copies them, so the
-  # package never carries a binary that is newer than the sources on disk. A missing copy - no
-  # compiler, or the dll held open by a running resident - leaves the slower path in place.
-  $clientOut = Join-Path $stage 'client.exe'
-  $asmOut = Join-Path $stage 'lib\assembly\clipboard.dll'
-  if ($client -and (Test-Path -LiteralPath $srcClient)) {
-    Copy-Item -LiteralPath $srcClient -Destination $clientOut -Force
-  }
-  if ($assembly -and (Test-Path -LiteralPath $srcAssembly)) {
-    $asmDir = Split-Path -Parent $asmOut
-    if (-not (Test-Path -LiteralPath $asmDir)) { New-Item -ItemType Directory -Path $asmDir -Force | Out-Null }
-    Copy-Item -LiteralPath $srcAssembly -Destination $asmOut -Force
-  }
-  # Without a compiled assembly the package has to carry the source: lib\native.ps1 and
-  # lib\panel\keyhook.ps1 read lib\assembly\*.cs and compile them in-process, which is what
-  # makes the accelerator optional. A package with neither cannot open its panel at all, so
-  # Assembly=0 (or a machine without csc) means "ship the source instead", not "ship nothing".
-  if (-not (Test-Path -LiteralPath $asmOut)) {
-    $csSrc = Join-Path $srcRoot 'lib\assembly'
-    $shipped = 0
-    if (Test-Path -LiteralPath $csSrc) {
-      $csDst = Join-Path $stage 'lib\assembly'
-      if (-not (Test-Path -LiteralPath $csDst)) { New-Item -ItemType Directory -Path $csDst -Force | Out-Null }
-      foreach ($f in @(Get-ChildItem -LiteralPath $csSrc -Filter '*.cs' -File)) {
-        Copy-Item -LiteralPath $f.FullName -Destination $csDst -Force
-        $shipped++
-      }
-    }
-    if ($shipped -eq 0) { Fail 'no clipboard.dll and no C# source: the package could not open its panel' }
-    Write-Step ('  no clipboard.dll: shipped ' + $shipped + ' C# source file(s) to compile at run time')
   }
 
   # ------------------------------------------------------------ publish
@@ -485,7 +375,7 @@ if ($verify) {
   if ($total) { Write-Step ('tests: ' + ([string]$total).Trim()) }
   # the suite runs the packaged copy itself, so that copy has just created its own data\
   # and settings; they are the user's, never the package's, so they go away again here.
-  foreach ($leak in @('data', 'clipboard.ini')) {
+  foreach ($leak in @('data', ($app + '.ini'))) {
     $p = Join-Path $dest $leak
     if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue }
   }
@@ -503,8 +393,8 @@ if ($wantZip) {
 Write-Host ''
 Write-Host 'result:'
 Write-Host ('  ' + $dest)
-Write-Host '  install.bat                   clipboard.ini template + startup / desktop shortcuts'
+Write-Host '  install.bat                   settings template + startup / desktop shortcuts'
 Write-Host '  uninstall.bat                 stop, remove the shortcuts, delete data\ and the ini'
-Write-Host '  clipboard.cmd config init      write a commented clipboard.ini'
-Write-Host '  clipboard.cmd install         startup shortcut + desktop shortcut'
+Write-Host ('  ' + $app + '.cmd config init      write a commented ' + $app + '.ini')
+Write-Host ('  ' + $app + '.cmd install         startup shortcut + desktop shortcut')
 exit 0
