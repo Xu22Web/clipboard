@@ -3,7 +3,7 @@
 # This is the module system of the ini layer: a path is parsed once and the same doc is
 # handed out until the file changes on disk, so a second reader never pays for a second
 # pass. The cache key is the path; the entry is dropped when the file's size or write time
-# moves, and Export-IniValue drops it explicitly after it rewrites a line. A missing file
+# moves, and the writers below drop it explicitly after they rewrite the file. A missing file
 # reads as an empty doc, so a caller never has to test for the file first.
 #
 # Only .ini files are imported for now: the cache is keyed by path and validated by the file
@@ -47,11 +47,6 @@ function Import-Ini([string]$path) {
   return $doc
 }
 
-# the flat key map of one file, which is all a plain reader wants
-function Import-IniMap([string]$path) {
-  return (Import-Ini $path).Map
-}
-
 # one value of one file, "" when the key is absent
 function Import-IniValue([string]$path, [string]$key) {
   return (Get-IniDocValue (Import-Ini $path) $key)
@@ -85,74 +80,39 @@ function Clear-IniImport([string]$path) {
   $script:IniImports.Remove($full)
 }
 
-# Rewrite one key in place: comments, order and every other line stay as they are.
-# A grouped key ("item-marks.MaxPins") is updated in the spelling the file already uses -
-# flat, or as a leaf inside its [section] - and appended flat when it is new.
-function Export-IniValue([string]$path, [string]$key, [string]$value) {
+# Write a whole document back. The caller owns what is in it (a rebuilt file, a merged one);
+# this function owns the encoding and the temp-then-move, so no reader ever sees half a file.
+function Save-IniDoc([string]$path, $doc) {
+  if ($null -eq $doc) { return $false }
+  return (Save-IniLines $path @(ConvertTo-IniText $doc))
+}
+
+# Write a set of lines as a fresh file. A template is not a doc yet - it is the text this
+# version wants - so it gets its own entry point instead of being parsed and rebuilt.
+function Save-IniLines([string]$path, [string[]]$lines) {
   $full = $path
   try { $full = [IO.Path]::GetFullPath($path) } catch { }
   $dir = Split-Path -Parent $full
   if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-  $lines = [System.Collections.Generic.List[string]]::new()
-  if (Test-Path -LiteralPath $full) {
-    foreach ($l in [IO.File]::ReadAllLines($full, [Text.Encoding]::UTF8)) { $lines.Add($l) }
-  }
-  $leaf = $key
-  $group = ''
-  $dot = $key.LastIndexOf('.')
-  if ($dot -gt 0) {
-    $group = $key.Substring(0, $dot)
-    $leaf = $key.Substring($dot + 1)
-  }
-  $flatPattern = '^\s*' + [regex]::Escape($key) + '\s*='
-  $leafPattern = '^\s*' + [regex]::Escape($leaf) + '\s*='
-  $done = $false
-  $section = ''
-  for ($i = 0; $i -lt $lines.Count; $i++) {
-    $line = $lines[$i]
-    if ($line -match '^\s*\[(.+)\]\s*$') {
-      $section = $Matches[1].Trim()
-      continue
-    }
-    if ($line -match $flatPattern) {
-      $lines[$i] = $key + '=' + $value
-      $done = $true
-      continue
-    }
-    if ($group -and $section -ieq $group -and $line -match $leafPattern) {
-      $lines[$i] = $leaf + '=' + $value
-      $done = $true
-    }
-  }
-  if (-not $done) {
-    if ($group) {
-      # keep the file in its sectioned shape: a new plugin key joins its [group] block, and
-      # the block is created at the end when the file does not have one yet
-      $head = -1
-      $last = -1
-      for ($i = 0; $i -lt $lines.Count; $i++) {
-        if ($lines[$i] -match '^\s*\[(.+)\]\s*$') {
-          if ($head -ge 0) { break }
-          if ($Matches[1].Trim() -ieq $group) { $head = $i; $last = $i }
-          continue
-        }
-        if ($head -ge 0 -and $lines[$i].Trim()) { $last = $i }
-      }
-      if ($head -ge 0) {
-        $lines.Insert($last + 1, $leaf + '=' + $value)
-      } else {
-        if ($lines.Count -gt 0 -and $lines[$lines.Count - 1].Trim()) { $lines.Add('') }
-        $lines.Add('[' + $group + ']')
-        $lines.Add($leaf + '=' + $value)
-      }
-    } else {
-      $lines.Add($key + '=' + $value)
-    }
-  }
+  $text = ((@($lines) -join [Environment]::NewLine) + [Environment]::NewLine)
   $tmp = $full + '.tmp'
   $utf8 = [System.Text.UTF8Encoding]::new($false)
-  [IO.File]::WriteAllText($tmp, (($lines -join [Environment]::NewLine) + [Environment]::NewLine), $utf8)
+  [IO.File]::WriteAllText($tmp, $text, $utf8)
   Move-Item -LiteralPath $tmp -Destination $full -Force
   Clear-IniImport $full
+  return $true
+}
+
+# Rewrite one key in place: comments, order and every other line stay as they are.
+# A grouped key ("item-marks.MaxPins") is updated in the spelling the file already uses -
+# flat, or as a leaf inside its [section] - and appended flat when it is new.
+function Export-IniValue([string]$path, [string]$key, [string]$value) {
+  $lines = @()
+  if (Test-Path -LiteralPath $path) { $lines = [IO.File]::ReadAllLines($path, [Text.Encoding]::UTF8) }
+  # where the key goes - its own line, its [section] block, or a header at the end - is the
+  # document's business (utils/ini.ps1); this function only owns the file around it
+  $doc = Read-IniDoc $lines
+  [void](Set-IniDocValue $doc $key $value)
+  [void](Save-IniDoc $path $doc)
   return $true
 }

@@ -51,12 +51,13 @@ function Set-KeyHookCtrlKeys([int[]]$keys) {
 }
 
 function Disable-KeyHook {
-  if (-not ('Cb.KeyHook' -as [type])) { return }
-  if (-not [Cb.KeyHook]::Active) { return }
+  if (-not (Test-KeyHook)) { return }
   [Cb.KeyHook]::Remove()
   Write-Log ('key hook removed swallowed=' + [Cb.KeyHook]::Swallowed)
 }
 
+# $true when the type is loaded and the hook is installed; both are asked together because every
+# caller that removes or reports the hook has to know the type exists first
 function Test-KeyHook { return ('Cb.KeyHook' -as [type]) -and [Cb.KeyHook]::Active }
 
 # Hand the keyboard over for real: an input method needs an ordinary window that owns the

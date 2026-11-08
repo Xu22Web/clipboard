@@ -1,4 +1,4 @@
-# lib/settings.ps1 - clipboard.ini as data: the schema that describes every key, and the four
+# lib/settings.ps1 - clipboard.ini as data: the schema that describes every key, and the
 # calls that read or write one value from the file.
 #
 # This is the layer anything that touches a setting goes through: lib/config.ps1 builds the

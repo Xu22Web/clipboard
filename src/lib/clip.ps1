@@ -241,14 +241,6 @@ function Get-ImageCapture {
   }
 }
 
-# one clipboard item as a payload string: text, FILESIG + paths, or an image descriptor
-function Get-ClipItem {
-  $cap = Get-ClipCapture
-  if ($null -eq $cap) { return $null }
-  if ($null -ne $cap.Image) { return (New-ImagePayload $cap.Image.Png $cap.Image.W $cap.Image.H $cap.Image.Fmt) }
-  return [string]$cap.Text
-}
-
 function Set-ItemDataObject($do) {
   for ($i = 0; $i -lt 10; $i++) {
     try {
@@ -291,6 +283,10 @@ function Set-ImageItem([string]$payload) {
 # and the original HTML / RTF ride along so Word, WordPad and mail clients keep the layout.
 function Set-RichItem([string]$text, [string]$rich) {
   try {
+    # the reference names files on disk: when they are gone the blocks below are skipped one by
+    # one, which turns a formatted paste into plain text without saying so. One line in the log
+    # is the only place that would ever show it.
+    if ($rich -and -not (Test-RichMedia $rich)) { Write-Log 'clipboard: rich media files are missing, only the blocks still on disk go back' }
     $do = New-Object Windows.Forms.DataObject
     $do.SetData([Windows.Forms.DataFormats]::UnicodeText, [string]$text)
     # every block goes back as the exact bytes it was captured as: a string would be encoded

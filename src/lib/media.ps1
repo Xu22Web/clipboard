@@ -218,8 +218,9 @@ function Read-RichRtf([string]$ref) {
   return [Text.Encoding]::Default.GetString($bytes)
 }
 
-# does the record still have something to paste? (a missing file must not become plain text
-# silently when the user asked for a formatted paste)
+# does the record still have something to paste? Set-RichItem asks this before a formatted
+# paste, because a missing file must not become plain text silently when the user asked for a
+# formatted paste
 function Test-RichMedia([string]$ref) {
   $r = Get-RichRef $ref
   if ($null -eq $r) { return $false }

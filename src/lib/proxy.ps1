@@ -173,14 +173,6 @@ function Invoke-ProxySession($Client, $Request, [int]$IOMs = 2000) {
   }
 }
 
-# Connect, ask, disconnect: what a caller that only wants one answer uses.
-function Invoke-ProxyClient($Request, [int]$ConnectMs = 120, [int]$IOMs = 2000) {
-  $client = New-ProxyConnection (Get-ProxyField $Request 'store') $ConnectMs
-  if (-not $client) { return $null }
-  try { return (Invoke-ProxySession $client $Request $IOMs) }
-  finally { try { $client.Dispose() } catch { } }
-}
-
 # ---- server ----------------------------------------------------------------------------
 
 # One pending connection, created before the first client knocks. The security descriptor is

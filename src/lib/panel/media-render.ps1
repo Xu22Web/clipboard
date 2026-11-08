@@ -94,17 +94,6 @@ function Write-ImageThumb([string]$sha1, $src) {
 $script:RowThumbMax = 64
 $script:RowThumbCache = @{ Order = (New-Object System.Collections.Generic.List[string]); Map = @{} }
 
-function Clear-RowThumbCache {
-  $c = $script:RowThumbCache
-  if ($null -eq $c) { return }
-  foreach ($k in @($c.Map.Keys)) {
-    $v = $c.Map[$k]
-    if ($null -ne $v) { try { $v.Dispose() } catch { } }
-  }
-  $c.Map.Clear()
-  $c.Order.Clear()
-}
-
 # The bitmap belongs to this cache, so a caller draws it and never disposes it.
 function Get-RowThumbBitmap($record, [int]$side) {
   if ($null -eq $record -or $side -lt 8) { return $null }

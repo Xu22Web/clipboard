@@ -110,12 +110,6 @@ function Get-ImageCapture {
   return @{ Png = $png; W = $ref.W; H = $ref.H; Fmt = $ref.Fmt }
 }
 
-function Get-ClipItem {
-  $p = Read-FakeClipValue 'payload.txt'
-  if (-not $p) { return $null }
-  return $p
-}
-
 # putting an entry back: the payload and, when the entry has one, the reference to its
 # formatted blocks - which is all the real file needs to hand a target every flavor
 function Set-ClipItem([string]$entry, [string]$rich = '') {

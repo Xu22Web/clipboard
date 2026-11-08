@@ -116,52 +116,23 @@ function Merge-IniDefaults {
   Ensure-Dir
   $tpl = @(Get-IniTemplateLines)
   # everything the program can write is "known"; anything else is left over from an older
-  # version or a plugin that is gone. A key inside a template section counts under the
-  # section name, so "[item-marks]" + "MaxPins=50" is the key item-marks.MaxPins.
+  # version or a plugin that is gone. The template is read with the same reader as the file, so
+  # "[item-marks]" + "MaxPins=50" counts as item-marks.MaxPins here exactly as it does there.
   $known = @{}
-  $tplSection = ''
-  foreach ($t in $tpl) {
-    if ($t -match '^\s*\[(.+)\]\s*$') { $tplSection = $Matches[1].Trim(); continue }
-    if ($t -match '^\s*([A-Za-z0-9_.-]+)\s*=') {
-      $name = $Matches[1]
-      if ($tplSection) { $name = $tplSection + '.' + $name }
-      $known[$name.ToLowerInvariant()] = $true
-    }
-  }
-  $lines = New-Object System.Collections.Generic.List[string]
-  $have = @{}
-  $haveSections = @{}
-  $sectionEnd = @{}
+  foreach ($k in @((Read-IniDoc $tpl).Keys)) { $known[([string]$k).ToLowerInvariant()] = $true }
+  # the file as a document: comments, blank lines and the order of every key stay where they are
+  $lines = @()
+  if (Test-Path -LiteralPath $IniPath) { $lines = [IO.File]::ReadAllLines($IniPath, [Text.Encoding]::UTF8) }
+  $doc = Read-IniDoc $lines
+  # a key this version does not know is kept readable but out of the way: removing the '#'
+  # brings it back
   $pruned = 0
-  if (Test-Path -LiteralPath $IniPath) {
-    # a key may be written flat or as a leaf inside [section]; both count as that key, and
-    # the extent of every section is remembered so a late key can join it in place
-    $section = ''
-    foreach ($l in [IO.File]::ReadAllLines($IniPath, [Text.Encoding]::UTF8)) {
-      if ($l -match '^\s*\[(.+)\]\s*$') {
-        $section = $Matches[1].Trim()
-        $lines.Add($l)
-        $haveSections[$section.ToLowerInvariant()] = $true
-        $sectionEnd[$section.ToLowerInvariant()] = $lines.Count - 1
-        continue
-      }
-      if ($l -match '^\s*([A-Za-z0-9_.-]+)\s*=') {
-        $name = $Matches[1]
-        if ($section) { $name = $section + '.' + $name }
-        $name = $name.ToLowerInvariant()
-        if (-not $known.ContainsKey($name)) {
-          # keep the value readable, but out of the way: a removed '#' brings it back
-          $lines.Add('# [unknown] ' + $l.Trim())
-          $pruned++
-          continue
-        }
-        $lines.Add($l)
-        $have[$name] = $true
-        if ($section) { $sectionEnd[$section.ToLowerInvariant()] = $lines.Count - 1 }
-        continue
-      }
-      $lines.Add($l)
-      if ($section -and $l.Trim()) { $sectionEnd[$section.ToLowerInvariant()] = $lines.Count - 1 }
+  foreach ($k in @($doc.Keys)) {
+    if ($known.ContainsKey(([string]$k).ToLowerInvariant())) { continue }
+    foreach ($n in @($doc.Index[$k].Lines)) {
+      $at = [int]$n
+      $doc = Set-IniDocLine $doc $at ('# [unknown] ' + ([string]$doc.Lines[$at]).Trim())
+      $pruned++
     }
   }
   # comments are buffered so an added key keeps the explanation that introduces it; a
@@ -175,37 +146,33 @@ function Merge-IniDefaults {
     $tl = $s.Trim()
     if ($tl -eq '' -or $tl.StartsWith('#')) { $pending.Add($s); continue }
     if ($tl -match '^\[(.+)\]$') {
-      $tplSectionName = $Matches[1].Trim().ToLowerInvariant()
-      if ($haveSections.ContainsKey($tplSectionName)) { $pending.Clear(); continue }
+      $tplSectionName = $Matches[1].Trim()
+      if ($null -ne (Get-IniDocSection $doc $tplSectionName)) { $pending.Clear(); continue }
       $pending.Add($s)
       continue
     }
     if ($tl -notmatch '^\s*([A-Za-z0-9_.-]+)\s*=') { $pending.Clear(); continue }
-    $k = $Matches[1].ToLowerInvariant()
-    if ($tplSectionName) { $k = $tplSectionName + '.' + $k }
-    if ($have.ContainsKey($k)) { $pending.Clear(); continue }
-    if ($tplSectionName -and $haveSections.ContainsKey($tplSectionName)) {
-      # the section is already in the file: insert after its last line and keep the indices
-      $at = [int]$sectionEnd[$tplSectionName] + 1
-      $lines.Insert($at, $s)
-      foreach ($sec in @($sectionEnd.Keys)) {
-        if ([int]$sectionEnd[$sec] -ge $at) { $sectionEnd[$sec] = [int]$sectionEnd[$sec] + 1 }
-      }
-      $sectionEnd[$tplSectionName] = $at
-      $pending.Clear()
-      $have[$k] = $true
-      $added++
-      continue
+    $key = $Matches[1]
+    if ($tplSectionName) { $key = $tplSectionName + '.' + $key }
+    if (Test-IniDocKey $doc $key) { $pending.Clear(); continue }
+    $block = @()
+    foreach ($p in $pending) { $block += $p }
+    $block += $s
+    $sec = $null
+    if ($tplSectionName) { $sec = Get-IniDocSection $doc $tplSectionName }
+    if ($null -ne $sec) {
+      # the section is already in the file: insert after its last line, comments included
+      $doc = Insert-IniDocLines $doc ([int]$sec.Last + 1) $block
+    } else {
+      $cur = @($doc.Lines)
+      if ($cur.Count -gt 0 -and $cur[$cur.Count - 1].Trim()) { $doc = Insert-IniDocLines $doc $cur.Count @('') }
+      $doc = Insert-IniDocLines $doc @($doc.Lines).Count $block
     }
-    if ($lines.Count -gt 0 -and $pending.Count -gt 0) { $lines.Add('') }
-    foreach ($p in $pending) { $lines.Add($p) }
-    $lines.Add($s)
     $pending.Clear()
-    $have[$k] = $true
     $added++
   }
   if ($added -gt 0 -or $pruned -gt 0 -or -not (Test-Path -LiteralPath $IniPath)) {
-    [IO.File]::WriteAllText($IniPath, (($lines -join [Environment]::NewLine) + [Environment]::NewLine), $Utf8)
+    [void](Save-IniDoc $IniPath $doc)
   }
   return @{ Added = $added; Pruned = $pruned }
 }
@@ -216,7 +183,6 @@ function Merge-IniDefaults {
 function Write-IniTemplate([switch]$Force) {
   if ((Test-Path -LiteralPath $IniPath) -and (-not $Force)) { return $IniPath }
   Ensure-Dir
-  $all = @(Get-IniTemplateLines)
-  [IO.File]::WriteAllText($IniPath, (($all -join [Environment]::NewLine) + [Environment]::NewLine), $Utf8)
+  [void](Save-IniLines $IniPath @(Get-IniTemplateLines))
   return $IniPath
 }

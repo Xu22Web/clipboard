@@ -403,6 +403,9 @@ try {
     foreach ($k in @($toolDoc.Map.Keys)) {
       if (-not $programDoc.Map.ContainsKey($k)) { $iniDiff += ('tools only: ' + $k) }
     }
+    # order matters as much as the values: both readers hand the keys out in file order, and
+    # `config` prints them that way
+    if ((@($programDoc.Keys) -join '|') -cne (@($toolDoc.Keys) -join '|')) { $iniDiff += 'key order differs' }
     Check 'struct' 'the program and the tooling parse ini the same way' ($iniDiff.Count -eq 0) ($iniDiff -join ', ')
 
     $rootHits = ([regex]::Matches([IO.File]::ReadAllText($entryPath), '(?m)^\$Root = Split-Path -Parent \$PSCommandPath\s*$')).Count
