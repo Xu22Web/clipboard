@@ -61,9 +61,8 @@ function Invoke-PickerEditKey($e) {  if ($null -eq $e) { return }
 }
 
 # The editor is a card inside the panel: a title line saying what is being edited, the box
-# itself, a status line (cursor position, length, whether the text differs) and a Save /
-# Cancel pair. It uses the same Fluent pieces as the rest of the panel - rounded corners, a
-# 1 px accent stroke, accent fill for the primary action.
+# itself, a status line (cursor position, length, whether the text differs), the key chips the
+# panel footer draws (the footer is covered while the card is up) and a Save / Cancel pair.
 
 # cursor line, row count, length and a "modified" flag: the editor has no gutter, so this
 # line is what tells the user where the caret is and whether there is anything to save
@@ -99,11 +98,21 @@ function New-EditAction([string]$label, [bool]$primary, [int]$w, [int]$h) {
         $edge = $pal.FieldBorder
         $ink = $pal.Text
         if ($tag.Primary) { $fill = $pal.Accent; $edge = $pal.Accent; $ink = $pal.Surface }
-        elseif ($tag.Hot) { $fill = $pal.HoverBg }
+        # hover eases in like a row's: the outlined button fades toward the same tint the rows
+        # use, the filled one takes a thin wash of the text colour, which lightens it on a dark
+        # theme and deepens it on a light one
+        $k = 0.0
+        if ($tag.Hot -and $script:Anim) { $k = [double]$script:Anim.EditBtn }
         $gp = New-RoundPath 0 0 ([int]$s.Width - 1) ([int]$s.Height - 1) (Px 4)
         $br = New-Object Drawing.SolidBrush $fill
         $g.FillPath($br, $gp)
         $br.Dispose()
+        if ($k -gt 0) {
+          $over = Scale-Alpha $(if ($tag.Primary) { $pal.Text } else { $pal.HoverBg }) ($k * $(if ($tag.Primary) { 0.15 } else { 1.0 }))
+          $ob = New-Object Drawing.SolidBrush $over
+          $g.FillPath($ob, $gp)
+          $ob.Dispose()
+        }
         $pen = New-Object Drawing.Pen $edge
         $g.DrawPath($pen, $gp)
         $pen.Dispose()
@@ -119,8 +128,8 @@ function New-EditAction([string]$label, [bool]$primary, [int]$w, [int]$h) {
         $fmt.Dispose()
       } catch { }
     })
-  $b.Add_MouseEnter({ param($s, $e) $s.Tag.Hot = $true; $s.Invalidate() })
-  $b.Add_MouseLeave({ param($s, $e) $s.Tag.Hot = $false; $s.Invalidate() })
+  $b.Add_MouseEnter({ param($s, $e) $s.Tag.Hot = $true; if ($script:Anim) { Set-AnimTarget $script:Anim 'EditBtn' 1.0 }; $s.Invalidate() })
+  $b.Add_MouseLeave({ param($s, $e) $s.Tag.Hot = $false; if ($script:Anim) { Set-AnimTarget $script:Anim 'EditBtn' 0.0 }; $s.Invalidate() })
   return $b
 }
 
@@ -131,6 +140,8 @@ function Close-RowEdit {
   $script:EditRow = $null
   $script:HookTargetBox = $null
   $script:EditArm = ''
+  # the buttons are gone, so the hover ramp has to land at 0 or the next card would open lit
+  if ($script:Anim) { Set-AnimTarget $script:Anim 'EditBtn' 0.0 }
   if ($null -eq $st -or $null -eq $ctx) { return }
   try {
     $rgn = $st.Card.Region
@@ -169,7 +180,9 @@ function Begin-RowEdit {
         $g = $e.Graphics
         $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $pal = $script:EditorCtx.Ui
-        $pen = New-Object Drawing.Pen $pal.Accent
+        # the same 1 px edge the panel itself draws: the editor covers the whole client area,
+        # so an accent frame would read as a second window on top of the panel
+        $pen = New-Object Drawing.Pen $pal.Border
         $gp = New-RoundPath 0 0 ([int]$s.Width - 1) ([int]$s.Height - 1) (Px 8)
         $g.DrawPath($pen, $gp)
         $pen.Dispose()
@@ -240,13 +253,20 @@ function Begin-RowEdit {
   $err.BackColor = $ctx.Ui.Surface
   $err.SetBounds($pad, ($ch - (Px 74)), ($cw - (2 * $pad) - (Px 200)), (Px 18))
 
-  # the footer is covered, so the keys are spelled out here instead
-  $hint = New-Object Windows.Forms.Label
-  $hint.Font = $script:FTiny
-  $hint.ForeColor = $ctx.Ui.Dim
+  # the footer is covered, so the same key chips the panel draws there are drawn here: the
+  # editor speaks the panel's language instead of a plain hint line
+  $hint = New-Object Windows.Forms.Panel
   $hint.BackColor = $ctx.Ui.Surface
-  $hint.SetBounds($pad, ($ch - (Px 46)), ($cw - (2 * $pad) - (Px 200)), (Px 18))
-  $hint.Text = 'Enter saves   Shift+Enter newline   Esc cancels'
+  $hint.SetBounds($pad, ($ch - (Px 46)), ($cw - (2 * $pad) - (Px 200)), (Px 26))
+  $hint.Add_Paint({
+      param($s, $e)
+      try {
+        $g = $e.Graphics
+        $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+        $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+        Draw-KeyChips $g 0 ([int]($s.ClientSize.Height / 2)) @(@('Enter', 'save'), @('Shift+Enter', 'newline'), @('Esc', 'cancel')) $script:EditorCtx.Ui.Dim $script:EditorCtx.Ui.Faint ([int]$s.ClientSize.Width)
+      } catch { }
+    })
 
   $save = New-EditAction 'Save' $true (Px 76) (Px 26)
   $save.SetBounds(($cw - $pad - (Px 76)), ($ch - (Px 46)), (Px 76), (Px 26))
@@ -265,7 +285,7 @@ function Begin-RowEdit {
   $ctx.Form.Controls.Add($card)
   $card.BringToFront()
   try { $card.Region = New-RoundRegion $card.Width $card.Height (Px 8) } catch { }
-  $script:EditRow = @{ Rec = $rec; Box = $box; Card = $card; Stat = $stat; Err = $err; Payload = $payload }
+  $script:EditRow = @{ Rec = $rec; Box = $box; Card = $card; Stat = $stat; Err = $err; Payload = $payload; Save = $save; Cancel = $cancel }
   $script:HookTargetBox = $box
   $box.Add_TextChanged({
       $script:EditArm = ''
