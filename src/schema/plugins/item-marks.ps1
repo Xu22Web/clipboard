@@ -7,7 +7,6 @@
 @{
   Name            = 'item-marks'
   File            = 'clipboard.ini'
-  Description     = 'pins, stars and highlights on top of the history'
   Version         = 1
   Properties      = [ordered]@{
     MaxPins          = @{ Type = 'int'; Minimum = 0; Maximum = 1000; Default = 50; Description = 'pinned entry cap, 0 = unlimited' }

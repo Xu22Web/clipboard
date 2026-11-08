@@ -6,7 +6,6 @@
 @{
   Name            = 'entry-actions'
   File            = 'clipboard.ini'
-  Description     = 'typing an entry and opening it'
   Version         = 1
   Properties      = [ordered]@{
     Detail       = @{ Type = 'enum'; Enum = @('short', 'full'); Default = 'full'; Description = 'kind: short = one summary line, full = the whole block' }

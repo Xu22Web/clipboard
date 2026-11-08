@@ -211,6 +211,15 @@ function Show-Config {
   foreach ($pname in $loaded) {
     Write-Host ''
     Write-Host ('  [plugin: ' + $pname + ']')
+    # the one line the plugin file gives about itself, so a group of keys is never anonymous
+    $descr = ''
+    foreach ($p in @($script:Plugins)) {
+      if ($null -eq $p -or $p -isnot [System.Collections.IDictionary]) { continue }
+      if ([string]$p['Name'] -ne $pname) { continue }
+      if ($p.Contains('Description')) { $descr = [string]$p['Description'] }
+      break
+    }
+    if ($descr) { Write-Host ('    ' + $descr) }
     $keys = $null
     if ($groups.ContainsKey($pname)) { $keys = $groups[$pname] }
     if ($null -eq $keys -or $keys.Count -eq 0) { Write-Host '    (no settings)'; continue }
@@ -240,7 +249,8 @@ function Show-Config {
   Write-Host 'clipboard config get <key>            one value (effective + raw ini value)'
   Write-Host 'clipboard config set <key> <value>    validate and write one key'
   Write-Host 'clipboard config edit                 open clipboard.ini in notepad'
-  Write-Host 'clipboard config init                 write a full template with all defaults'
+  Write-Host 'clipboard config init                 add missing keys, comment out retired ones'
+  Write-Host 'clipboard config reset                rewrite the file from the defaults (loses values)'
 }
 
 # `config get <key>`

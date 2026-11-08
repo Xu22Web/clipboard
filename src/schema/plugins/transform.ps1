@@ -5,7 +5,6 @@
 @{
   Name        = 'transform'
   File        = 'clipboard.ini'
-  Description = 'rewrite text before it is pasted'
   Version     = 1
   Properties  = [ordered]@{
     Mode  = @{ Type = 'enum'; Enum = @('keep', 'text', 'upper', 'lower', 'camel', 'snake', 'kebab', 'title'); Default = 'keep'; Description = 'how a pasted entry is rewritten' }

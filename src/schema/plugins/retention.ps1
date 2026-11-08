@@ -5,7 +5,6 @@
 @{
   Name       = 'retention'
   File       = 'clipboard.ini'
-  Description = 'expiry sweep for old entries'
   Version    = 1
   Properties = [ordered]@{
     MaxAgeDays   = @{ Type = 'int'; Minimum = 0; Maximum = 3650; Default = 0; Description = 'delete entries older than this many days, 0 = keep forever' }
