@@ -609,7 +609,7 @@ src/                    程序本体（打包只读这个目录）
   lib/themes.ps1          主题加载层
   lib/settings.ps1        设置文件层：schema 装配、读写单键
   lib/media.ps1           图片与富文本的媒体文件：块存储、载荷编解码、孤儿回收
-  lib/cfhtml.ps1          CF_HTML 往返：内联图片、写回文件、偏移重算与占位图
+  lib/cfhtml.ps1          CF_HTML 往返：内联图片、写回文件（头部解析与标签处理在 utils/cfhtml.ps1）
   lib/clip.ps1            剪贴板读写（文本 / 文件清单 / 图片 / HTML+RTF）
   lib/blobs.ps1           大正文块：超过 BlobChars 的条目落成文件，行内只留引用
   lib/store.ps1           历史文件：CBHIST 格式、版本字段、加锁、追加 / 墓碑 / 折叠、裁剪
@@ -656,6 +656,8 @@ src/                    程序本体（打包只读这个目录）
   utils/schema.ps1        schema 的加载 / 校验 / 单值转换
   utils/hotkey.ps1        热键字符串 → 修饰键 + 虚拟键码
   utils/fileio.ps1        单个文件的读写原语
+  utils/hash.ps1          内容哈希（SHA1 十六进制，文件名即内容）
+  utils/cfhtml.ps1       CF_HTML 头与标签的文本处理（偏移重算、取 src、取正文）
   utils/transfer.ps1      导出文本的形状：行 ↔ 文本
   utils/apprules.ps1      AppRules 的文本形式解析
   utils/log.ps1           日志文件写入

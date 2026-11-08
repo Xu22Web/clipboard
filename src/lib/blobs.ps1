@@ -11,9 +11,7 @@
 function Get-BlobDir { return (Join-Path $StoreDir 'blobs') }
 
 function Save-Blob([string]$text) {
-  $sha = [Security.Cryptography.SHA1]::Create()
-  try { $hex = ([BitConverter]::ToString($sha.ComputeHash($Utf8.GetBytes($text))) -replace '-', '').ToLowerInvariant() }
-  finally { $sha.Dispose() }
+  $hex = Get-TextSha1Hex $text
   $dir = Get-BlobDir
   if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
   $path = Join-Path $dir ($hex + '.txt')

@@ -29,18 +29,14 @@ function Ensure-MediaDir {
 
 # sha1 over one part, or over two parts separated by RS so the pair stays unambiguous
 function Get-MediaSha1([byte[]]$first, [byte[]]$second) {
-  $sha = [Security.Cryptography.SHA1]::Create()
-  try {
-    $data = $first
-    if ($null -ne $second) {
-      $data = New-Object byte[] ($first.Length + 1 + $second.Length)
-      [Array]::Copy($first, 0, $data, 0, $first.Length)
-      $data[$first.Length] = 30
-      [Array]::Copy($second, 0, $data, $first.Length + 1, $second.Length)
-    }
-    if ($null -eq $data) { $data = New-Object byte[] 0 }
-    return (([BitConverter]::ToString($sha.ComputeHash($data)) -replace '-', '').ToLowerInvariant())
-  } finally { $sha.Dispose() }
+  $data = $first
+  if ($null -ne $second) {
+    $data = New-Object byte[] ($first.Length + 1 + $second.Length)
+    [Array]::Copy($first, 0, $data, 0, $first.Length)
+    $data[$first.Length] = 30
+    [Array]::Copy($second, 0, $data, $first.Length + 1, $second.Length)
+  }
+  return (Get-Sha1Hex $data)
 }
 
 # ---- images -----------------------------------------------------------------

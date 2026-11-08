@@ -54,7 +54,8 @@ $libDir = Join-Path $Root 'lib'
 # Paths are relative to the tool root, so a module can sit in lib\, in lib\panel\ or in
 # utils\. The utils\ files are the pure helpers: utils\ini parses text into a document,
 # utils\inifile reads a file once and writes a key back, utils\schema validates a value
-# against src\schema\.
+# against src\schema\, utils\hash names a file after its content, utils\cfhtml reads and
+# rewrites the CF_HTML header.
 #
 # Only what a command can reach is parsed: compiling a module costs about 20 ms, so `version`
 # reads eighteen files, `list` about thirty, and only `ui` / `serve` pay for the panel, the
@@ -72,7 +73,7 @@ $baseModules = @(
 # it back are one job - the capture pipeline (clip), the payload files (blobs), the image and
 # formatted-text sidecars (media, cfhtml) and the paste modifiers all live in it.
 $groupModules = @{
-  store    = @('lib\store', 'lib\entry', 'lib\query', 'lib\select', 'lib\clip', 'lib\media', 'lib\blobs', 'lib\cfhtml', 'lib\modifiers', 'lib\apprules', 'utils\query-words', 'utils\pinyin')
+  store    = @('utils\hash', 'utils\cfhtml', 'lib\store', 'lib\entry', 'lib\query', 'lib\select', 'lib\clip', 'lib\media', 'lib\blobs', 'lib\cfhtml', 'lib\modifiers', 'lib\apprules', 'utils\query-words', 'utils\pinyin')
   transfer = @('lib\transfer', 'utils\transfer', 'lib\migrate')
   config   = @('lib\config', 'lib\config-template', 'lib\shortcut', 'utils\dpi')
   panel    = @('lib\panel\media-render', 'lib\panel\anim', 'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\keyhook', 'lib\panel\picker', 'lib\panel\picker-geom', 'lib\serve')
