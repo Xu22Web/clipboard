@@ -657,11 +657,12 @@ src/                    程序本体（打包只读这个目录）
   utils/hotkey.ps1        热键字符串 → 修饰键 + 虚拟键码
   utils/fileio.ps1        单个文件的读写原语
   utils/hash.ps1          内容哈希（SHA1 十六进制，文件名即内容）
+  utils/image.ps1         图片字节的格式读取（PNG 头宽高、DIB 补 BMP 头）
   utils/cfhtml.ps1       CF_HTML 头与标签的文本处理（偏移重算、取 src、取正文）
   utils/transfer.ps1      导出文本的形状：行 ↔ 文本
   utils/apprules.ps1      AppRules 的文本形式解析
   utils/log.ps1           日志文件写入
-  utils/time.ps1          epoch 与相对时间
+  utils/time.ps1          epoch、相对时间与时间串（7d / 12h）解析
   utils/query-words.ps1   把一行搜索切成词
   utils/pinyin.ps1        汉字首字母（GB2312 一级字）
   utils/format.ps1        字节计数

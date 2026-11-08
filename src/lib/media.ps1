@@ -13,7 +13,8 @@
 # Graphics or a bitmap: the thumb file, the two bitmap caches and the three preview pictures
 # live in lib/panel/media-render.ps1, which only the panel and the card load. The CF_HTML buffer
 # itself - inlining the pictures a copy points at, and writing them back out for a paste - is
-# lib/cfhtml.ps1: this file owns the files, that one owns the clipboard format.
+# lib/cfhtml.ps1: this file owns the files, that one owns the clipboard format. The byte formats
+# that need no file - a png header, a CF_DIB turned into a bmp - are utils/image.ps1.
 
 function Get-MediaDir { return (Join-Path $StoreDir 'media') }
 
@@ -289,7 +290,7 @@ function ConvertFrom-MediaBytes([byte[]]$bytes, [string]$tag) {
       return (New-Object Drawing.Imaging.Metafile $ms)
     }
     $all = $bytes
-    if ($tag -ceq 'D') { $all = Get-BmpBytes $bytes }
+    if ($tag -ceq 'D') { $all = ConvertTo-BmpBytes $bytes }
     if ($null -eq $all) { return $null }
     $ms.Write($all, 0, $all.Length)
     $ms.Position = 0
@@ -299,28 +300,3 @@ function ConvertFrom-MediaBytes([byte[]]$bytes, [string]$tag) {
     return $null
   }
 }
-
-# a CF_DIB block is the bitmap info header plus the pixels, without the 14 byte file header a
-# decoder expects in front of it
-function Get-BmpBytes([byte[]]$dib) {
-  if ($null -eq $dib -or $dib.Length -lt 40) { return $null }
-  $header = [long][BitConverter]::ToUInt32($dib, 0)
-  if ($header -lt 12 -or $header -gt $dib.Length) { return $null }
-  $bits = [int][BitConverter]::ToUInt16($dib, 14)
-  $comp = [int][BitConverter]::ToUInt32($dib, 16)
-  $used = [long][BitConverter]::ToUInt32($dib, 32)
-  $extra = 0
-  if ($comp -eq 3 -or $comp -eq 6) { $extra = 12 }
-  $palette = [long]0
-  if ($used -gt 0) { $palette = $used * 4 }
-  elseif ($bits -gt 0 -and $bits -le 8) { $palette = [long](1 -shl $bits) * 4 }
-  $offset = [int](14 + $header + $extra + $palette)
-  $out = New-Object byte[] (14 + $dib.Length)
-  $out[0] = 0x42
-  $out[1] = 0x4D
-  [Array]::Copy([BitConverter]::GetBytes([int]$out.Length), 0, $out, 2, 4)
-  [Array]::Copy([BitConverter]::GetBytes($offset), 0, $out, 10, 4)
-  [Array]::Copy($dib, 0, $out, 14, $dib.Length)
-  return $out
-}
-

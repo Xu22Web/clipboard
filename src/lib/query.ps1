@@ -32,33 +32,6 @@ function Get-QueryFields {
   }
 }
 
-# '7d' / '12h' / '30m' / '90s' / '3' -> seconds
-function ConvertTo-QuerySeconds([string]$spec) {
-  $s = ([string]$spec).Trim().ToLowerInvariant()
-  if (-not $s) { return -1 }
-  $m = [regex]::Match($s, '^(\d+)([dhms])?$')
-  if (-not $m.Success) { return -1 }
-  $n = [long]$m.Groups[1].Value
-  $unit = [string]$m.Groups[2].Value
-  switch ($unit) {
-    's' { return $n }
-    'm' { return ($n * 60) }
-    'h' { return ($n * 3600) }
-    'd' { return ($n * 86400) }
-    default { return ($n * 86400) }
-  }
-}
-
-function ConvertTo-QueryEpoch([string]$spec) {
-  $s = ([string]$spec).Trim()
-  if (-not $s) { return [long]-1 }
-  $d = [DateTime]::MinValue
-  $ok = [DateTime]::TryParse($s, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$d)
-  if (-not $ok) { $ok = [DateTime]::TryParse($s, [ref]$d) }
-  if (-not $ok) { return [long]-1 }
-  return ([long](([DateTimeOffset]$d.ToUniversalTime()).ToUnixTimeSeconds()))
-}
-
 # A query is a bag of filters; an empty one matches everything. Count is how many filters
 # were given, which is what the panel uses to tell "no search" from "no results".
 function New-Query {
@@ -121,18 +94,18 @@ function New-Query {
       }
       'age' {
         $q.Count++
-        $secs = ConvertTo-QuerySeconds $value
+        $secs = ConvertTo-TimeSpan $value
         if ($secs -lt 0) { $q.Bad.Add('age: wants 7d, 12h or 30m') }
         else { $q.Older = [long]((Get-Epoch) - $secs) }
       }
       'newer' {
         $q.Count++
-        $t = ConvertTo-QueryEpoch $value
+        $t = ConvertTo-TimeEpoch $value
         if ($t -lt 0) { $q.Bad.Add('newer: needs a date') } else { $q.Newer = $t }
       }
       'older' {
         $q.Count++
-        $t = ConvertTo-QueryEpoch $value
+        $t = ConvertTo-TimeEpoch $value
         if ($t -lt 0) { $q.Bad.Add('older: needs a date') } else { $q.Older = $t }
       }
       'py' {

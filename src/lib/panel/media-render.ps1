@@ -3,7 +3,8 @@
 #
 # lib/media.ps1 owns the files and knows nothing about drawing; this module reads them and
 # only the panel (`lib/panel/picker.ps1`) and the card (`lib/panel/preview.ps1`) call it. Keeping the two
-# apart means the capture path never loads GDI+ code it does not use.
+# apart means the capture path never loads GDI+ code it does not use. Reading a png header
+# without decoding the picture is utils/image.ps1, which needs no GDI+ at all.
 #
 # Everything returned here belongs to a cache: a caller draws the bitmap and never disposes it.
 
@@ -290,18 +291,6 @@ $script:CardPicRows = 6
 # The fallback for a picture that never says its size: one marker paragraph followed by the
 # empty ones the painted block covers.
 $script:CardPicCell = "\par" + $script:CardPicToken + ("\par" * $script:CardPicRows)
-
-# The pixel size a png states in its own header, or $null when the bytes are not a png. A
-# picture past the bitmap budget is never decoded, so its header is the only thing that can tell
-# the card what shape the picture has.
-function Get-PngPixelSize($bytes) {
-  if ($null -eq $bytes -or $bytes.Length -lt 24) { return $null }
-  if ($bytes[0] -ne 137 -or $bytes[1] -ne 80 -or $bytes[2] -ne 78 -or $bytes[3] -ne 71) { return $null }
-  $w = ([long]$bytes[16] * 16777216) + ([long]$bytes[17] * 65536) + ([long]$bytes[18] * 256) + [long]$bytes[19]
-  $h = ([long]$bytes[20] * 16777216) + ([long]$bytes[21] * 65536) + ([long]$bytes[22] * 256) + [long]$bytes[23]
-  if ($w -lt 1 -or $h -lt 1) { return $null }
-  return @([int]$w, [int]$h)
-}
 
 # A block shaped like the picture: as wide as it may be, as many text lines tall as that width
 # needs. Counted in the card's own line height, so the marker paragraph that reserves the room

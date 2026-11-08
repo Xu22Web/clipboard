@@ -209,7 +209,7 @@ try {
     'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch',
     'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey',
     'utils\query-words', 'utils\pinyin', 'utils\transfer', 'utils\apprules', 'utils\fileio',
-    'utils\hash', 'utils\cfhtml',
+    'utils\hash', 'utils\cfhtml', 'utils\image',
     'schema\clipboard', 'schema\theme')
   $missingLib = @()
   foreach ($m in $requiredLib) {
