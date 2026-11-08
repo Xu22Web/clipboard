@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 <#
-  scripts\shot.ps1 - refresh docs\screenshot-dark.png and screenshot-light.png.
+  tools\shot.ps1 - refresh docs\screenshot-dark.png and screenshot-light.png.
 
       cli shot                 both themes
       cli shot -Theme light    one theme

@@ -42,6 +42,7 @@ function Invoke-Cli([string[]]$cliArgs) {
 # cli.ini [dev] holds Interval, Includes, Excludes and Rebuild. It is read with the tooling's
 # own ini parser, so a tool script never loads a module out of src\.
 . (Join-Path $root 'tools\utils\ini.ps1')
+. (Join-Path $root 'tools\utils\schema.ps1')
 . (Join-Path $root 'tools\utils\globs.ps1')
 $cfgFile = Join-Path $root 'cli.ini'
 if (-not (Test-Path -LiteralPath $cfgFile)) {
@@ -50,15 +51,11 @@ if (-not (Test-Path -LiteralPath $cfgFile)) {
 }
 $cfg = Import-IniMap $cfgFile
 
-# cli.ini is the only place a dev setting may live: a missing key is a broken file, not a
-# default to fall back on. An empty Excludes= is valid and means "exclude nothing".
-$requiredKeys = @('Interval', 'Includes', 'Excludes', 'Rebuild')
-$missingKeys = @()
-foreach ($key in $requiredKeys) {
-  if (-not $cfg.ContainsKey('dev.' + $key) -and -not $cfg.ContainsKey($key)) { $missingKeys += $key }
-}
-if ($missingKeys.Count -gt 0) {
-  Write-Host ('[x] cli.ini [dev] is missing: ' + ($missingKeys -join ', '))
+# cli.ini is the only place a dev setting may live: a missing key, an unknown key or a wrong
+# value is a broken file, not a default to fall back on (tools\schema\cli.ps1).
+$problems = @(Test-ToolConfigMap (Import-ToolSchema (Join-Path $root 'tools\schema\cli.ps1')) $cfg 'cli.ini' 'dev')
+if ($problems.Count -gt 0) {
+  foreach ($p in $problems) { Write-Host ('[x] ' + $p) }
   exit 1
 }
 
@@ -76,14 +73,9 @@ function Split-GlobList([string]$value) {
 
 # -Interval overrides the file for a single run; without the switch the file decides
 if ($Interval -le 0) {
-  $rawInterval = Cfg 'Interval'
-  if ($rawInterval -notmatch '^\d+$' -or [int]$rawInterval -le 0) {
-    Write-Host ('[x] cli.ini [dev] Interval is not a positive number of milliseconds: ' + $rawInterval)
-    exit 1
-  }
-  $Interval = [int]$rawInterval
+  $Interval = [int](Cfg 'Interval')
 }
-$rebuild = @('1', 'true', 'yes', 'on') -contains (Cfg 'Rebuild').ToLowerInvariant()
+$rebuild = (Cfg 'Rebuild') -eq '1'
 
 # What the loop watches: the include globs minus the exclude globs. Both are written relative
 # to src\ and read again on every poll, so a file that appears or disappears counts as a
@@ -91,10 +83,6 @@ $rebuild = @('1', 'true', 'yes', 'on') -contains (Cfg 'Rebuild').ToLowerInvarian
 # size, window position) and watching it would restart the tool on its own writes.
 $includeGlobs = Split-GlobList (Cfg 'Includes')
 $excludeGlobs = Split-GlobList (Cfg 'Excludes')
-if ($includeGlobs.Count -eq 0) {
-  Write-Host '[x] cli.ini [dev] Includes lists nothing to watch'
-  exit 1
-}
 
 # The entry point builds every module path from $libDir, so its dot-source lines resolve to
 # real files: following them gives the exact load list, the way a bundler follows imports.
@@ -321,7 +309,7 @@ function Start-DevLoop {
     # source, so a C# edit has to recompile it before the restart; otherwise the restart
     # compiles it in-process, which costs about a second per start.
     if ($rebuild -and @($changes | Where-Object { $_ -match '\.cs$' }).Count -gt 0) {
-      $assemblyScript = Join-Path $root 'scripts\build-assembly.ps1'
+      $assemblyScript = Join-Path $root 'tools\build-assembly.ps1'
       if (Test-Path -LiteralPath $assemblyScript) {
         Write-Host '[..] the C# changed - rebuilding lib\assembly\clipboard.dll'
         $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $assemblyScript -Out (Join-Path $srcDir 'lib\assembly\clipboard.dll') 2>&1

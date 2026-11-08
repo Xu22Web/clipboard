@@ -1,4 +1,4 @@
-# scripts\globs.ps1 - the glob rules cli.ini uses for Includes and Excludes.
+# tools\utils\globs.ps1 - the glob rules cli.ini uses for Includes and Excludes.
 #
 # One syntax for every list: "*" and "?" match inside one file name, "**/" walks any number
 # of folders, and the text in front of the last "/" is the folder a pattern starts in.

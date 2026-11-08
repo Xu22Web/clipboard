@@ -46,17 +46,23 @@ $ErrorActionPreference = 'Stop'
 $testsRoot = $PSCommandPath | Split-Path -Parent
 $repoRoot = Split-Path -Parent $testsRoot
 
-# cli.ini is read with the parser the tool itself uses
-. (Join-Path $repoRoot 'src\utils\ini.ps1')
-$cfg = @{}
+# cli.ini is read and checked with the tooling's own parser and schema: the driver needs
+# [test] (Groups, Workers), and a file that does not match tools\schema\cli.ps1 is a broken
+# file rather than something to guess a default for.
+. (Join-Path $repoRoot 'tools\utils\ini.ps1')
+. (Join-Path $repoRoot 'tools\utils\schema.ps1')
 $iniPath = Join-Path $repoRoot 'cli.ini'
-if (Test-Path -LiteralPath $iniPath) {
-  $cfg = (Read-IniDoc ([IO.File]::ReadAllLines($iniPath, [Text.Encoding]::UTF8))).Map
+$cfg = @{}
+if (Test-Path -LiteralPath $iniPath) { $cfg = Import-IniMap $iniPath }
+$cfgProblems = @(Test-ToolConfigMap (Import-ToolSchema (Join-Path $repoRoot 'tools\schema\cli.ps1')) $cfg 'cli.ini' 'test')
+if ($cfgProblems.Count -gt 0) {
+  foreach ($p in $cfgProblems) { Write-Host ('[x] ' + $p) }
+  exit 1
 }
 
-function Get-Cfg([string]$key, [string]$fallback) {
-  if ($cfg.ContainsKey($key) -and [string]$cfg[$key]) { return [string]$cfg[$key] }
-  return $fallback
+function Get-Cfg([string]$key) {
+  if ($cfg.ContainsKey($key)) { return [string]$cfg[$key] }
+  return ''
 }
 
 function Split-List([string]$value) {

@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 <#
-  scripts\test.ps1 - run the self test suite.
+  tools\test.ps1 - run the self test suite.
 
       cli test                       every part (tests\run.ps1)
       cli test -Unit                 only the in-process unit part

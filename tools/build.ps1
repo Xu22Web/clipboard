@@ -52,17 +52,16 @@ if (-not $Config) { $Config = Join-Path $root 'cli.ini' }
 if (-not (Test-Path -LiteralPath $Config)) { Fail ('missing settings file: ' + $Config) }
 $cfg = Import-IniMap $Config
 
-# cli.ini is the only place a build setting may live: a missing key is a broken file, not a
-# default to fall back on, so the whole [build] section is checked once here. An empty value
-# is valid - Plugins= and Themes= mean "everything", Includes= and Excludes= mean "none".
-$requiredKeys = @('OutDir', 'Minify', 'Rename', 'Verify', 'IncludeDocs', 'Overwrite', 'Zip',
-  'Client', 'Assembly', 'Plugins', 'Themes', 'Includes', 'Excludes')
-$missingKeys = @()
-foreach ($key in $requiredKeys) {
-  if (-not $cfg.ContainsKey('build.' + $key) -and -not $cfg.ContainsKey($key)) { $missingKeys += $key }
-}
-if ($missingKeys.Count -gt 0) {
-  Fail ((Split-Path -Leaf $Config) + ' [build] is missing: ' + ($missingKeys -join ', '))
+# cli.ini is the only place a build setting may live. It is checked against
+# tools\schema\cli.ps1 before anything else happens: a missing key, an unknown key, a value of
+# the wrong type or a number outside its range stops the build with the list of problems, so a
+# typo cannot turn into "the build quietly stopped minifying". An empty Plugins= or Themes= is
+# valid and means "ship none".
+. (Join-Path $root 'tools\utils\schema.ps1')
+$problems = @(Test-ToolConfigMap (Import-ToolSchema (Join-Path $root 'tools\schema\cli.ps1')) $cfg (Split-Path -Leaf $Config) 'build')
+if ($problems.Count -gt 0) {
+  foreach ($p in $problems) { Write-Host ('[x] ' + $p) }
+  exit 1
 }
 
 function Cfg([string]$key) {
@@ -132,7 +131,7 @@ Write-Step ('  version ' + $version + '   (package.ini)')
 Write-Step ('  output  ' + $dest)
 Write-Step ('  minify  ' + $(if ($minify) { 'yes' } else { 'no' }) + '   rename ' + $(if ($rename) { 'yes' } else { 'no' }) + '   verify ' + $(if ($verify) { 'yes' } else { 'no' }) + '   zip ' + $(if ($wantZip) { 'yes' } else { 'no' }))
 Write-Step ('  docs    ' + $(if ($includeDocs) { 'yes' } else { 'no' }) + '   overwrite ' + $(if ($overwrite) { 'yes' } else { 'no' }))
-Write-Step ('  plugins ' + $(if ($pluginNames.Count) { $pluginNames -join ',' } else { 'all' }) + '   themes ' + $(if ($themeNames.Count) { $themeNames -join ',' } else { 'all' }))
+Write-Step ('  plugins ' + $(if ($pluginNames.Count) { $pluginNames -join ',' } else { 'none' }) + '   themes ' + $(if ($themeNames.Count) { $themeNames -join ',' } else { 'none' }))
 
 if ((Test-Path -LiteralPath $dest) -and -not $overwrite) { Fail ('already exists: ' + $dest + '   (set Overwrite=1 to replace it)') }
 
@@ -149,15 +148,13 @@ $themeFiles = @()
 foreach ($kind in @(@{ Dir = 'plugins'; Ext = '.ps1'; Names = $pluginNames }, @{ Dir = 'themes'; Ext = '.ini'; Names = $themeNames })) {
   $srcDir = Join-Path $srcRoot $kind.Dir
   if (-not (Test-Path -LiteralPath $srcDir)) { Fail ('missing: src\' + $kind.Dir + '\') }
+  # the list is the package: an empty value ships none of them, it does not fall back to
+  # "every file in the folder". Adding a plugin to the package therefore means naming it.
   $picked = @()
-  if ($kind.Names.Count -eq 0) {
-    $picked = @(Get-ChildItem -LiteralPath $srcDir -File | ForEach-Object { $_.FullName })
-  } else {
-    foreach ($n in $kind.Names) {
-      $file = Join-Path $srcDir ($n + $kind.Ext)
-      if (-not (Test-Path -LiteralPath $file)) { Fail ('not found in ' + $kind.Dir + ': ' + $n) }
-      $picked += $file
-    }
+  foreach ($n in @($kind.Names)) {
+    $file = Join-Path $srcDir ($n + $kind.Ext)
+    if (-not (Test-Path -LiteralPath $file)) { Fail ('not found in ' + $kind.Dir + ': ' + $n) }
+    $picked += $file
   }
   if ($kind.Dir -eq 'plugins') { $pluginFiles = $picked } else { $themeFiles = $picked }
 }
@@ -167,13 +164,10 @@ foreach ($kind in @(@{ Dir = 'plugins'; Ext = '.ps1'; Names = $pluginNames }, @{
 $pluginSchemas = @()
 $schemaPluginDir = Join-Path $srcRoot 'schema\plugins'
 if (Test-Path -LiteralPath $schemaPluginDir) {
-  if ($pluginNames.Count -eq 0) {
-    $pluginSchemas = @(Get-ChildItem -LiteralPath $schemaPluginDir -Filter '*.ps1' -File | ForEach-Object { $_.FullName })
-  } else {
-    foreach ($n in $pluginNames) {
-      $file = Join-Path $schemaPluginDir ($n + '.ps1')
-      if (Test-Path -LiteralPath $file) { $pluginSchemas += $file }
-    }
+  # the schema list follows the plugin list: an unshipped plugin ships no key table either
+  foreach ($n in @($pluginNames)) {
+    $file = Join-Path $schemaPluginDir ($n + '.ps1')
+    if (Test-Path -LiteralPath $file) { $pluginSchemas += $file }
   }
 }
 

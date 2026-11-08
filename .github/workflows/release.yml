@@ -38,10 +38,13 @@ jobs:
 
       - name: Package
         shell: pwsh
-        # 发版要 zip：build.ini 默认 Zip=0，这里写一份只覆盖需要那几个键的配置，其余键
-        # 用 scripts\build.ps1 的内置默认（Minify/Rename/IncludeDocs 都是 1）。
+        # 发版要 zip：cli.ini 默认 Zip=0，这里写一份完整配置（[build] 的键必须写全，
+        # tools\build.ps1 对缺失的键直接报错），只改 Zip 与 Overwrite。
         run: |
-          @('OutDir=dist', 'Zip=1', 'Overwrite=1', 'Verify=1') |
+          @('OutDir=dist', 'Minify=1', 'Rename=1', 'Verify=1', 'IncludeDocs=0',
+            'Overwrite=1', 'Zip=1', 'Client=1', 'Assembly=1',
+            'Plugins=entry-actions,item-marks,retention,transform',
+            'Themes=win11-dark,win11-light', 'Includes=', 'Excludes=') |
             Set-Content -LiteralPath build-release.ini -Encoding ascii
           .\cli.ps1 build -Config build-release.ini
           Remove-Item -LiteralPath build-release.ini -Force

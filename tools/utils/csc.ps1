@@ -1,4 +1,4 @@
-# scripts\csc.ps1 - find the C# compiler and report what it says.
+# tools\utils\csc.ps1 - find the C# compiler and report what it says.
 #
 # Both build scripts compile with the compiler that ships inside the .NET Framework 4, which
 # Windows 10 and 11 already have. Nothing here writes a file: it only locates the tool and

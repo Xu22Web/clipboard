@@ -19,25 +19,32 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSCommandPath
 Set-Location -LiteralPath $root
 $pkgPath = Join-Path $root 'package.ini'
-$iniTools = Join-Path $root 'src\utils'
+$tools = Join-Path $root 'tools'
 
 if (-not (Test-Path -LiteralPath $pkgPath)) {
   Write-Host ('[x] missing: ' + $pkgPath)
   exit 1
 }
-foreach ($tool in @('ini', 'inifile')) {
-  $toolPath = Join-Path $iniTools ($tool + '.ps1')
+foreach ($tool in @('utils\ini.ps1', 'utils\schema.ps1', 'schema\package.ps1')) {
+  $toolPath = Join-Path $tools $tool
   if (-not (Test-Path -LiteralPath $toolPath)) {
     Write-Host ('[x] missing: ' + $toolPath)
     exit 1
   }
 }
-# the repository has one ini layer (src\utils\ini.ps1 + inifile.ps1); the tooling uses it
-# too, so a rule cannot hold for clipboard.ini and not for package.ini
-. (Join-Path $iniTools 'ini.ps1')
-. (Join-Path $iniTools 'inifile.ps1')
-$pkgDoc = Import-Ini $pkgPath
+# the tooling has its own ini layer (tools\utils\ini.ps1, the same rules as the program's) and
+# its own schemas (tools\schema), so no tool script loads a module out of src\
+. (Join-Path $tools 'utils\ini.ps1')
+. (Join-Path $tools 'utils\schema.ps1')
+$pkgDoc = Read-IniDoc ([IO.File]::ReadAllLines($pkgPath, [Text.Encoding]::UTF8))
 $pkg = $pkgDoc.Map
+# package.ini describes the tooling itself, so it is checked before a command runs: a mistyped
+# section or a command with no command line is a broken file, not "no such command"
+$pkgProblems = @(Test-ToolConfigMap (Import-ToolSchema (Join-Path $tools 'schema\package.ps1')) $pkg 'package.ini')
+if ($pkgProblems.Count -gt 0) {
+  foreach ($p in $pkgProblems) { Write-Host ('[x] ' + $p) }
+  exit 1
+}
 $order = New-Object System.Collections.Generic.List[string]
 foreach ($k in @($pkgDoc.Keys)) {
   if ($k -like 'scripts.*') { $order.Add($k.Substring(8)) }

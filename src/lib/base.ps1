@@ -23,7 +23,7 @@ $script:DataVersion = 1
 
 # --- version --------------------------------------------------------------------
 # package.ini owns the number. This is the development path: read it from the file above the
-# script folder. scripts\build.ps1 replaces the marked block with a literal assignment, so a
+# script folder. tools\build.ps1 replaces the marked block with a literal assignment, so a
 # package carries the value and reads nothing at run time.
 #@version-begin
 $script:Version = '0.0.0'

@@ -327,7 +327,7 @@ try {
 
     # the renamer replaces a variable by its parsed extent, and a splat's extent starts at
     # the '@': rebuilding it as `$name` turns `f @h` into `f $h`, a positional argument
-    $minifyPath = Join-Path $repoRoot 'scripts\minify.ps1'
+    $minifyPath = Join-Path $repoRoot 'tools\utils\minify.ps1'
     if (Test-Path -LiteralPath $minifyPath) {
       . $minifyPath
       $tmpIn = Join-Path ([IO.Path]::GetTempPath()) ('splat-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.ps1')
@@ -380,6 +380,31 @@ try {
       }
     }
     Check 'struct' 'ini files use lower case sections and PascalCase keys' ($badIni.Count -eq 0) ($badIni -join ', ')
+
+    # The program and the tooling each carry an ini parser (src\utils\ini.ps1 + inifile.ps1 and
+    # tools\utils\ini.ps1). The rules are the same on paper; this keeps them the same in fact,
+    # because a rule that holds for clipboard.ini and not for cli.ini fails silently. Both files
+    # define Read-IniDoc, so the program copy is parsed first and then replaced by the tool copy.
+    # The tooling schemas and the two settings files need no test here: every command validates
+    # the file it reads against its schema before acting on it.
+    $iniSample = @(
+      '# a comment', '; another', '[section]', 'Key=value', 'Quoted="a b"',
+      'Empty=', 'NoEquals', '  padded  =  text  ', 'Dup=1', 'Dup=2', 'Top=1'
+    )
+    . (Join-Path $defaultSource 'utils\ini.ps1')
+    $programDoc = Read-IniDoc $iniSample
+    . (Join-Path $repoRoot 'tools\utils\ini.ps1')
+    $toolDoc = Read-IniDoc $iniSample
+    $iniDiff = @()
+    foreach ($k in @($programDoc.Map.Keys)) {
+      if (-not $toolDoc.Map.ContainsKey($k)) { $iniDiff += ('src only: ' + $k); continue }
+      if ([string]$programDoc.Map[$k] -cne [string]$toolDoc.Map[$k]) { $iniDiff += ('differs: ' + $k) }
+    }
+    foreach ($k in @($toolDoc.Map.Keys)) {
+      if (-not $programDoc.Map.ContainsKey($k)) { $iniDiff += ('tools only: ' + $k) }
+    }
+    Check 'struct' 'the program and the tooling parse ini the same way' ($iniDiff.Count -eq 0) ($iniDiff -join ', ')
+
     $rootHits = ([regex]::Matches([IO.File]::ReadAllText($entryPath), '(?m)^\$Root = Split-Path -Parent \$PSCommandPath\s*$')).Count
     Check 'struct' 'tool root is computed once, in the entry' ($rootHits -eq 1) ([string]$rootHits + ' occurrence(s)')
 

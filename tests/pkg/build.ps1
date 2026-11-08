@@ -19,7 +19,7 @@ $intDir = New-FakeSandbox 'cli'
 $cfg2 = Join-Path $intDir 'clipboard.ini'
 
 
-    # scripts\build.ps1 is driven by a settings file and rewrites the scripts from their
+    # tools\build.ps1 is driven by a settings file and rewrites the scripts from their
     # syntax tree, never packing the history
     $pkgOut = Join-Path $tmpRoot 'pkg'
     $build = Join-Path $repoRoot 'tools\build.ps1'
@@ -30,8 +30,12 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
     Check 'int' 'package.ini ships with the repo' (Test-Path -LiteralPath (Join-Path $repoRoot 'package.ini')) ''
     # every [build] key has to be present: the build reads cli.ini and refuses to invent a
     # default, so each case starts from the whole section and overrides what it tests
+    # an empty Plugins= / Themes= means "ship none", so the defaults name every file: the
+    # cases that trim the list override these two keys
     $buildDefaults = @('Minify=1', 'Rename=1', 'Verify=0', 'IncludeDocs=1', 'Overwrite=1', 'Zip=0',
-      'Client=0', 'Assembly=0', 'Plugins=', 'Themes=', 'Includes=', 'Excludes=')
+      'Client=0', 'Assembly=0',
+      'Plugins=entry-actions,item-marks,retention,transform', 'Themes=win11-dark,win11-light',
+      'Includes=', 'Excludes=')
     function Write-BuildCfg([string]$outDir, [string[]]$override) {
       $lines = @('OutDir=' + $outDir) + $buildDefaults
       foreach ($line in @($override)) {
