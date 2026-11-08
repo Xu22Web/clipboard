@@ -201,9 +201,24 @@ function Draw-CardContent($g, $win, $ps, $c) {
   # the caption line is the card's own chrome, so the wait belongs there: a line inside the
   # body would look like content the entry does not have
   $head = [string]$ps.Head
-  if ($ps.Pending) { $head = $head + '  - rendering the preview...' }
+  if ($ps.Pending) {
+    # three dots of a fixed width, so the caption does not jitter as they grow
+    $dots = '...'
+    if ($script:Animations) {
+      $k = [int](((Get-Date).TimeOfDay.TotalMilliseconds / 400) % 4)
+      $dots = @('   ', '.  ', '.. ', '...')[$k]
+    }
+    $head = $head + ' - rendering' + $dots
+  }
   $g.DrawString($head, $c.Small, $c.DimBrush, $caption, $c.Sf)
   $y += $c.LineH
+  if ($ps.Pending -and $null -eq $ps.Bmp) {
+    # the page is still being built: its room is taken now, so the card settles instead of
+    # growing when the page arrives, and the bars breathe so a second of work does not read
+    # as a stalled card
+    Draw-CardSkeleton $g $c ([int]$y)
+    return
+  }
   $bmp = $ps.Bmp
   if ($null -ne $bmp) {
     # already scaled to the card width by lib/media.ps1: painting it is a blit, not a resize.
@@ -234,6 +249,40 @@ function Draw-CardContent($g, $win, $ps, $c) {
     $rect = New-Object Drawing.RectangleF -ArgumentList @([single]$c.Pad, [single]$y, [single]($c.W - 2 * $c.Pad), [single]$c.LineH)
     $g.DrawString($line, $c.Font, $c.InkBrush, $rect, $c.Sf)
     $y += $c.LineH
+  }
+}
+
+# The room a page will take, sketched as bars: the same width the page uses and the same
+# height budget, so the card has one size from the first frame to the last. The bars fade in and
+# out on the panel's own tick, which is already running while the job is on its way.
+function Draw-CardSkeleton($g, $c, [int]$top) {
+  $luma = (([int]$c.Bg.R + [int]$c.Bg.G + [int]$c.Bg.B) / 3)
+  $step = $(if ($luma -lt 128) { 24 } else { -18 })
+  $tone = New-TonedColor $c.Bg $step
+  $alpha = 255
+  if ($script:Animations) {
+    $phase = (((Get-Date).TimeOfDay.TotalMilliseconds / 1200) * 2 * [Math]::PI)
+    $alpha = [int](255 * (0.6 + 0.4 * (0.5 + 0.5 * [Math]::Sin($phase))))
+  }
+  $brush = New-Object Drawing.SolidBrush ([Drawing.Color]::FromArgb($alpha, $tone.R, $tone.G, $tone.B))
+  $barH = [int](Px 10)
+  $full = $c.W - 2 * $c.Pad
+  $bottom = $top + $c.ImgH
+  # as many bars as the reserved room takes, so the whole area is spoken for and the page does
+  # not arrive on top of a half empty card
+  $count = [Math]::Max(3, [int][Math]::Floor($c.ImgH / $c.LineH))
+  $ratios = @(1.0, 0.92, 0.97, 0.88, 0.94, 0.62, 0.86, 0.74)
+  $y = $top
+  try {
+    for ($k = 0; $k -lt $count; $k++) {
+      if ($y + $barH -gt $bottom) { break }
+      $path = New-RoundPath ([int]$c.Pad) $y ([int]($full * $ratios[$k % $ratios.Count])) $barH (Px 4)
+      $g.FillPath($brush, $path)
+      $path.Dispose()
+      $y += $c.LineH
+    }
+  } finally {
+    $brush.Dispose()
   }
 }
 
@@ -322,13 +371,16 @@ function Update-Preview($ps, $record, $anchorTop, $cfg, $panel) {
 # Place the card beside the panel and draw it. Separate from Update-Preview because a
 # background render finishes later and only has to repaint, not recompute the content.
 function Show-PreviewCard($ps, $cfg, $panel, $anchorTop) {
-  if ($null -ne $ps.Bmp) {
+  $w = $cfg.W
+  if ($ps.Pending -and $null -eq $ps.Bmp) {
+    # the page is not here yet: take the room it may need, so arriving is a repaint and not a
+    # resize
+    $h = $cfg.Pad * 2 + $cfg.LineH + $cfg.ImgH
+  } elseif ($null -ne $ps.Bmp) {
     # an image card hugs the picture; a rendered page uses the full card width
-    $w = $cfg.W
     if ($ps.Kind -eq 'image') { $w = [Math]::Max((Px 220), [Math]::Min($cfg.W, $ps.Bmp.Width + 2 * $cfg.Pad)) }
     $h = $cfg.Pad * 2 + $cfg.LineH + $ps.Bmp.Height
   } else {
-    $w = $cfg.W
     $h = $cfg.Pad * 2 + $cfg.LineH * (1 + $ps.Lines.Count)
   }
   # beside the panel, on the side that has room; never under the cursor, so the row keeps
@@ -560,6 +612,14 @@ function Step-PreviewCard($ps) {
       $moved = $true
     } else {
       $ps.FadeAt = $null
+    }
+  }
+  # the bars breathe while the job runs: the card has to be repainted for that to be seen
+  if ($ps.Pending -and $null -eq $ps.Bmp -and $script:Animations) {
+    $win = $ps.Win
+    if ($null -ne $win -and -not $win.IsDisposed -and $win.Visible) {
+      try { $win.Invalidate() } catch { }
+      $moved = $true
     }
   }
   if ($null -eq $ps.Handle) { return $moved }
