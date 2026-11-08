@@ -4,6 +4,34 @@
 # The suppression state (LastSeq) lives here because the capture loop compares against it.
 # Writing to it is lib/clip.ps1's job - see Set-LastCapture there.
 
+# The text of the clear confirmation, and the two numbers behind it. It counts rows, not mark
+# names: the kept names are s and p whether or not a single entry carries them, so counting
+# names said "2 pinned entries stay" on a history that had no pinned entry at all.
+#   @{ Text; Gone; Stay }
+function Get-ClearPrompt($records) {
+  $recs = @($records)
+  $keeps = @(Get-ClearKeepMarks)
+  $stay = 0
+  $words = [ordered]@{}
+  foreach ($r in $recs) {
+    $m = [string]$r.Marks
+    if (-not $m) { continue }
+    $hit = ''
+    foreach ($k in $keeps) { if ($m.Contains([string]$k)) { $hit = [string]$k; break } }
+    if (-not $hit) { continue }
+    $stay++
+    $w = Get-MarkWord $hit
+    if ($words.Contains($w)) { $words[$w]++ } else { $words[$w] = 1 }
+  }
+  $gone = $recs.Count - $stay
+  $text = 'Delete ' + $gone + ' ' + $(if ($gone -eq 1) { 'entry' } else { 'entries' }) + ' from the history?'
+  if ($stay -gt 0) {
+    $parts = @($words.Keys | Sort-Object | ForEach-Object { [string]$words[$_] + ' ' + [string]$_ })
+    $text += "`n`n" + $stay + ' ' + $(if ($stay -eq 1) { 'entry stays' } else { 'entries stay' }) + ' (' + ($parts -join ', ') + ').'
+  }
+  return @{ Text = $text; Gone = $gone; Stay = $stay }
+}
+
 function Start-Serve {
   $created = $false
   $mutex = New-Object System.Threading.Mutex($true, $MutexName, [ref]$created)
@@ -127,11 +155,12 @@ function Invoke-ServeOnce {
     $iClear = $dm.Items.Add('Clear history...')
     $iClear.Add_Click({
         try {
-          $n = @(Get-Records).Count
-          $keep = @(Get-ClearKeepMarks).Count
-          $q = 'Delete ' + $n + ' ' + $(if ($n -eq 1) { 'entry' } else { 'entries' }) + ' from the history?'
-          if ($keep -gt 0) { $q += "`n`n" + $keep + ' pinned ' + $(if ($keep -eq 1) { 'entry stays' } else { 'entries stay' }) + '.' }
-          $r = [Windows.Forms.MessageBox]::Show($q, 'clipboard', [Windows.Forms.MessageBoxButtons]::YesNo, [Windows.Forms.MessageBoxIcon]::Question)
+          $prompt = Get-ClearPrompt @(Get-Records)
+          if ([int]$prompt.Gone -le 0) {
+            [void][Windows.Forms.MessageBox]::Show('Nothing to delete: every entry is kept by a mark.', 'clipboard', [Windows.Forms.MessageBoxButtons]::OK, [Windows.Forms.MessageBoxIcon]::Information)
+            return
+          }
+          $r = [Windows.Forms.MessageBox]::Show($prompt.Text, 'clipboard', [Windows.Forms.MessageBoxButtons]::YesNo, [Windows.Forms.MessageBoxIcon]::Question)
           if ($r -ne [Windows.Forms.DialogResult]::Yes) { return }
           Clear-Store (Get-ClearKeepMarks)
           Write-Log 'tray: history cleared'
