@@ -835,8 +835,10 @@ cli build -Config other.ini     # 换一份配置
 | `Verify` | `1` | `1` = 打包后对产物运行一遍 CLI 测试，不通过则删掉产物并失败 |
 | `Overwrite` | `0` | `1` = 覆盖同版本已存在的目录 |
 | `Zip` | `0` | `1` = 另外再打一个 `clipboard-<version>.zip` |
-| `Includes` | `src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,scripts/**.bat` | 产物文件清单，相对 `BaseUrl` 的通配，语法同 `[dev]`；必须写出且必须含 `src/<Name>.ps1`、`.cmd`、`.sh` |
+| `Includes` | 见下 | 产物文件清单，相对 `BaseUrl` 的通配，语法同 `[dev]`；必须写出且必须含 `src/<Name>.ps1`、`.cmd`、`.sh` |
 | `Excludes` | 空 | 从产物中剔除的文件，最后执行 |
+
+`Includes` 默认 `src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,scripts/**.bat`。
 
 ```ini
 # 精简包：一套主题 + 带文档，不压缩不验证
