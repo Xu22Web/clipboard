@@ -23,70 +23,132 @@ $intDir = New-FakeSandbox 'cli'
 $cfg2 = Join-Path $intDir 'clipboard.ini'
 
 
-    # ------------------------------------------- settings are never created silently
-    $roDir = New-FakeSandbox 'readonly'
-    $roIni = Join-Path $roDir 'clipboard.ini'
-    $cli = Start-CliRunner $roDir
-    function Run([string[]]$cliArgs, [switch]$Cold) { return (Invoke-CliRunner $cli $cliArgs -Cold:$Cold) }
-    foreach ($cmd in @(@('status'), @('config'), @('config', 'get', 'Theme'), @('themes'))) {
-      [void](Run $cmd)
-    }
-    [void](Run @('list') -Cold)
-    Check 'int' 'no ini created by read-only commands' (-not (Test-Path -LiteralPath $roIni)) $roIni
-    $o = Run @('status')
-    Check 'int' 'status labels missing ini' ($o -match 'missing, defaults in effect') $o.Trim()
-    $o = Run @('config')
-    Check 'int' 'config labels defaults' ($o -match '<- default') ''
-    $schemaKeys = New-Object System.Collections.Generic.List[string]
-    $inBase = $false
-    foreach ($ln in @($o -split "`n")) {
-      if ($ln -match '^\s+\[base\]') { $inBase = $true; continue }
-      if ($ln -match '^\s+\[plugin:') { $inBase = $false; continue }
-      if ($inBase -and $ln -match '^\s+([A-Za-z0-9_]+)\s+=') { $schemaKeys.Add($matches[1]) }
-    }
-    $o = Run @('config', 'init')
-    Check 'int' 'config init creates template' ((Test-Path -LiteralPath $roIni) -and ($o -match 'key\(s\) added')) $o.Trim()
-    $iniTpl = [IO.File]::ReadAllText($roIni)
-    $missing = @($schemaKeys | Where-Object { $iniTpl -notmatch ('(?m)^' + $_ + '=') })
-    Check 'int' 'template has every schema key' ($schemaKeys.Count -gt 20 -and $missing.Count -eq 0) (($missing -join ','))
-    # the template writes the numbers the schema declares, so the value a user reads in the
-    # comment and the value the program falls back to cannot drift apart (the schema variable
-    # itself is renamed in a package, so a packaged copy skips this comparison)
-    if (($script:IniSchema -is [System.Collections.IDictionary]) -and (@($script:IniSchema.Keys).Count -gt 20)) {
-      $tplDrift = @()
-      foreach ($k in @($script:IniSchema.Keys)) {
-        $spec = $script:IniSchema[$k]
-        if (-not $spec.Contains('Ref')) { continue }
-        $m = [regex]::Match($iniTpl, '(?m)^' + $k + '=(.*)$')
-        if (-not $m.Success) { continue }
-        $want = [string]$spec['Default']
-        $got = $m.Groups[1].Value.Trim()
-        if ($got -ne $want) { $tplDrift += ($k + '=' + $got + '/' + $want) }
+# settings are never created silently: the sandbox has no ini at all
+$roDir = New-FakeSandbox 'readonly'
+$roIni = Join-Path $roDir 'clipboard.ini'
+$cli = Start-CliRunner $roDir
+function Run([string[]]$cliArgs, [switch]$Cold) { return (Invoke-CliRunner $cli $cliArgs -Cold:$Cold) }
+
+Describe 'int' {
+  AfterAll { Stop-CliRunner $cli }
+
+  Describe 'read-only commands' {
+    BeforeAll {
+      foreach ($cmd in @(@('status'), @('config'), @('config', 'get', 'Theme'), @('themes'))) {
+        [void](Run $cmd)
       }
-      Check 'int' 'the template writes the schema defaults' ($tplDrift.Count -eq 0) (($tplDrift | Select-Object -First 4) -join '; ')
+      [void](Run @('list') -Cold)
     }
-    Check 'int' 'template lists every plugin by name' (($iniTpl -match '(?m)^Plugins=entry-actions,item-marks,retention,transform\r?$') -and (-not ($iniTpl -match 'PluginDisabled'))) ''
+    It 'no ini created by read-only commands' {
+      Expect (-not (Test-Path -LiteralPath $roIni)) $roIni
+    }
+    It 'status labels missing ini' {
+      $o = Run @('status')
+      Expect-Match $o 'missing, defaults in effect' $o.Trim()
+    }
+    It 'config labels defaults' {
+      $o = Run @('config')
+      Expect-Match $o '<- default' 'every key of a missing ini is a default'
+    }
+  }
+
+  Describe 'config init' {
+    BeforeAll {
+      # the keys the config view prints under [base], collected once for the template check
+      $script:schemaKeys = New-Object System.Collections.Generic.List[string]
+      $o = Run @('config')
+      $inBase = $false
+      foreach ($ln in @($o -split "`n")) {
+        if ($ln -match '^\s+\[base\]') { $inBase = $true; continue }
+        if ($ln -match '^\s+\[plugin:') { $inBase = $false; continue }
+        if ($inBase -and $ln -match '^\s+([A-Za-z0-9_]+)\s+=') { $script:schemaKeys.Add($matches[1]) }
+      }
+    }
+    It 'config init creates template' {
+      $o = Run @('config', 'init')
+      Expect ((Test-Path -LiteralPath $roIni) -and ($o -match 'key\(s\) added')) $o.Trim()
+    }
+    It 'template has every schema key' {
+      $iniTpl = [IO.File]::ReadAllText($roIni)
+      $missing = @($script:schemaKeys | Where-Object { $iniTpl -notmatch ('(?m)^' + $_ + '=') })
+      Expect ($script:schemaKeys.Count -gt 20 -and $missing.Count -eq 0) ($missing -join ',')
+    }
+    It 'template lists every plugin by name' {
+      $iniTpl = [IO.File]::ReadAllText($roIni)
+      Expect (($iniTpl -match '(?m)^Plugins=entry-actions,item-marks,retention,transform\r?$') -and (-not ($iniTpl -match 'PluginDisabled'))) 'the template should name every plugin once'
+    }
     # every plugin key is documented in its own [section], and none is written flat
-    Check 'int' 'config init documents every plugin key' (($iniTpl -match '(?m)^\[item-marks\]\r?$') -and ($iniTpl -match '(?m)^MaxPins=50\r?$') -and ($iniTpl -match '(?m)^StickyPins=1\r?$') -and ($iniTpl -match '(?m)^\[entry-actions\]\r?$') -and ($iniTpl -match '(?m)^Reveal=1\r?$') -and (-not ($iniTpl -match '(?m)^item-marks\.')) -and (-not ($iniTpl -match '(?m)^entry-actions\.'))) ''
+    It 'config init documents every plugin key' {
+      $iniTpl = [IO.File]::ReadAllText($roIni)
+      Expect (($iniTpl -match '(?m)^\[item-marks\]\r?$') -and ($iniTpl -match '(?m)^MaxPins=50\r?$') -and ($iniTpl -match '(?m)^StickyPins=1\r?$') -and ($iniTpl -match '(?m)^\[entry-actions\]\r?$') -and ($iniTpl -match '(?m)^Reveal=1\r?$') -and (-not ($iniTpl -match '(?m)^item-marks\.')) -and (-not ($iniTpl -match '(?m)^entry-actions\.'))) 'plugin keys belong in their own section'
+    }
+  }
 
-    # init must never overwrite a value the user set - only reset may throw settings away
-    [IO.File]::WriteAllText($roIni, ("Theme=win11-light`r`nRows=7`r`nMaxItems=42`r`n"), $Utf8)
-    $o = Run @('config', 'init')
-    $iniTpl = [IO.File]::ReadAllText($roIni)
-    Check 'int' 'config init keeps existing values' (($iniTpl -match '(?m)^Theme=win11-light\r?$') -and ($iniTpl -match '(?m)^Rows=7\r?$') -and ($iniTpl -match '(?m)^MaxItems=42\r?$')) $o.Trim()
-    Check 'int' 'config init still fills the gaps' ($iniTpl -match '(?m)^Hotkey=') ''
-    Check 'int' 'config init reports what it did' ($o -match 'key\(s\) added, \d+ unknown key') $o.Trim()
-    # a key this version does not know is commented out, not silently kept or dropped
-    [IO.File]::WriteAllText($roIni, ("Nonsense=1`r`nRows=7`r`n"), $Utf8)
-    $o = Run @('config', 'init')
-    $iniTpl = [IO.File]::ReadAllText($roIni)
-    Check 'int' 'config init comments out unknown keys' (($iniTpl -match '(?m)^#\s*\[unknown\]\s*Nonsense=1\r?$') -and (-not ($iniTpl -match '(?m)^Nonsense='))) $o.Trim()
-    Check 'int' 'the pruned key keeps its value' ($iniTpl -match '\[unknown\]\s*Nonsense=1') ''
-    Check 'int' 'pruning does not touch a known value' ($iniTpl -match '(?m)^Rows=7\r?$') ''
-    $o = Run @('config', 'reset')
-    $iniTpl = [IO.File]::ReadAllText($roIni)
-    Check 'int' 'config reset restores the defaults' (($iniTpl -match '(?m)^Theme=win11-dark\r?$') -and ($iniTpl -match '(?m)^Rows=10\r?$') -and ($iniTpl -match '(?m)^Animations=1\r?$')) $o.Trim()
+  # the template writes the numbers the schema declares, so the value a user reads in the
+  # comment and the value the program falls back to cannot drift apart (the schema variable
+  # itself is renamed in a package, so a packaged copy skips this comparison)
+  if (($script:IniSchema -is [System.Collections.IDictionary]) -and (@($script:IniSchema.Keys).Count -gt 20)) {
+    Describe 'template defaults' {
+      It 'the template writes the schema defaults' {
+        $iniTpl = [IO.File]::ReadAllText($roIni)
+        $tplDrift = @()
+        foreach ($k in @($script:IniSchema.Keys)) {
+          $spec = $script:IniSchema[$k]
+          if (-not $spec.Contains('Ref')) { continue }
+          $m = [regex]::Match($iniTpl, '(?m)^' + $k + '=(.*)$')
+          if (-not $m.Success) { continue }
+          $want = [string]$spec['Default']
+          $got = $m.Groups[1].Value.Trim()
+          if ($got -ne $want) { $tplDrift += ($k + '=' + $got + '/' + $want) }
+        }
+        Expect ($tplDrift.Count -eq 0) (($tplDrift | Select-Object -First 4) -join '; ')
+      }
+    }
+  }
 
+  # init must never overwrite a value the user set - only reset may throw settings away
+  Describe 'config init keeps what the user set' {
+    BeforeAll { [IO.File]::WriteAllText($roIni, ("Theme=win11-light`r`nRows=7`r`nMaxItems=42`r`n"), $Utf8) }
+    It 'config init keeps existing values' {
+      $o = Run @('config', 'init')
+      $iniTpl = [IO.File]::ReadAllText($roIni)
+      Expect (($iniTpl -match '(?m)^Theme=win11-light\r?$') -and ($iniTpl -match '(?m)^Rows=7\r?$') -and ($iniTpl -match '(?m)^MaxItems=42\r?$')) $o.Trim()
+    }
+    It 'config init still fills the gaps' {
+      $iniTpl = [IO.File]::ReadAllText($roIni)
+      Expect-Match $iniTpl '(?m)^Hotkey=' 'a missing key should be filled in'
+    }
+    It 'config init reports what it did' {
+      $o = Run @('config', 'init')
+      Expect-Match $o 'key\(s\) added, \d+ unknown key' $o.Trim()
+    }
+  }
 
-Stop-CliRunner $cli
+  # a key this version does not know is commented out, not silently kept or dropped
+  Describe 'unknown keys' {
+    BeforeAll { [IO.File]::WriteAllText($roIni, ("Nonsense=1`r`nRows=7`r`n"), $Utf8) }
+    It 'config init comments out unknown keys' {
+      $o = Run @('config', 'init')
+      $iniTpl = [IO.File]::ReadAllText($roIni)
+      Expect (($iniTpl -match '(?m)^#\s*\[unknown\]\s*Nonsense=1\r?$') -and (-not ($iniTpl -match '(?m)^Nonsense='))) $o.Trim()
+    }
+    It 'the pruned key keeps its value' {
+      $iniTpl = [IO.File]::ReadAllText($roIni)
+      Expect-Match $iniTpl '\[unknown\]\s*Nonsense=1' 'the pruned line should keep its value'
+    }
+    It 'pruning does not touch a known value' {
+      $iniTpl = [IO.File]::ReadAllText($roIni)
+      Expect-Match $iniTpl '(?m)^Rows=7\r?$' 'a known value must survive the prune'
+    }
+  }
+
+  Describe 'config reset' {
+    It 'config reset restores the defaults' {
+      $o = Run @('config', 'reset')
+      $iniTpl = [IO.File]::ReadAllText($roIni)
+      Expect (($iniTpl -match '(?m)^Theme=win11-dark\r?$') -and ($iniTpl -match '(?m)^Rows=10\r?$') -and ($iniTpl -match '(?m)^Animations=1\r?$')) $o.Trim()
+    }
+  }
+}
+
 Complete-TestPart -ResultFile $ResultFile -Quiet:$Quiet
