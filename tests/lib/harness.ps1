@@ -250,6 +250,7 @@ function Invoke-TestIt([string]$Name, [scriptblock]$Body, [object[]]$Arguments =
   $script:Harness.Asserts = $asserts
   $script:Harness.ExpectCount = -1
   $script:Harness.ExpectSome = $false
+  $script:Harness.SkipReason = ''
   $failure = ''
   foreach ($hook in @($Before)) {
     try { & $hook } catch { $failure = 'before each: ' + $_.Exception.Message; break }
@@ -262,10 +263,12 @@ function Invoke-TestIt([string]$Name, [scriptblock]$Body, [object[]]$Arguments =
   }
   $wanted = $script:Harness.ExpectCount
   $some = $script:Harness.ExpectSome
+  $skipReason = [string]$script:Harness.SkipReason
   $script:Harness.Asserts = $outer
   $script:Harness.ExpectCount = $outerCount
   $script:Harness.ExpectSome = $outerSome
   if ($failure) { Add-TestResult $group $Name 'FAIL' $failure; return }
+  if ($skipReason) { Add-TestResult $group $Name 'SKIP' $skipReason; return }
   $recorded = $asserts.Count
   if ($some -and $recorded -eq 0) { Add-TestResult $group $Name 'FAIL' 'expected at least one assertion, the block made none'; return }
   if ($wanted -ge 0 -and $recorded -ne $wanted) {
@@ -346,6 +349,12 @@ function Expect-Greater($Actual, $Expected, [string]$Message = '') {
 
 function Expect-Not([bool]$Ok, [string]$Message = '') {
   Expect (-not $Ok) $Message
+}
+
+# A row can find out at run time that it cannot be checked here - no compiler, another part
+# owning the clipboard. The reason replaces the row's result instead of failing it.
+function Skip-Test([string]$Why = 'skipped') {
+  $script:Harness.SkipReason = $Why
 }
 
 # the drawing helpers take a Graphics plus plain values, so a part can paint them onto a bitmap
