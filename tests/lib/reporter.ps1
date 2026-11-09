@@ -56,7 +56,17 @@ $script:TestReport = @{
 
 function Get-TestConsoleWidth {
   $w = 100
-  try { if (-not [Console]::IsOutputRedirected) { $w = [int][Console]::WindowWidth } } catch { $w = 100 }
+  # the smaller of the two: a width larger than the real one makes a row wrap, and a wrapped row
+  # takes a line the frame did not count
+  try {
+    if (-not [Console]::IsOutputRedirected) {
+      $w = [int][Console]::WindowWidth
+      try {
+        $raw = [int]$Host.UI.RawUI.WindowSize.Width
+        if ($raw -gt 0 -and $raw -lt $w) { $w = $raw }
+      } catch { }
+    }
+  } catch { $w = 100 }
   if ($w -lt 40) { $w = 40 }
   return $w
 }
@@ -470,6 +480,21 @@ function Write-TestWindow([string]$Message = '') {
   $columns = [Math]::Max(20, $script:TestReport.Width)
   $window = New-Object System.Collections.Generic.List[string]
   foreach ($line in @($script:TestReport.Window)) { $window.Add((Get-TestClip ([string]$line) $columns)) }
+  # A window taller than the console cannot be cleared: the cursor stops at the first row, the
+  # frame erases too little and every later frame repeats what is left. The summary block at the
+  # end is what has to stay, so the oldest running rows go first.
+  $screen = 0
+  try { $screen = [Console]::WindowHeight } catch { $screen = 0 }
+  if ($screen -gt 8) {
+    $budget = $screen - 4
+    if ($window.Count -gt $budget) {
+      $drop = $window.Count - $budget + 1
+      $kept = New-Object System.Collections.Generic.List[string]
+      $kept.Add((Get-TestDim (' ... ' + [string]$drop + ' more')))
+      for ($i = $window.Count - ($budget - 1); $i -lt $window.Count; $i++) { $kept.Add($window[$i]) }
+      $window = $kept
+    }
+  }
   $messageText = ''
   $messageRows = 0
   if ($Message) {
@@ -499,6 +524,12 @@ function Write-TestWindow([string]$Message = '') {
   if ($rows -gt 0) { [void]$sb.Append(($window -join "`r`n")) }
   [void]$sb.Append($esc + '[?2026l')
   Write-TestOut $sb.ToString()
+  if ([string]$env:CB_TEST_WINDOW_LOG) {
+    try {
+      $rec = 'old=' + $old + ' rows=' + $rows + ' msg=' + $messageRows + ' pad=' + $padding + ' cols=' + $columns + ' screen=' + $screen + "`r`n"
+      [IO.File]::AppendAllText([string]$env:CB_TEST_WINDOW_LOG, $rec)
+    } catch { }
+  }
   $script:TestReport.WindowHeight = $rows + [Math]::Max(0, $padding)
 }
 
