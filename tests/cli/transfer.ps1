@@ -23,53 +23,87 @@ $intDir = New-FakeSandbox 'cli'
 $cfg2 = Join-Path $intDir 'clipboard.ini'
 $runner = Start-CliRunner $intDir
 function Run([string[]]$cliArgs, [switch]$Cold) { return (Invoke-CliRunner $runner $cliArgs -Cold:$Cold) }
+# defined outside the blocks: a variable made inside a Describe is gone by the time its rows run
+$cliPath = Join-Path $repoRoot 'cli.ps1'
 
 
-    # diag and the native Win+V restore are gone: an old command name falls through to the
-    # usage text instead of doing something
+Describe 'int' {
+  AfterAll { Stop-CliRunner $runner }
+
+  # diag and the native Win+V restore are gone: an old command name falls through to the
+  # usage text instead of doing something
+  It 'removed commands fall back to usage' {
     $o = Run @('diag')
-    Check 'int' 'removed commands fall back to usage' ($o -match 'unknown command: diag') $o.Trim()
+    Expect-Match $o 'unknown command: diag' $o.Trim()
+  }
+  It 'restore-data is not a command any more' {
     $o = Run @('restore-data')
-    Check 'int' 'restore-data is not a command any more' ($o -match 'unknown command: restore-data') $o.Trim()
-
+    Expect-Match $o 'unknown command: restore-data' $o.Trim()
+  }
+  It 'help' {
     $o = Run @('help')
-    Check 'int' 'help' ($o -match 'Usage: clipboard') ''
-
+    Expect-Match $o 'Usage: clipboard' 'help should print the usage line'
+  }
+  It 'version prints the program and data version' {
     $o = Run @('version')
-    Check 'int' 'version prints the program and data version' ($o -match ('clipboard ' + [regex]::Escape($programVersion) + '\s+data v\d+')) $o.Trim()
-
+    Expect-Match $o ('clipboard ' + [regex]::Escape($programVersion) + '\s+data v\d+') $o.Trim()
+  }
+  It 'migrate reports a store it does not need to touch' {
     $o = Run @('migrate')
-    Check 'int' 'migrate reports a store it does not need to touch' ($o -match 'nothing to migrate|migrated') $o.Trim()
+    Expect-Match $o 'nothing to migrate|migrated' $o.Trim()
+  }
 
-    # export / import / backup, through the command line the user actually types
-    $jsonOut = Join-Path $intDir 'history-export.json'
-    [void](Run @('put', 'export round trip'))
-    $o = Run @('export', $jsonOut)
-    Check 'int' 'export writes a json file' ((Test-Path -LiteralPath $jsonOut) -and ($o -match 'exported')) $o.Trim()
-    $o = Run @('export', (Join-Path $intDir 'history-export.csv'))
-    Check 'int' 'export writes a csv file' ($o -match 'exported') $o.Trim()
-    $o = Run @('export', (Join-Path $intDir 'note.txt'), '-Media')
-    Check 'int' 'export refuses -Media for a format that cannot carry pictures' ($o -match 'needs a .json') $o.Trim()
-    $o = Run @('import', $jsonOut)
-    Check 'int' 'import reports what it did' ($o -match 'imported|already there') $o.Trim()
-    $o = Run @('backup', 'unit')
-    Check 'int' 'backup writes a snapshot' ($o -match 'backup written') $o.Trim()
-    $o = Run @('restore', 'nosuchsnapshot')
-    Check 'int' 'restore refuses an unknown snapshot' ($o -match 'no snapshot matches') $o.Trim()
-
-    # cli reads package.ini and runs the command line it finds there
-    $cli = Join-Path $repoRoot 'cli.ps1'
-    if (Test-Path -LiteralPath $cli) {
-      $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $cli 2>&1 | Out-String)
-      Check 'int' 'cli lists the declared commands' (($o -match '\bdev\b') -and ($o -match '\bbuild\b') -and ($o -match '\btest\b') -and ($o -match '\bshot\b')) $o.Trim()
-      $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $cli 'nosuchcmd' 2>&1 | Out-String)
-      Check 'int' 'cli reports an unknown command' (($o -match 'unknown command') -and ($o -match '\bdev\b')) $o.Trim()
-      $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $cli 'dev' 'nosuch' 2>&1 | Out-String)
-      Check 'int' 'cli runs a script through its command line' ($o -match 'dev always watches') $o.Trim()
-    } else {
-      Check 'int' 'cli lists the declared commands' $false 'no cli.ps1'
+  # export / import / backup, through the command line the user actually types
+  Describe 'export and restore' {
+    BeforeAll {
+      $script:jsonOut = Join-Path $intDir 'history-export.json'
+      [void](Run @('put', 'export round trip'))
     }
+    It 'export writes a json file' {
+      $o = Run @('export', $script:jsonOut)
+      Expect ((Test-Path -LiteralPath $script:jsonOut) -and ($o -match 'exported')) $o.Trim()
+    }
+    It 'export writes a csv file' {
+      $o = Run @('export', (Join-Path $intDir 'history-export.csv'))
+      Expect-Match $o 'exported' $o.Trim()
+    }
+    It 'export refuses -Media for a format that cannot carry pictures' {
+      $o = Run @('export', (Join-Path $intDir 'note.txt'), '-Media')
+      Expect-Match $o 'needs a .json' $o.Trim()
+    }
+    It 'import reports what it did' {
+      $o = Run @('import', $script:jsonOut)
+      Expect-Match $o 'imported|already there' $o.Trim()
+    }
+    It 'backup writes a snapshot' {
+      $o = Run @('backup', 'unit')
+      Expect-Match $o 'backup written' $o.Trim()
+    }
+    It 'restore refuses an unknown snapshot' {
+      $o = Run @('restore', 'nosuchsnapshot')
+      Expect-Match $o 'no snapshot matches' $o.Trim()
+    }
+  }
 
+  # cli reads package.ini and runs the command line it finds there
+  if (Test-Path -LiteralPath $cliPath) {
+    Describe 'the repo cli' {
+      It 'cli lists the declared commands' {
+        $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $cliPath 2>&1 | Out-String)
+        Expect (($o -match '\bdev\b') -and ($o -match '\bbuild\b') -and ($o -match '\btest\b') -and ($o -match '\bshot\b')) $o.Trim()
+      }
+      It 'cli reports an unknown command' {
+        $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $cliPath 'nosuchcmd' 2>&1 | Out-String)
+        Expect (($o -match 'unknown command') -and ($o -match '\bdev\b')) $o.Trim()
+      }
+      It 'cli runs a script through its command line' {
+        $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $cliPath 'dev' 'nosuch' 2>&1 | Out-String)
+        Expect-Match $o 'dev always watches' $o.Trim()
+      }
+    }
+  } else {
+    It 'cli lists the declared commands' { Expect $false 'no cli.ps1' }
+  }
+}
 
-Stop-CliRunner $runner
 Complete-TestPart -ResultFile $ResultFile -Quiet:$Quiet

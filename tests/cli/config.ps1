@@ -29,65 +29,125 @@ $cli = Start-CliRunner $intDir
 function Run([string[]]$cliArgs) { return (Invoke-CliRunner $cli $cliArgs) }
 
 
-    # --------------------------------------- plugin commands (loaded by default)
-    [void](Run @('clear', '-All'))
-    [void](Run @('put', 'https://example.com/hello'))
-    Remove-Item -LiteralPath $cfg2 -Force -ErrorAction SilentlyContinue
-    $o = Run @('kind', '1')
-    Check 'int' 'kind is available by default' ($o -match 'link') $o.Trim()
-    $o = Run @('open', '99')
-    Check 'int' 'open reports a bad index' ($o -match 'index out of range') $o.Trim()
-    $o = Run @('config')
-    Check 'int' 'config lists every loaded plugin' (($o -match 'plugins     : loaded') -and ($o -match 'item-marks') -and ($o -match 'entry-actions') -and ($o -match 'retention') -and ($o -match 'transform')) $o.Trim()
-    $o = Run @('status')
-    Check 'int' 'status lists every loaded plugin' ($o -match 'plugins     : entry-actions, item-marks, retention, transform') $o.Trim()
-    $o = Run @('help')
-    Check 'int' 'help has the plugin groups by default' (($o -match '\[plugin: item-marks\]') -and ($o -match '(?m)^    pin\s')) ''
-    Check 'int' 'help lists the plugin panel keys' ($o -match 'Ctrl\+S\s+star.*\(item-marks\)') ''
+Describe 'int' {
+  AfterAll { Stop-CliRunner $cli }
 
-    # a shorter list narrows it: a plugin that is not named never runs
-    [IO.File]::WriteAllLines($cfg2, @('Plugins=entry-actions'), $Utf8)
-    $o = Run @('star', '1')
-    Check 'int' 'a shorter list turns the other plugins off' ($o -match 'unknown command') $o.Trim()
-    $o = Run @('open', '99')
-    Check 'int' 'Plugins= enables the plugin' ($o -match 'index out of range') $o.Trim()
-    $o = Run @('config')
-    Check 'int' 'config lists the loaded plugin' ($o -match 'plugins     : loaded entry-actions') $o.Trim()
-    $o = Run @('status')
-    Check 'int' 'status lists the loaded plugin' ($o -match 'plugins     : entry-actions') $o.Trim()
-    $o = Run @('help')
-    Check 'int' 'help groups base commands' (($o -match '\[history\]') -and ($o -match '(?m)^    del N\s')) ''
-    Check 'int' 'help groups plugin commands' (($o -match '\[plugin: entry-actions\]') -and ($o -match '(?m)^    open\s')) ''
-    Check 'int' 'help lists plugin panel keys' ($o -match 'Ctrl\+O\s+open link or path\s+\(entry-actions\)') ''
+  # plugin commands (loaded by default)
+  Describe 'plugins load by default' {
+    BeforeAll {
+      [void](Run @('clear', '-All'))
+      [void](Run @('put', 'https://example.com/hello'))
+      Remove-Item -LiteralPath $cfg2 -Force -ErrorAction SilentlyContinue
+    }
+    It 'kind is available by default' {
+      $o = Run @('kind', '1')
+      Expect-Match $o 'link' $o.Trim()
+    }
+    It 'open reports a bad index' {
+      $o = Run @('open', '99')
+      Expect-Match $o 'index out of range' $o.Trim()
+    }
+    It 'config lists every loaded plugin' {
+      $o = Run @('config')
+      Expect (($o -match 'plugins     : loaded') -and ($o -match 'item-marks') -and ($o -match 'entry-actions') -and ($o -match 'retention') -and ($o -match 'transform')) $o.Trim()
+    }
+    It 'status lists every loaded plugin' {
+      $o = Run @('status')
+      Expect-Match $o 'plugins     : entry-actions, item-marks, retention, transform' $o.Trim()
+    }
+    It 'help has the plugin groups by default' {
+      $o = Run @('help')
+      Expect (($o -match '\[plugin: item-marks\]') -and ($o -match '(?m)^    pin\s')) 'help should group the item-marks verbs'
+    }
+    It 'help lists the plugin panel keys' {
+      $o = Run @('help')
+      Expect-Match $o 'Ctrl\+S\s+star.*\(item-marks\)' 'help should list the item-marks panel keys'
+    }
+  }
 
-    $o = Run @('config', 'get', 'entry-actions.Browser')
-    Check 'int' 'plugin setting is visible' ($o -match 'entry-actions\.Browser') $o.Trim()
-    $o = Run @('config', 'set', 'entry-actions.Reveal', '0')
-    $iniPlugin = [IO.File]::ReadAllText($cfg2)
-    # a plugin key lands in its own section, which is created when the file has none yet
-    Check 'int' 'plugin setting is writable' (($o -match 'entry-actions\.Reveal') -and ($iniPlugin -match '(?m)^\[entry-actions\]\r?$') -and ($iniPlugin -match '(?m)^Reveal=0\r?$')) $o.Trim()
-    $o = Run @('config', 'set', 'entry-actions.Reveal', 'maybe')
-    Check 'int' 'plugin setting rejects bad value' ($o -match '0 or 1') $o.Trim()
-    $o = Run @('config', 'init')
-    $tplText = [IO.File]::ReadAllText($cfg2)
-    # the missing plugin key is added inside the existing section, the one the user set to 0
-    # keeps its value, and the section header is not duplicated
-    Check 'int' 'config init fills plugin settings only' (($tplText -match '(?m)^Browser=\r?$') -and ($tplText -match '(?m)^Reveal=0\r?$') -and (([regex]::Matches($tplText, '(?m)^\[entry-actions\]\r?$')).Count -eq 1)) ''
-    [IO.File]::WriteAllLines($cfg2, @('Plugins=entry-actions'), $Utf8)
+  # a shorter list narrows it: a plugin that is not named never runs
+  Describe 'Plugins= narrows the list' {
+    BeforeAll { [IO.File]::WriteAllLines($cfg2, @('Plugins=entry-actions'), $Utf8) }
 
-    [IO.File]::WriteAllLines($cfg2, @('Plugins=nosuch'), $Utf8)
-    $o = Run @('status')
-    Check 'int' 'unknown plugin name is reported' ($o -match 'not found: nosuch') $o.Trim()
-    $o = Run @('help')
-    Check 'int' 'help reports unknown plugin' ($o -match 'plugin not found: nosuch') ''
-    $o = Run @('list')
-    Check 'int' 'data commands stay clean' (-not ($o -match 'plugin')) $o.Trim()
-    Check 'int' 'base commands survive a bad plugin name' ($o -match 'example\.com/hello') $o.Trim()
-    $o = Run @('config', 'get', 'Plugins')
-    Check 'int' 'config get Plugins' ($o -match 'Plugins = nosuch') $o.Trim()
-    $o = Run @('config', 'set', 'Plugins', 'entry-actions')
-    Check 'int' 'config set accepts a plugin list' ($o -match 'entry-actions') $o.Trim()
+    It 'a shorter list turns the other plugins off' {
+      $o = Run @('star', '1')
+      Expect-Match $o 'unknown command' $o.Trim()
+    }
+    It 'Plugins= enables the plugin' {
+      $o = Run @('open', '99')
+      Expect-Match $o 'index out of range' $o.Trim()
+    }
+    It 'config lists the loaded plugin' {
+      $o = Run @('config')
+      Expect-Match $o 'plugins     : loaded entry-actions' $o.Trim()
+    }
+    It 'status lists the loaded plugin' {
+      $o = Run @('status')
+      Expect-Match $o 'plugins     : entry-actions' $o.Trim()
+    }
+    It 'help groups base commands' {
+      $o = Run @('help')
+      Expect (($o -match '\[history\]') -and ($o -match '(?m)^    del N\s')) 'help should group the base commands'
+    }
+    It 'help groups plugin commands' {
+      $o = Run @('help')
+      Expect (($o -match '\[plugin: entry-actions\]') -and ($o -match '(?m)^    open\s')) 'help should group the entry-actions verbs'
+    }
+    It 'help lists plugin panel keys' {
+      $o = Run @('help')
+      Expect-Match $o 'Ctrl\+O\s+open link or path\s+\(entry-actions\)' 'help should list the entry-actions panel keys'
+    }
+    It 'plugin setting is visible' {
+      $o = Run @('config', 'get', 'entry-actions.Browser')
+      Expect-Match $o 'entry-actions\.Browser' $o.Trim()
+    }
+    It 'plugin setting is writable' {
+      $o = Run @('config', 'set', 'entry-actions.Reveal', '0')
+      $iniPlugin = [IO.File]::ReadAllText($cfg2)
+      # a plugin key lands in its own section, which is created when the file has none yet
+      Expect (($o -match 'entry-actions\.Reveal') -and ($iniPlugin -match '(?m)^\[entry-actions\]\r?$') -and ($iniPlugin -match '(?m)^Reveal=0\r?$')) $o.Trim()
+    }
+    It 'plugin setting rejects bad value' {
+      $o = Run @('config', 'set', 'entry-actions.Reveal', 'maybe')
+      Expect-Match $o '0 or 1' $o.Trim()
+    }
+    It 'config init fills plugin settings only' {
+      $o = Run @('config', 'init')
+      $tplText = [IO.File]::ReadAllText($cfg2)
+      # the missing plugin key is added inside the existing section, the one the user set to 0
+      # keeps its value, and the section header is not duplicated
+      Expect (($tplText -match '(?m)^Browser=\r?$') -and ($tplText -match '(?m)^Reveal=0\r?$') -and (([regex]::Matches($tplText, '(?m)^\[entry-actions\]\r?$')).Count -eq 1)) 'config init should only fill the plugin settings'
+    }
+  }
 
+  Describe 'unknown plugin name' {
+    BeforeAll { [IO.File]::WriteAllLines($cfg2, @('Plugins=nosuch'), $Utf8) }
 
-Stop-CliRunner $cli
+    It 'unknown plugin name is reported' {
+      $o = Run @('status')
+      Expect-Match $o 'not found: nosuch' $o.Trim()
+    }
+    It 'help reports unknown plugin' {
+      $o = Run @('help')
+      Expect-Match $o 'plugin not found: nosuch' 'help should report the unknown plugin'
+    }
+    It 'data commands stay clean' {
+      $o = Run @('list')
+      Expect (-not ($o -match 'plugin')) $o.Trim()
+    }
+    It 'base commands survive a bad plugin name' {
+      $o = Run @('list')
+      Expect-Match $o 'example\.com/hello' $o.Trim()
+    }
+    It 'config get Plugins' {
+      $o = Run @('config', 'get', 'Plugins')
+      Expect-Match $o 'Plugins = nosuch' $o.Trim()
+    }
+    It 'config set accepts a plugin list' {
+      $o = Run @('config', 'set', 'Plugins', 'entry-actions')
+      Expect-Match $o 'entry-actions' $o.Trim()
+    }
+  }
+}
+
 Complete-TestPart -ResultFile $ResultFile -Quiet:$Quiet
