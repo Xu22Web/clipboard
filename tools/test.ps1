@@ -11,6 +11,10 @@
       cli test -Changed              only the parts a change since HEAD can break
       cli test -Workers 6            fewer parts at a time (default: one per logical processor)
       cli test -Serial               one after another
+      cli test -Reporter verbose      list every check instead of one row per part
+      cli test -Bail                 stop starting parts after the first failure
+      cli test -Profile              print the slowest command line calls and the time per part
+      cli test -NoColor              no escape sequences (also the default when redirected)
       cli test -Source dist\clipboard-0.1.0
                                      run the command line parts against a packaged copy
 
@@ -27,6 +31,10 @@ param(
   [int]$Workers = 0,
   [switch]$Serial,
   [switch]$Changed,
+  [string]$Reporter = '',
+  [switch]$Bail,
+  [switch]$Profile,
+  [switch]$NoColor,
   [switch]$Verbose_Log
 )
 
@@ -47,6 +55,10 @@ if ($Part) { $cli += @('-Part', $Part) }
 if ($Workers -gt 0) { $cli += @('-Workers', [string]$Workers) }
 if ($Serial) { $cli += '-Serial' }
 if ($Changed) { $cli += '-Changed' }
+if ($Reporter) { $cli += @('-Reporter', $Reporter) }
+if ($Bail) { $cli += '-Bail' }
+if ($Profile) { $cli += '-Profile' }
+if ($NoColor) { $cli += '-NoColor' }
 if ($Verbose_Log) { $cli += '-Verbose_Log' }
 & powershell @cli
 $code = $LASTEXITCODE

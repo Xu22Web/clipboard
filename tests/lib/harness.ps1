@@ -6,7 +6,7 @@
   A part is one file that runs on its own, in its own process, with its own sandbox:
 
       . "$PSScriptRoot\..\lib\harness.ps1"     (from tests\cli\*.ps1)
-      Start-TestPart -Source $Source
+      Start-TestPart -Source $Source -Quiet:$Quiet
       ...checks...
       Complete-TestPart -ResultFile $ResultFile
 
@@ -15,10 +15,61 @@
 #>
 
 $script:Results = New-Object System.Collections.Generic.List[object]
-$script:Harness = @{}
+$script:Harness = @{ Timings = (New-Object System.Collections.Generic.List[object]) }
 
+# loaded here rather than by every part: Check and Skip print through it, and so does the
+# summary a part prints when it is run by hand
+. (Join-Path $PSScriptRoot 'reporter.ps1')
+
+# what the progress line reads while the part runs; a quiet part only writes this file, the
+# part that started it owns the console
+$script:Harness.Progress = @{ Pass = 0; Fail = 0; Skip = 0; Last = ''; At = [DateTime]::MinValue }
+
+function Write-TestProgressFile {
+  $file = [string]$script:Harness.ProgressFile
+  if (-not $file) { return }
+  $now = Get-Date
+  # five writes a second is enough for a progress line and keeps a 579 check part cheap
+  if (($now - $script:Harness.Progress.At).TotalMilliseconds -lt 200) { return }
+  $script:Harness.Progress.At = $now
+  $p = $script:Harness.Progress
+  $line = [string]$p['Pass'] + ' ' + [string]$p['Fail'] + ' ' + [string]$p['Skip'] + ' ' + [string]$p['Last']
+  try { [IO.File]::WriteAllText($file, $line, $script:Harness.Utf8) } catch { }
+}
+
+function Add-TestTiming([string]$what, [long]$ms) {
+  if ($null -eq $script:Harness.Timings) { return }
+  $script:Harness.Timings.Add([pscustomobject]@{ What = $what; Ms = $ms })
+}
+
+# Milliseconds are the time since the previous check: the work before a check is the setup it
+# needed (a command line call, a sandbox copy), which is what a slow part spends its time on.
+#
+# Printing never decides whether a result exists: a reporter that throws loses its line, not the
+# row, and the reason goes to %TEMP%\clipboard-tests-error.log instead of vanishing.
 function Add-TestResult([string]$group, [string]$name, [string]$result, [string]$detail) {
-  $script:Results.Add([pscustomobject]@{ Group = $group; Test = $name; Result = $result; Detail = $detail })
+  $now = Get-Date
+  $ms = 0
+  try {
+    if ($null -ne $script:TestReport.LastMark) { $ms = [int](($now - $script:TestReport.LastMark).TotalMilliseconds) }
+    $script:TestReport.LastMark = $now
+    $script:Results.Add([pscustomobject]@{ Group = $group; Test = $name; Result = $result; Detail = $detail; Ms = $ms })
+    $p = $script:Harness.Progress
+    if ($result -eq 'PASS') { $p['Pass'] = [int]$p['Pass'] + 1 }
+    elseif ($result -eq 'FAIL') { $p['Fail'] = [int]$p['Fail'] + 1 }
+    elseif ($result -eq 'SKIP') { $p['Skip'] = [int]$p['Skip'] + 1 }
+    $p['Last'] = $name
+    Write-TestCheck $group $name $result $detail $ms
+    Write-TestProgressFile
+  } catch {
+    if (-not ($script:Results | Where-Object { $_.Test -eq $name -and $_.Group -eq $group })) {
+      $script:Results.Add([pscustomobject]@{ Group = $group; Test = $name; Result = $result; Detail = $detail; Ms = 0 })
+    }
+    try {
+      $log = Join-Path $env:TEMP 'clipboard-tests-error.log'
+      [IO.File]::AppendAllText($log, ((Get-Date).ToString('HH:mm:ss') + '  reporter: ' + $_.Exception.Message + "`r`n"))
+    } catch { }
+  }
 }
 
 function Check([string]$group, [string]$name, [bool]$ok, [string]$detail) {
@@ -75,14 +126,13 @@ function Get-ClientExe {
   $builder = Join-Path $script:Harness.RepoRoot 'tools\build-client.ps1'
   $source = Join-Path $script:Harness.SrcRoot 'lib\client\client.cs'
   if (-not (Test-Path -LiteralPath $builder) -or -not (Test-Path -LiteralPath $source)) { return '' }
-  $cache = Join-Path $script:Harness.TmpRoot 'client'
+  # Content addressed and outside the per-run temp folder: recompiling a client that did not
+  # change used to cost every run of the suite a csc call, in the parts that exercise it.
+  $cache = Join-Path $env:TEMP 'clipboard-tests-cache'
   if (-not (Test-Path -LiteralPath $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
-  $exe = Join-Path $cache 'client.exe'
-  $stale = $true
-  if (Test-Path -LiteralPath $exe) {
-    $stale = (Get-Item -LiteralPath $exe).LastWriteTime -lt (Get-Item -LiteralPath $source).LastWriteTime
-  }
-  if ($stale) {
+  $stamp = (Get-FileHash -LiteralPath $source -Algorithm SHA1).Hash.Substring(0, 12)
+  $exe = Join-Path $cache ('client-' + $stamp + '.exe')
+  if (-not (Test-Path -LiteralPath $exe)) {
     $null = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $builder -Source $source -Out $exe 2>&1
   }
   if (Test-Path -LiteralPath $exe) { $script:Harness.ClientExe = $exe }
@@ -92,7 +142,11 @@ function Get-ClientExe {
 # one CLI call in its own process: a command starts from nothing, the way the user's shell does
 function Clip([string]$sandbox, [string[]]$cliArgs) {
   $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', (Join-Path $sandbox 'clipboard.ps1')) + $cliArgs
-  return (& powershell @a 2>&1 | Out-String)
+  $watch = [Diagnostics.Stopwatch]::StartNew()
+  $out = (& powershell @a 2>&1 | Out-String)
+  $watch.Stop()
+  Add-TestTiming (($cliArgs -join ' ')) $watch.ElapsedMilliseconds
+  return $out
 }
 # One command per process, never a batch: `-Media` and the plugin verbs are read from the real
 # command line, and `& clipboard.ps1 ...` inside a warm process does not answer the same way.
@@ -115,7 +169,7 @@ function Set-Clip([string]$value) {
   return $false
 }
 
-function Start-TestPart([string]$Source = '', [switch]$ClipShared) {
+function Start-TestPart([string]$Source = '', [switch]$ClipShared, [switch]$Quiet, [string]$ProgressFile = '') {
   $here = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
   $repoRoot = Split-Path -Parent $here
   $defaultSource = Join-Path $repoRoot 'src'
@@ -134,6 +188,9 @@ function Start-TestPart([string]$Source = '', [switch]$ClipShared) {
   $script:clipShared = [bool]$ClipShared
   New-Item -ItemType Directory -Path $script:Harness.TmpRoot -Force | Out-Null
   $script:Harness.Utf8 = New-Object System.Text.UTF8Encoding $false
+  # tests\run.ps1 names the file the progress line reads back; a part started by hand has none
+  $script:Harness.ProgressFile = $ProgressFile
+  Initialize-TestReporter -Mode 'verbose' -Quiet:$Quiet
   # the number package.ini declares; a package carries it as a constant, so both agree
   $script:Harness.ProgramVersion = ''
   $verFile = Join-Path $repoRoot 'package.ini'
@@ -155,15 +212,20 @@ function Complete-TestPart([string]$ResultFile = '', [switch]$Quiet) {
   $fail = @($script:Results | Where-Object { $_.Result -eq 'FAIL' }).Count
   if ($ResultFile) {
     # ToArray, not @($list): wrapping a List[object] throws "Argument types do not match" in 5.1
-    $payload = @{ Part = $script:Harness.Part; Source = $script:Harness.SrcRoot; Results = $script:Results.ToArray() }
+    $payload = @{
+      Part = $script:Harness.Part; Source = $script:Harness.SrcRoot
+      Results = $script:Results.ToArray(); Timings = $script:Harness.Timings.ToArray()
+    }
     try {
       [IO.File]::WriteAllText($ResultFile, ($payload | ConvertTo-Json -Depth 4), $script:Harness.Utf8)
     } catch { Write-Output ('[!] cannot write ' + $ResultFile + ': ' + $_.Exception.Message) }
   }
   if (-not $Quiet) {
-    $script:Results | Format-Table -AutoSize -Wrap | Out-String -Width 160 | Write-Output
     $pass = @($script:Results | Where-Object { $_.Result -eq 'PASS' }).Count
     $skipped = @($script:Results | Where-Object { $_.Result -eq 'SKIP' }).Count
+    Write-Host ''
+    Write-TestCounts 'Checks' $pass $fail $skipped $script:Results.Count
+    # kept for the scripts that read it, and for a log where the block above is not enough
     Write-Output ('TOTAL ' + $script:Results.Count + '   PASS ' + $pass + '   FAIL ' + $fail + '   SKIP ' + $skipped)
   }
   try { Remove-Item -LiteralPath $script:Harness.TmpRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }

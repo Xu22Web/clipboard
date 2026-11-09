@@ -25,6 +25,8 @@ param(
   [string]$Source = '',
   # tests\run.ps1 reads back one json file per part
   [string]$ResultFile = '',
+  # the file tests\run.ps1 reads the progress line from; empty when run by hand
+  [string]$ProgressFile = '',
   [switch]$Quiet
 )
 
@@ -56,6 +58,31 @@ if ($isPackaged) {
 
 $script:results = New-Object System.Collections.Generic.List[object]
 
+# This file is its own harness (it cannot dot-source tests\lib\harness.ps1: it owns the one
+# sandbox the whole part shares), so it loads the reporter and the progress contract itself.
+. (Join-Path $repoRoot 'tests\lib\reporter.ps1')
+Initialize-TestReporter -Mode 'verbose' -Quiet:$Quiet
+$script:unitTimings = New-Object System.Collections.Generic.List[object]
+$script:unitProgress = @{ Pass = 0; Fail = 0; Skip = 0; Last = ''; At = [DateTime]::MinValue }
+
+function Write-UnitProgress {
+  $file = [string]$ProgressFile
+  if (-not $file) { return }
+  $now = Get-Date
+  # five writes a second is enough for a progress line and keeps 579 checks cheap
+  if (($now - $script:unitProgress.At).TotalMilliseconds -lt 200) { return }
+  $script:unitProgress.At = $now
+  $p = $script:unitProgress
+  $line = [string]$p['Pass'] + ' ' + [string]$p['Fail'] + ' ' + [string]$p['Skip'] + ' ' + [string]$p['Last']
+  $enc = $Utf8
+  if ($null -eq $enc) { $enc = New-Object Text.UTF8Encoding $false }
+  try { [IO.File]::WriteAllText($file, $line, $enc) } catch { }
+}
+
+function Add-UnitTiming([string]$what, [long]$ms) {
+  $script:unitTimings.Add([pscustomobject]@{ What = $what; Ms = $ms })
+}
+
 # The version lives in package.ini. A development copy reads it at run time, a package
 # carries it as a constant, so this is the number both of them have to report.
 $programVersion = ''
@@ -67,16 +94,31 @@ if (Test-Path -LiteralPath $verFile) {
 }
 
 function Check([string]$group, [string]$name, [bool]$ok, [string]$detail) {
+  $now = Get-Date
+  $ms = 0
+  if ($null -ne $script:TestReport.LastMark) { $ms = [int](($now - $script:TestReport.LastMark).TotalMilliseconds) }
+  $script:TestReport.LastMark = $now
+  $result = $(if ($ok) { 'PASS' } else { 'FAIL' })
   $script:results.Add([pscustomobject]@{
       Group  = $group
       Test   = $name
-      Result = $(if ($ok) { 'PASS' } else { 'FAIL' })
+      Result = $result
       Detail = $detail
+      Ms     = $ms
     })
+  $p = $script:unitProgress
+  if ($result -eq 'PASS') { $p['Pass'] = [int]$p['Pass'] + 1 } else { $p['Fail'] = [int]$p['Fail'] + 1 }
+  $p['Last'] = $name
+  Write-TestCheck $group $name $result $detail $ms
+  Write-UnitProgress
 }
 
 function Skip([string]$group, [string]$name, [string]$why) {
-  $script:results.Add([pscustomobject]@{ Group = $group; Test = $name; Result = 'SKIP'; Detail = $why })
+  $script:results.Add([pscustomobject]@{ Group = $group; Test = $name; Result = 'SKIP'; Detail = $why; Ms = 0 })
+  $script:unitProgress['Skip'] = [int]$script:unitProgress['Skip'] + 1
+  $script:unitProgress['Last'] = $name
+  Write-TestCheck $group $name 'SKIP' $why 0
+  Write-UnitProgress
 }
 
 # The drawing helpers take a Graphics plus plain values, so the unit group paints them onto
@@ -135,7 +177,11 @@ if ((Test-Path -LiteralPath $testIniPath) -and (Get-Command Read-IniDoc -ErrorAc
 # instead - see the [test] section of cli.ini.)
 function Clip([string]$sandbox, [string[]]$cliArgs) {
   $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', (Join-Path $sandbox 'clipboard.ps1')) + $cliArgs
-  return (& powershell @a 2>&1 | Out-String)
+  $watch = [Diagnostics.Stopwatch]::StartNew()
+  $out = (& powershell @a 2>&1 | Out-String)
+  $watch.Stop()
+  Add-UnitTiming ($cliArgs -join ' ') $watch.ElapsedMilliseconds
+  return $out
 }
 
 function Test-MutexFree([string]$name) {
@@ -2384,7 +2430,7 @@ finally {
 # tests\run.ps1 reads this back; a plain run leaves the file alone
 if ($ResultFile) {
   # ToArray, not @($list): wrapping a List[object] throws "Argument types do not match" in 5.1
-  $payload = @{ Part = 'unit'; Source = $srcRoot; Results = $script:results.ToArray() }
+  $payload = @{ Part = 'unit'; Source = $srcRoot; Results = $script:results.ToArray(); Timings = $script:unitTimings.ToArray() }
   try {
     [IO.File]::WriteAllText($ResultFile, ($payload | ConvertTo-Json -Depth 4), (New-Object Text.UTF8Encoding $false))
   } catch { Write-Output ('[!] cannot write ' + $ResultFile + ': ' + $_.Exception.Message) }
@@ -2394,7 +2440,8 @@ $pass = @($script:results | Where-Object { $_.Result -eq 'PASS' }).Count
 $fail = @($script:results | Where-Object { $_.Result -eq 'FAIL' }).Count
 $skipped = @($script:results | Where-Object { $_.Result -eq 'SKIP' }).Count
 if (-not $Quiet) {
-  $script:results | Format-Table -AutoSize -Wrap | Out-String -Width 160 | Write-Output
+  Write-Host ''
+  Write-TestCounts 'Checks' $pass $fail $skipped $script:results.Count
   Write-Output ('TOTAL ' + $script:results.Count + '   PASS ' + $pass + '   FAIL ' + $fail + '   SKIP ' + $skipped)
 }
 if ($fail -gt 0) { exit 1 }

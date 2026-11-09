@@ -39,13 +39,36 @@ param(
   [switch]$Serial,
   # only the parts a change since HEAD can break (a development loop, not a gate)
   [switch]$Changed,
-  # print every check instead of one line per part
-  [switch]$Verbose_Log
+  # default = one row per part and a block at the end; verbose = every check
+  [string]$Reporter = '',
+  # every check, the same as -Reporter verbose (kept for the runs that always passed it)
+  [switch]$Verbose_Log,
+  # stop starting parts after the first one with a failure
+  [switch]$Bail,
+  # print where the time went: the slowest command line calls and the total per part
+  [switch]$Profile,
+  [switch]$NoColor
 )
 
 $ErrorActionPreference = 'Stop'
 $testsRoot = $PSCommandPath | Split-Path -Parent
 $repoRoot = Split-Path -Parent $testsRoot
+
+# one reporter for the rows this driver prints; the parts print their own through the same
+# file, so a line reads the same whichever process wrote it
+. (Join-Path $testsRoot 'lib\reporter.ps1')
+if (-not $Reporter) {
+  if ($Verbose_Log) { $Reporter = 'verbose' } else { $Reporter = 'default' }
+}
+Initialize-TestReporter -Mode $Reporter -NoColor:$NoColor
+
+# the header row names the build under test; a package carries the same number as a constant
+$programVersion = ''
+$versionFile = Join-Path $repoRoot 'package.ini'
+if (Test-Path -LiteralPath $versionFile) {
+  $vm = [regex]::Match([IO.File]::ReadAllText($versionFile), '(?mi)^\s*version\s*=\s*(\S+)\s*$')
+  if ($vm.Success) { $programVersion = $vm.Groups[1].Value }
+}
 
 # cli.ini is read and checked with the tooling's own parser and schema: the driver needs
 # [test] (Groups, Workers), and a file that does not match tools\schema\cli.ps1 is a broken
@@ -195,19 +218,48 @@ if ($Serial) {
 
 $tmpRoot = Join-Path $env:TEMP ('clipboard-run-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Path $tmpRoot -Force | Out-Null
+
+# The C# types are compiled once in every process that loads the tool, and the command line
+# parts start about a hundred of those. A built clipboard.dll is what keeps that compile out
+# of every call; a .cs newer than the dll still falls back to the run-time compile, so a stale
+# file can never win.
+function Update-TestAssembly {
+  if ($isPackaged) { return }
+  $asmDir = Join-Path $repoRoot 'src\lib\assembly'
+  if (-not (Test-Path -LiteralPath $asmDir)) { return }
+  $cs = @(Get-ChildItem -LiteralPath $asmDir -Filter '*.cs' -File)
+  if ($cs.Count -eq 0) { return }
+  $dll = Join-Path $asmDir 'clipboard.dll'
+  $stale = -not (Test-Path -LiteralPath $dll)
+  if (-not $stale) {
+    $dllAt = (Get-Item -LiteralPath $dll).LastWriteTimeUtc
+    foreach ($f in $cs) { if ($f.LastWriteTimeUtc -gt $dllAt) { $stale = $true } }
+  }
+  if (-not $stale) { return }
+  $builder = Join-Path $repoRoot 'tools\build-assembly.ps1'
+  if (-not (Test-Path -LiteralPath $builder)) { return }
+  $null = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $builder 2>&1
+  if (-not (Test-Path -LiteralPath $dll)) { Write-Host '[..] no C# compiler here: the parts compile the sources at run time' }
+}
+Update-TestAssembly
+
 $results = New-Object System.Collections.Generic.List[object]
+$allTimings = New-Object System.Collections.Generic.List[object]
+$script:Bailed = $false
+$script:ProgressAt = [DateTime]::MinValue
 $started = Get-Date
 $utf8 = New-Object System.Text.UTF8Encoding $false
 
 function Start-Part($job) {
   $out = Join-Path $tmpRoot ($job.Name + '.json')
+  $progress = Join-Path $tmpRoot ($job.Name + '.progress')
   $cliArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', $job.File)
   if ($job.Args) { $cliArgs += $job.Args }
   if ($Source) { $cliArgs += @('-Source', $Source) }
   # a cli part runs beside the end-to-end part, which writes the real clipboard: a check that
   # claims "the machine clipboard was never touched" cannot hold there, so the part is told
   if ($job.Lane -eq 'cli' -and $clipShared) { $cliArgs += '-ClipShared' }
-  $cliArgs += @('-ResultFile', $out, '-Quiet')
+  $cliArgs += @('-ResultFile', $out, '-ProgressFile', $progress, '-Quiet')
   $psi = New-Object System.Diagnostics.ProcessStartInfo
   $psi.FileName = 'powershell'
   $psi.UseShellExecute = $false
@@ -216,38 +268,103 @@ function Start-Part($job) {
   foreach ($a in $cliArgs) { $joined = $joined + ' "' + [string]$a + '"' }
   $psi.Arguments = $joined
   # no redirection: a pipe nobody reads deadlocks a child that prints a lot, and -Quiet keeps
-  # the child's own table out of the console anyway
+  # the child's own table out of the console anyway. ProcessStartInfo.EnvironmentVariables is
+  # avoided on purpose: touching it here threw and left the child without a PATH.
   $p = [System.Diagnostics.Process]::Start($psi)
-  return @{ Job = $job; Process = $p; Out = $out; Started = Get-Date }
+  return @{ Job = $job; Process = $p; Out = $out; Progress = $progress; Started = Get-Date }
 }
 
 function Complete-Part($run) {
-  $seconds = [int]((Get-Date) - $run.Started).TotalSeconds
+  $seconds = ((Get-Date) - $run.Started).TotalSeconds
   $rows = @()
+  $timings = @()
   if (Test-Path -LiteralPath $run.Out) {
     try {
       $doc = [IO.File]::ReadAllText($run.Out, [Text.Encoding]::UTF8) | ConvertFrom-Json
       $rows = @($doc.Results)
+      if ($null -ne $doc.Timings) { $timings = @($doc.Timings) }
     } catch { $rows = @() }
   }
   if ($rows.Count -eq 0) {
+    $code = 'unknown'
+    try { if ($run.Process.HasExited) { $code = [string]$run.Process.ExitCode } } catch { }
     $rows = @([pscustomobject]@{
         Group  = $run.Job.Name
         Test   = '(no result file)'
         Result = 'FAIL'
-        Detail = 'the part wrote no result file, so it threw before the end'
+        Detail = 'the part wrote no result file, so it threw before the end (exit code ' + $code + ')'
       })
   }
-  $fails = @($rows | Where-Object { $_.Result -eq 'FAIL' }).Count
+  $fails = @($rows | Where-Object { $_.Result -eq 'FAIL' })
+  $skips = @($rows | Where-Object { $_.Result -eq 'SKIP' }).Count
   $results.Add(@{ Name = $run.Job.Name; Seconds = $seconds; Rows = $rows })
-  $label = '  ' + $run.Job.Name.PadRight(9) + ([string]$rows.Count).PadLeft(5) + ' checks' + ([string]$seconds).PadLeft(6) + ' s'
-  if ($fails -eq 0) {
-    Write-Host ('[ok] ' + $label)
-  } else {
-    Write-Host ('[!!] ' + $label + '   ' + $fails + ' failed')
-    foreach ($r in @($rows | Where-Object { $_.Result -eq 'FAIL' })) {
-      Write-Host ('       ' + $r.Test + '   ' + ([string]$r.Detail).Trim())
+  foreach ($t in $timings) {
+    if ($null -eq $t) { continue }
+    $allTimings.Add([pscustomobject]@{ Part = $run.Job.Name; What = [string]$t.What; Ms = [long]$t.Ms })
+  }
+  Clear-TestProgress
+  # verbose lists every check of the part as it lands; the parts themselves stay quiet so one
+  # child cannot interleave its rows into another
+  if ($Reporter -eq 'verbose') {
+    foreach ($r in $rows) { Write-TestCheck ([string]$r.Group) ([string]$r.Test) ([string]$r.Result) ([string]$r.Detail) ([int]$r.Ms) }
+  }
+  Write-TestPartRow $run.Job.Name $rows.Count $seconds $fails.Count $skips
+  foreach ($r in $fails) {
+    Write-TestFailureBlock $run.Job.Name ([string]$r.Group) ([string]$r.Test) ([string]$r.Detail).Trim()
+  }
+  if ($Bail -and $fails.Count -gt 0) { $script:Bailed = $true }
+}
+
+# One line that is overwritten while parts run: the totals so far, then how far each running
+# part got. The counters come from the progress files the parts write.
+function Write-TestRunProgress {
+  $now = Get-Date
+  if (($now - $script:ProgressAt).TotalMilliseconds -lt 200) { return }
+  $script:ProgressAt = $now
+  $ok = 0
+  $bad = 0
+  $skip = 0
+  foreach ($r in $results) {
+    foreach ($row in $r.Rows) {
+      if ($row.Result -eq 'FAIL') { $bad++ }
+      elseif ($row.Result -eq 'SKIP') { $skip++ }
+      else { $ok++ }
     }
+  }
+  $parts = New-Object System.Collections.Generic.List[string]
+  foreach ($a in $active) {
+    $bits = @()
+    if (Test-Path -LiteralPath $a.Progress) {
+      try { $bits = @(([IO.File]::ReadAllText($a.Progress)).Trim() -split '\s+') } catch { $bits = @() }
+    }
+    if ($bits.Count -ge 4 -and $bits[0] -match '^[0-9]+$') {
+      $n = [int]$bits[0] + [int]$bits[1] + [int]$bits[2]
+      $parts.Add($a.Job.Name + ' ' + [string]$n + ' ' + [string]$bits[3])
+    } else { $parts.Add($a.Job.Name) }
+  }
+  $elapsed = (Get-Date) - $started
+  $text = ('{0:00}:{1:00}  ok {2}  FAIL {3}  skip {4}' -f $elapsed.Minutes, $elapsed.Seconds, $ok, $bad, $skip)
+  if ($parts.Count -gt 0) { $text = $text + '  |  ' + ($parts -join '  ') }
+  Write-TestProgress $text
+}
+
+# Where the time went. The command line parts record every child process they start, so this
+# answers "which call is slow", not just "which part is slow".
+function Write-TestProfile {
+  if ($allTimings.Count -eq 0) { Write-Host 'no command line calls recorded'; return }
+  $sum = ($allTimings | Measure-Object -Property Ms -Sum).Sum
+  if ($null -eq $sum) { $sum = 0 }
+  Write-Host ''
+  Write-Host (' slowest command line calls   ' + [string]$allTimings.Count + ' calls, ' + [string]$sum + ' ms in total')
+  foreach ($t in @($allTimings | Sort-Object -Property Ms -Descending | Select-Object -First 15)) {
+    Write-Host ('   ' + ([string]$t.Ms).PadLeft(7) + ' ms  ' + $t.Part.PadRight(10) + ' ' + $t.What)
+  }
+  Write-Host ''
+  Write-Host ' command line time per part'
+  foreach ($g in @($allTimings | Group-Object -Property Part | Sort-Object -Property { ($_.Group | Measure-Object -Property Ms -Sum).Sum } -Descending)) {
+    $partSum = ($g.Group | Measure-Object -Property Ms -Sum).Sum
+    if ($null -eq $partSum) { $partSum = 0 }
+    Write-Host ('   ' + $g.Name.PadRight(10) + ([string]$g.Count).PadLeft(4) + ' calls' + ([string]$partSum).PadLeft(9) + ' ms')
   }
 }
 
@@ -258,24 +375,32 @@ $pending = New-Object System.Collections.Generic.List[object]
 foreach ($job in $jobs) { $pending.Add($job) }
 $active = New-Object System.Collections.Generic.List[object]
 
-Write-Host ('clipboard tests   ' + $jobs.Count + ' part(s), up to ' + $Workers + ' at a time')
+Write-TestRunHeader $programVersion ('powershell ' + $PSVersionTable.PSVersion.ToString()) ([string]$env:PROCESSOR_ARCHITECTURE) $jobs.Count $Workers
 
 while ($pending.Count -gt 0 -or $active.Count -gt 0) {
   $launched = $false
-  foreach ($job in $pending.ToArray()) {
-    $busy = @($active | Where-Object { $_.Job.Lane -eq $job.Lane }).Count
-    if ($busy -ge $laneLimit[$job.Lane]) { continue }
-    [void]$pending.Remove($job)
-    $active.Add((Start-Part $job))
-    $launched = $true
+  if (-not $script:Bailed) {
+    foreach ($job in $pending.ToArray()) {
+      $busy = @($active | Where-Object { $_.Job.Lane -eq $job.Lane }).Count
+      if ($busy -ge $laneLimit[$job.Lane]) { continue }
+      [void]$pending.Remove($job)
+      $active.Add((Start-Part $job))
+      $launched = $true
+    }
   }
   $done = $null
   foreach ($a in $active) { if ($a.Process.HasExited) { $done = $a; break } }
   if ($null -ne $done) {
     [void]$active.Remove($done)
     Complete-Part $done
-  } elseif (-not $launched) {
-    Start-Sleep -Milliseconds 120
+    # -Bail: what is still queued never starts, but a part already running is left to finish
+    if ($script:Bailed -and $pending.Count -gt 0) {
+      Write-Host ('  -bail: ' + [string]$pending.Count + ' part(s) not started')
+      $pending.Clear()
+    }
+  } else {
+    Write-TestRunProgress
+    if (-not $launched) { Start-Sleep -Milliseconds 120 }
   }
 }
 
@@ -285,17 +410,37 @@ foreach ($r in $results) {
     $all.Add([pscustomobject]@{ Group = [string]$row.Group; Test = [string]$row.Test; Result = [string]$row.Result; Detail = [string]$row.Detail })
   }
 }
-if ($Verbose_Log) { $all | Format-Table -AutoSize -Wrap | Out-String -Width 160 | Write-Output }
-
 $pass = @($all | Where-Object { $_.Result -eq 'PASS' }).Count
 $fail = @($all | Where-Object { $_.Result -eq 'FAIL' }).Count
 $skipped = @($all | Where-Object { $_.Result -eq 'SKIP' }).Count
-$totalSecs = [int]((Get-Date) - $started).TotalSeconds
-Write-Host ''
+$totalSecs = (Get-Date) - $started
+if ($Profile) { Write-TestProfile }
+
+$partsFail = 0
+$partsSkip = 0
+$slowest = ''
+$slowestSecs = 0
+$failLines = New-Object System.Collections.Generic.List[string]
 foreach ($r in $results) {
-  Write-Host ('  ' + $r.Name.PadRight(9) + ([string]$r.Rows.Count).PadLeft(5) + ' checks' + ([string]$r.Seconds).PadLeft(6) + ' s')
+  $rowsFail = @($r.Rows | Where-Object { $_.Result -eq 'FAIL' }).Count
+  $rowsSkip = @($r.Rows | Where-Object { $_.Result -eq 'SKIP' }).Count
+  if ($rowsFail -gt 0) { $partsFail++ }
+  elseif ($rowsSkip -gt 0 -and $rowsSkip -eq @($r.Rows).Count) { $partsSkip++ }
+  if ($r.Seconds -gt $slowestSecs) { $slowestSecs = $r.Seconds; $slowest = $r.Name }
+  foreach ($row in $r.Rows) {
+    if ($row.Result -eq 'FAIL') { $failLines.Add($r.Name + ' > ' + [string]$row.Group + ' > ' + [string]$row.Test) }
+  }
 }
-Write-Host ('TOTAL ' + $all.Count + '   PASS ' + $pass + '   FAIL ' + $fail + '   SKIP ' + $skipped + '   in ' + $totalSecs + ' s')
+$summary = @{
+  Parts = $results.Count; PartsPass = ($results.Count - $partsFail - $partsSkip); PartsFail = $partsFail; PartsSkip = $partsSkip
+  Pass = $pass; Fail = $fail; Skip = $skipped; Total = $all.Count
+  Seconds = $totalSecs.TotalSeconds
+  Slowest = $(if ($slowest) { $slowest + ' ' + (Format-TestDuration $slowestSecs) } else { '' })
+  Fails = $failLines.ToArray()
+}
+Clear-TestProgress
+Write-TestSummary $summary
+Write-Host ('TOTAL ' + $all.Count + '   PASS ' + $pass + '   FAIL ' + $fail + '   SKIP ' + $skipped + '   in ' + [int]$totalSecs.TotalSeconds + ' s')
 try { Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
 if ($fail -gt 0) { exit 1 }
 exit 0

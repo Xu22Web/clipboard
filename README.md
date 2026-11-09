@@ -588,8 +588,9 @@ tools/utils/pipeline.ps1 文件处理表：按路径决定压缩 / 复制 / 编�
 tools/utils/console.ps1 输出前缀与失败退出（Write-Step / Fail），打包与开发共用
 tools/utils/csc.ps1     定位 .NET Framework 的 csc.exe
 tools/utils/minify.ps1  压缩器（语法树重写）
-tests/run.ps1           自测驱动：按目录发现分件、并行执行、合并结果
+tests/run.ps1           自测驱动：按目录发现分件、并行执行、合并结果（打印在 tests\lib\reporter.ps1）
 tests/lib/harness.ps1   分件共用的断言、沙箱与命令调用
+tests/lib/reporter.ps1  测试打印：分件行、失败块、进度行与汇总
 tests/lib/fake-clip.ps1 沙箱自带的剪贴板
 tests/unit/unit.ps1     结构与单元测试（进程内 dot-source）
 tests/cli/*.ps1         命令行分件
@@ -765,12 +766,18 @@ cli test -Unit                       # 只跑单元分件
 cli test -Part transfer,history      # 指定分件
 cli test -Changed                    # 只跑本次改动可能影响到的分件
 cli test -Serial                     # 逐个跑
+cli test -Reporter verbose           # 逐条列出断言（-Verbose_Log 同义）
+cli test -Bail                       # 首个失败后不再启动新分件
+cli test -Profile                    # 打印最慢的命令行调用与每个分件的命令行耗时
+cli test -NoColor                    # 不输出颜色（重定向时自动关）
 cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 ```
 
 也可直接调用 `powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run.ps1`。
 
-一个分件一个文件、一个进程、一个沙箱；并行度默认按逻辑处理器数（`cli.ini` 的 `[test] Workers` 缺省即可，写 `1` 为串行，写其它值为该并发数，命令行 `cli test -Workers N` 可对单次运行覆盖）；结果由驱动合并成一张表。全量 700 项以上，其中端到端 22 项。
+一个分件一个文件、一个进程、一个沙箱；并行度默认按逻辑处理器数（`cli.ini` 的 `[test] Workers` 缺省即可，写 `1` 为串行，写其它值为该并发数，命令行 `cli test -Workers N` 可对单次运行覆盖）。全量 735 项，其中端到端 22 项。
+
+输出分两部分：运行时每个分件完成一行（`ok  unit  579 tests  1m 04s`，失败为 `FAIL` 并紧接失败块），交互终端另有一行被覆盖的进度（已跑条数、失败数、每个运行中分件的进度）；结束时给出分件/断言计数、总时长、最慢分件与失败清单，最后一行 `TOTAL` 保留给脚本读取。分件自身的断言只决定结果，打印失败不会吞掉断言（原因写入 `%TEMP%\clipboard-tests-error.log`）。
 
 断言只写两类：守回归（对应实际缺陷）与守契约（对外行为、文件格式、命令行输出）。不复述常量、不断言私有实现细节、同一行为不写第二条等价断言。
 

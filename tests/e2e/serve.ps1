@@ -11,12 +11,13 @@
 param(
   [string]$Source = '',
   [string]$ResultFile = '',
+  [string]$ProgressFile = '',
   [switch]$Quiet
 )
 
 . (Join-Path (Split-Path -Parent (Split-Path -Parent $PSCommandPath)) 'lib\harness.ps1')
 $script:Harness.Part = 'e2e'
-Start-TestPart -Source $Source
+Start-TestPart -Source $Source -Quiet:$Quiet -ProgressFile $ProgressFile
 $e2eDir = New-Sandbox 'e2e'
 # the resident keeps its log and store open while it runs, so a read can lose the race
 function Read-TextSafe([string]$path) {

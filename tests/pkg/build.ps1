@@ -9,12 +9,13 @@
 param(
   [string]$Source = '',
   [string]$ResultFile = '',
+  [string]$ProgressFile = '',
   [switch]$Quiet
 )
 
 . (Join-Path (Split-Path -Parent (Split-Path -Parent $PSCommandPath)) 'lib\harness.ps1')
 $script:Harness.Part = 'build'
-Start-TestPart -Source $Source
+Start-TestPart -Source $Source -Quiet:$Quiet -ProgressFile $ProgressFile
 $intDir = New-FakeSandbox 'cli'
 $cfg2 = Join-Path $intDir 'clipboard.ini'
 

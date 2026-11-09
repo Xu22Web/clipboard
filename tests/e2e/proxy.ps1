@@ -13,13 +13,14 @@
 param(
   [string]$Source = '',
   [string]$ResultFile = '',
+  [string]$ProgressFile = '',
   [switch]$Quiet,
   [switch]$ClipShared
 )
 
 . (Join-Path (Split-Path -Parent (Split-Path -Parent $PSCommandPath)) 'lib\harness.ps1')
 $script:Harness.Part = 'proxy'
-Start-TestPart -Source $Source -ClipShared:$ClipShared
+Start-TestPart -Source $Source -ClipShared:$ClipShared -Quiet:$Quiet -ProgressFile $ProgressFile
 $dir = New-Sandbox 'proxy'
 $clip = Join-Path $dir 'clipboard.ps1'
 $log = Join-Path $dir 'data\clipboard.log'

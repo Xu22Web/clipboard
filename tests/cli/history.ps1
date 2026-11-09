@@ -12,6 +12,7 @@
 param(
   [string]$Source = '',
   [string]$ResultFile = '',
+  [string]$ProgressFile = '',
   [switch]$Quiet,
   # set by tests\run.ps1 when another part of the same run drives the real clipboard
   [switch]$ClipShared
@@ -19,7 +20,7 @@ param(
 
 . (Join-Path (Split-Path -Parent (Split-Path -Parent $PSCommandPath)) 'lib\harness.ps1')
 $script:Harness.Part = 'history'
-Start-TestPart -Source $Source -ClipShared:$ClipShared
+Start-TestPart -Source $Source -ClipShared:$ClipShared -Quiet:$Quiet -ProgressFile $ProgressFile
 $intDir = New-FakeSandbox 'cli'
 $cfg2 = Join-Path $intDir 'clipboard.ini'
 
