@@ -345,7 +345,9 @@ function Get-TestWindowLines {
       try { $bits = @(([IO.File]::ReadAllText($a.Progress)).Trim() -split '\s+') } catch { $bits = @() }
       if ($bits.Count -ge 3 -and $bits[0] -match '^[0-9]+$') { $done = [int]$bits[0] + [int]$bits[1] + [int]$bits[2] }
     }
-    $line = ' > ' + $label
+    # vitest writes "<mark> <path> <completed>/<total>"; a part cannot know its own total while
+    # it runs, so the row carries the completed count only
+    $line = ' ' + [string]$script:TestReport.Marks['run'] + ' ' + $label
     if ($done -gt 0) { $line = $line + ' ' + [string]$done }
     $frame.Add($line)
   }

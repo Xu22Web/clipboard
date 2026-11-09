@@ -416,11 +416,14 @@ function Write-TestWindow([string]$Message = '') {
   $columns = [Math]::Max(20, $script:TestReport.Width)
   $window = @($script:TestReport.Window)
   $rows = Get-TestRowCount $window $columns
+  $messageRows = 0
+  if ($Message) { $messageRows = Get-TestRowCount @($Message.TrimEnd("`r", "`n")) $columns }
   $old = [int]$script:TestReport.WindowHeight
-  $padding = $old - $rows
-  if ($padding -gt 0 -and $Message) {
-    $padding = $padding - (Get-TestRowCount @($Message.TrimEnd("`r", "`n")) $columns)
-  }
+  # The next frame clears exactly what this one wrote, so the height has to be the number of rows
+  # written: the message, then the padding that keeps the window where it was, then the window.
+  # A frame that grew (another part started) has no padding and simply extends downwards.
+  $padding = $old - $messageRows - $rows
+  if ($padding -lt 0) { $padding = 0 }
   $sb = New-Object System.Text.StringBuilder
   [void]$sb.Append($esc + '[?2026h')
   if ($old -gt 0) {
@@ -435,7 +438,7 @@ function Write-TestWindow([string]$Message = '') {
   if ($rows -gt 0) { [void]$sb.Append(($window -join "`r`n")) }
   [void]$sb.Append($esc + '[?2026l')
   Write-TestOut $sb.ToString()
-  $script:TestReport.WindowHeight = $rows + [Math]::Max(0, $padding)
+  $script:TestReport.WindowHeight = $messageRows + $padding + $rows
 }
 
 function Clear-TestWindow {
