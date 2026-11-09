@@ -117,6 +117,9 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
       Check 'int' 'the batch scripts stay plain ASCII' (($instHigh -eq 0) -and ($uninstHigh -eq 0)) ([string]$instHigh + '/' + [string]$uninstHigh)
       Check 'int' 'package keeps plugins and themes' ((Test-Path -LiteralPath (Join-Path $pkgDir 'plugins\item-marks.ps1')) -and (Test-Path -LiteralPath (Join-Path $pkgDir 'themes\win11-dark.ini'))) ''
       Check 'int' 'package leaves history, tooling and metadata out' ((@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|scripts)([\\/]|$)' }).Count -eq 0) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir 'cli.ini')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir 'package.ini'))) (@($names | Where-Object { $_ -match '(^[\\/])(data|clipboard\.ini|tests|scripts)' }) -join ', ')
+      # documentation is data like any other file, so a list that does not name it ships none -
+      # the positive half of that pair is asserted on the docs package below
+      Check 'int' 'a list without the documentation ships none' ((Test-Path -LiteralPath (Join-Path $pkgDir 'README.md')) -eq $false -and (Test-Path -LiteralPath (Join-Path $pkgDir 'docs')) -eq $false) ''
 
       # the point of the build: same scripts, smaller, still parsing
       # (compare against the repository sources, not $srcRoot: with -Source the latter is
@@ -151,40 +154,30 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
     Check 'int' 'Overwrite=0 keeps the existing folder' (($bout -join ' ') -match 'already exists') (($bout | Select-Object -Last 1) -as [string])
 
     # the list is the package: a theme that is not named does not travel, a file named in
-    # Excludes does not travel, and a list that misses the entry point stops the build.
-    # Minify=0: these builds are only about which files travelled, so the rewrite would cost
-    # more than the whole check
+    # Excludes does not travel, the docs travel only when the list names them, and a list that
+    # misses the entry point stops the build. Minify=0: these builds are only about which
+    # files travelled, so the rewrite would cost more than the whole check. One build answers
+    # all three questions - a second one would only prove the same copy handler twice.
     $pkgOut2 = Join-Path $tmpRoot 'pkg2'
-    $oneTheme = 'Includes=src/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/win11-light.ini,scripts/**.bat'
+    $oneTheme = 'Includes=src/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/win11-light.ini,scripts/**.bat,README.md,LICENSE,docs/**/*'
     Write-BuildCfg $pkgOut2 @('Minify=0', $oneTheme, 'Excludes=src/plugins/item-marks.ps1')
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
     $pkgDir2 = Join-Path $pkgOut2 ('clipboard-' + $programVersion)
     if (Test-Path -LiteralPath $pkgDir2) {
       Check 'int' 'Excludes= drops the plugin it names' ((Test-Path -LiteralPath (Join-Path $pkgDir2 'plugins\transform.ps1')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir2 'plugins\item-marks.ps1'))) ''
       Check 'int' 'the list decides which theme ships' ((Test-Path -LiteralPath (Join-Path $pkgDir2 'themes\win11-light.ini')) -and -not (Test-Path -LiteralPath (Join-Path $pkgDir2 'themes\win11-dark.ini'))) ''
-      Check 'int' 'a list without the documentation ships none' ((Test-Path -LiteralPath (Join-Path $pkgDir2 'README.md')) -eq $false -and (Test-Path -LiteralPath (Join-Path $pkgDir2 'docs')) -eq $false) ''
+      Check 'int' 'the list carries the docs it names' ((Test-Path -LiteralPath (Join-Path $pkgDir2 'README.md')) -and (Test-Path -LiteralPath (Join-Path $pkgDir2 'LICENSE'))) ''
+      Check 'int' 'a docs subfolder keeps its layout' ((Test-Path -LiteralPath (Join-Path $pkgDir2 'docs\plugin\transform.md')) -and (Test-Path -LiteralPath (Join-Path $pkgDir2 'docs\screenshot-dark.png'))) ''
     } else {
       Check 'int' 'Excludes= drops the plugin it names' $false (($bout | Select-Object -Last 1) -as [string])
+      Check 'int' 'the list decides which theme ships' $false ''
+      Check 'int' 'the list carries the docs it names' $false ''
+      Check 'int' 'a docs subfolder keeps its layout' $false ''
     }
     $noEntry = 'Includes=src/lib/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh'
     Write-BuildCfg $pkgOut2 @('Minify=0', $noEntry)
     $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
     Check 'int' 'a list without clipboard.ps1 stops the build' (($bout -join ' ') -match 'does not ship clipboard\.ps1') (($bout | Select-Object -Last 1) -as [string])
-
-    # documentation is data like any other file: the list names it, the copy handler ships it
-    # unchanged, and a subfolder keeps its layout
-    $pkgOut3 = Join-Path $tmpRoot 'pkg3'
-    $withDocs = $allFiles + ',README.md,LICENSE,docs/**/*'
-    Write-BuildCfg $pkgOut3 @('Minify=0', $withDocs)
-    $bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
-    $pkgDir3 = Join-Path $pkgOut3 ('clipboard-' + $programVersion)
-    if (Test-Path -LiteralPath $pkgDir3) {
-      Check 'int' 'the list carries the docs it names' ((Test-Path -LiteralPath (Join-Path $pkgDir3 'README.md')) -and (Test-Path -LiteralPath (Join-Path $pkgDir3 'LICENSE'))) ''
-      Check 'int' 'a docs subfolder keeps its layout' ((Test-Path -LiteralPath (Join-Path $pkgDir3 'docs\plugin\transform.md')) -and (Test-Path -LiteralPath (Join-Path $pkgDir3 'docs\screenshot-dark.png'))) ''
-    } else {
-      Check 'int' 'the list carries the docs it names' $false (($bout | Select-Object -Last 1) -as [string])
-    }
-    Remove-Item -LiteralPath $pkgOut3 -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $pkgOut -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $pkgOut2 -Recurse -Force -ErrorAction SilentlyContinue
 

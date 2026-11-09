@@ -76,7 +76,6 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
     Check 'int' 'help reports unknown plugin' ($o -match 'plugin not found: nosuch') ''
     $o = Clip $intDir @('list')
     Check 'int' 'data commands stay clean' (-not ($o -match 'plugin')) $o.Trim()
-    $o = Clip $intDir @('list')
     Check 'int' 'base commands survive a bad plugin name' ($o -match 'example\.com/hello') $o.Trim()
     $o = Clip $intDir @('config', 'get', 'Plugins')
     Check 'int' 'config get Plugins' ($o -match 'Plugins = nosuch') $o.Trim()
