@@ -781,23 +781,22 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 
 分件内的命令行调用默认走 `tests\lib\cli-runner.ps1`：分件启动时拉起一个子进程，每条命令在该进程内的独立 runspace 中执行，省去每条命令一次解释器启动；插件脚本块相关的命令（`pin` / `star` / `highlight` / `transform` / `kind` / `list` 等）仍起真实子进程，因为脚本块需要真实的模块加载作用域。
 
-输出先给一行运行头（版本、PowerShell 版本、架构、分件数与并发度），随后每个分件完成时一行：标记、名字、断言数、耗时，失败时追加失败数与紧接的失败块：
+输出与 vitest 相同：一行 `RUN` 头，每个分件完成时一行（标记、相对 `tests\` 的路径、括号里的断言数与耗时），失败分件下面列出它失败的断言；所有失败与原因集中到末尾一块，然后是 `Test Files` / `Tests` / `Start at` / `Duration`。
 
 ```text
- RUN  clipboard 0.1.0  on powershell 5.1.26100.9836 (AMD64)
-      10 files, up to 12 at a time
+ RUN  clipboard v0.1.0  D:\Users\xzz\Desktop\Project\clipboard
 
- ok   unit      (579 tests)   53.1s
- ok   history   (22 tests)    1m 03s   1 skipped
+ ✓ unit\unit.ps1 (579 tests) 55.4s
+ ✓ cli\config.ps1 (23 tests) 1m 22s
+ ✓ cli\history.ps1 (22 tests | 1 skipped) 2m 05s
 
  Test Files  10 passed (10)
-      Tests  735 passed | 1 skipped (735)
-   Duration  2m 09s (slowest build 2m 09s)
-
-TOTAL 735   PASS 734   FAIL 0   SKIP 1   in 129 s
+      Tests  734 passed | 1 skipped (735)
+   Start at  20:49:13
+   Duration  2m 10s (slowest pkg\build.ps1 2m 10s)
 ```
 
-交互终端里标记是 `✓` / `×` / `↓` 并带颜色；重定向或 `-NoColor` 时换成 `ok` / `FAIL` / `skip`，日志因此可直接 grep，也不依赖字体。运行中不再刷进度行（`-Progress` 才会），最后一行 `TOTAL` 的形态固定，供脚本读取。分件自身的断言只决定结果，打印失败不会吞掉断言（原因写入 `%TEMP%\clipboard-tests-error.log`）。
+失败时那一个分件的行首标记是 `❯`，行下列出 `× 组 > 断言`，失败原因在末尾的 `Failed Tests N` 块里给出（`FAIL 分件 > 组 > 断言` 加一行细节）。交互终端里标记是 `✓` / `❯` / `×` / `↓`、分隔线是 `⎯` 并带颜色；重定向或 `-NoColor` 时换成 `ok` / `FAIL` / `skip` 与 `-`，日志因此可直接 grep，也不依赖字体。运行中不刷进度行（`-Progress` 才会）。分件自身的断言只决定结果，打印失败不会吞掉断言（原因写入 `%TEMP%\clipboard-tests-error.log`）。
 
 断言只写两类：守回归（对应实际缺陷）与守契约（对外行为、文件格式、命令行输出）。不复述常量、不断言私有实现细节、同一行为不写第二条等价断言。
 

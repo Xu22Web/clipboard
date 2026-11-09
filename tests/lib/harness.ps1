@@ -59,7 +59,7 @@ function Add-TestResult([string]$group, [string]$name, [string]$result, [string]
     elseif ($result -eq 'FAIL') { $p['Fail'] = [int]$p['Fail'] + 1 }
     elseif ($result -eq 'SKIP') { $p['Skip'] = [int]$p['Skip'] + 1 }
     $p['Last'] = $name
-    Write-TestCheck $group $name $result $detail $ms
+    Write-TestCheck ($script:Harness.Part + '.ps1') ($group + ' > ' + $name) $result $detail $ms
     Write-TestProgressFile
   } catch {
     if (-not ($script:Results | Where-Object { $_.Test -eq $name -and $_.Group -eq $group })) {
@@ -250,10 +250,14 @@ function Start-TestPart([string]$Source = '', [switch]$ClipShared, [switch]$Quie
   $script:tmpRoot = $script:Harness.TmpRoot
   $script:Utf8 = $script:Harness.Utf8
   $script:programVersion = $script:Harness.ProgramVersion
+  $script:Harness.Started = Get-Date
+  # a part started by hand prints what a run prints, one file at a time
+  if (-not $Quiet) { Write-TestBanner $script:Harness.ProgramVersion $script:Harness.SrcRoot }
 }
 
 function Complete-TestPart([string]$ResultFile = '', [switch]$Quiet) {
-  foreach ($r in @($script:Harness.Runners)) { Stop-CliRunner $r }
+  # walking the runner list directly: @($list) over a List[object] throws in 5.1
+  foreach ($r in $script:Harness.Runners) { Stop-CliRunner $r }
   $fail = @($script:Results | Where-Object { $_.Result -eq 'FAIL' }).Count
   if ($ResultFile) {
     # ToArray, not @($list): wrapping a List[object] throws "Argument types do not match" in 5.1
@@ -268,10 +272,14 @@ function Complete-TestPart([string]$ResultFile = '', [switch]$Quiet) {
   if (-not $Quiet) {
     $pass = @($script:Results | Where-Object { $_.Result -eq 'PASS' }).Count
     $skipped = @($script:Results | Where-Object { $_.Result -eq 'SKIP' }).Count
-    Write-Host ''
-    Write-TestCounts 'Checks' $pass $fail $skipped $script:Results.Count
-    # kept for the scripts that read it, and for a log where the block above is not enough
-    Write-Output ('TOTAL ' + $script:Results.Count + '   PASS ' + $pass + '   FAIL ' + $fail + '   SKIP ' + $skipped)
+    $label = $script:Harness.Part + '.ps1'
+    $items = @()
+    foreach ($r in $script:Results) {
+      if ($r.Result -ne 'FAIL') { continue }
+      $items += @{ Name = ($label + ' > ' + [string]$r.Group + ' > ' + [string]$r.Test); Detail = [string]$r.Detail }
+    }
+    $seconds = ((Get-Date) - $script:Harness.Started).TotalSeconds
+    Write-TestPartReport $label $pass $fail $skipped $seconds $script:Harness.Started $items
   }
   try { Remove-Item -LiteralPath $script:Harness.TmpRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
   if ($fail -gt 0) { exit 1 }

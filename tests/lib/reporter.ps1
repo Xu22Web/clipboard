@@ -6,23 +6,32 @@
   tests\run.ps1, which starts the parts. Both load this file, so a line looks the same
   wherever it comes from.
 
-  The shapes follow the runner most people read these days - a header, one row per part with
-  its count and time, a failure that shows where it happened, and one block at the end:
+  The output is vitest's, one to one, because that is what a reader already knows:
 
-       RUN  clipboard 0.1.0  on powershell 5.1.26100.9836 (AMD64)
-            10 files, up to 12 at a time
 
-      v unit        (579 tests)   53.1s
-      v template    (14 tests)    1m 08s
-      x history     (22 tests)    1m 03s   4 failed
+       RUN  clipboard v0.1.0  D:\project\clipboard
 
-      Test Files  9 passed | 1 failed (10)
-           Tests  733 passed | 4 failed | 1 skipped (735)
-        Duration  2m 09s (slowest build 2m 09s)
+       v unit\unit.ps1 (579 tests) 56.2s
+       v cli\config.ps1 (23 tests) 31.2s
+       x cli\history.ps1 (22 tests | 4 failed) 1m 03s
+         x int > the fake clipboard reads back 12ms
 
-  The marks are the glyphs a console draws once the rows are read as sentences (v / x / down),
-  and the ascii words ok / FAIL / skip when the output is redirected or -NoColor was asked for:
-  a log file stays greppable and a font-less console stays readable.
+      ------ Failed Tests 4 ------
+
+       FAIL  cli\history.ps1 > int > the fake clipboard reads back
+             wanted "fake-one", got nothing
+
+      -------------------------------
+
+       Test Files  9 passed | 1 failed (10)
+            Tests  733 passed | 4 failed | 1 skipped (735)
+         Start at  22:41:07
+         Duration  2m 20s (slowest unit\unit.ps1 56.2s)
+
+
+  A mark is a glyph in a console and the word ok / FAIL / skip when the output is redirected or
+  -NoColor was asked for: a log stays greppable and a console without the font stays readable.
+  A failure is printed once, after the last part, never between the rows.
 
   Colour is ANSI and only when the handle is a console that takes it: a redirected run, a host
   without virtual terminal support, and NO_COLOR all get the same rows without escapes.
@@ -129,6 +138,12 @@ function Get-TestMark([string]$Kind, [int]$Pad = 0) {
   return ($script:TestReport.Ansi[$Kind] + $word + $script:TestReport.Ansi.reset)
 }
 
+# the quiet part of a row: counts in brackets, a duration, the "(slowest x)" note
+function Get-TestDim([string]$Text) {
+  if (-not $script:TestReport.Color) { return $Text }
+  return ($script:TestReport.Ansi.dim + $Text + $script:TestReport.Ansi.reset)
+}
+
 # long assertion details are one sentence each; wrap them under the row instead of letting the
 # console fold them wherever it likes
 function Write-TestWrapped([string]$Text, [int]$Indent) {
@@ -146,39 +161,111 @@ function Write-TestWrapped([string]$Text, [int]$Indent) {
   }
 }
 
-# one check, while the part runs (verbose, or a part run by hand)
+# one check under its part: verbose lists every one, and a part that failed lists its own.
+# The detail is not printed here: vitest collects failures and prints them once at the end, so
+# a long run does not break its own rows with a paragraph.
 function Write-TestCheck([string]$Group, [string]$Name, [string]$Result, [string]$Detail, [int]$Ms) {
   if ($script:TestReport.Quiet) { return }
   if ($script:TestReport.Mode -ne 'verbose' -and $Result -ne 'FAIL') { return }
-  $line = (Get-TestMark $Result 5) + $Group + ' > ' + $Name
-  if ($Result -eq 'SKIP') { $line = $line + '   ' + $Detail }
-  elseif ($Ms -gt 0) { $line = $line + '   ' + (Format-TestDuration ($Ms / 1000.0)) }
-  Write-Host $line
-  if ($Result -eq 'FAIL' -and $Detail) { Write-TestWrapped $Detail 6 }
-}
-
-# one part, once it is done (tests\run.ps1): the mark, the name, how many checks, how long
-function Write-TestPartRow([string]$Part, [int]$Checks, [double]$Seconds, [int]$Failed, [int]$Skipped) {
   $kind = 'pass'
-  if ($Failed -gt 0) { $kind = 'fail' } elseif ($Skipped -gt 0 -and $Checks -eq $Skipped) { $kind = 'skip' }
-  $note = ''
-  if ($Failed -gt 0) { $note = '   ' + [string]$Failed + ' failed' }
-  elseif ($Skipped -gt 0) { $note = '   ' + [string]$Skipped + ' skipped' }
-  $what = if ($Checks -eq 1) { 'test' } else { 'tests' }
-  $count = '(' + [string]$Checks + ' ' + $what + ')'
-  Write-Host ((Get-TestMark $kind 5) + $Part.PadRight(10) + $count.PadRight(14) + (Format-TestDuration $Seconds) + $note)
+  if ($Result -eq 'FAIL') { $kind = 'fail' } elseif ($Result -eq 'SKIP') { $kind = 'skip' }
+  $row = '   ' + (Get-TestMark $kind) + ' ' + $Group + ' > ' + $Name
+  if ($Result -eq 'SKIP' -and $Detail) { $row = $row + ' ' + (Get-TestDim ('[' + $Detail + ']')) }
+  elseif ($Ms -gt 0) { $row = $row + ' ' + (Get-TestDim (Format-TestDuration ($Ms / 1000.0))) }
+  Write-Host $row
 }
 
-function Write-TestFailureBlock([string]$Part, [string]$Group, [string]$Name, [string]$Detail) {
-  Write-Host ('  ' + (Get-TestMark 'fail') + '  ' + $Part + ' > ' + $Group + ' > ' + $Name)
-  if ($Detail) { Write-TestWrapped $Detail 8 }
+# one part, printed the way vitest prints one file: mark, path, counts in brackets, duration
+function Write-TestModuleRow([string]$Name, [int]$Checks, [int]$Failed, [int]$Skipped, [double]$Seconds) {
+  $kind = 'pass'
+  if ($Failed -gt 0) { $kind = 'fail' } elseif ($Checks -gt 0 -and $Checks -eq $Skipped) { $kind = 'skip' }
+  $bits = New-Object System.Collections.Generic.List[string]
+  $bits.Add([string]$Checks + ' ' + $(if ($Checks -eq 1) { 'test' } else { 'tests' }))
+  if ($Failed -gt 0) { $bits.Add([string]$Failed + ' failed') }
+  if ($Skipped -gt 0) { $bits.Add([string]$Skipped + ' skipped') }
+  $row = ' ' + (Get-TestMark $kind) + ' ' + $Name + ' ' + (Get-TestDim '(') + ($bits -join (Get-TestDim ' | ')) + (Get-TestDim ')')
+  if ($Seconds -gt 0) { $row = $row + ' ' + (Format-TestDuration $Seconds) }
+  Write-Host $row
 }
 
-function Write-TestRunHeader([string]$Version, [string]$PowerShell, [string]$Platform, [int]$Parts, [int]$Workers) {
-  Write-Host (' RUN  clipboard ' + $Version + '  on ' + $PowerShell + ' (' + $Platform + ')')
-  $what = if ($Parts -eq 1) { 'file' } else { 'files' }
-  Write-Host ('      ' + [string]$Parts + ' ' + $what + ', up to ' + [string]$Workers + ' at a time')
+# the banner vitest opens with: an empty line, the version and the root it is about to test
+function Write-TestBanner([string]$Version, [string]$Root) {
   Write-Host ''
+  Write-Host (' RUN  clipboard v' + $Version + '  ' + $Root)
+  Write-Host ''
+}
+
+# a full-width rule with a label in the middle, the shape vitest uses for its failure banner
+function Get-TestRule([string]$Label = '') {
+  $width = [Math]::Max(20, $script:TestReport.Width)
+  $ch = if ($script:TestReport.Glyphs) { [string][char]0x23AF } else { '-' }
+  if (-not $Label) { return ($ch * $width) }
+  $side = [int][Math]::Floor(($width - $Label.Length) / 2)
+  if ($side -lt 2) { $side = 2 }
+  return (($ch * $side) + $Label + ($ch * $side))
+}
+
+# everything that failed, printed once after the last part. Each item is { Name, Detail }.
+function Write-TestFailures($Items) {
+  # walking the list instead of @($Items): wrapping a List[object] throws
+  # "Argument types do not match" in 5.1
+  $list = New-Object System.Collections.Generic.List[object]
+  foreach ($i in $Items) { if ($null -ne $i) { $list.Add($i) } }
+  if ($list.Count -eq 0) { return }
+  Write-Host ''
+  Write-Host (Get-TestRule (' Failed Tests ' + [string]$list.Count + ' '))
+  Write-Host ''
+  foreach ($item in $list) {
+    $label = ' FAIL '
+    if ($script:TestReport.Color) { $label = $script:TestReport.Ansi.fail + $label + $script:TestReport.Ansi.reset }
+    Write-Host ($label + ' ' + [string]$item.Name)
+    if ($item.Detail) { Write-TestWrapped ([string]$item.Detail).Trim() 8 }
+    Write-Host ''
+  }
+  Write-Host (Get-TestRule)
+}
+
+# failed | passed | skipped, the order vitest uses, then the total in brackets
+function Get-TestState([int]$Pass, [int]$Fail, [int]$Skip, [int]$Total) {
+  $bits = New-Object System.Collections.Generic.List[string]
+  if ($Fail -gt 0) { $bits.Add((Get-TestMark 'fail') + ' ' + [string]$Fail + ' failed') }
+  if ($Pass -gt 0) { $bits.Add([string]$Pass + ' passed') }
+  if ($Skip -gt 0) { $bits.Add([string]$Skip + ' skipped') }
+  if ($bits.Count -eq 0) { $bits.Add('no checks') }
+  return (($bits -join (Get-TestDim ' | ')) + ' ' + (Get-TestDim ('(' + [string]$Total + ')')))
+}
+
+function Write-TestSummaryLine([string]$Label, [string]$Value) {
+  Write-Host (' ' + $Label.PadLeft(10) + '  ' + $Value)
+}
+
+# the block at the end of a run; tests\run.ps1 owns the numbers, this owns the shape
+function Write-TestSummary($Run) {
+  Write-Host ''
+  Write-TestSummaryLine 'Test Files' (Get-TestState ([int]$Run.PartsPass) ([int]$Run.PartsFail) ([int]$Run.PartsSkip) ([int]$Run.Parts))
+  Write-TestSummaryLine 'Tests' (Get-TestState ([int]$Run.Pass) ([int]$Run.Fail) ([int]$Run.Skip) ([int]$Run.Total))
+  if ($Run.StartAt) { Write-TestSummaryLine 'Start at' ([string]$Run.StartAt) }
+  $span = Format-TestDuration ([double]$Run.Seconds)
+  if ($Run.Slowest) { $span = $span + ' ' + (Get-TestDim ('(slowest ' + [string]$Run.Slowest + ')')) }
+  Write-TestSummaryLine 'Duration' $span
+  Write-Host ''
+}
+
+# a part run on its own: one row, its failures, and the same block the driver prints
+function Write-TestPartReport([string]$Name, [int]$Pass, [int]$Fail, [int]$Skip, [double]$Seconds, [datetime]$StartAt, $Fails) {
+  Write-TestModuleRow $Name ($Pass + $Fail + $Skip) $Fail $Skip $Seconds
+  Write-TestFailures $Fails
+  $run = @{
+    Parts = 1
+    PartsPass = $(if ($Fail -gt 0) { 0 } else { 1 })
+    PartsFail = $(if ($Fail -gt 0) { 1 } else { 0 })
+    PartsSkip = 0
+    Pass = $Pass; Fail = $Fail; Skip = $Skip; Total = ($Pass + $Fail + $Skip)
+    Seconds = $Seconds
+    StartAt = $StartAt.ToString('HH:mm:ss')
+    Slowest = ''
+  }
+  Write-TestSummary $run
 }
 
 # a single line that is repainted while parts run; opt-in, and only when the output is a console
@@ -206,27 +293,4 @@ function Clear-TestProgress {
     else { Write-Host (' ' * ([Math]::Max(10, $script:TestReport.Width - 2))) -NoNewline }
     Write-Host "`r" -NoNewline
   } catch { }
-}
-
-function Write-TestCounts([string]$Label, [int]$Pass, [int]$Fail, [int]$Skip, [int]$Total) {
-  $parts = New-Object System.Collections.Generic.List[string]
-  if ($Pass -gt 0) { $parts.Add([string]$Pass + ' passed') }
-  if ($Fail -gt 0) { $parts.Add((Get-TestMark 'fail') + ' ' + [string]$Fail + ' failed') }
-  if ($Skip -gt 0) { $parts.Add([string]$Skip + ' skipped') }
-  if ($parts.Count -eq 0) { $parts.Add('0 checks') }
-  Write-Host (' ' + $Label.PadLeft(10) + '  ' + ($parts -join ' | ') + ' (' + [string]$Total + ')')
-}
-
-# the block at the end of a run; tests\run.ps1 owns the numbers, this owns the shape
-function Write-TestSummary($Run) {
-  Write-Host ''
-  Write-TestCounts 'Test Files' ([int]$Run.PartsPass) ([int]$Run.PartsFail) ([int]$Run.PartsSkip) ([int]$Run.Parts)
-  Write-TestCounts 'Tests' ([int]$Run.Pass) ([int]$Run.Fail) ([int]$Run.Skip) ([int]$Run.Total)
-  $line = '   Duration  ' + (Format-TestDuration ([double]$Run.Seconds))
-  if ($Run.Slowest) { $line = $line + ' (slowest ' + $Run.Slowest + ')' }
-  Write-Host $line
-  if ($Run.Fails -and @($Run.Fails).Count -gt 0) {
-    Write-Host ''
-    foreach ($f in @($Run.Fails)) { Write-Host ('  ' + (Get-TestMark 'fail') + '  ' + [string]$f) }
-  }
 }

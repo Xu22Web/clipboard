@@ -365,8 +365,8 @@ if ($verify) {
   # no -Serial: the driver sees that -Source is not src\ and keeps the cli parts one at a time
   # (a packaged copy has no fake clipboard), while the packaging part still runs beside them
   # The suite stays attached to this console instead of being piped into a variable: it prints
-  # a row per part, a failure block and a live progress line, and capturing the stream turned
-  # a run of several minutes into one silent line. A failing part says why on its own row.
+  # a row per part and a block with everything that failed, and capturing the stream turned a
+  # run of several minutes into one silent line. A failing part says why on its own row.
   & powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -File $suite -Integration -Source $dest
   $code = $LASTEXITCODE
   if ($code -ne 0) {

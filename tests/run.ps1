@@ -248,6 +248,7 @@ Update-TestAssembly
 
 $results = New-Object System.Collections.Generic.List[object]
 $allTimings = New-Object System.Collections.Generic.List[object]
+$allFails = New-Object System.Collections.Generic.List[object]
 $script:Bailed = $false
 $script:ProgressAt = [DateTime]::MinValue
 $started = Get-Date
@@ -300,20 +301,29 @@ function Complete-Part($run) {
   }
   $fails = @($rows | Where-Object { $_.Result -eq 'FAIL' })
   $skips = @($rows | Where-Object { $_.Result -eq 'SKIP' }).Count
-  $results.Add(@{ Name = $run.Job.Name; Seconds = $seconds; Rows = $rows })
+  $results.Add(@{ Name = $run.Job.Name; Label = ($run.Job.Group + '\' + $run.Job.Name + '.ps1'); Seconds = $seconds; Rows = $rows })
   foreach ($t in $timings) {
     if ($null -eq $t) { continue }
     $allTimings.Add([pscustomobject]@{ Part = $run.Job.Name; What = [string]$t.What; Ms = [long]$t.Ms })
   }
   Clear-TestProgress
+  $label = $run.Job.Group + '\' + $run.Job.Name + '.ps1'
   # verbose lists every check of the part as it lands; the parts themselves stay quiet so one
   # child cannot interleave its rows into another
   if ($Reporter -eq 'verbose') {
-    foreach ($r in $rows) { Write-TestCheck ([string]$r.Group) ([string]$r.Test) ([string]$r.Result) ([string]$r.Detail) ([int]$r.Ms) }
+    foreach ($r in $rows) { Write-TestCheck $label ([string]$r.Group + ' > ' + [string]$r.Test) ([string]$r.Result) ([string]$r.Detail) ([int]$r.Ms) }
   }
-  Write-TestPartRow $run.Job.Name $rows.Count $seconds $fails.Count $skips
+  Write-TestModuleRow $label $rows.Count $fails.Count $skips $seconds
+  # a part that failed shows its own checks, the way vitest shows the tests of a failed file;
+  # the reason is kept for the one block after the last part
+  if ($Reporter -ne 'verbose') {
+    foreach ($r in $fails) { Write-TestCheck $label ([string]$r.Group + ' > ' + [string]$r.Test) 'FAIL' '' ([int]$r.Ms) }
+  }
   foreach ($r in $fails) {
-    Write-TestFailureBlock $run.Job.Name ([string]$r.Group) ([string]$r.Test) ([string]$r.Detail).Trim()
+    $allFails.Add(@{
+      Name = ($label + ' > ' + [string]$r.Group + ' > ' + [string]$r.Test)
+      Detail = ([string]$r.Detail).Trim()
+    })
   }
   if ($Bail -and $fails.Count -gt 0) { $script:Bailed = $true }
 }
@@ -378,7 +388,7 @@ $pending = New-Object System.Collections.Generic.List[object]
 foreach ($job in $jobs) { $pending.Add($job) }
 $active = New-Object System.Collections.Generic.List[object]
 
-Write-TestRunHeader $programVersion ('powershell ' + $PSVersionTable.PSVersion.ToString()) ([string]$env:PROCESSOR_ARCHITECTURE) $jobs.Count $Workers
+Write-TestBanner $programVersion $(if ($Source) { ([string](Resolve-Path -LiteralPath $Source).Path) } else { $repoRoot })
 
 while ($pending.Count -gt 0 -or $active.Count -gt 0) {
   $launched = $false
@@ -423,29 +433,23 @@ $partsFail = 0
 $partsSkip = 0
 $slowest = ''
 $slowestSecs = 0
-$failLines = New-Object System.Collections.Generic.List[string]
 foreach ($r in $results) {
   $rowsFail = @($r.Rows | Where-Object { $_.Result -eq 'FAIL' }).Count
   $rowsSkip = @($r.Rows | Where-Object { $_.Result -eq 'SKIP' }).Count
   if ($rowsFail -gt 0) { $partsFail++ }
   elseif ($rowsSkip -gt 0 -and $rowsSkip -eq @($r.Rows).Count) { $partsSkip++ }
-  if ($r.Seconds -gt $slowestSecs) { $slowestSecs = $r.Seconds; $slowest = $r.Name }
-  foreach ($row in $r.Rows) {
-    if ($row.Result -eq 'FAIL') { $failLines.Add($r.Name + ' > ' + [string]$row.Group + ' > ' + [string]$row.Test) }
-  }
+  if ($r.Seconds -gt $slowestSecs) { $slowestSecs = $r.Seconds; $slowest = $r.Label }
 }
 $summary = @{
   Parts = $results.Count; PartsPass = ($results.Count - $partsFail - $partsSkip); PartsFail = $partsFail; PartsSkip = $partsSkip
   Pass = $pass; Fail = $fail; Skip = $skipped; Total = $all.Count
   Seconds = $totalSecs.TotalSeconds
+  StartAt = $started.ToString('HH:mm:ss')
   Slowest = $(if ($slowest) { $slowest + ' ' + (Format-TestDuration $slowestSecs) } else { '' })
-  Fails = $failLines.ToArray()
 }
 Clear-TestProgress
+Write-TestFailures $allFails
 Write-TestSummary $summary
-# the last line is for scripts, not for people: every run ends with this one shape
-Write-Host ''
-Write-Host ('TOTAL ' + $all.Count + '   PASS ' + $pass + '   FAIL ' + $fail + '   SKIP ' + $skipped + '   in ' + [int]$totalSecs.TotalSeconds + ' s')
 try { Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
 if ($fail -gt 0) { exit 1 }
 exit 0

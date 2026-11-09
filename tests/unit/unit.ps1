@@ -62,6 +62,8 @@ $script:results = New-Object System.Collections.Generic.List[object]
 # sandbox the whole part shares), so it loads the reporter and the progress contract itself.
 . (Join-Path $repoRoot 'tests\lib\reporter.ps1')
 Initialize-TestReporter -Mode 'verbose' -Quiet:$Quiet
+$script:unitStarted = Get-Date
+if (-not $Quiet) { Write-TestBanner $programVersion ([string]$srcRoot) }
 $script:unitTimings = New-Object System.Collections.Generic.List[object]
 $script:unitProgress = @{ Pass = 0; Fail = 0; Skip = 0; Last = ''; At = [DateTime]::MinValue }
 
@@ -109,7 +111,7 @@ function Check([string]$group, [string]$name, [bool]$ok, [string]$detail) {
   $p = $script:unitProgress
   if ($result -eq 'PASS') { $p['Pass'] = [int]$p['Pass'] + 1 } else { $p['Fail'] = [int]$p['Fail'] + 1 }
   $p['Last'] = $name
-  Write-TestCheck $group $name $result $detail $ms
+  Write-TestCheck 'unit\unit.ps1' ($group + ' > ' + $name) $result $detail $ms
   Write-UnitProgress
 }
 
@@ -117,7 +119,7 @@ function Skip([string]$group, [string]$name, [string]$why) {
   $script:results.Add([pscustomobject]@{ Group = $group; Test = $name; Result = 'SKIP'; Detail = $why; Ms = 0 })
   $script:unitProgress['Skip'] = [int]$script:unitProgress['Skip'] + 1
   $script:unitProgress['Last'] = $name
-  Write-TestCheck $group $name 'SKIP' $why 0
+  Write-TestCheck 'unit\unit.ps1' ($group + ' > ' + $name) 'SKIP' $why 0
   Write-UnitProgress
 }
 
@@ -2440,9 +2442,13 @@ $pass = @($script:results | Where-Object { $_.Result -eq 'PASS' }).Count
 $fail = @($script:results | Where-Object { $_.Result -eq 'FAIL' }).Count
 $skipped = @($script:results | Where-Object { $_.Result -eq 'SKIP' }).Count
 if (-not $Quiet) {
-  Write-Host ''
-  Write-TestCounts 'Checks' $pass $fail $skipped $script:results.Count
-  Write-Output ('TOTAL ' + $script:results.Count + '   PASS ' + $pass + '   FAIL ' + $fail + '   SKIP ' + $skipped)
+  $items = @()
+  foreach ($r in $script:results) {
+    if ($r.Result -ne 'FAIL') { continue }
+    $items += @{ Name = ('unit\unit.ps1 > ' + [string]$r.Group + ' > ' + [string]$r.Test); Detail = [string]$r.Detail }
+  }
+  $seconds = ((Get-Date) - $script:unitStarted).TotalSeconds
+  Write-TestPartReport 'unit\unit.ps1' $pass $fail $skipped $seconds $script:unitStarted $items
 }
 if ($fail -gt 0) { exit 1 }
 exit 0
