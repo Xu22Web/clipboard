@@ -43,7 +43,9 @@ $script:TestReport = @{
   Color    = $false
   Glyphs   = $false
   Progress = $false
-  LiveLines = 0
+  Window   = @()
+  WindowHeight = 0
+  Capture  = $null
   Width    = 100
   LastMark = $null
   # ascii on purpose: the tool and its tests stay readable on a console without the glyphs,
@@ -104,7 +106,9 @@ function Initialize-TestReporter([string]$Mode = 'default', [switch]$Quiet, [swi
   # sequence the host understands. It is on by default because a run of a few minutes is not
   # readable without it, and it disappears by itself when the output is a pipe or a file.
   $script:TestReport.Progress = $vt -and (-not [bool]$NoProgress)
-  $script:TestReport.LiveLines = 0
+  $script:TestReport.Window = @()
+  $script:TestReport.WindowHeight = 0
+  $script:TestReport.Capture = $null
   if ($script:TestReport.Glyphs) {
     $script:TestReport.Marks = @{
       pass = [string][char]0x2713
@@ -164,10 +168,10 @@ function Write-TestWrapped([string]$Text, [int]$Indent) {
     while ($rest.Length -gt $room) {
       $cut = $rest.LastIndexOf(' ', [Math]::Min($room, $rest.Length - 1))
       if ($cut -lt $room / 2) { $cut = $room }
-      Write-Host ($pad + $rest.Substring(0, $cut).TrimEnd())
+      Write-TestLog ($pad + $rest.Substring(0, $cut).TrimEnd())
       $rest = $rest.Substring($cut).TrimStart()
     }
-    if ($rest.Length -gt 0) { Write-Host ($pad + $rest) }
+    if ($rest.Length -gt 0) { Write-TestLog ($pad + $rest) }
   }
 }
 
@@ -181,7 +185,7 @@ function Write-TestCheck([string]$Group, [string]$Name, [string]$Result, [string
   $row = '   ' + (Get-TestMark $kind) + ' ' + $Group + ' > ' + $Name
   if ($Result -eq 'SKIP' -and $Detail) { $row = $row + ' ' + (Get-TestDim ('[' + $Detail + ']')) }
   elseif ($Ms -gt 0) { $row = $row + ' ' + (Get-TestDim (Format-TestDuration ($Ms / 1000.0))) }
-  Write-Host $row
+  Write-TestLog $row
 }
 
 # one part, printed the way vitest prints one file: mark, path, counts in brackets, duration
@@ -194,14 +198,14 @@ function Write-TestModuleRow([string]$Name, [int]$Checks, [int]$Failed, [int]$Sk
   if ($Skipped -gt 0) { $bits.Add([string]$Skipped + ' skipped') }
   $row = ' ' + (Get-TestMark $kind) + ' ' + $Name + ' ' + (Get-TestDim '(') + ($bits -join (Get-TestDim ' | ')) + (Get-TestDim ')')
   if ($Seconds -gt 0) { $row = $row + ' ' + (Format-TestDuration $Seconds) }
-  Write-Host $row
+  Write-TestLog $row
 }
 
 # the banner vitest opens with: an empty line, the version and the root it is about to test
 function Write-TestBanner([string]$Version, [string]$Root) {
-  Write-Host ''
-  Write-Host (' RUN  clipboard v' + $Version + '  ' + $Root)
-  Write-Host ''
+  Write-TestLog ''
+  Write-TestLog (' RUN  clipboard v' + $Version + '  ' + $Root)
+  Write-TestLog ''
 }
 
 # a full-width rule with a label in the middle, the shape vitest uses for its failure banner
@@ -221,17 +225,17 @@ function Write-TestFailures($Items) {
   $list = New-Object System.Collections.Generic.List[object]
   foreach ($i in $Items) { if ($null -ne $i) { $list.Add($i) } }
   if ($list.Count -eq 0) { return }
-  Write-Host ''
-  Write-Host (Get-TestRule (' Failed Tests ' + [string]$list.Count + ' '))
-  Write-Host ''
+  Write-TestLog ''
+  Write-TestLog (Get-TestRule (' Failed Tests ' + [string]$list.Count + ' '))
+  Write-TestLog ''
   foreach ($item in $list) {
     $label = ' FAIL '
     if ($script:TestReport.Color) { $label = $script:TestReport.Ansi.fail + $label + $script:TestReport.Ansi.reset }
-    Write-Host ($label + ' ' + [string]$item.Name)
+    Write-TestLog ($label + ' ' + [string]$item.Name)
     if ($item.Detail) { Write-TestWrapped ([string]$item.Detail).Trim() 8 }
-    Write-Host ''
+    Write-TestLog ''
   }
-  Write-Host (Get-TestRule)
+  Write-TestLog (Get-TestRule)
 }
 
 # failed | passed | skipped, the order vitest uses, then the total in brackets
@@ -244,20 +248,24 @@ function Get-TestState([int]$Pass, [int]$Fail, [int]$Skip, [int]$Total) {
   return (($bits -join (Get-TestDim ' | ')) + ' ' + (Get-TestDim ('(' + [string]$Total + ')')))
 }
 
+function Get-TestSummaryLine([string]$Label, [string]$Value) {
+  return (' ' + $Label.PadLeft(10) + '  ' + $Value)
+}
+
 function Write-TestSummaryLine([string]$Label, [string]$Value) {
-  Write-Host (' ' + $Label.PadLeft(10) + '  ' + $Value)
+  Write-TestLog (Get-TestSummaryLine $Label $Value)
 }
 
 # the block at the end of a run; tests\run.ps1 owns the numbers, this owns the shape
 function Write-TestSummary($Run) {
-  Write-Host ''
+  Write-TestLog ''
   Write-TestSummaryLine 'Test Files' (Get-TestState ([int]$Run.PartsPass) ([int]$Run.PartsFail) ([int]$Run.PartsSkip) ([int]$Run.Parts))
   Write-TestSummaryLine 'Tests' (Get-TestState ([int]$Run.Pass) ([int]$Run.Fail) ([int]$Run.Skip) ([int]$Run.Total))
   if ($Run.StartAt) { Write-TestSummaryLine 'Start at' ([string]$Run.StartAt) }
   $span = Format-TestDuration ([double]$Run.Seconds)
   if ($Run.Slowest) { $span = $span + ' ' + (Get-TestDim ('(slowest ' + [string]$Run.Slowest + ')')) }
   Write-TestSummaryLine 'Duration' $span
-  Write-Host ''
+  Write-TestLog ''
 }
 
 # the tree the default reporter prints for a single file, or for a file that failed: the
@@ -296,13 +304,13 @@ function Write-TestPartTree($Rows) {
     elseif ($g.Skipped -gt 0) { $bits = $bits + ' | ' + [string]$g.Skipped + ' skipped' }
     $row = '   ' + (Get-TestMark $kind) + ' ' + $g.Name + ' ' + (Get-TestDim ('(' + $bits + ')'))
     if ($g.Ms -gt 0) { $row = $row + ' ' + (Format-TestDuration ($g.Ms / 1000.0)) }
-    Write-Host $row
+    Write-TestLog $row
     foreach ($r in $g.Rows) {
       $k = 'pass'
       if ($r.Result -eq 'FAIL') { $k = 'fail' } elseif ($r.Result -eq 'SKIP') { $k = 'skip' }
       $line = '     ' + (Get-TestMark $k) + ' ' + [string]$r.Test
       if ($r.Result -eq 'SKIP' -and $r.Detail) { $line = $line + ' ' + (Get-TestDim ('[' + [string]$r.Detail + ']')) }
-      Write-Host $line
+      Write-TestLog $line
     }
   }
 }
@@ -337,46 +345,111 @@ function Write-TestPartReport([string]$Name, $Rows, [double]$Seconds, [datetime]
   Write-TestSummary $run
 }
 
-# The block vitest keeps under the finished rows while tests run: the files still going, how
-# far each got, what it is running now. The block always ends with a newline, so the cursor
-# sits on the line below it; repainting means moving back up over the old lines, erasing them,
-# and writing the new ones - a finished part's row is printed after a Clear, which is how the
-# rows stay above the block and in order.
-function Write-TestLive($Items) {
-  if (-not $script:TestReport.Progress) { return }
-  $esc = [string][char]27
-  $old = [int]$script:TestReport.LiveLines
-  # the block is built under its own name: PowerShell ignores case, so a local $lines would
-  # overwrite the $Lines parameter and the copy below would walk an empty list
-  $block = New-Object System.Collections.Generic.List[string]
-  foreach ($item in $Items) { $block.Add([string]$item) }
-  if ($old -gt 0) {
-    Write-Host ($esc + '[' + [string]$old + 'A') -NoNewline
-    for ($i = 0; $i -lt $old; $i++) {
-      Write-Host ($esc + '[2K') -NoNewline
-      Write-Host ''
-    }
-    Write-Host ($esc + '[' + [string]$old + 'A') -NoNewline
-  }
-  foreach ($line in $block) {
-    $text = $line
-    $room = [Math]::Max(20, $script:TestReport.Width - 1)
-    if ($text.Length -gt $room) { $text = $text.Substring(0, $room) }
-    Write-Host ($esc + '[2K' + $text)
-  }
-  $script:TestReport.LiveLines = $block.Count
+# ---------------------------------------------------------------- terminal window
+# This is vitest's WindowRenderer, ported: it keeps a window of lines at the bottom of the
+# terminal and pushes everything else above it. The details are the ones that make it stop
+# flickering, and none of them are optional:
+#
+#   - the whole frame is wrapped in ESC[?2026h / ESC[?2026l (synchronized output), so the
+#     terminal commits it in one go instead of repainting row by row
+#   - the window is erased with ESC[K plus ESC[1A per row, never by deleting rows: a deletion
+#     reflows everything below it, and that reflow is the flicker
+#   - the window text ends without a line break, so the cursor rests on its last row and the
+#     next erase starts there
+#   - a line printed while the window is up is written where the window began, and the window
+#     is pushed back down by as many rows as it shrank, so no gap opens between them
+function Write-TestOut([string]$Text) {
+  if ($script:TestReport.Quiet) { return }
+  if (-not $Text) { return }
+  # one call for the whole string: Write-Host hands it to the host in one piece, where several
+  # calls per frame let the host reorder the escape sequences
+  try { Write-Host -NoNewline $Text } catch { }
 }
 
-function Clear-TestLive {
+# a line of output that belongs above the window
+function Write-TestLog([string]$Text) {
+  if ($script:TestReport.Quiet) { return }
+  $line = ([string]$Text).TrimEnd("`r", "`n") + "`r`n"
+  # while a block is being collected the line waits here, so a part's row and tree reach the
+  # window in one frame instead of one repaint per line
+  if ($null -ne $script:TestReport.Capture) { $script:TestReport.Capture.Add($line); return }
+  if ($script:TestReport.Progress) { Write-TestWindow $line } else { Write-TestOut $line }
+}
+
+function Start-TestCapture {
+  $script:TestReport.Capture = New-Object System.Collections.Generic.List[string]
+}
+
+function Get-TestCaptured {
+  $text = ''
+  if ($null -ne $script:TestReport.Capture) { $text = ($script:TestReport.Capture -join '') }
+  $script:TestReport.Capture = $null
+  return $text
+}
+
+function Get-TestPlain([string]$Text) {
+  return [regex]::Replace([string]$Text, '\x1b\[[0-9;?]*[ -/]*[@-~]', '')
+}
+
+# how many rows a line really takes: the terminal wraps it at its width
+function Get-TestRowCount($Lines, [int]$Columns) {
+  $count = 0
+  foreach ($line in $Lines) {
+    $len = (Get-TestPlain ([string]$line)).Length
+    $count += [Math]::Max(1, [int][Math]::Ceiling($len / [double]$Columns))
+  }
+  return $count
+}
+
+function Set-TestWindow($Lines) {
+  $list = New-Object System.Collections.Generic.List[string]
+  foreach ($line in $Lines) { $list.Add([string]$line) }
+  $script:TestReport.Window = $list.ToArray()
+}
+
+function Write-TestWindow([string]$Message = '') {
+  if (-not $script:TestReport.Progress) {
+    if ($Message) { Write-TestOut $Message }
+    return
+  }
+  $esc = [string][char]27
+  $columns = [Math]::Max(20, $script:TestReport.Width)
+  $window = @($script:TestReport.Window)
+  $rows = Get-TestRowCount $window $columns
+  $old = [int]$script:TestReport.WindowHeight
+  $padding = $old - $rows
+  if ($padding -gt 0 -and $Message) {
+    $padding = $padding - (Get-TestRowCount @($Message.TrimEnd("`r", "`n")) $columns)
+  }
+  $sb = New-Object System.Text.StringBuilder
+  [void]$sb.Append($esc + '[?2026h')
+  if ($old -gt 0) {
+    # back to column one first: the window ends on an empty line, but a row that was written
+    # without one would leave the cursor mid line and ESC[K would erase only the tail
+    [void]$sb.Append("`r")
+    [void]$sb.Append($esc + '[K')
+    for ($i = 1; $i -lt $old; $i++) { [void]$sb.Append($esc + '[1A' + $esc + '[K') }
+  }
+  if ($Message) { [void]$sb.Append($Message) }
+  if ($padding -gt 0) { [void]$sb.Append("`r`n" * $padding) }
+  if ($rows -gt 0) { [void]$sb.Append(($window -join "`r`n")) }
+  [void]$sb.Append($esc + '[?2026l')
+  Write-TestOut $sb.ToString()
+  $script:TestReport.WindowHeight = $rows + [Math]::Max(0, $padding)
+}
+
+function Clear-TestWindow {
   if (-not $script:TestReport.Progress) { return }
-  $old = [int]$script:TestReport.LiveLines
+  $old = [int]$script:TestReport.WindowHeight
+  $script:TestReport.Window = @()
+  $script:TestReport.WindowHeight = 0
   if ($old -le 0) { return }
   $esc = [string][char]27
-  Write-Host ($esc + '[' + [string]$old + 'A') -NoNewline
-  for ($i = 0; $i -lt $old; $i++) {
-    Write-Host ($esc + '[2K') -NoNewline
-    Write-Host ''
-  }
-  Write-Host ($esc + '[' + [string]$old + 'A') -NoNewline
-  $script:TestReport.LiveLines = 0
+  $sb = New-Object System.Text.StringBuilder
+  [void]$sb.Append($esc + '[?2026h')
+  [void]$sb.Append("`r")
+  [void]$sb.Append($esc + '[K')
+  for ($i = 1; $i -lt $old; $i++) { [void]$sb.Append($esc + '[1A' + $esc + '[K') }
+  [void]$sb.Append($esc + '[?2026l')
+  Write-TestOut $sb.ToString()
 }

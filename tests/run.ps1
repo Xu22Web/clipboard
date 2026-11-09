@@ -310,17 +310,21 @@ function Complete-Part($run) {
     if ($null -eq $t) { continue }
     $allTimings.Add([pscustomobject]@{ Part = $run.Job.Name; What = [string]$t.What; Ms = [long]$t.Ms })
   }
-  Clear-TestLive
   $label = $run.Job.Group + '\' + $run.Job.Name + '.ps1'
   # vitest prints what is inside a file only when it is the single file of a run, or when the
   # file has a failure; every other row stays one line. -Reporter verbose is the mode that lists
-  # every check instead.
+  # every check instead. The rows are captured first and handed to the window in one frame, so
+  # the window is not repainted once per row.
+  Start-TestCapture
   if ($Reporter -eq 'verbose') {
     foreach ($r in $rows) { Write-TestCheck $label ([string]$r.Group + ' > ' + [string]$r.Test) ([string]$r.Result) ([string]$r.Detail) ([int]$r.Ms) }
   } else {
     Write-TestModuleRow $label $rows.Count $fails.Count $skips $seconds
     if (($jobs.Count -le 1) -or ($fails.Count -gt 0)) { Write-TestPartTree $rows }
   }
+  $message = Get-TestCaptured
+  Set-TestWindow (Get-TestWindowLines)
+  Write-TestWindow $message
   foreach ($r in $fails) {
     $allFails.Add(@{
       Name = ($label + ' > ' + [string]$r.Group + ' > ' + [string]$r.Test)
@@ -330,37 +334,54 @@ function Complete-Part($run) {
   if ($Bail -and $fails.Count -gt 0) { $script:Bailed = $true }
 }
 
-# The block under the rows: the parts still running, how many checks each finished, and the one
-# it is on now. It is repainted in place, the way vitest keeps its running files on screen.
-function Write-TestRunProgress {
-  if ($NoProgress) { return }
-  $now = Get-Date
-  if (($now - $script:ProgressAt).TotalMilliseconds -lt 200) { return }
-  $script:ProgressAt = $now
-  $elapsed = (Get-Date) - $started
-  $stamp = '{0:00}:{1:00}' -f $elapsed.Minutes, $elapsed.Seconds
-  $lines = New-Object System.Collections.Generic.List[string]
-  $first = $true
+# the lines the window shows: the parts still going, then the four rows the run ends with
+function Get-TestWindowLines {
+  $frame = New-Object System.Collections.Generic.List[string]
   foreach ($a in $active) {
     $label = $a.Job.Group + '\' + $a.Job.Name + '.ps1'
-    $done = ''
-    $last = ''
+    $done = 0
     if (Test-Path -LiteralPath $a.Progress) {
       $bits = @()
       try { $bits = @(([IO.File]::ReadAllText($a.Progress)).Trim() -split '\s+') } catch { $bits = @() }
-      if ($bits.Count -ge 4 -and $bits[0] -match '^[0-9]+$') {
-        $done = [string]([int]$bits[0] + [int]$bits[1] + [int]$bits[2]) + ' checks'
-        $last = (@($bits[3..($bits.Count - 1)]) -join ' ')
-      }
+      if ($bits.Count -ge 3 -and $bits[0] -match '^[0-9]+$') { $done = [int]$bits[0] + [int]$bits[1] + [int]$bits[2] }
     }
-    $head = if ($first) { ' ' + (Get-TestMark 'run') + ' ' + $stamp } else { ' ' * 8 }
-    $line = $head + '  ' + $label
-    if ($done) { $line = $line + '  ' + $done }
-    if ($last) { $line = $line + '  ' + (Get-TestDim $last) }
-    $lines.Add($line)
-    $first = $false
+    $line = ' > ' + $label
+    if ($done -gt 0) { $line = $line + ' ' + [string]$done }
+    $frame.Add($line)
   }
-  Write-TestLive $lines
+  if ($frame.Count -gt 0) { $frame.Add('') }
+  $ok = 0
+  $bad = 0
+  $skip = 0
+  foreach ($r in $results) {
+    foreach ($row in $r.Rows) {
+      if ($row.Result -eq 'FAIL') { $bad++ } elseif ($row.Result -eq 'SKIP') { $skip++ } else { $ok++ }
+    }
+  }
+  $elapsed = (Get-Date) - $started
+  $frame.Add((Get-TestSummaryLine 'Test Files' ([string]$results.Count + ' passed (' + [string]$jobs.Count + ')')))
+  $testsText = [string]$ok + ' passed'
+  if ($bad -gt 0) { $testsText = $testsText + ' | ' + [string]$bad + ' failed' }
+  if ($skip -gt 0) { $testsText = $testsText + ' | ' + [string]$skip + ' skipped' }
+  $frame.Add((Get-TestSummaryLine 'Tests' $testsText))
+  $frame.Add((Get-TestSummaryLine 'Start at' $started.ToString('HH:mm:ss')))
+  $frame.Add((Get-TestSummaryLine 'Duration' (Format-TestDuration $elapsed.TotalSeconds)))
+  # the renderer clears from the cursor, so the window has to end on an empty line: the cursor
+  # then sits at the start of a row and ESC[K / ESC[1A ESC[K erase whole rows
+  $frame.Add('')
+  return $frame
+}
+
+# The window vitest keeps on screen while tests run, repainted in place by the renderer in
+# tests\lib\reporter.ps1. A finished part asks for a frame right away; otherwise four frames a
+# second cover the seconds the window shows.
+function Write-TestRunProgress {
+  if ($NoProgress) { return }
+  $now = Get-Date
+  if (($now - $script:ProgressAt).TotalMilliseconds -lt 400) { return }
+  $script:ProgressAt = $now
+  Set-TestWindow (Get-TestWindowLines)
+  Write-TestWindow ''
 }
 
 # Where the time went. The command line parts record every child process they start, so this
@@ -449,7 +470,7 @@ $summary = @{
   StartAt = $started.ToString('HH:mm:ss')
   Slowest = $(if ($slowest) { $slowest + ' ' + (Format-TestDuration $slowestSecs) } else { '' })
 }
-Clear-TestLive
+Clear-TestWindow
 Write-TestFailures $allFails
 Write-TestSummary $summary
 try { Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }

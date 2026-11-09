@@ -590,7 +590,7 @@ tools/utils/csc.ps1     定位 .NET Framework 的 csc.exe
 tools/utils/minify.ps1  压缩器（语法树重写）
 tests/run.ps1           自测驱动：按目录发现分件、并行执行、合并结果（打印在 tests\lib\reporter.ps1）
 tests/lib/harness.ps1   分件共用的断言、沙箱与命令调用
-tests/lib/reporter.ps1  测试打印：分件行、失败块、进度行与汇总
+tests/lib/reporter.ps1  测试打印：分件行、失败块、实时窗口与汇总
 tests/lib/cli-runner.ps1 分件内的命令执行器：一个进程内按请求调用命令行
 tests/lib/fake-clip.ps1 沙箱自带的剪贴板
 tests/unit/unit.ps1     结构与单元测试（进程内 dot-source）
@@ -800,7 +800,7 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 
 两个开关改变输出：`-Reporter verbose` 每条断言一行（`✓ 分件路径 > 组 > 断言 耗时`，不打印分件行）；`-Reporter default` 为默认值，可省略，写其它值报 `unknown reporter`。
 
-运行时有一块实时区：正在跑的分件逐行列在已完成的行下方，每行是该分件的相对路径、已跑断言数与当前断言名，首行带已用时间，约每 200 ms 就地重绘；分件一完成就清掉这块、在上方追加它的一行，然后继续重画。输出被重定向时不画（`-NoProgress` 可显式关掉）。
+运行时有一块实时窗口：正在跑的分件逐行列出，每行是该分件的相对路径与已跑断言数，空行之后是 `Test Files` / `Tests` / `Start at` / `Duration` 四行，与结束时的汇总同形。整帧用同步输出序列（`ESC[?2026h` / `ESC[?2026l`）一次写入，重绘只清行并上移光标，约每 400 ms 一帧；分件完成时它的一行追加到窗口上方，与该帧同一次写入。输出被重定向时不画（`-NoProgress` 可显式关掉）。
 
 失败时那一个分件的行首标记是 `❯`，行下列出 `× 组 > 断言`，失败原因在末尾的 `Failed Tests N` 块里给出（`FAIL 分件 > 组 > 断言` 加一行细节）。交互终端里标记是 `✓` / `❯` / `×` / `↓`、分隔线是 `⎯` 并带颜色；重定向或 `-NoColor` 时换成 `ok` / `FAIL` / `skip` 与 `-`，日志因此可直接 grep，也不依赖字体。分件自身的断言只决定结果，打印失败不会吞掉断言（原因写入 `%TEMP%\clipboard-tests-error.log`）。
 
