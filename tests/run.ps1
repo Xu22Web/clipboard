@@ -257,10 +257,10 @@ $script:Bailed = $false
 $script:ProgressAt = [DateTime]::MinValue
 $started = Get-Date
 $utf8 = New-Object System.Text.UTF8Encoding $false
-# A part is a script, not a collected test list: it cannot know how many checks it will run
-# before it runs them. The count each part ended with last time is kept here, so the running row
-# reads "<completed>/<total>" from the second run on; the first run of a part shows the
-# completed count alone.
+# A part publishes the number of rows it collected before the first one runs, so its row reads
+# "<completed>/<total>" on its own. This file covers the row of a part that has not published
+# one yet - the unit group hands its progress writer over later in the run - with the count that
+# part ended with last time; on the first run of a part only the completed count is shown.
 $script:TotalsFile = Join-Path $env:TEMP 'clipboard-tests-totals.txt'
 $script:Totals = @{}
 if (Test-Path -LiteralPath $script:TotalsFile) {

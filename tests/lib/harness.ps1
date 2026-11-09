@@ -17,8 +17,8 @@
 $script:Results = New-Object System.Collections.Generic.List[object]
 $script:Harness = @{ Timings = (New-Object System.Collections.Generic.List[object]) }
 
-# loaded here rather than by every part: Check and Skip print through it, and so does the
-# summary a part prints when it is run by hand
+# loaded here rather than by every part: every row prints through it, and so does the summary
+# a part prints when it is run by hand
 . (Join-Path $PSScriptRoot 'reporter.ps1')
 
 # what the progress line reads while the part runs; a quiet part only writes this file, the
@@ -29,7 +29,8 @@ function Write-TestProgressFile {
   $file = [string]$script:Harness.ProgressFile
   if (-not $file) { return }
   $now = Get-Date
-  # five writes a second is enough for a progress line and keeps a 579 check part cheap
+  # five writes a second is enough for a progress line and keeps a part with a few hundred
+  # rows cheap
   if (($now - $script:Harness.Progress.At).TotalMilliseconds -lt 200) { return }
   $script:Harness.Progress.At = $now
   $p = $script:Harness.Progress
@@ -83,18 +84,10 @@ function Add-TestResult([string]$group, [string]$name, [string]$result, [string]
   }
 }
 
-function Check([string]$group, [string]$name, [bool]$ok, [string]$detail) {
-  Add-TestResult $group $name $(if ($ok) { 'PASS' } else { 'FAIL' }) $detail
-}
-
-function Skip([string]$group, [string]$name, [string]$why) {
-  Add-TestResult $group $name 'SKIP' $why
-}
-
 # ---------------------------------------------------------------- describe / it
 # The shape vitest reports in: describes nest, an it is one check, and the assertions inside it
 # record what was looked at. Each it runs as soon as it is reached, so a part keeps the order
-# its setup was written in. Check and Skip stay for a part that has not been moved yet.
+# its setup was written in.
 $script:Harness.Describes = New-Object System.Collections.Generic.List[string]
 $script:Harness.Frames = New-Object System.Collections.Generic.List[object]
 $script:Harness.Asserts = $null
