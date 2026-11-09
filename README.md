@@ -770,7 +770,7 @@ cli test -Serial                     # 逐个跑
 cli test -Reporter verbose           # 每条断言一行（带分件路径与耗时）
 cli test -Bail                       # 首个失败后不再启动新分件
 cli test -Profile                    # 打印最慢的命令行调用与每个分件的命令行耗时
-cli test -Progress                   # 运行中刷一行进度（默认关闭）
+cli test -NoProgress                 # 不刷运行中的实时块（重定向时自动关闭）
 cli test -NoColor                    # 不输出颜色，标记改用 ASCII（重定向时自动如此）
 cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 ```
@@ -800,7 +800,9 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 
 两个开关改变输出：`-Reporter verbose` 每条断言一行（`✓ 分件路径 > 组 > 断言 耗时`，不打印分件行）；`-Reporter default` 为默认值，可省略，写其它值报 `unknown reporter`。
 
-失败时那一个分件的行首标记是 `❯`，行下列出 `× 组 > 断言`，失败原因在末尾的 `Failed Tests N` 块里给出（`FAIL 分件 > 组 > 断言` 加一行细节）。交互终端里标记是 `✓` / `❯` / `×` / `↓`、分隔线是 `⎯` 并带颜色；重定向或 `-NoColor` 时换成 `ok` / `FAIL` / `skip` 与 `-`，日志因此可直接 grep，也不依赖字体。运行中不刷进度行（`-Progress` 才会）。分件自身的断言只决定结果，打印失败不会吞掉断言（原因写入 `%TEMP%\clipboard-tests-error.log`）。
+运行时有一块实时区：正在跑的分件逐行列在已完成的行下方，每行是该分件的相对路径、已跑断言数与当前断言名，首行带已用时间，约每 200 ms 就地重绘；分件一完成就清掉这块、在上方追加它的一行，然后继续重画。输出被重定向时不画（`-NoProgress` 可显式关掉）。
+
+失败时那一个分件的行首标记是 `❯`，行下列出 `× 组 > 断言`，失败原因在末尾的 `Failed Tests N` 块里给出（`FAIL 分件 > 组 > 断言` 加一行细节）。交互终端里标记是 `✓` / `❯` / `×` / `↓`、分隔线是 `⎯` 并带颜色；重定向或 `-NoColor` 时换成 `ok` / `FAIL` / `skip` 与 `-`，日志因此可直接 grep，也不依赖字体。分件自身的断言只决定结果，打印失败不会吞掉断言（原因写入 `%TEMP%\clipboard-tests-error.log`）。
 
 断言只写两类：守回归（对应实际缺陷）与守契约（对外行为、文件格式、命令行输出）。不复述常量、不断言私有实现细节、同一行为不写第二条等价断言。
 

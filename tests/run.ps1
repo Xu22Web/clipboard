@@ -48,9 +48,8 @@ param(
   [switch]$Bail,
   # print where the time went: the slowest command line calls and the total per part
   [switch]$Profile,
-  # repaint one line while parts run; off by default, because a finished run reads better
-  # as plain rows and the line is the only part that repaints the terminal
-  [switch]$Progress,
+  # repaint the block of running parts while the run goes; off when nobody is watching
+  [switch]$NoProgress,
   [switch]$NoColor
 )
 
@@ -68,7 +67,7 @@ if (@('default', 'verbose') -notcontains $Reporter) {
   Write-Host ('[x] unknown reporter: ' + $Reporter + '   (default | verbose)')
   exit 2
 }
-Initialize-TestReporter -Mode $Reporter -NoColor:$NoColor -Progress:$Progress
+Initialize-TestReporter -Mode $Reporter -NoColor:$NoColor -NoProgress:$NoProgress
 
 # the header row names the build under test; a package carries the same number as a constant
 $programVersion = ''
@@ -311,7 +310,7 @@ function Complete-Part($run) {
     if ($null -eq $t) { continue }
     $allTimings.Add([pscustomobject]@{ Part = $run.Job.Name; What = [string]$t.What; Ms = [long]$t.Ms })
   }
-  Clear-TestProgress
+  Clear-TestLive
   $label = $run.Job.Group + '\' + $run.Job.Name + '.ps1'
   # vitest prints what is inside a file only when it is the single file of a run, or when the
   # file has a failure; every other row stays one line. -Reporter verbose is the mode that lists
@@ -331,37 +330,37 @@ function Complete-Part($run) {
   if ($Bail -and $fails.Count -gt 0) { $script:Bailed = $true }
 }
 
-# One line that is overwritten while parts run: the totals so far, then how far each running
-# part got. The counters come from the progress files the parts write.
+# The block under the rows: the parts still running, how many checks each finished, and the one
+# it is on now. It is repainted in place, the way vitest keeps its running files on screen.
 function Write-TestRunProgress {
+  if ($NoProgress) { return }
   $now = Get-Date
   if (($now - $script:ProgressAt).TotalMilliseconds -lt 200) { return }
   $script:ProgressAt = $now
-  $ok = 0
-  $bad = 0
-  $skip = 0
-  foreach ($r in $results) {
-    foreach ($row in $r.Rows) {
-      if ($row.Result -eq 'FAIL') { $bad++ }
-      elseif ($row.Result -eq 'SKIP') { $skip++ }
-      else { $ok++ }
-    }
-  }
-  $parts = New-Object System.Collections.Generic.List[string]
-  foreach ($a in $active) {
-    $bits = @()
-    if (Test-Path -LiteralPath $a.Progress) {
-      try { $bits = @(([IO.File]::ReadAllText($a.Progress)).Trim() -split '\s+') } catch { $bits = @() }
-    }
-    if ($bits.Count -ge 4 -and $bits[0] -match '^[0-9]+$') {
-      $n = [int]$bits[0] + [int]$bits[1] + [int]$bits[2]
-      $parts.Add($a.Job.Name + ' ' + [string]$n + ' ' + [string]$bits[3])
-    } else { $parts.Add($a.Job.Name) }
-  }
   $elapsed = (Get-Date) - $started
-  $text = ('{0:00}:{1:00}  ok {2}  FAIL {3}  skip {4}' -f $elapsed.Minutes, $elapsed.Seconds, $ok, $bad, $skip)
-  if ($parts.Count -gt 0) { $text = $text + '  |  ' + ($parts -join '  ') }
-  Write-TestProgress $text
+  $stamp = '{0:00}:{1:00}' -f $elapsed.Minutes, $elapsed.Seconds
+  $lines = New-Object System.Collections.Generic.List[string]
+  $first = $true
+  foreach ($a in $active) {
+    $label = $a.Job.Group + '\' + $a.Job.Name + '.ps1'
+    $done = ''
+    $last = ''
+    if (Test-Path -LiteralPath $a.Progress) {
+      $bits = @()
+      try { $bits = @(([IO.File]::ReadAllText($a.Progress)).Trim() -split '\s+') } catch { $bits = @() }
+      if ($bits.Count -ge 4 -and $bits[0] -match '^[0-9]+$') {
+        $done = [string]([int]$bits[0] + [int]$bits[1] + [int]$bits[2]) + ' checks'
+        $last = (@($bits[3..($bits.Count - 1)]) -join ' ')
+      }
+    }
+    $head = if ($first) { ' ' + (Get-TestMark 'run') + ' ' + $stamp } else { ' ' * 8 }
+    $line = $head + '  ' + $label
+    if ($done) { $line = $line + '  ' + $done }
+    if ($last) { $line = $line + '  ' + (Get-TestDim $last) }
+    $lines.Add($line)
+    $first = $false
+  }
+  Write-TestLive $lines
 }
 
 # Where the time went. The command line parts record every child process they start, so this
@@ -415,7 +414,7 @@ while ($pending.Count -gt 0 -or $active.Count -gt 0) {
       $pending.Clear()
     }
   } else {
-    if ($Progress) { Write-TestRunProgress }
+    Write-TestRunProgress
     if (-not $launched) { Start-Sleep -Milliseconds 120 }
   }
 }
@@ -450,7 +449,7 @@ $summary = @{
   StartAt = $started.ToString('HH:mm:ss')
   Slowest = $(if ($slowest) { $slowest + ' ' + (Format-TestDuration $slowestSecs) } else { '' })
 }
-Clear-TestProgress
+Clear-TestLive
 Write-TestFailures $allFails
 Write-TestSummary $summary
 try { Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }

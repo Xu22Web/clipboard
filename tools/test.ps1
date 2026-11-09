@@ -14,7 +14,7 @@
       cli test -Reporter verbose      one row per check, with the path and the time
       cli test -Bail                 stop starting parts after the first failure
       cli test -Profile              print the slowest command line calls and the time per part
-      cli test -Progress             repaint one line while parts run (off by default)
+      cli test -NoProgress           do not repaint the block of running parts
       cli test -NoColor              no escape sequences and ascii marks (also the default when
                                      redirected)
       cli test -Source dist\clipboard-0.1.0
@@ -36,7 +36,7 @@ param(
   [string]$Reporter = '',
   [switch]$Bail,
   [switch]$Profile,
-  [switch]$Progress,
+  [switch]$NoProgress,
   [switch]$NoColor,
   [switch]$Verbose_Log
 )
@@ -61,7 +61,7 @@ if ($Changed) { $cli += '-Changed' }
 if ($Reporter) { $cli += @('-Reporter', $Reporter) }
 if ($Bail) { $cli += '-Bail' }
 if ($Profile) { $cli += '-Profile' }
-if ($Progress) { $cli += '-Progress' }
+if ($NoProgress) { $cli += '-NoProgress' }
 if ($NoColor) { $cli += '-NoColor' }
 if ($Verbose_Log) { $cli += '-Verbose_Log' }
 & powershell @cli

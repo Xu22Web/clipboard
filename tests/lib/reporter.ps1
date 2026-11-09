@@ -43,6 +43,7 @@ $script:TestReport = @{
   Color    = $false
   Glyphs   = $false
   Progress = $false
+  LiveLines = 0
   Width    = 100
   LastMark = $null
   # ascii on purpose: the tool and its tests stay readable on a console without the glyphs,
@@ -86,26 +87,35 @@ function Test-VirtualTerminal {
 }
 
 # A part starts this for itself; tests\run.ps1 starts one for the rows it prints.
-function Initialize-TestReporter([string]$Mode = 'default', [switch]$Quiet, [switch]$NoColor, [switch]$Progress) {
+function Initialize-TestReporter([string]$Mode = 'default', [switch]$Quiet, [switch]$NoColor, [switch]$NoProgress) {
   $script:TestReport.Mode = $Mode
   $script:TestReport.Quiet = [bool]$Quiet
   $script:TestReport.Width = Get-TestConsoleWidth
   # the quiet path prints nothing, so it must not pay for the console probe (a csc run)
   $redirected = $false
   try { $redirected = [Console]::IsOutputRedirected } catch { $redirected = $true }
-  $script:TestReport.Color = (-not [bool]$Quiet) -and (-not [bool]$NoColor) -and (Test-VirtualTerminal)
+  $vt = $false
+  if (-not [bool]$Quiet) { $vt = Test-VirtualTerminal }
+  $script:TestReport.Color = $vt -and (-not [bool]$NoColor)
   # a check mark says more than the word ok, but only a console draws it and only a font shows
   # it: a redirected log and -NoColor keep the ascii words, which also stay greppable
   $script:TestReport.Glyphs = (-not [bool]$Quiet) -and (-not [bool]$NoColor) -and (-not $redirected)
-  # the live line is opt-in: it is the one part of the output that repaints the terminal, and
-  # a run that is read after the fact is clearer without it
-  $script:TestReport.Progress = [bool]$Progress
+  # The live block repaints lines under the finished ones, which needs a console and an escape
+  # sequence the host understands. It is on by default because a run of a few minutes is not
+  # readable without it, and it disappears by itself when the output is a pipe or a file.
+  $script:TestReport.Progress = $vt -and (-not [bool]$NoProgress)
+  $script:TestReport.LiveLines = 0
   if ($script:TestReport.Glyphs) {
     $script:TestReport.Marks = @{
       pass = [string][char]0x2713
       fail = [string][char]0x00D7
       skip = [string][char]0x2193
+      run  = [string][char]0x276F
       info = [string][char]0x00B7
+    }
+  } else {
+    $script:TestReport.Marks = @{
+      pass = 'ok'; fail = 'FAIL'; skip = 'skip'; run = '..'; info = '..'
     }
   }
   if ($script:TestReport.Color) {
@@ -327,29 +337,46 @@ function Write-TestPartReport([string]$Name, $Rows, [double]$Seconds, [datetime]
   Write-TestSummary $run
 }
 
-# a single line that is repainted while parts run; opt-in, and only when the output is a console
-function Write-TestProgress([string]$Text) {
-  if ($script:TestReport.Quiet) { return }
+# The block vitest keeps under the finished rows while tests run: the files still going, how
+# far each got, what it is running now. The block always ends with a newline, so the cursor
+# sits on the line below it; repainting means moving back up over the old lines, erasing them,
+# and writing the new ones - a finished part's row is printed after a Clear, which is how the
+# rows stay above the block and in order.
+function Write-TestLive($Items) {
   if (-not $script:TestReport.Progress) { return }
-  if ([Console]::IsOutputRedirected) { return }
-  $room = [Math]::Max(10, $script:TestReport.Width - 2)
-  if ($Text.Length -gt $room) { $Text = $Text.Substring($Text.Length - $room) }
-  try {
-    # erase to the end of the line when the console takes escapes: padding to its width breaks
-    # the moment the real width is smaller than the one this process measured
-    if ($script:TestReport.Color) { Write-Host ($Text + [string][char]27 + '[K') -NoNewline }
-    else { Write-Host ($Text.PadRight($room)) -NoNewline }
-    Write-Host "`r" -NoNewline
-  } catch { }
+  $esc = [string][char]27
+  $old = [int]$script:TestReport.LiveLines
+  # the block is built under its own name: PowerShell ignores case, so a local $lines would
+  # overwrite the $Lines parameter and the copy below would walk an empty list
+  $block = New-Object System.Collections.Generic.List[string]
+  foreach ($item in $Items) { $block.Add([string]$item) }
+  if ($old -gt 0) {
+    Write-Host ($esc + '[' + [string]$old + 'A') -NoNewline
+    for ($i = 0; $i -lt $old; $i++) {
+      Write-Host ($esc + '[2K') -NoNewline
+      Write-Host ''
+    }
+    Write-Host ($esc + '[' + [string]$old + 'A') -NoNewline
+  }
+  foreach ($line in $block) {
+    $text = $line
+    $room = [Math]::Max(20, $script:TestReport.Width - 1)
+    if ($text.Length -gt $room) { $text = $text.Substring(0, $room) }
+    Write-Host ($esc + '[2K' + $text)
+  }
+  $script:TestReport.LiveLines = $block.Count
 }
 
-function Clear-TestProgress {
-  if ($script:TestReport.Quiet) { return }
+function Clear-TestLive {
   if (-not $script:TestReport.Progress) { return }
-  if ([Console]::IsOutputRedirected) { return }
-  try {
-    if ($script:TestReport.Color) { Write-Host ([string][char]27 + '[K') -NoNewline }
-    else { Write-Host (' ' * ([Math]::Max(10, $script:TestReport.Width - 2))) -NoNewline }
-    Write-Host "`r" -NoNewline
-  } catch { }
+  $old = [int]$script:TestReport.LiveLines
+  if ($old -le 0) { return }
+  $esc = [string][char]27
+  Write-Host ($esc + '[' + [string]$old + 'A') -NoNewline
+  for ($i = 0; $i -lt $old; $i++) {
+    Write-Host ($esc + '[2K') -NoNewline
+    Write-Host ''
+  }
+  Write-Host ($esc + '[' + [string]$old + 'A') -NoNewline
+  $script:TestReport.LiveLines = 0
 }
