@@ -23,7 +23,7 @@ $script:Harness = @{ Timings = (New-Object System.Collections.Generic.List[objec
 
 # what the progress line reads while the part runs; a quiet part only writes this file, the
 # part that started it owns the console
-$script:Harness.Progress = @{ Pass = 0; Fail = 0; Skip = 0; Last = ''; At = [DateTime]::MinValue }
+$script:Harness.Progress = @{ Pass = 0; Fail = 0; Skip = 0; Total = 0; Last = ''; At = [DateTime]::MinValue }
 
 function Write-TestProgressFile {
   $file = [string]$script:Harness.ProgressFile
@@ -33,7 +33,18 @@ function Write-TestProgressFile {
   if (($now - $script:Harness.Progress.At).TotalMilliseconds -lt 200) { return }
   $script:Harness.Progress.At = $now
   $p = $script:Harness.Progress
-  $line = [string]$p['Pass'] + ' ' + [string]$p['Fail'] + ' ' + [string]$p['Skip'] + ' ' + [string]$p['Last']
+  $line = [string]$p['Pass'] + ' ' + [string]$p['Fail'] + ' ' + [string]$p['Skip'] + ' ' + [string]$p['Total'] + ' ' + [string]$p['Last']
+  try { [IO.File]::WriteAllText($file, $line, $script:Harness.Utf8) } catch { }
+}
+
+# The number of checks this part will run, written as soon as the block tree is built: the
+# reader over this file shows "completed/total" while the rows are still running.
+function Set-TestPartTotal([int]$Total) {
+  $p = $script:Harness.Progress
+  $p['Total'] = $Total
+  $file = [string]$script:Harness.ProgressFile
+  if (-not $file) { return }
+  $line = [string]$p['Pass'] + ' ' + [string]$p['Fail'] + ' ' + [string]$p['Skip'] + ' ' + [string]$Total + ' ' + [string]$p['Last']
   try { [IO.File]::WriteAllText($file, $line, $script:Harness.Utf8) } catch { }
 }
 
@@ -89,6 +100,10 @@ $script:Harness.Frames = New-Object System.Collections.Generic.List[object]
 $script:Harness.Asserts = $null
 $script:Harness.ExpectCount = -1
 $script:Harness.ExpectSome = $false
+# Two phases, the way vitest collects before it runs: a part reaches its rows first (that is
+# when the total is known and written out), then the rows are executed in the order written.
+$script:Harness.Phase = 'collect'
+$script:Harness.Queue = New-Object System.Collections.Generic.List[object]
 
 function Get-TestGroupPath {
   if ($script:Harness.Describes.Count -eq 0) { return '' }
@@ -116,15 +131,24 @@ function Describe([string]$Name, [scriptblock]$Body) {
   } finally {
     $script:Harness.Frames.RemoveAt($script:Harness.Frames.Count - 1)
     $script:Harness.Describes.RemoveAt($script:Harness.Describes.Count - 1)
-    # the cleanup of a block runs even when a row inside it failed or threw
-    foreach ($hook in $frame.After) {
-      try { & $hook } catch { Add-TestHookError $_ }
+    # a block's cleanup belongs after the rows it collected, and it runs even when one of them
+    # failed or threw
+    if ($script:Harness.Phase -eq 'collect') {
+      foreach ($hook in $frame.After) { $script:Harness.Queue.Add(@{ Hook = $hook }) }
+    } else {
+      foreach ($hook in $frame.After) {
+        try { & $hook } catch { Add-TestHookError $_ }
+      }
     }
   }
 }
 
-# runs at the point it is written, which is the start of the block
-function BeforeAll([scriptblock]$Body) { & $Body }
+# Runs before the first row that follows it, so the order a part writes its setup in is kept:
+# while collecting it takes a place in the queue instead of running.
+function BeforeAll([scriptblock]$Body) {
+  if ($script:Harness.Phase -eq 'collect') { $script:Harness.Queue.Add(@{ Hook = $Body }); return }
+  & $Body
+}
 
 function AfterAll([scriptblock]$Body) {
   if ($script:Harness.Frames.Count -eq 0) { throw 'AfterAll has to be inside a Describe block' }
@@ -172,13 +196,53 @@ function Format-TestCaseName([string]$Name, $Case) {
 }
 
 function It([string]$Name, [scriptblock]$Body, [string]$Skip = '', [object[]]$Cases = @()) {
-  if ($Cases.Count -eq 0) { Invoke-TestIt $Name $Body @(); return }
-  foreach ($case in $Cases) { Invoke-TestIt (Format-TestCaseName $Name $case) $Body @($case) }
+  if ($script:Harness.Phase -eq 'collect') {
+    $group = Get-TestGroupPath
+    if (-not $group) { $group = [string]$script:Harness.Part }
+    # the hooks are captured with the row: the block frames are gone by the time it runs
+    $before = @(Get-TestHooks 'BeforeEach')
+    $after = @(Get-TestHooks 'AfterEach' -Reverse)
+    if ($Cases.Count -eq 0) {
+      $script:Harness.Queue.Add(@{ Group = $group; Name = $Name; Body = $Body; Args = @(); Skip = $Skip; Before = $before; After = $after })
+    } else {
+      foreach ($case in $Cases) {
+        $script:Harness.Queue.Add(@{ Group = $group; Name = (Format-TestCaseName $Name $case); Body = $Body; Args = @($case); Skip = $Skip; Before = $before; After = $after })
+      }
+    }
+    return
+  }
+  if ($Cases.Count -eq 0) { Invoke-TestIt $Name $Body @() '' $Skip; return }
+  foreach ($case in $Cases) { Invoke-TestIt (Format-TestCaseName $Name $case) $Body @($case) '' $Skip }
 }
 
-function Invoke-TestIt([string]$Name, [scriptblock]$Body, [object[]]$Arguments = @()) {
-  $group = Get-TestGroupPath
-  if (-not $group) { $group = [string]$script:Harness.Part }
+# The queue is what the collect phase produced: report its size, run the one-off hooks, then
+# every row in the order it was written.
+function Invoke-TestQueue {
+  if ($script:Harness.Phase -ne 'collect') { return }
+  $script:Harness.Phase = 'run'
+  $total = 0
+  foreach ($item in $script:Harness.Queue) { if ($null -eq $item.Hook) { $total = $total + 1 } }
+  Set-TestPartTotal $total
+  foreach ($item in $script:Harness.Queue) {
+    if ($null -ne $item.Hook) {
+      try { & $item.Hook } catch { Add-TestHookError $_ }
+      continue
+    }
+    Invoke-TestIt ([string]$item.Name) ($item.Body) @($item.Args) ([string]$item.Group) ([string]$item.Skip) $item.Before $item.After
+  }
+}
+
+function Invoke-TestIt([string]$Name, [scriptblock]$Body, [object[]]$Arguments = @(), [string]$Group = '', [string]$Skip = '', [object[]]$Before = $null, [object[]]$After = $null) {
+  if (-not $Group) {
+    $Group = Get-TestGroupPath
+    if (-not $Group) { $Group = [string]$script:Harness.Part }
+  }
+  if ($Skip) { Add-TestResult $Group $Name 'SKIP' $Skip; return }
+  if ($null -eq $Before -and $script:Harness.Frames.Count -gt 0) {
+    $Before = @(Get-TestHooks 'BeforeEach')
+    $After = @(Get-TestHooks 'AfterEach' -Reverse)
+  }
+  $group = $Group
   $outer = $script:Harness.Asserts
   $outerCount = $script:Harness.ExpectCount
   $outerSome = $script:Harness.ExpectSome
@@ -187,13 +251,13 @@ function Invoke-TestIt([string]$Name, [scriptblock]$Body, [object[]]$Arguments =
   $script:Harness.ExpectCount = -1
   $script:Harness.ExpectSome = $false
   $failure = ''
-  foreach ($hook in (Get-TestHooks 'BeforeEach')) {
+  foreach ($hook in @($Before)) {
     try { & $hook } catch { $failure = 'before each: ' + $_.Exception.Message; break }
   }
   if (-not $failure) {
     try { & $Body @Arguments } catch { $failure = $_.Exception.Message }
   }
-  foreach ($hook in (Get-TestHooks 'AfterEach' -Reverse)) {
+  foreach ($hook in @($After)) {
     try { & $hook } catch { Add-TestHookError $_ }
   }
   $wanted = $script:Harness.ExpectCount
@@ -460,6 +524,9 @@ function Start-TestPart([string]$Source = '', [switch]$ClipShared, [switch]$Quie
 }
 
 function Complete-TestPart([string]$ResultFile = '', [switch]$Quiet) {
+  # a part that collected its rows runs them now; the ones still on the old Check form have an
+  # empty queue and are already done
+  Invoke-TestQueue
   # walking the runner list directly: @($list) over a List[object] throws in 5.1
   foreach ($r in $script:Harness.Runners) { Stop-CliRunner $r }
   $fail = @($script:Results | Where-Object { $_.Result -eq 'FAIL' }).Count

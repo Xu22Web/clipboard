@@ -362,16 +362,21 @@ function Get-TestWindowLines {
   foreach ($a in $active) {
     $label = $a.Job.Group + '\' + $a.Job.Name + '.ps1'
     $done = 0
+    $ownTotal = 0
     if (Test-Path -LiteralPath $a.Progress) {
       $bits = @()
       try { $bits = @(([IO.File]::ReadAllText($a.Progress)).Trim() -split '\s+') } catch { $bits = @() }
-      if ($bits.Count -ge 3 -and $bits[0] -match '^[0-9]+$') { $done = [int]$bits[0] + [int]$bits[1] + [int]$bits[2] }
+      if ($bits.Count -ge 3 -and $bits[0] -match '^[0-9]+$') {
+        $done = [int]$bits[0] + [int]$bits[1] + [int]$bits[2]
+        # the field a part fills once it has collected its rows
+        if ($bits.Count -ge 4 -and $bits[3] -match '^[0-9]+$') { $ownTotal = [int]$bits[3] }
+      }
     }
     # vitest writes "<mark> <path> <completed>/<total>": the pointer bold yellow, the count dim
     $count = ''
-    if ($done -gt 0) {
-      $total = 0
-      if ($script:Totals.ContainsKey($a.Job.Name)) { $total = [int]$script:Totals[$a.Job.Name] }
+    if ($done -gt 0 -or $ownTotal -gt 0) {
+      $total = $ownTotal
+      if ($total -le 0 -and $script:Totals.ContainsKey($a.Job.Name)) { $total = [int]$script:Totals[$a.Job.Name] }
       if ($total -gt 0) { $count = ' ' + [string]$done + '/' + [string]$total }
       else { $count = ' ' + [string]$done }
     }

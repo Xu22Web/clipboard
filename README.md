@@ -800,7 +800,7 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 
 两个开关改变输出：`-Reporter verbose` 每条断言一行（`✓ 分件路径 > 组 > 断言 耗时`，不打印分件行）；`-Reporter default` 为默认值，可省略，写其它值报 `unknown reporter`。
 
-运行时有一块实时窗口：正在跑的分件逐行列出，每行是 `❯` 加该分件的相对路径与已跑断言数（分件边跑边报，运行中不知道总数，因此不写成 `已完成/总数`），空行之后是 `Test Files` / `Tests` / `Start at` / `Duration` 四行，与结束时的汇总同形。整帧用同步输出序列（`ESC[?2026h` / `ESC[?2026l`）一次写入，重绘只清行并上移光标，约每 400 ms 一帧；分件完成时它的一行追加到窗口上方，与该帧同一次写入。输出被重定向时不画（`-NoProgress` 可显式关掉）。
+运行时有一块实时窗口：正在跑的分件逐行列出，每行是 `❯` 加该分件的相对路径与 `已完成/总数`，空行之后是 `Test Files` / `Tests` / `Start at` / `Duration` 四行，与结束时的汇总同形。总数由分件在建完用例树后写进进度文件，所以第一条用例开始跑之前就已确定（仍是旧写法 `Check` 的分件没有总数，只显示已完成数）。整帧用同步输出序列（`ESC[?2026h` / `ESC[?2026l`）一次写入，重绘只清行并上移光标，约每 400 ms 一帧；分件完成时它的一行追加到窗口上方，与该帧同一次写入。输出被重定向时不画（`-NoProgress` 可显式关掉）。
 
 失败时那一个分件的行首标记是 `❯`，行下列出 `× 组 > 断言`，失败原因在末尾的 `Failed Tests N` 块里给出（`FAIL 分件 > 组 > 断言` 加一行细节）。交互终端里标记是 `✓` / `❯` / `×` / `↓`、分隔线是 `⎯` 并带颜色；重定向或 `-NoColor` 时换成 `ok` / `FAIL` / `skip` 与 `-`，日志因此可直接 grep，也不依赖字体。分件自身的断言只决定结果，打印失败不会吞掉断言（原因写入 `%TEMP%\clipboard-tests-error.log`）。
 
@@ -822,6 +822,8 @@ Describe 'int' {
 ```
 
 `Describe` 可嵌套，分组名以 ` > ` 连接；`It` 一执行就记一条结果，`-Skip '原因'` 记为跳过，`-Cases` 按名称里的 `%s` 展开成多条。断言有 `Expect`（布尔）、`Expect-Match`（正则）、`Expect-Equal`、`Expect-Contains`、`Expect-Throws`（可带消息正则）、`Expect-Greater`、`Expect-Not`；`Expect-HasAssertions` 与 `Expect-Assertions N` 在该条没有断言或数量不符时判失败。块内抛异常或任一断言失败即判该条失败，失败信息取第一条断言的消息。钩子 `BeforeAll` / `AfterAll` / `BeforeEach` / `AfterEach` 写在 `Describe` 内，`AfterAll` 在块结束（含失败）时执行；`Wait-Until { 条件 } -Timeout 毫秒` 轮询到条件成立。旧写法 `Check` / `Skip` 仍然可用，未迁移的分件行为不变。
+
+`Describe` 块里**只写声明**（`Describe` / `It` / 钩子）：代码先跑一遍收集用例、再按书写顺序执行，写在块内的普通语句会在收集阶段就执行，顺序与预期不符。准备与清理写进 `BeforeAll` / `BeforeEach` / `AfterEach` / `AfterAll`，分件顶层只留沙箱与进程这类一次性的准备。
 
 分件分三条泳道：`unit` 与 `e2e` 都要驱动真实剪贴板，两者互斥；命令行分件各用各的假剪贴板，只受 `Workers` 限制。打包副本中假剪贴板失效，命令行分件自动改为串行；`-Source` 指向产物时单元组跳过（它按名字调用内部函数），集成与端到端照常运行。
 
