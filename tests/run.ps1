@@ -39,8 +39,8 @@ param(
   [switch]$Serial,
   # only the parts a change since HEAD can break (a development loop, not a gate)
   [switch]$Changed,
-  # default = one row per check inside the part, then the part's row; files = one row per part;
-  # verbose = the same as default, kept for the runs that always passed it
+  # default = vitest's default reporter, verbose = one row per check. Anything else is a typo,
+  # not a mode nobody wrote yet.
   [string]$Reporter = '',
   # every check, the same as -Reporter verbose (kept for the runs that always passed it)
   [switch]$Verbose_Log,
@@ -63,6 +63,10 @@ $repoRoot = Split-Path -Parent $testsRoot
 . (Join-Path $testsRoot 'lib\reporter.ps1')
 if (-not $Reporter) {
   if ($Verbose_Log) { $Reporter = 'verbose' } else { $Reporter = 'default' }
+}
+if (@('default', 'verbose') -notcontains $Reporter) {
+  Write-Host ('[x] unknown reporter: ' + $Reporter + '   (default | verbose)')
+  exit 2
 }
 Initialize-TestReporter -Mode $Reporter -NoColor:$NoColor -Progress:$Progress
 
@@ -309,15 +313,15 @@ function Complete-Part($run) {
   }
   Clear-TestProgress
   $label = $run.Job.Group + '\' + $run.Job.Name + '.ps1'
-  # vitest prints what is inside a file, not only the file: one row per check, then the part's
-  # row with its counts. -Reporter files keeps the short form, which is what a run in a packed
-  # build log wants.
-  if ($Reporter -ne 'files') {
+  # vitest prints what is inside a file only when it is the single file of a run, or when the
+  # file has a failure; every other row stays one line. -Reporter verbose is the mode that lists
+  # every check instead.
+  if ($Reporter -eq 'verbose') {
     foreach ($r in $rows) { Write-TestCheck $label ([string]$r.Group + ' > ' + [string]$r.Test) ([string]$r.Result) ([string]$r.Detail) ([int]$r.Ms) }
   } else {
-    foreach ($r in $fails) { Write-TestCheck $label ([string]$r.Group + ' > ' + [string]$r.Test) 'FAIL' '' ([int]$r.Ms) }
+    Write-TestModuleRow $label $rows.Count $fails.Count $skips $seconds
+    if (($jobs.Count -le 1) -or ($fails.Count -gt 0)) { Write-TestPartTree $rows }
   }
-  Write-TestModuleRow $label $rows.Count $fails.Count $skips $seconds
   foreach ($r in $fails) {
     $allFails.Add(@{
       Name = ($label + ' > ' + [string]$r.Group + ' > ' + [string]$r.Test)

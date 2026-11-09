@@ -270,16 +270,9 @@ function Complete-TestPart([string]$ResultFile = '', [switch]$Quiet) {
     } catch { Write-Output ('[!] cannot write ' + $ResultFile + ': ' + $_.Exception.Message) }
   }
   if (-not $Quiet) {
-    $pass = @($script:Results | Where-Object { $_.Result -eq 'PASS' }).Count
-    $skipped = @($script:Results | Where-Object { $_.Result -eq 'SKIP' }).Count
     $label = $script:Harness.Part + '.ps1'
-    $items = @()
-    foreach ($r in $script:Results) {
-      if ($r.Result -ne 'FAIL') { continue }
-      $items += @{ Name = ($label + ' > ' + [string]$r.Group + ' > ' + [string]$r.Test); Detail = [string]$r.Detail }
-    }
     $seconds = ((Get-Date) - $script:Harness.Started).TotalSeconds
-    Write-TestPartReport $label $pass $fail $skipped $seconds $script:Harness.Started $items
+    Write-TestPartReport $label $script:Results $seconds $script:Harness.Started
   }
   try { Remove-Item -LiteralPath $script:Harness.TmpRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
   if ($fail -gt 0) { exit 1 }

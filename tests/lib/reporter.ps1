@@ -250,16 +250,76 @@ function Write-TestSummary($Run) {
   Write-Host ''
 }
 
-# a part run on its own: one row, its failures, and the same block the driver prints
-function Write-TestPartReport([string]$Name, [int]$Pass, [int]$Fail, [int]$Skip, [double]$Seconds, [datetime]$StartAt, $Fails) {
-  Write-TestModuleRow $Name ($Pass + $Fail + $Skip) $Fail $Skip $Seconds
-  Write-TestFailures $Fails
+# the tree the default reporter prints for a single file, or for a file that failed: the
+# describe block with the checks it held, then the checks themselves. Indentation follows
+# vitest: the file row is flush, a suite sits three columns in, a check two more.
+function Write-TestPartTree($Rows) {
+  if ($script:TestReport.Quiet) { return }
+  $list = New-Object System.Collections.Generic.List[object]
+  foreach ($r in $Rows) { if ($null -ne $r) { $list.Add($r) } }
+  $groups = New-Object System.Collections.Generic.List[object]
+  $seen = @{}
+  foreach ($r in $list) {
+    $name = [string]$r.Group
+    if (-not $seen.ContainsKey($name)) {
+      $seen[$name] = $groups.Count
+      $groups.Add(@{
+          Name    = $name
+          Count   = 0
+          Failed  = 0
+          Skipped = 0
+          Ms      = 0
+          Rows    = (New-Object System.Collections.Generic.List[object])
+        })
+    }
+    $g = $groups[$seen[$name]]
+    $g.Count = $g.Count + 1
+    if ($r.Result -eq 'FAIL') { $g.Failed = $g.Failed + 1 } elseif ($r.Result -eq 'SKIP') { $g.Skipped = $g.Skipped + 1 }
+    $g.Ms = $g.Ms + [int]$r.Ms
+    $g.Rows.Add($r)
+  }
+  foreach ($g in $groups) {
+    $kind = 'pass'
+    if ($g.Failed -gt 0) { $kind = 'fail' } elseif ($g.Count -eq $g.Skipped) { $kind = 'skip' }
+    $bits = [string]$g.Count + ' ' + $(if ($g.Count -eq 1) { 'test' } else { 'tests' })
+    if ($g.Failed -gt 0) { $bits = $bits + ' | ' + [string]$g.Failed + ' failed' }
+    elseif ($g.Skipped -gt 0) { $bits = $bits + ' | ' + [string]$g.Skipped + ' skipped' }
+    $row = '   ' + (Get-TestMark $kind) + ' ' + $g.Name + ' ' + (Get-TestDim ('(' + $bits + ')'))
+    if ($g.Ms -gt 0) { $row = $row + ' ' + (Format-TestDuration ($g.Ms / 1000.0)) }
+    Write-Host $row
+    foreach ($r in $g.Rows) {
+      $k = 'pass'
+      if ($r.Result -eq 'FAIL') { $k = 'fail' } elseif ($r.Result -eq 'SKIP') { $k = 'skip' }
+      $line = '     ' + (Get-TestMark $k) + ' ' + [string]$r.Test
+      if ($r.Result -eq 'SKIP' -and $r.Detail) { $line = $line + ' ' + (Get-TestDim ('[' + [string]$r.Detail + ']')) }
+      Write-Host $line
+    }
+  }
+}
+
+# a part run on its own is a single file run: its row, its tree, its failures, the summary
+function Write-TestPartReport([string]$Name, $Rows, [double]$Seconds, [datetime]$StartAt) {
+  $list = New-Object System.Collections.Generic.List[object]
+  foreach ($r in $Rows) { if ($null -ne $r) { $list.Add($r) } }
+  $pass = 0
+  $fail = 0
+  $skipped = 0
+  $items = @()
+  foreach ($r in $list) {
+    if ($r.Result -eq 'FAIL') {
+      $fail = $fail + 1
+      $items += @{ Name = ($Name + ' > ' + [string]$r.Group + ' > ' + [string]$r.Test); Detail = [string]$r.Detail }
+    } elseif ($r.Result -eq 'SKIP') { $skipped = $skipped + 1 } else { $pass = $pass + 1 }
+  }
+  Write-TestModuleRow $Name $list.Count $fail $skipped $Seconds
+  Write-TestPartTree $list
+  Write-TestFailures $items
   $run = @{
     Parts = 1
-    PartsPass = $(if ($Fail -gt 0) { 0 } else { 1 })
-    PartsFail = $(if ($Fail -gt 0) { 1 } else { 0 })
+    PartsPass = $(if ($fail -gt 0) { 0 } else { 1 })
+    PartsFail = $(if ($fail -gt 0) { 1 } else { 0 })
     PartsSkip = 0
-    Pass = $Pass; Fail = $Fail; Skip = $Skip; Total = ($Pass + $Fail + $Skip)
+    Pass = $pass; Fail = $fail; Skip = $skipped; Total = $list.Count
     Seconds = $Seconds
     StartAt = $StartAt.ToString('HH:mm:ss')
     Slowest = ''

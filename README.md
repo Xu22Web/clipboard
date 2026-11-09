@@ -767,7 +767,7 @@ cli test -Unit                       # 只跑单元分件
 cli test -Part transfer,history      # 指定分件
 cli test -Changed                    # 只跑本次改动可能影响到的分件
 cli test -Serial                     # 逐个跑
-cli test -Reporter files             # 每个分件只出一行，不列表内部断言
+cli test -Reporter verbose           # 每条断言一行（带分件路径与耗时）
 cli test -Bail                       # 首个失败后不再启动新分件
 cli test -Profile                    # 打印最慢的命令行调用与每个分件的命令行耗时
 cli test -Progress                   # 运行中刷一行进度（默认关闭）
@@ -781,23 +781,24 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 
 分件内的命令行调用默认走 `tests\lib\cli-runner.ps1`：分件启动时拉起一个子进程，每条命令在该进程内的独立 runspace 中执行，省去每条命令一次解释器启动；插件脚本块相关的命令（`pin` / `star` / `highlight` / `transform` / `kind` / `list` 等）仍起真实子进程，因为脚本块需要真实的模块加载作用域。
 
-输出与 vitest 相同：一行 `RUN` 头；分件内部的每个断言一行（`✓ 分件路径 > 组 > 断言 耗时`），随后是该分件的行（标记、路径、括号里的断言数与耗时）；所有失败与原因集中到末尾一块，然后是 `Test Files` / `Tests` / `Start at` / `Duration`。`-Reporter files` 只保留分件行。
+输出与 vitest 的默认 reporter 相同：一行 `RUN` 头，每个分件完成时一行（标记、相对 `tests\` 的路径、括号里的断言数与耗时）。**只有运行里只有一个分件，或该分件有失败时**，分件行下面才打印它的树（组一行带该组的断言数与耗时，断言行不带耗时）；所有失败的断言与原因集中到末尾一块，然后是 `Test Files` / `Tests` / `Start at` / `Duration`。
 
 ```text
  RUN  clipboard v0.1.0  D:\Users\xzz\Desktop\Project\clipboard
 
-   ✓ cli\settings.ps1 > int > ini MaxItems respected 12.3s
-   ✓ cli\settings.ps1 > int > config set writes 0.92s
-   ✓ cli\settings.ps1 > int > config set rejects range 0.74s
- ✓ cli\settings.ps1 (13 tests) 31.3s
-   ✓ unit\unit.ps1 > struct > every module parses 0.12s
- ✓ unit\unit.ps1 (579 tests) 55.4s
+ ok cli\settings.ps1 (13 tests) 30.5s
+   ok int (13 tests) 27.8s
+     ok ini MaxItems respected
+     ok config set writes
+     ok a preview setting is restorable
 
- Test Files  10 passed (10)
-      Tests  734 passed | 1 skipped (735)
-   Start at  20:49:13
-   Duration  2m 10s (slowest pkg\build.ps1 2m 10s)
+ Test Files  1 passed (1)
+      Tests  13 passed (13)
+   Start at  21:14:23
+   Duration  30.8s (slowest cli\settings.ps1 30.5s)
 ```
+
+两个开关改变输出：`-Reporter verbose` 每条断言一行（`✓ 分件路径 > 组 > 断言 耗时`，不打印分件行）；`-Reporter default` 为默认值，可省略，写其它值报 `unknown reporter`。
 
 失败时那一个分件的行首标记是 `❯`，行下列出 `× 组 > 断言`，失败原因在末尾的 `Failed Tests N` 块里给出（`FAIL 分件 > 组 > 断言` 加一行细节）。交互终端里标记是 `✓` / `❯` / `×` / `↓`、分隔线是 `⎯` 并带颜色；重定向或 `-NoColor` 时换成 `ok` / `FAIL` / `skip` 与 `-`，日志因此可直接 grep，也不依赖字体。运行中不刷进度行（`-Progress` 才会）。分件自身的断言只决定结果，打印失败不会吞掉断言（原因写入 `%TEMP%\clipboard-tests-error.log`）。
 

@@ -2442,13 +2442,8 @@ $pass = @($script:results | Where-Object { $_.Result -eq 'PASS' }).Count
 $fail = @($script:results | Where-Object { $_.Result -eq 'FAIL' }).Count
 $skipped = @($script:results | Where-Object { $_.Result -eq 'SKIP' }).Count
 if (-not $Quiet) {
-  $items = @()
-  foreach ($r in $script:results) {
-    if ($r.Result -ne 'FAIL') { continue }
-    $items += @{ Name = ('unit\unit.ps1 > ' + [string]$r.Group + ' > ' + [string]$r.Test); Detail = [string]$r.Detail }
-  }
   $seconds = ((Get-Date) - $script:unitStarted).TotalSeconds
-  Write-TestPartReport 'unit\unit.ps1' $pass $fail $skipped $seconds $script:unitStarted $items
+  Write-TestPartReport 'unit\unit.ps1' $script:results $seconds $script:unitStarted
 }
 if ($fail -gt 0) { exit 1 }
 exit 0
