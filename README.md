@@ -767,7 +767,7 @@ cli test -Unit                       # 只跑单元分件
 cli test -Part transfer,history      # 指定分件
 cli test -Changed                    # 只跑本次改动可能影响到的分件
 cli test -Serial                     # 逐个跑
-cli test -Reporter verbose           # 逐条列出断言（-Verbose_Log 同义）
+cli test -Reporter files             # 每个分件只出一行，不列表内部断言
 cli test -Bail                       # 首个失败后不再启动新分件
 cli test -Profile                    # 打印最慢的命令行调用与每个分件的命令行耗时
 cli test -Progress                   # 运行中刷一行进度（默认关闭）
@@ -781,14 +781,17 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 
 分件内的命令行调用默认走 `tests\lib\cli-runner.ps1`：分件启动时拉起一个子进程，每条命令在该进程内的独立 runspace 中执行，省去每条命令一次解释器启动；插件脚本块相关的命令（`pin` / `star` / `highlight` / `transform` / `kind` / `list` 等）仍起真实子进程，因为脚本块需要真实的模块加载作用域。
 
-输出与 vitest 相同：一行 `RUN` 头，每个分件完成时一行（标记、相对 `tests\` 的路径、括号里的断言数与耗时），失败分件下面列出它失败的断言；所有失败与原因集中到末尾一块，然后是 `Test Files` / `Tests` / `Start at` / `Duration`。
+输出与 vitest 相同：一行 `RUN` 头；分件内部的每个断言一行（`✓ 分件路径 > 组 > 断言 耗时`），随后是该分件的行（标记、路径、括号里的断言数与耗时）；所有失败与原因集中到末尾一块，然后是 `Test Files` / `Tests` / `Start at` / `Duration`。`-Reporter files` 只保留分件行。
 
 ```text
  RUN  clipboard v0.1.0  D:\Users\xzz\Desktop\Project\clipboard
 
+   ✓ cli\settings.ps1 > int > ini MaxItems respected 12.3s
+   ✓ cli\settings.ps1 > int > config set writes 0.92s
+   ✓ cli\settings.ps1 > int > config set rejects range 0.74s
+ ✓ cli\settings.ps1 (13 tests) 31.3s
+   ✓ unit\unit.ps1 > struct > every module parses 0.12s
  ✓ unit\unit.ps1 (579 tests) 55.4s
- ✓ cli\config.ps1 (23 tests) 1m 22s
- ✓ cli\history.ps1 (22 tests | 1 skipped) 2m 05s
 
  Test Files  10 passed (10)
       Tests  734 passed | 1 skipped (735)

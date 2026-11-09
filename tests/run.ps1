@@ -39,7 +39,8 @@ param(
   [switch]$Serial,
   # only the parts a change since HEAD can break (a development loop, not a gate)
   [switch]$Changed,
-  # default = one row per part and a block at the end; verbose = every check
+  # default = one row per check inside the part, then the part's row; files = one row per part;
+  # verbose = the same as default, kept for the runs that always passed it
   [string]$Reporter = '',
   # every check, the same as -Reporter verbose (kept for the runs that always passed it)
   [switch]$Verbose_Log,
@@ -308,17 +309,15 @@ function Complete-Part($run) {
   }
   Clear-TestProgress
   $label = $run.Job.Group + '\' + $run.Job.Name + '.ps1'
-  # verbose lists every check of the part as it lands; the parts themselves stay quiet so one
-  # child cannot interleave its rows into another
-  if ($Reporter -eq 'verbose') {
+  # vitest prints what is inside a file, not only the file: one row per check, then the part's
+  # row with its counts. -Reporter files keeps the short form, which is what a run in a packed
+  # build log wants.
+  if ($Reporter -ne 'files') {
     foreach ($r in $rows) { Write-TestCheck $label ([string]$r.Group + ' > ' + [string]$r.Test) ([string]$r.Result) ([string]$r.Detail) ([int]$r.Ms) }
-  }
-  Write-TestModuleRow $label $rows.Count $fails.Count $skips $seconds
-  # a part that failed shows its own checks, the way vitest shows the tests of a failed file;
-  # the reason is kept for the one block after the last part
-  if ($Reporter -ne 'verbose') {
+  } else {
     foreach ($r in $fails) { Write-TestCheck $label ([string]$r.Group + ' > ' + [string]$r.Test) 'FAIL' '' ([int]$r.Ms) }
   }
+  Write-TestModuleRow $label $rows.Count $fails.Count $skips $seconds
   foreach ($r in $fails) {
     $allFails.Add(@{
       Name = ($label + ' > ' + [string]$r.Group + ' > ' + [string]$r.Test)

@@ -161,12 +161,11 @@ function Write-TestWrapped([string]$Text, [int]$Indent) {
   }
 }
 
-# one check under its part: verbose lists every one, and a part that failed lists its own.
-# The detail is not printed here: vitest collects failures and prints them once at the end, so
-# a long run does not break its own rows with a paragraph.
+# one check under its part: vitest prints the checks inside a file, not just the file, so this
+# is what the default reporter shows. The detail is not printed here: a failure is collected
+# and printed once at the end, the way vitest does it.
 function Write-TestCheck([string]$Group, [string]$Name, [string]$Result, [string]$Detail, [int]$Ms) {
   if ($script:TestReport.Quiet) { return }
-  if ($script:TestReport.Mode -ne 'verbose' -and $Result -ne 'FAIL') { return }
   $kind = 'pass'
   if ($Result -eq 'FAIL') { $kind = 'fail' } elseif ($Result -eq 'SKIP') { $kind = 'skip' }
   $row = '   ' + (Get-TestMark $kind) + ' ' + $Group + ' > ' + $Name

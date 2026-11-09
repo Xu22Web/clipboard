@@ -11,7 +11,7 @@
       cli test -Changed              only the parts a change since HEAD can break
       cli test -Workers 6            fewer parts at a time (default: one per logical processor)
       cli test -Serial               one after another
-      cli test -Reporter verbose      list every check instead of one row per part
+      cli test -Reporter files        one row per part instead of one row per check
       cli test -Bail                 stop starting parts after the first failure
       cli test -Profile              print the slowest command line calls and the time per part
       cli test -Progress             repaint one line while parts run (off by default)
