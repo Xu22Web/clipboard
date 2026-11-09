@@ -27,44 +27,94 @@ $cli = Start-CliRunner $intDir
 function Run([string[]]$cliArgs, [switch]$Cold) { return (Invoke-CliRunner $cli $cliArgs -Cold:$Cold) }
 
 
-    [IO.File]::WriteAllLines($cfg2, @('MaxItems=300', 'Plugins=transform,retention,item-marks,entry-actions', 'transform.Mode=snake'), $Utf8)
-    [void](Run @('clear', '-All'))
-    [void](Run @('put', 'Hello World Demo'))
-    $o = Run @('transform', '1 upper') -Cold
-    Check 'int' 'transform one-off mode' ($o -match '\[upper\] HELLO WORLD DEMO') $o.Trim()
-    $o = Run @('transform', '1') -Cold
-    Check 'int' 'transform uses configured mode' ($o -match '\[snake\] hello_world_demo') $o.Trim()
-    $o = Run @('marks') -Cold
-    Check 'int' 'marks command' (($o -match 'star glyph') -and ($o -match 'highlight ink')) $o.Trim()
-    $o = Run @('sweep', 'force') -Cold
-    Check 'int' 'sweep command' ($o -match 'retention') $o.Trim()
-    $o = Run @('kind', '1') -Cold
-    Check 'int' 'kind detail block' (($o -match 'kind text') -and ($o -match '(?m)^  size\s+:') -and ($o -match '(?m)^  preview\s+:')) $o.Trim()
-    $o = Run @('kind', '0') -Cold
-    Check 'int' 'kind out of range' ($o -match 'index out of range') $o.Trim()
-    $o = Run @('kinds') -Cold
-    Check 'int' 'kinds distribution' (($o -match 'kinds in ') -and ($o -match '(?m)^  text\s')) $o.Trim()
-
-    # config groups settings under their plugin, and never invents theme-only keys
-    $o = Run @('config')
-    Check 'int' 'config groups plugin settings' (($o -match '\[plugin: transform\]') -and ($o -match '(?m)^    Mode\s+=\s+snake')) ''
-    Check 'int' 'config groups each enabled plugin' (($o -match '\[plugin: retention\]') -and ($o -match '\[plugin: item-marks\]') -and ($o -match '\[plugin: entry-actions\]')) ''
-    Check 'int' 'config has no theme-only keys' (-not ($o -match 'Theme\.(Accent|Surface|Pin)|item-marks\.StarColor')) ''
-
-    $o = Run @('help')
-    Check 'int' 'help groups every plugin' (($o -match '\[plugin: transform\]') -and ($o -match '\[plugin: retention\]') -and ($o -match 'transform entry N')) ''
-    Check 'int' 'help groups pin and star' ($o -match '(?s)\[plugin: item-marks\].*pin\s+pin entry N.*unstar') ''
-    Check 'int' 'help lists the highlight verbs' ($o -match '(?s)\[plugin: item-marks\].*highlight\s+highlight entry N.*unhighlight') ''
-    Check 'int' 'help puts kind under entry-actions' ($o -match '(?s)\[plugin: entry-actions\].*kind\s+analyse entry N.*kinds') ''
-
-    $o = Run @('config', 'set', 'transform.Mode', 'kebab')
-    Check 'int' 'plugin setting is writable' (($o -match 'transform\.Mode') -and ((Run @('config', 'get', 'transform.Mode')) -match 'kebab')) $o.Trim()
-    $o = Run @('config', 'set', 'Theme.Accent', '#FF6600')
-    Check 'int' 'theme colour keys are rejected' ($o -match 'unknown key') $o.Trim()
-    $o = Run @('config', 'set', 'Theme', 'win11-light')
-    Check 'int' 'theme name is still settable' ($o -match 'win11-light') $o.Trim()
+Describe 'int' {
+  AfterAll {
+    Stop-CliRunner $cli
     Remove-Item -LiteralPath $cfg2 -Force -ErrorAction SilentlyContinue
+  }
 
+  Describe 'plugin verbs' {
+    BeforeAll {
+      [IO.File]::WriteAllLines($cfg2, @('MaxItems=300', 'Plugins=transform,retention,item-marks,entry-actions', 'transform.Mode=snake'), $Utf8)
+      [void](Run @('clear', '-All'))
+      [void](Run @('put', 'Hello World Demo'))
+    }
+    It 'transform one-off mode' {
+      $o = Run @('transform', '1 upper') -Cold
+      Expect-Match $o '\[upper\] HELLO WORLD DEMO' $o.Trim()
+    }
+    It 'transform uses configured mode' {
+      $o = Run @('transform', '1') -Cold
+      Expect-Match $o '\[snake\] hello_world_demo' $o.Trim()
+    }
+    It 'marks command' {
+      $o = Run @('marks') -Cold
+      Expect (($o -match 'star glyph') -and ($o -match 'highlight ink')) $o.Trim()
+    }
+    It 'sweep command' {
+      $o = Run @('sweep', 'force') -Cold
+      Expect-Match $o 'retention' $o.Trim()
+    }
+    It 'kind detail block' {
+      $o = Run @('kind', '1') -Cold
+      Expect (($o -match 'kind text') -and ($o -match '(?m)^  size\s+:') -and ($o -match '(?m)^  preview\s+:')) $o.Trim()
+    }
+    It 'kind out of range' {
+      $o = Run @('kind', '0') -Cold
+      Expect-Match $o 'index out of range' $o.Trim()
+    }
+    It 'kinds distribution' {
+      $o = Run @('kinds') -Cold
+      Expect (($o -match 'kinds in ') -and ($o -match '(?m)^  text\s')) $o.Trim()
+    }
+  }
 
-Stop-CliRunner $cli
+  # config groups settings under their plugin, and never invents theme-only keys
+  Describe 'grouping' {
+    It 'config groups plugin settings' {
+      $o = Run @('config')
+      Expect (($o -match '\[plugin: transform\]') -and ($o -match '(?m)^    Mode\s+=\s+snake')) 'config should group the transform setting'
+    }
+    It 'config groups each enabled plugin' {
+      $o = Run @('config')
+      Expect (($o -match '\[plugin: retention\]') -and ($o -match '\[plugin: item-marks\]') -and ($o -match '\[plugin: entry-actions\]')) 'config should list every enabled plugin'
+    }
+    It 'config has no theme-only keys' {
+      $o = Run @('config')
+      Expect (-not ($o -match 'Theme\.(Accent|Surface|Pin)|item-marks\.StarColor')) 'config must not invent theme-only keys'
+    }
+    It 'help groups every plugin' {
+      $o = Run @('help')
+      Expect (($o -match '\[plugin: transform\]') -and ($o -match '\[plugin: retention\]') -and ($o -match 'transform entry N')) 'help should group every plugin'
+    }
+    It 'help groups pin and star' {
+      $o = Run @('help')
+      Expect-Match $o '(?s)\[plugin: item-marks\].*pin\s+pin entry N.*unstar' 'help should group pin and star'
+    }
+    It 'help lists the highlight verbs' {
+      $o = Run @('help')
+      Expect-Match $o '(?s)\[plugin: item-marks\].*highlight\s+highlight entry N.*unhighlight' 'help should list the highlight verbs'
+    }
+    It 'help puts kind under entry-actions' {
+      $o = Run @('help')
+      Expect-Match $o '(?s)\[plugin: entry-actions\].*kind\s+analyse entry N.*kinds' 'help should put kind under entry-actions'
+    }
+  }
+
+  Describe 'plugin settings' {
+    It 'plugin setting is writable' {
+      $o = Run @('config', 'set', 'transform.Mode', 'kebab')
+      Expect (($o -match 'transform\.Mode') -and ((Run @('config', 'get', 'transform.Mode')) -match 'kebab')) $o.Trim()
+    }
+    It 'theme colour keys are rejected' {
+      $o = Run @('config', 'set', 'Theme.Accent', '#FF6600')
+      Expect-Match $o 'unknown key' $o.Trim()
+    }
+    It 'theme name is still settable' {
+      $o = Run @('config', 'set', 'Theme', 'win11-light')
+      Expect-Match $o 'win11-light' $o.Trim()
+    }
+  }
+}
+
 Complete-TestPart -ResultFile $ResultFile -Quiet:$Quiet
