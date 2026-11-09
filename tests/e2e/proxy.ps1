@@ -43,102 +43,146 @@ function Run-Clip([string[]]$cliArgs, [switch]$Direct) {
   return @{ Out = $out; Ms = [int]$sw.Elapsed.TotalMilliseconds }
 }
 
-$clipBak = ''
-try { $clipBak = (Get-Clipboard -Raw -ErrorAction Stop) } catch { }
-$child = $null
-try {
+Describe 'e2e' {
+  BeforeAll {
+    $script:skipAll = ''
+    $script:up = $false
+    $script:child = $null
+    $script:fast = $null
+    $script:slow = $null
+    $script:clipBak = ''
+    try { $script:clipBak = (Get-Clipboard -Raw -ErrorAction Stop) } catch { $script:clipBak = '' }
     if (-not (Test-MutexFree 'Local\clipboard.daemon')) {
-      Skip 'e2e' 'resident answers on the pipe' 'a resident is already running - stop it first'
+      $script:skipAll = 'a resident is already running - stop it first'
+      return
     }
-    else {
-      $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', $clip, 'serve')
-      $child = Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList $argList -PassThru
-
-      $up = $false
-      for ($i = 0; $i -lt 80 -and -not $up; $i++) {
-        Start-Sleep -Milliseconds 250
-        if ((Read-TextSafe $log) -match 'serve start') { $up = $true }
-      }
-      Check 'e2e' 'resident answers on the pipe' $up ''
-
-      if ($up) {
-        # a first command warms nothing on the resident side: it is already warm by design
-        $fast = Run-Clip @('list')
-        $slow = Run-Clip @('list') -Direct
-        # the pipe does not remove PowerShell's own start, so the honest claim is "faster than a
-        # fresh process"; the numbers are printed either way so a regression is visible
-        Check 'e2e' 'the proxied call is the faster one' ($fast.Ms -lt $slow.Ms) ('proxy ' + $fast.Ms + ' ms / direct ' + $slow.Ms + ' ms')
-        Check 'e2e' 'a proxied answer matches the direct one' ($fast.Out -ceq $slow.Out) ('proxy=' + $fast.Out.Trim() + ' direct=' + $slow.Out.Trim())
-
-        $o = Run-Clip @('status')
-        Check 'e2e' 'a proxied status sees the resident' ($o.Out -match 'resident    : running') $o.Out.Trim()
-
-        # put carries its text in the request; the direct list then reads what the resident wrote
-        $mark = 'proxy-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-        $o = Run-Clip @('put', $mark)
-        Check 'e2e' 'put through the pipe answers like put' ($o.Out -match 'clipboard set') $o.Out.Trim()
-        $check = Run-Clip @('list') -Direct
-        Check 'e2e' 'the row the resident wrote is in the store' ($check.Out -match [regex]::Escape($mark)) $mark
-
-        # the entry reads stdin before it asks the resident, so the text travels as the value
-        $mark2 = 'proxy-stdin-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-        $o = ($mark2 | & powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $clip put 2>&1 | Out-String)
-        $check = Run-Clip @('list') -Direct
-        Check 'e2e' 'put with stdin survives the pipe' (($o -match 'clipboard set') -and ($check.Out -match [regex]::Escape($mark2))) $mark2
-
-        # config changes settings and is never proxied, but it has to keep working alongside
-        $o = Run-Clip @('config', 'get', 'Rows')
-        Check 'e2e' 'a direct-only command still runs' ($o.Out -match 'Rows') $o.Out.Trim()
-
-        # the pipe is per user, so a second copy of the tool finds the same pipe but names a
-        # different root. It has to be refused and quietly run the command in its own process -
-        # a refusal that printed nothing and exited would break every sandbox on the machine.
-        $other = New-Sandbox 'proxy-other'
-        $otherClip = Join-Path $other 'clipboard.ps1'
-        $mark3 = 'other-root-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-        $otherArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', $otherClip)
-        $o = (& powershell @otherArgs put $mark3 2>&1 | Out-String)
-        $o2 = (& powershell @otherArgs list 2>&1 | Out-String)
-        Check 'e2e' 'another root is refused and runs the command itself' (($o -match 'clipboard set') -and ($o2 -match [regex]::Escape($mark3))) ($o.Trim() + ' / ' + $o2.Trim())
-
-        # The compiled client is what a user actually goes through: clipboard.cmd starts it
-        # before any PowerShell exists, so a proxied command costs a native start. It is
-        # optional, so a machine that cannot build one skips this instead of failing.
-        $client = Get-ClientExe
-        if (-not $client) {
-          Skip 'e2e' 'clipboard.cmd answers through the compiled client' 'no compiler and no prebuilt client.exe'
-        } else {
-          Copy-Item -LiteralPath $client -Destination (Join-Path $dir 'client.exe') -Force
-          Copy-Item -LiteralPath (Join-Path $script:Harness.SrcRoot 'clipboard.cmd') -Destination $dir -Force
-          $line = '"' + (Join-Path $dir 'clipboard.cmd') + '" list'
-          $o = (& cmd.exe '/c' $line 2>&1 | Out-String)
-          Check 'e2e' 'clipboard.cmd answers through the compiled client' ($o -match 'proxy-') $o.Trim()
-          # and the same file without the exe keeps working: that is the fallback the batch file
-          # is written around, not an error path
-          Remove-Item -LiteralPath (Join-Path $dir 'client.exe') -Force
-          $o = (& cmd.exe '/c' $line 2>&1 | Out-String)
-          Check 'e2e' 'clipboard.cmd still answers without the exe' ($o -match 'proxy-') $o.Trim()
-        }
-      }
-
-      # after the resident is gone the same command line has to work the slow way
-      [void](Run-Clip @('stop'))
-      $down = $false
-      for ($i = 0; $i -lt 60 -and -not $down; $i++) {
-        Start-Sleep -Milliseconds 250
-        if ($child.HasExited) { $down = $true }
-      }
-      # the assertion below is about the fallback, not about how long a loaded machine takes to
-      # shut a resident down: if it is still there, end it here
-      if (-not $down) { try { $child.Kill(); $down = $true } catch { } }
-      $o = Run-Clip @('list')
-      Check 'e2e' 'falls back to a fresh process when the resident is gone' ($down -and $o.Out -match 'proxy-' -and $o.Ms -gt 0) ([string]$o.Ms + ' ms')
+    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', $clip, 'serve')
+    $script:child = Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList $argList -PassThru
+    for ($i = 0; $i -lt 80 -and -not $script:up; $i++) {
+      Start-Sleep -Milliseconds 250
+      if ((Read-TextSafe $log) -match 'serve start') { $script:up = $true }
     }
-} catch {
-  Check 'harness' 'run finished without an exception' $false $_.Exception.Message
-} finally {
-  if ($child -and -not $child.HasExited) { try { $child.Kill() } catch { } }
-  if ($clipBak) { [void](Set-Clip $clipBak) } else { [void](Set-Clip '') }
+  }
+
+  AfterAll {
+    if ($script:child -and -not $script:child.HasExited) { try { $script:child.Kill() } catch { } }
+    if ($script:clipBak) { [void](Set-Clip $script:clipBak) } else { [void](Set-Clip '') }
+  }
+
+  It 'resident answers on the pipe' {
+    if ($script:skipAll) { Skip-Test $script:skipAll; return }
+    Expect $script:up 'the resident should log serve start while it comes up'
+  }
+  # a first command warms nothing on the resident side: it is already warm by design
+  It 'the proxied call is the faster one' {
+    if ($script:skipAll) { Skip-Test $script:skipAll; return }
+    if (-not $script:up) { Expect $false 'the resident did not come up'; return }
+    # the pipe does not remove PowerShell's own start, so the honest claim is "faster than a
+    # fresh process"; the numbers are printed either way so a regression is visible
+    $script:fast = Run-Clip @('list')
+    $script:slow = Run-Clip @('list') -Direct
+    Expect ($script:fast.Ms -lt $script:slow.Ms) ('proxy ' + $script:fast.Ms + ' ms / direct ' + $script:slow.Ms + ' ms')
+  }
+  It 'a proxied answer matches the direct one' {
+    if ($script:skipAll) { Skip-Test $script:skipAll; return }
+    if (-not $script:up) { Expect $false 'the resident did not come up'; return }
+    # the same two calls the row above made: a second pair would only measure the machine again
+    if ($null -eq $script:fast) {
+      $script:fast = Run-Clip @('list')
+      $script:slow = Run-Clip @('list') -Direct
+    }
+    Expect ($script:fast.Out -ceq $script:slow.Out) ('proxy=' + $script:fast.Out.Trim() + ' direct=' + $script:slow.Out.Trim())
+  }
+  It 'a proxied status sees the resident' {
+    if ($script:skipAll) { Skip-Test $script:skipAll; return }
+    if (-not $script:up) { Expect $false 'the resident did not come up'; return }
+    $o = Run-Clip @('status')
+    Expect-Match $o.Out 'resident    : running' $o.Out.Trim()
+  }
+  # put carries its text in the request; the direct list then reads what the resident wrote
+  It 'put through the pipe answers like put' {
+    if ($script:skipAll) { Skip-Test $script:skipAll; return }
+    if (-not $script:up) { Expect $false 'the resident did not come up'; return }
+    $script:mark = 'proxy-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $o = Run-Clip @('put', $script:mark)
+    Expect-Match $o.Out 'clipboard set' $o.Out.Trim()
+  }
+  It 'the row the resident wrote is in the store' {
+    if ($script:skipAll) { Skip-Test $script:skipAll; return }
+    if (-not $script:up) { Expect $false 'the resident did not come up'; return }
+    $check = Run-Clip @('list') -Direct
+    Expect-Match $check.Out ([regex]::Escape($script:mark)) $script:mark
+  }
+  # the entry reads stdin before it asks the resident, so the text travels as the value
+  It 'put with stdin survives the pipe' {
+    if ($script:skipAll) { Skip-Test $script:skipAll; return }
+    if (-not $script:up) { Expect $false 'the resident did not come up'; return }
+    $mark2 = 'proxy-stdin-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $o = ($mark2 | & powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $clip put 2>&1 | Out-String)
+    $check = Run-Clip @('list') -Direct
+    Expect (($o -match 'clipboard set') -and ($check.Out -match [regex]::Escape($mark2))) $mark2
+  }
+  # config changes settings and is never proxied, but it has to keep working alongside
+  It 'a direct-only command still runs' {
+    if ($script:skipAll) { Skip-Test $script:skipAll; return }
+    if (-not $script:up) { Expect $false 'the resident did not come up'; return }
+    $o = Run-Clip @('config', 'get', 'Rows')
+    Expect-Match $o.Out 'Rows' $o.Out.Trim()
+  }
+  # the pipe is per user, so a second copy of the tool finds the same pipe but names a different
+  # root. It has to be refused and quietly run the command in its own process - a refusal that
+  # printed nothing and exited would break every sandbox on the machine.
+  It 'another root is refused and runs the command itself' {
+    if ($script:skipAll) { Skip-Test $script:skipAll; return }
+    if (-not $script:up) { Expect $false 'the resident did not come up'; return }
+    $other = New-Sandbox 'proxy-other'
+    $otherClip = Join-Path $other 'clipboard.ps1'
+    $mark3 = 'other-root-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $otherArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', $otherClip)
+    $o = (& powershell @otherArgs put $mark3 2>&1 | Out-String)
+    $o2 = (& powershell @otherArgs list 2>&1 | Out-String)
+    Expect (($o -match 'clipboard set') -and ($o2 -match [regex]::Escape($mark3))) ($o.Trim() + ' / ' + $o2.Trim())
+  }
+  It 'clipboard.cmd answers through the compiled client' {
+    if ($script:skipAll) { Skip-Test $script:skipAll; return }
+    if (-not $script:up) { Expect $false 'the resident did not come up'; return }
+    # The compiled client is what a user actually goes through: clipboard.cmd starts it before
+    # any PowerShell exists, so a proxied command costs a native start. It is optional, so a
+    # machine that cannot build one skips this instead of failing.
+    $client = Get-ClientExe
+    if (-not $client) { Skip-Test 'no compiler and no prebuilt client.exe'; return }
+    Copy-Item -LiteralPath $client -Destination (Join-Path $dir 'client.exe') -Force
+    Copy-Item -LiteralPath (Join-Path $script:Harness.SrcRoot 'clipboard.cmd') -Destination $dir -Force
+    $script:line = '"' + (Join-Path $dir 'clipboard.cmd') + '" list'
+    $o = (& cmd.exe '/c' $script:line 2>&1 | Out-String)
+    Expect-Match $o 'proxy-' $o.Trim()
+  }
+  # and the same file without the exe keeps working: that is the fallback the batch file is
+  # written around, not an error path
+  It 'clipboard.cmd still answers without the exe' {
+    if ($script:skipAll) { Skip-Test $script:skipAll; return }
+    if (-not $script:up) { Expect $false 'the resident did not come up'; return }
+    if (-not (Test-Path -LiteralPath (Join-Path $dir 'clipboard.cmd'))) { Skip-Test 'the compiled client was not built here'; return }
+    Remove-Item -LiteralPath (Join-Path $dir 'client.exe') -Force -ErrorAction SilentlyContinue
+    $o = (& cmd.exe '/c' $script:line 2>&1 | Out-String)
+    Expect-Match $o 'proxy-' $o.Trim()
+  }
+  # after the resident is gone the same command line has to work the slow way
+  It 'falls back to a fresh process when the resident is gone' {
+    if ($script:skipAll) { Skip-Test $script:skipAll; return }
+    if (-not $script:up) { Expect $false 'the resident did not come up'; return }
+    [void](Run-Clip @('stop'))
+    $down = $false
+    for ($i = 0; $i -lt 60 -and -not $down; $i++) {
+      Start-Sleep -Milliseconds 250
+      if ($script:child.HasExited) { $down = $true }
+    }
+    # the assertion below is about the fallback, not about how long a loaded machine takes to
+    # shut a resident down: if it is still there, end it here
+    if (-not $down) { try { $script:child.Kill(); $down = $true } catch { } }
+    $o = Run-Clip @('list')
+    Expect ($down -and $o.Out -match 'proxy-' -and $o.Ms -gt 0) ([string]$o.Ms + ' ms')
+  }
 }
 
 Complete-TestPart -ResultFile $ResultFile -Quiet:$Quiet
