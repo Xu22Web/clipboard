@@ -47,6 +47,9 @@ param(
   [switch]$Bail,
   # print where the time went: the slowest command line calls and the total per part
   [switch]$Profile,
+  # repaint one line while parts run; off by default, because a finished run reads better
+  # as plain rows and the line is the only part that repaints the terminal
+  [switch]$Progress,
   [switch]$NoColor
 )
 
@@ -60,7 +63,7 @@ $repoRoot = Split-Path -Parent $testsRoot
 if (-not $Reporter) {
   if ($Verbose_Log) { $Reporter = 'verbose' } else { $Reporter = 'default' }
 }
-Initialize-TestReporter -Mode $Reporter -NoColor:$NoColor
+Initialize-TestReporter -Mode $Reporter -NoColor:$NoColor -Progress:$Progress
 
 # the header row names the build under test; a package carries the same number as a constant
 $programVersion = ''
@@ -399,7 +402,7 @@ while ($pending.Count -gt 0 -or $active.Count -gt 0) {
       $pending.Clear()
     }
   } else {
-    Write-TestRunProgress
+    if ($Progress) { Write-TestRunProgress }
     if (-not $launched) { Start-Sleep -Milliseconds 120 }
   }
 }
@@ -440,6 +443,8 @@ $summary = @{
 }
 Clear-TestProgress
 Write-TestSummary $summary
+# the last line is for scripts, not for people: every run ends with this one shape
+Write-Host ''
 Write-Host ('TOTAL ' + $all.Count + '   PASS ' + $pass + '   FAIL ' + $fail + '   SKIP ' + $skipped + '   in ' + [int]$totalSecs.TotalSeconds + ' s')
 try { Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
 if ($fail -gt 0) { exit 1 }

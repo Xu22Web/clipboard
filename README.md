@@ -770,7 +770,8 @@ cli test -Serial                     # 逐个跑
 cli test -Reporter verbose           # 逐条列出断言（-Verbose_Log 同义）
 cli test -Bail                       # 首个失败后不再启动新分件
 cli test -Profile                    # 打印最慢的命令行调用与每个分件的命令行耗时
-cli test -NoColor                    # 不输出颜色（重定向时自动关）
+cli test -Progress                   # 运行中刷一行进度（默认关闭）
+cli test -NoColor                    # 不输出颜色，标记改用 ASCII（重定向时自动如此）
 cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 ```
 
@@ -780,7 +781,23 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 
 分件内的命令行调用默认走 `tests\lib\cli-runner.ps1`：分件启动时拉起一个子进程，每条命令在该进程内的独立 runspace 中执行，省去每条命令一次解释器启动；插件脚本块相关的命令（`pin` / `star` / `highlight` / `transform` / `kind` / `list` 等）仍起真实子进程，因为脚本块需要真实的模块加载作用域。
 
-输出分两部分：运行时每个分件完成一行（`ok  unit  579 tests  1m 04s`，失败为 `FAIL` 并紧接失败块），交互终端另有一行被覆盖的进度（已跑条数、失败数、每个运行中分件的进度）；结束时给出分件/断言计数、总时长、最慢分件与失败清单，最后一行 `TOTAL` 保留给脚本读取。分件自身的断言只决定结果，打印失败不会吞掉断言（原因写入 `%TEMP%\clipboard-tests-error.log`）。
+输出先给一行运行头（版本、PowerShell 版本、架构、分件数与并发度），随后每个分件完成时一行：标记、名字、断言数、耗时，失败时追加失败数与紧接的失败块：
+
+```text
+ RUN  clipboard 0.1.0  on powershell 5.1.26100.9836 (AMD64)
+      10 files, up to 12 at a time
+
+ ok   unit      (579 tests)   53.1s
+ ok   history   (22 tests)    1m 03s   1 skipped
+
+ Test Files  10 passed (10)
+      Tests  735 passed | 1 skipped (735)
+   Duration  2m 09s (slowest build 2m 09s)
+
+TOTAL 735   PASS 734   FAIL 0   SKIP 1   in 129 s
+```
+
+交互终端里标记是 `✓` / `×` / `↓` 并带颜色；重定向或 `-NoColor` 时换成 `ok` / `FAIL` / `skip`，日志因此可直接 grep，也不依赖字体。运行中不再刷进度行（`-Progress` 才会），最后一行 `TOTAL` 的形态固定，供脚本读取。分件自身的断言只决定结果，打印失败不会吞掉断言（原因写入 `%TEMP%\clipboard-tests-error.log`）。
 
 断言只写两类：守回归（对应实际缺陷）与守契约（对外行为、文件格式、命令行输出）。不复述常量、不断言私有实现细节、同一行为不写第二条等价断言。
 

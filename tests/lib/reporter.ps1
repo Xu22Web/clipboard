@@ -6,17 +6,23 @@
   tests\run.ps1, which starts the parts. Both load this file, so a line looks the same
   wherever it comes from.
 
-  The shapes follow the runner most people read these days - one row per part, a failure that
-  shows where it happened, and one block at the end:
+  The shapes follow the runner most people read these days - a header, one row per part with
+  its count and time, a failure that shows where it happened, and one block at the end:
 
-      ok    unit          579 tests    77.3s
-      FAIL  history        22 tests    35.2s   1 failed
-        FAIL  history > del 9 reports the range
-              index out of range (del 9)
+       RUN  clipboard 0.1.0  on powershell 5.1.26100.9836 (AMD64)
+            10 files, up to 12 at a time
 
-      Test Parts  8 passed | 1 failed | 1 skipped (10)
-           Tests  733 passed | 1 failed | 1 skipped (735)
-        Duration  199.5s   slowest build 181.2s
+      v unit        (579 tests)   53.1s
+      v template    (14 tests)    1m 08s
+      x history     (22 tests)    1m 03s   4 failed
+
+      Test Files  9 passed | 1 failed (10)
+           Tests  733 passed | 4 failed | 1 skipped (735)
+        Duration  2m 09s (slowest build 2m 09s)
+
+  The marks are the glyphs a console draws once the rows are read as sentences (v / x / down),
+  and the ascii words ok / FAIL / skip when the output is redirected or -NoColor was asked for:
+  a log file stays greppable and a font-less console stays readable.
 
   Colour is ANSI and only when the handle is a console that takes it: a redirected run, a host
   without virtual terminal support, and NO_COLOR all get the same rows without escapes.
@@ -26,6 +32,8 @@ $script:TestReport = @{
   Mode     = 'default'          # default | verbose
   Quiet    = $false
   Color    = $false
+  Glyphs   = $false
+  Progress = $false
   Width    = 100
   LastMark = $null
   # ascii on purpose: the tool and its tests stay readable on a console without the glyphs,
@@ -69,12 +77,28 @@ function Test-VirtualTerminal {
 }
 
 # A part starts this for itself; tests\run.ps1 starts one for the rows it prints.
-function Initialize-TestReporter([string]$Mode = 'default', [switch]$Quiet, [switch]$NoColor) {
+function Initialize-TestReporter([string]$Mode = 'default', [switch]$Quiet, [switch]$NoColor, [switch]$Progress) {
   $script:TestReport.Mode = $Mode
   $script:TestReport.Quiet = [bool]$Quiet
   $script:TestReport.Width = Get-TestConsoleWidth
   # the quiet path prints nothing, so it must not pay for the console probe (a csc run)
+  $redirected = $false
+  try { $redirected = [Console]::IsOutputRedirected } catch { $redirected = $true }
   $script:TestReport.Color = (-not [bool]$Quiet) -and (-not [bool]$NoColor) -and (Test-VirtualTerminal)
+  # a check mark says more than the word ok, but only a console draws it and only a font shows
+  # it: a redirected log and -NoColor keep the ascii words, which also stay greppable
+  $script:TestReport.Glyphs = (-not [bool]$Quiet) -and (-not [bool]$NoColor) -and (-not $redirected)
+  # the live line is opt-in: it is the one part of the output that repaints the terminal, and
+  # a run that is read after the fact is clearer without it
+  $script:TestReport.Progress = [bool]$Progress
+  if ($script:TestReport.Glyphs) {
+    $script:TestReport.Marks = @{
+      pass = [string][char]0x2713
+      fail = [string][char]0x00D7
+      skip = [string][char]0x2193
+      info = [string][char]0x00B7
+    }
+  }
   if ($script:TestReport.Color) {
     $esc = [string][char]27
     $script:TestReport.Ansi = @{
@@ -94,9 +118,13 @@ function Format-TestDuration([double]$Seconds) {
   return ([string]$m + 'm ' + $s.ToString('00') + 's')
 }
 
-function Get-TestMark([string]$Kind) {
+# The mark, optionally padded to a column width. The padding has to happen here: the colour
+# wraps the word in escape sequences, and PadRight on the wrapped string counts them and adds
+# nothing, which left the glyph rows one column short of the ascii ones.
+function Get-TestMark([string]$Kind, [int]$Pad = 0) {
   $word = [string]$script:TestReport.Marks[$Kind]
   if (-not $word) { $word = [string]$Kind }
+  if ($Pad -gt $word.Length) { $word = $word + (' ' * ($Pad - $word.Length)) }
   if (-not $script:TestReport.Color) { return $word }
   return ($script:TestReport.Ansi[$Kind] + $word + $script:TestReport.Ansi.reset)
 }
@@ -122,23 +150,23 @@ function Write-TestWrapped([string]$Text, [int]$Indent) {
 function Write-TestCheck([string]$Group, [string]$Name, [string]$Result, [string]$Detail, [int]$Ms) {
   if ($script:TestReport.Quiet) { return }
   if ($script:TestReport.Mode -ne 'verbose' -and $Result -ne 'FAIL') { return }
-  $line = (Get-TestMark $Result) + '  ' + $Group + ' > ' + $Name
+  $line = (Get-TestMark $Result 5) + $Group + ' > ' + $Name
   if ($Result -eq 'SKIP') { $line = $line + '   ' + $Detail }
   elseif ($Ms -gt 0) { $line = $line + '   ' + (Format-TestDuration ($Ms / 1000.0)) }
   Write-Host $line
   if ($Result -eq 'FAIL' -and $Detail) { Write-TestWrapped $Detail 6 }
 }
 
-# one part, once it is done (tests\run.ps1)
+# one part, once it is done (tests\run.ps1): the mark, the name, how many checks, how long
 function Write-TestPartRow([string]$Part, [int]$Checks, [double]$Seconds, [int]$Failed, [int]$Skipped) {
   $kind = 'pass'
   if ($Failed -gt 0) { $kind = 'fail' } elseif ($Skipped -gt 0 -and $Checks -eq $Skipped) { $kind = 'skip' }
   $note = ''
-  if ($Failed -gt 0) { $note = [string]$Failed + ' failed' }
-  elseif ($Skipped -gt 0) { $note = [string]$Skipped + ' skipped' }
-  $row = (Get-TestMark $kind) + '  ' + $Part.PadRight(12) + ([string]$Checks).PadLeft(4) + ' tests' + (Format-TestDuration $Seconds).PadLeft(9)
-  if ($note) { $row = $row + '   ' + $note }
-  Write-Host $row.TrimEnd()
+  if ($Failed -gt 0) { $note = '   ' + [string]$Failed + ' failed' }
+  elseif ($Skipped -gt 0) { $note = '   ' + [string]$Skipped + ' skipped' }
+  $what = if ($Checks -eq 1) { 'test' } else { 'tests' }
+  $count = '(' + [string]$Checks + ' ' + $what + ')'
+  Write-Host ((Get-TestMark $kind 5) + $Part.PadRight(10) + $count.PadRight(14) + (Format-TestDuration $Seconds) + $note)
 }
 
 function Write-TestFailureBlock([string]$Part, [string]$Group, [string]$Name, [string]$Detail) {
@@ -147,25 +175,37 @@ function Write-TestFailureBlock([string]$Part, [string]$Group, [string]$Name, [s
 }
 
 function Write-TestRunHeader([string]$Version, [string]$PowerShell, [string]$Platform, [int]$Parts, [int]$Workers) {
-  Write-Host (' clipboard ' + $Version + ' - ' + $PowerShell + ' - ' + $Platform + ' - ' + [string]$Parts + ' part(s), up to ' + [string]$Workers + ' at a time')
+  Write-Host (' RUN  clipboard ' + $Version + '  on ' + $PowerShell + ' (' + $Platform + ')')
+  $what = if ($Parts -eq 1) { 'file' } else { 'files' }
+  Write-Host ('      ' + [string]$Parts + ' ' + $what + ', up to ' + [string]$Workers + ' at a time')
   Write-Host ''
 }
 
-# a single line that is overwritten while parts run; only when the output is a console
+# a single line that is repainted while parts run; opt-in, and only when the output is a console
 function Write-TestProgress([string]$Text) {
   if ($script:TestReport.Quiet) { return }
-  if (-not [Console]::IsOutputRedirected) {
-    $room = [Math]::Max(10, $script:TestReport.Width - 1)
-    if ($Text.Length -gt $room) { $Text = $Text.Substring($Text.Length - $room) }
-    try { Write-Host ($Text.PadRight($room) + "`r") -NoNewline } catch { }
-  }
+  if (-not $script:TestReport.Progress) { return }
+  if ([Console]::IsOutputRedirected) { return }
+  $room = [Math]::Max(10, $script:TestReport.Width - 2)
+  if ($Text.Length -gt $room) { $Text = $Text.Substring($Text.Length - $room) }
+  try {
+    # erase to the end of the line when the console takes escapes: padding to its width breaks
+    # the moment the real width is smaller than the one this process measured
+    if ($script:TestReport.Color) { Write-Host ($Text + [string][char]27 + '[K') -NoNewline }
+    else { Write-Host ($Text.PadRight($room)) -NoNewline }
+    Write-Host "`r" -NoNewline
+  } catch { }
 }
 
 function Clear-TestProgress {
   if ($script:TestReport.Quiet) { return }
-  if (-not [Console]::IsOutputRedirected) {
-    try { Write-Host ((' ' * ([Math]::Max(10, $script:TestReport.Width - 1))) + "`r") -NoNewline } catch { }
-  }
+  if (-not $script:TestReport.Progress) { return }
+  if ([Console]::IsOutputRedirected) { return }
+  try {
+    if ($script:TestReport.Color) { Write-Host ([string][char]27 + '[K') -NoNewline }
+    else { Write-Host (' ' * ([Math]::Max(10, $script:TestReport.Width - 2))) -NoNewline }
+    Write-Host "`r" -NoNewline
+  } catch { }
 }
 
 function Write-TestCounts([string]$Label, [int]$Pass, [int]$Fail, [int]$Skip, [int]$Total) {
@@ -180,10 +220,10 @@ function Write-TestCounts([string]$Label, [int]$Pass, [int]$Fail, [int]$Skip, [i
 # the block at the end of a run; tests\run.ps1 owns the numbers, this owns the shape
 function Write-TestSummary($Run) {
   Write-Host ''
-  Write-TestCounts 'Parts' ([int]$Run.PartsPass) ([int]$Run.PartsFail) ([int]$Run.PartsSkip) ([int]$Run.Parts)
+  Write-TestCounts 'Test Files' ([int]$Run.PartsPass) ([int]$Run.PartsFail) ([int]$Run.PartsSkip) ([int]$Run.Parts)
   Write-TestCounts 'Tests' ([int]$Run.Pass) ([int]$Run.Fail) ([int]$Run.Skip) ([int]$Run.Total)
   $line = '   Duration  ' + (Format-TestDuration ([double]$Run.Seconds))
-  if ($Run.Slowest) { $line = $line + '   slowest ' + $Run.Slowest }
+  if ($Run.Slowest) { $line = $line + ' (slowest ' + $Run.Slowest + ')' }
   Write-Host $line
   if ($Run.Fails -and @($Run.Fails).Count -gt 0) {
     Write-Host ''
