@@ -364,15 +364,15 @@ if ($verify) {
   Write-Step 'running the CLI suite against the package'
   # no -Serial: the driver sees that -Source is not src\ and keeps the cli parts one at a time
   # (a packaged copy has no fake clipboard), while the packaging part still runs beside them
-  $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -File $suite -Integration -Source $dest 2>&1
+  # The suite stays attached to this console instead of being piped into a variable: it prints
+  # a row per part, a failure block and a live progress line, and capturing the stream turned
+  # a run of several minutes into one silent line. A failing part says why on its own row.
+  & powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -File $suite -Integration -Source $dest
   $code = $LASTEXITCODE
-  $total = @($out | Where-Object { [string]$_ -match '^TOTAL ' }) | Select-Object -Last 1
   if ($code -ne 0) {
-    Write-Host ($out | Select-Object -Last 15 | Out-String)
     Remove-Item -LiteralPath $dest -Recurse -Force -ErrorAction SilentlyContinue
     Fail 'the packaged copy failed its own tests, output removed'
   }
-  if ($total) { Write-Step ('tests: ' + ([string]$total).Trim()) }
   # the suite runs the packaged copy itself, so that copy has just created its own data\
   # and settings; they are the user's, never the package's, so they go away again here.
   foreach ($leak in @('data', ($app + '.ini'))) {

@@ -843,7 +843,7 @@ cli build -Config other.ini     # 换一份配置
 | `BaseUrl` | `.` | `Includes` / `Excludes` 的相对目录；`.` = 仓库根，可写绝对路径 |
 | `Minify` | `1` | `1` = 压缩脚本与文本文件 |
 | `Rename` | `1` | `1` = 同时重命名内部函数与局部变量；`0` = 只压缩不改名 |
-| `Verify` | `1` | `1` = 打包后对产物运行一遍 CLI 测试，不通过则删掉产物并失败 |
+| `Verify` | `1` | `1` = 打包后对产物运行一遍 CLI 测试，不通过则删掉产物并失败；套件的输出直接接到当前终端，逐分件显示进度 |
 | `Overwrite` | `0` | `1` = 覆盖同版本已存在的目录 |
 | `Zip` | `0` | `1` = 另外再打一个 `clipboard-<version>.zip` |
 | `Includes` | 见下 | 产物文件清单，相对 `BaseUrl` 的通配，语法同 `[dev]`；必须写出且必须含 `src/<Name>.ps1`、`.cmd`、`.sh` |

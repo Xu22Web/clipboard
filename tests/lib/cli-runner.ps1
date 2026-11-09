@@ -42,6 +42,10 @@ function Quote-Token([string]$t) {
 function Invoke-Warm([string[]]$Tokens) {
   $line = '& "' + $ps1 + '" ' + (($Tokens | ForEach-Object { Quote-Token ([string]$_) }) -join ' ') + ' 6>&1 2>&1'
   $rs = [runspacefactory]::CreateRunspace()
+  # the child process runs with -Sta and the tool touches the clipboard from WinForms and
+  # from OLE; a runspace defaults to MTA, where the write silently does nothing and only a
+  # packaged copy notices (a sandbox with a fake clipboard never reaches the real one)
+  $rs.ApartmentState = [System.Threading.ApartmentState]::STA
   $rs.Open()
   $ps = [powershell]::Create()
   $ps.Runspace = $rs
