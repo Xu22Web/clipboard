@@ -11,7 +11,7 @@
 
        RUN  clipboard v0.1.0  D:\project\clipboard
 
-       v unit\unit.ps1 (579 tests) 56.2s
+       v unit\unit.ps1 (236 tests) 19.4s
        v cli\config.ps1 (23 tests) 31.2s
        x cli\history.ps1 (22 tests | 4 failed) 1m 03s
          x int > the fake clipboard reads back 12ms
@@ -23,10 +23,10 @@
 
       -------------------------------
 
-       Test Files  9 passed | 1 failed (10)
-            Tests  733 passed | 4 failed | 1 skipped (735)
+       Test Files  11 passed | 1 failed (12)
+            Tests  412 passed | 1 failed | 1 skipped (414)
          Start at  22:41:07
-         Duration  2m 20s (slowest unit\unit.ps1 56.2s)
+         Duration  3m 20s (slowest pkg\build.ps1 2m 43s)
 
 
   A mark is a glyph in a console and the word ok / FAIL / skip when the output is redirected or
@@ -45,6 +45,7 @@ $script:TestReport = @{
   Progress = $false
   Window   = @()
   WindowHeight = 0
+  FrameRows = 0                 # height the live block keeps once it is on screen
   Capture  = $null
   Width    = 100
   LastMark = $null
@@ -118,6 +119,7 @@ function Initialize-TestReporter([string]$Mode = 'default', [switch]$Quiet, [swi
   $script:TestReport.Progress = $vt -and (-not [bool]$NoProgress)
   $script:TestReport.Window = @()
   $script:TestReport.WindowHeight = 0
+  $script:TestReport.FrameRows = 0
   $script:TestReport.Capture = $null
   if ($script:TestReport.Glyphs) {
     $script:TestReport.Marks = @{
@@ -480,21 +482,6 @@ function Write-TestWindow([string]$Message = '') {
   $columns = [Math]::Max(20, $script:TestReport.Width)
   $window = New-Object System.Collections.Generic.List[string]
   foreach ($line in @($script:TestReport.Window)) { $window.Add((Get-TestClip ([string]$line) $columns)) }
-  # A window taller than the console cannot be cleared: the cursor stops at the first row, the
-  # frame erases too little and every later frame repeats what is left. The summary block at the
-  # end is what has to stay, so the oldest running rows go first.
-  $screen = 0
-  try { $screen = [Console]::WindowHeight } catch { $screen = 0 }
-  if ($screen -gt 8) {
-    $budget = $screen - 4
-    if ($window.Count -gt $budget) {
-      $drop = $window.Count - $budget + 1
-      $kept = New-Object System.Collections.Generic.List[string]
-      $kept.Add((Get-TestDim (' ... ' + [string]$drop + ' more')))
-      for ($i = $window.Count - ($budget - 1); $i -lt $window.Count; $i++) { $kept.Add($window[$i]) }
-      $window = $kept
-    }
-  }
   $messageText = ''
   $messageRows = 0
   if ($Message) {
@@ -503,12 +490,42 @@ function Write-TestWindow([string]$Message = '') {
     $messageText = ($parts -join "`r`n") + "`r`n"
     $messageRows = $parts.Count
   }
+  # The frame must stay inside the screen: the moment the block reaches past the last row the
+  # terminal scrolls, and a scrolled block leaves a copy of itself in the scrollback that no
+  # erase can reach - that is the block that repeats when you scroll up. So the frame keeps a
+  # fixed height that never changes after the first one, and the block is cut to fit under the
+  # rows printed above it. The frame starts eight rows short of the screen: the banner and
+  # whatever the shell printed before it sit above the block.
+  $screen = 0
+  try { $screen = [Console]::WindowHeight } catch { $screen = 0 }
+  $cap = 8
+  if ($screen -gt 8) { $cap = $screen - 8 } else { $cap = [Math]::Max(1, $screen - 5) }
+  $frame = [int]$script:TestReport.FrameRows
+  $need = $messageRows + $window.Count
+  if ($frame -le 0) {
+    $frame = [Math]::Min($cap, [Math]::Max(1, $need))
+  } elseif ($need -gt $frame -and $frame -lt $cap) {
+    # the first frames can come before every part has started, so the frame grows to fit the
+    # rest - but only up to the cap, which is what keeps its last row inside the screen
+    $frame = [Math]::Min($cap, $need)
+  }
+  $budget = $frame - $messageRows
+  if ($budget -lt 1) { $budget = 1 }
+  $dropped = 0
+  if ($window.Count -gt $budget) {
+    $dropped = $window.Count - $budget + 1
+    $kept = New-Object System.Collections.Generic.List[string]
+    $kept.Add((Get-TestDim (' ... ' + [string]$dropped + ' more')))
+    for ($i = $window.Count - ($budget - 1); $i -lt $window.Count; $i++) { $kept.Add($window[$i]) }
+    $window = $kept
+  }
   $rows = $window.Count
   $old = [int]$script:TestReport.WindowHeight
   # vitest counts the window only: the message above it is written outside the counted region,
-  # so a finished row stays on screen and the window keeps ending on the same line
-  $padding = $old - $rows
-  if ($padding -gt 0 -and $messageRows -gt 0) { $padding = $padding - $messageRows }
+  # so a finished row stays on screen and the window keeps ending on the same line. The padding
+  # takes the message's rows, which keeps the frame's own height - and therefore its last row,
+  # the one the screen would scroll - where it was.
+  $padding = $frame - $messageRows - $rows
   if ($padding -lt 0) { $padding = 0 }
   $sb = New-Object System.Text.StringBuilder
   [void]$sb.Append($esc + '[?2026h')
@@ -518,6 +535,12 @@ function Write-TestWindow([string]$Message = '') {
     [void]$sb.Append("`r")
     [void]$sb.Append($esc + '[K')
     for ($i = 1; $i -lt $old; $i++) { [void]$sb.Append($esc + '[1A' + $esc + '[K') }
+  } elseif ($frame -gt 1) {
+    # nothing to erase yet: reserve the frame with blank lines first. A cursor that already sits
+    # on the last row then scrolls blanks into the scrollback instead of a copy of the block.
+    [void]$sb.Append("`r`n" * ($frame + $messageRows - 1))
+    [void]$sb.Append("`r")
+    for ($i = 1; $i -lt ($frame + $messageRows); $i++) { [void]$sb.Append($esc + '[1A') }
   }
   if ($messageText) { [void]$sb.Append($messageText) }
   if ($padding -gt 0) { [void]$sb.Append("`r`n" * $padding) }
@@ -526,11 +549,12 @@ function Write-TestWindow([string]$Message = '') {
   Write-TestOut $sb.ToString()
   if ([string]$env:CB_TEST_WINDOW_LOG) {
     try {
-      $rec = 'old=' + $old + ' rows=' + $rows + ' msg=' + $messageRows + ' pad=' + $padding + ' cols=' + $columns + ' screen=' + $screen + "`r`n"
+      $rec = 'old=' + $old + ' rows=' + $rows + ' msg=' + $messageRows + ' pad=' + $padding + ' frame=' + $frame + ' cap=' + $cap + ' drop=' + $dropped + ' cols=' + $columns + ' screen=' + $screen + "`r`n"
       [IO.File]::AppendAllText([string]$env:CB_TEST_WINDOW_LOG, $rec)
     } catch { }
   }
-  $script:TestReport.WindowHeight = $rows + [Math]::Max(0, $padding)
+  $script:TestReport.FrameRows = $frame
+  $script:TestReport.WindowHeight = $frame
 }
 
 function Clear-TestWindow {
