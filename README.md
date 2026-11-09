@@ -806,6 +806,23 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 
 断言只写两类：守回归（对应实际缺陷）与守契约（对外行为、文件格式、命令行输出）。不复述常量、不断言私有实现细节、同一行为不写第二条等价断言。
 
+分件里的用例按 vitest 的形状写：
+
+```powershell
+Describe 'int' {
+  AfterAll { Stop-CliRunner $cli }        # 块结束一定执行，断言失败也一样
+
+  It 'star command' {
+    Expect-HasAssertions
+    $o = Run @('star', '1') -Cold
+    Expect-Match $o 'starred:' $o.Trim()
+  }
+  It 'value %s doubled' -Cases @(1, 2) { param($v) Expect-Equal ($v * 2) ($v * 2) '' }
+}
+```
+
+`Describe` 可嵌套，分组名以 ` > ` 连接；`It` 一执行就记一条结果，`-Skip '原因'` 记为跳过，`-Cases` 按名称里的 `%s` 展开成多条。断言有 `Expect`（布尔）、`Expect-Match`（正则）、`Expect-Equal`、`Expect-Contains`、`Expect-Throws`（可带消息正则）、`Expect-Greater`、`Expect-Not`；`Expect-HasAssertions` 与 `Expect-Assertions N` 在该条没有断言或数量不符时判失败。块内抛异常或任一断言失败即判该条失败，失败信息取第一条断言的消息。钩子 `BeforeAll` / `AfterAll` / `BeforeEach` / `AfterEach` 写在 `Describe` 内，`AfterAll` 在块结束（含失败）时执行；`Wait-Until { 条件 } -Timeout 毫秒` 轮询到条件成立。旧写法 `Check` / `Skip` 仍然可用，未迁移的分件行为不变。
+
 分件分三条泳道：`unit` 与 `e2e` 都要驱动真实剪贴板，两者互斥；命令行分件各用各的假剪贴板，只受 `Workers` 限制。打包副本中假剪贴板失效，命令行分件自动改为串行；`-Source` 指向产物时单元组跳过（它按名字调用内部函数），集成与端到端照常运行。
 
 | 分件 | 所在 | 覆盖内容 |

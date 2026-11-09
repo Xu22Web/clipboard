@@ -80,6 +80,210 @@ function Skip([string]$group, [string]$name, [string]$why) {
   Add-TestResult $group $name 'SKIP' $why
 }
 
+# ---------------------------------------------------------------- describe / it
+# The shape vitest reports in: describes nest, an it is one check, and the assertions inside it
+# record what was looked at. Each it runs as soon as it is reached, so a part keeps the order
+# its setup was written in. Check and Skip stay for a part that has not been moved yet.
+$script:Harness.Describes = New-Object System.Collections.Generic.List[string]
+$script:Harness.Frames = New-Object System.Collections.Generic.List[object]
+$script:Harness.Asserts = $null
+$script:Harness.ExpectCount = -1
+$script:Harness.ExpectSome = $false
+
+function Get-TestGroupPath {
+  if ($script:Harness.Describes.Count -eq 0) { return '' }
+  return ($script:Harness.Describes -join ' > ')
+}
+
+# hook errors never decide a result on their own: the log keeps them, the rows stay honest
+function Add-TestHookError($ErrorRecord) {
+  try {
+    $log = Join-Path $env:TEMP 'clipboard-tests-error.log'
+    [IO.File]::AppendAllText($log, ((Get-Date).ToString('HH:mm:ss') + '  hook: ' + $ErrorRecord.Exception.Message + "`r`n"))
+  } catch { }
+}
+
+function Describe([string]$Name, [scriptblock]$Body) {
+  $frame = @{
+    After      = New-Object System.Collections.Generic.List[object]
+    BeforeEach = New-Object System.Collections.Generic.List[object]
+    AfterEach  = New-Object System.Collections.Generic.List[object]
+  }
+  $script:Harness.Describes.Add($Name)
+  $script:Harness.Frames.Add($frame)
+  try {
+    & $Body
+  } finally {
+    $script:Harness.Frames.RemoveAt($script:Harness.Frames.Count - 1)
+    $script:Harness.Describes.RemoveAt($script:Harness.Describes.Count - 1)
+    # the cleanup of a block runs even when a row inside it failed or threw
+    foreach ($hook in $frame.After) {
+      try { & $hook } catch { Add-TestHookError $_ }
+    }
+  }
+}
+
+# runs at the point it is written, which is the start of the block
+function BeforeAll([scriptblock]$Body) { & $Body }
+
+function AfterAll([scriptblock]$Body) {
+  if ($script:Harness.Frames.Count -eq 0) { throw 'AfterAll has to be inside a Describe block' }
+  $script:Harness.Frames[$script:Harness.Frames.Count - 1].After.Add($Body)
+}
+
+function BeforeEach([scriptblock]$Body) {
+  if ($script:Harness.Frames.Count -eq 0) { throw 'BeforeEach has to be inside a Describe block' }
+  $script:Harness.Frames[$script:Harness.Frames.Count - 1].BeforeEach.Add($Body)
+}
+
+function AfterEach([scriptblock]$Body) {
+  if ($script:Harness.Frames.Count -eq 0) { throw 'AfterEach has to be inside a Describe block' }
+  $script:Harness.Frames[$script:Harness.Frames.Count - 1].AfterEach.Add($Body)
+}
+
+function Get-TestHooks([string]$Kind, [switch]$Reverse) {
+  $list = New-Object System.Collections.Generic.List[object]
+  foreach ($frame in $script:Harness.Frames) {
+    foreach ($hook in $frame[$Kind]) { $list.Add($hook) }
+  }
+  if ($Reverse) { $list.Reverse() }
+  return $list
+}
+
+# vi.waitFor: poll a condition, then answer whether it held; the caller asserts the answer
+function Wait-Until([scriptblock]$Condition, [int]$Timeout = 5000, [int]$Interval = 100) {
+  $watch = [Diagnostics.Stopwatch]::StartNew()
+  while ($true) {
+    try { if (& $Condition) { return $true } } catch { }
+    if ($watch.ElapsedMilliseconds -ge $Timeout) { return $false }
+    Start-Sleep -Milliseconds $Interval
+  }
+}
+
+# '%s' in the name is filled with the case, so one row is reported per case
+function Format-TestCaseName([string]$Name, $Case) {
+  $result = $Name
+  foreach ($value in @($Case)) {
+    $at = $result.IndexOf('%s')
+    if ($at -ge 0) { $result = $result.Substring(0, $at) + [string]$value + $result.Substring($at + 2) }
+    else { $result = $result + ' ' + [string]$value }
+  }
+  return $result
+}
+
+function It([string]$Name, [scriptblock]$Body, [string]$Skip = '', [object[]]$Cases = @()) {
+  if ($Cases.Count -eq 0) { Invoke-TestIt $Name $Body @(); return }
+  foreach ($case in $Cases) { Invoke-TestIt (Format-TestCaseName $Name $case) $Body @($case) }
+}
+
+function Invoke-TestIt([string]$Name, [scriptblock]$Body, [object[]]$Arguments = @()) {
+  $group = Get-TestGroupPath
+  if (-not $group) { $group = [string]$script:Harness.Part }
+  $outer = $script:Harness.Asserts
+  $outerCount = $script:Harness.ExpectCount
+  $outerSome = $script:Harness.ExpectSome
+  $asserts = New-Object System.Collections.Generic.List[object]
+  $script:Harness.Asserts = $asserts
+  $script:Harness.ExpectCount = -1
+  $script:Harness.ExpectSome = $false
+  $failure = ''
+  foreach ($hook in (Get-TestHooks 'BeforeEach')) {
+    try { & $hook } catch { $failure = 'before each: ' + $_.Exception.Message; break }
+  }
+  if (-not $failure) {
+    try { & $Body @Arguments } catch { $failure = $_.Exception.Message }
+  }
+  foreach ($hook in (Get-TestHooks 'AfterEach' -Reverse)) {
+    try { & $hook } catch { Add-TestHookError $_ }
+  }
+  $wanted = $script:Harness.ExpectCount
+  $some = $script:Harness.ExpectSome
+  $script:Harness.Asserts = $outer
+  $script:Harness.ExpectCount = $outerCount
+  $script:Harness.ExpectSome = $outerSome
+  if ($failure) { Add-TestResult $group $Name 'FAIL' $failure; return }
+  $recorded = $asserts.Count
+  if ($some -and $recorded -eq 0) { Add-TestResult $group $Name 'FAIL' 'expected at least one assertion, the block made none'; return }
+  if ($wanted -ge 0 -and $recorded -ne $wanted) {
+    Add-TestResult $group $Name 'FAIL' ('expected ' + [string]$wanted + ' assertions, the block made ' + [string]$recorded)
+    return
+  }
+  $failed = 0
+  $first = ''
+  foreach ($a in $asserts) {
+    if (-not $a.Ok) {
+      $failed = $failed + 1
+      if (-not $first) { $first = [string]$a.Detail }
+    }
+  }
+  if ($failed -gt 0) {
+    if ($failed -gt 1) { $first = $first + ' (' + [string]$failed + ' assertions failed)' }
+    Add-TestResult $group $Name 'FAIL' $first
+    return
+  }
+  Add-TestResult $group $Name 'PASS' ''
+}
+
+# one assertion: the message is what a failure prints
+function Expect([bool]$Ok, [string]$Message = '') {
+  if ($null -eq $script:Harness.Asserts) {
+    $group = Get-TestGroupPath
+    if (-not $group) { $group = [string]$script:Harness.Part }
+    if (-not $Message) { $Message = 'assertion' }
+    Add-TestResult $group $Message $(if ($Ok) { 'PASS' } else { 'FAIL' }) ''
+    return
+  }
+  $script:Harness.Asserts.Add(@{ Ok = $Ok; Detail = $Message })
+}
+
+function Expect-Match([string]$Text, [string]$Pattern, [string]$Message = '') {
+  $ok = [string]$Text -match $Pattern
+  if (-not $Message) { $Message = 'expected a match for ' + $Pattern + ', got: ' + ([string]$Text).Trim() }
+  Expect $ok $Message
+}
+
+function Expect-Equal($Actual, $Expected, [string]$Message = '') {
+  if (-not $Message) { $Message = 'expected <' + [string]$Expected + '>, got <' + [string]$Actual + '>' }
+  Expect ([string]$Actual -eq [string]$Expected) $Message
+}
+
+function Expect-Contains([string]$Text, [string]$Part, [string]$Message = '') {
+  if (-not $Message) { $Message = 'expected to find <' + $Part + '>, got: ' + ([string]$Text).Trim() }
+  Expect (([string]$Text).Contains($Part)) $Message
+}
+
+# the block has to throw; with a pattern the error message has to match it
+function Expect-Throws([scriptblock]$Block, [string]$Pattern = '', [string]$Message = '') {
+  $thrown = ''
+  try { & $Block } catch { $thrown = $_.Exception.Message }
+  if (-not $thrown) {
+    if (-not $Message) { $Message = 'expected the block to throw, but it returned' }
+    Expect $false $Message
+    return
+  }
+  if (-not $Pattern) { Expect $true ''; return }
+  if (-not $Message) { $Message = 'expected the error to match ' + $Pattern + ', got: ' + $thrown }
+  Expect ([string]$thrown -match $Pattern) $Message
+}
+
+# guards against a block that lost its assertions and would otherwise pass by doing nothing
+function Expect-HasAssertions {
+  $script:Harness.ExpectSome = $true
+}
+
+function Expect-Assertions([int]$Count) {
+  $script:Harness.ExpectCount = $Count
+}
+
+function Expect-Greater($Actual, $Expected, [string]$Message = '') {
+  if (-not $Message) { $Message = 'expected <' + [string]$Actual + '> to be greater than <' + [string]$Expected + '>' }
+  Expect ([double]$Actual -gt [double]$Expected) $Message
+}
+
+function Expect-Not([bool]$Ok, [string]$Message = '') {
+  Expect (-not $Ok) $Message
+}
+
 # the drawing helpers take a Graphics plus plain values, so a part can paint them onto a bitmap
 function Use-Drawing {
   foreach ($a in @('System.Drawing', 'System.Windows.Forms')) {

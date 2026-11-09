@@ -124,8 +124,14 @@ function Initialize-TestReporter([string]$Mode = 'default', [switch]$Quiet, [swi
   }
   if ($script:TestReport.Color) {
     $esc = [string][char]27
+    # the palette vitest prints with: green for what passed, bold red for what failed, yellow
+    # for what was skipped, dim for counts and the summary titles, gray for the total
     $script:TestReport.Ansi = @{
-      pass = $esc + '[32m'; fail = $esc + '[31m'; skip = $esc + '[33m'; dim = $esc + '[2m'; reset = $esc + '[0m'
+      pass = $esc + '[32m'; fail = $esc + '[31m'; skip = $esc + '[33m'
+      green = $esc + '[32m'; red = $esc + '[31m'; yellow = $esc + '[33m'
+      boldgreen = $esc + '[1;32m'; boldred = $esc + '[1;31m'; boldyellow = $esc + '[1;33m'
+      bold = $esc + '[1m'; dim = $esc + '[2m'; gray = $esc + '[90m'
+      reset = $esc + '[0m'
     }
   }
   $script:TestReport.LastMark = Get-Date
@@ -156,6 +162,28 @@ function Get-TestMark([string]$Kind, [int]$Pad = 0) {
 function Get-TestDim([string]$Text) {
   if (-not $script:TestReport.Color) { return $Text }
   return ($script:TestReport.Ansi.dim + $Text + $script:TestReport.Ansi.reset)
+}
+
+# one colour out of the palette above, by name, and unchanged when colour is off
+function Get-TestColor([string]$Kind, [string]$Text) {
+  if (-not $script:TestReport.Color) { return $Text }
+  $code = [string]$script:TestReport.Ansi[$Kind]
+  if (-not $code) { return $Text }
+  return ($code + $Text + $script:TestReport.Ansi.reset)
+}
+
+# vitest dims the directory, bolds the file name and dims the extension, so the eye lands on
+# the name
+function Get-TestPath([string]$Path) {
+  if (-not $script:TestReport.Color) { return $Path }
+  $dir = ''
+  $name = $Path
+  $cut = $Path.LastIndexOfAny([char[]]@('\', '/'))
+  if ($cut -ge 0) { $dir = $Path.Substring(0, $cut + 1); $name = $Path.Substring($cut + 1) }
+  $ext = ''
+  $dot = $name.LastIndexOf('.')
+  if ($dot -gt 0) { $ext = $name.Substring($dot); $name = $name.Substring(0, $dot) }
+  return ((Get-TestColor 'dim' $dir) + (Get-TestColor 'bold' $name) + (Get-TestColor 'dim' $ext))
 }
 
 # long assertion details are one sentence each; wrap them under the row instead of letting the
@@ -196,8 +224,12 @@ function Write-TestModuleRow([string]$Name, [int]$Checks, [int]$Failed, [int]$Sk
   $bits.Add([string]$Checks + ' ' + $(if ($Checks -eq 1) { 'test' } else { 'tests' }))
   if ($Failed -gt 0) { $bits.Add([string]$Failed + ' failed') }
   if ($Skipped -gt 0) { $bits.Add([string]$Skipped + ' skipped') }
-  $row = ' ' + (Get-TestMark $kind) + ' ' + $Name + ' ' + (Get-TestDim '(') + ($bits -join (Get-TestDim ' | ')) + (Get-TestDim ')')
-  if ($Seconds -gt 0) { $row = $row + ' ' + (Format-TestDuration $Seconds) }
+  $row = ' ' + (Get-TestMark $kind) + ' ' + (Get-TestPath $Name) + ' ' + (Get-TestDim '(') + ($bits -join (Get-TestDim ' | ')) + (Get-TestDim ')')
+  if ($Seconds -gt 0) {
+    $span = Format-TestDuration $Seconds
+    if ($Seconds -ge 1) { $row = $row + ' ' + (Get-TestColor 'yellow' $span) }
+    else { $row = $row + ' ' + $span }
+  }
   Write-TestLog $row
 }
 
@@ -241,15 +273,15 @@ function Write-TestFailures($Items) {
 # failed | passed | skipped, the order vitest uses, then the total in brackets
 function Get-TestState([int]$Pass, [int]$Fail, [int]$Skip, [int]$Total) {
   $bits = New-Object System.Collections.Generic.List[string]
-  if ($Fail -gt 0) { $bits.Add((Get-TestMark 'fail') + ' ' + [string]$Fail + ' failed') }
-  if ($Pass -gt 0) { $bits.Add([string]$Pass + ' passed') }
-  if ($Skip -gt 0) { $bits.Add([string]$Skip + ' skipped') }
-  if ($bits.Count -eq 0) { $bits.Add('no checks') }
-  return (($bits -join (Get-TestDim ' | ')) + ' ' + (Get-TestDim ('(' + [string]$Total + ')')))
+  if ($Fail -gt 0) { $bits.Add((Get-TestColor 'boldred' ([string]$Fail + ' failed'))) }
+  if ($Pass -gt 0) { $bits.Add((Get-TestColor 'boldgreen' ([string]$Pass + ' passed'))) }
+  if ($Skip -gt 0) { $bits.Add((Get-TestColor 'yellow' ([string]$Skip + ' skipped'))) }
+  if ($bits.Count -eq 0) { $bits.Add((Get-TestDim 'no checks')) }
+  return (($bits -join (Get-TestDim ' | ')) + ' ' + (Get-TestColor 'gray' ('(' + [string]$Total + ')')))
 }
 
 function Get-TestSummaryLine([string]$Label, [string]$Value) {
-  return (' ' + $Label.PadLeft(10) + '  ' + $Value)
+  return ((Get-TestDim (' ' + $Label.PadLeft(10) + '  ')) + $Value)
 }
 
 function Write-TestSummaryLine([string]$Label, [string]$Value) {
@@ -387,18 +419,40 @@ function Get-TestCaptured {
   return $text
 }
 
-function Get-TestPlain([string]$Text) {
-  return [regex]::Replace([string]$Text, '\x1b\[[0-9;?]*[ -/]*[@-~]', '')
-}
-
-# how many rows a line really takes: the terminal wraps it at its width
-function Get-TestRowCount($Lines, [int]$Columns) {
-  $count = 0
-  foreach ($line in $Lines) {
-    $len = (Get-TestPlain ([string]$line)).Length
-    $count += [Math]::Max(1, [int][Math]::Ceiling($len / [double]$Columns))
+# A row wider than the console wraps, and a wrapped row takes two lines while the frame counted
+# one: the frame then clears one row too few and the window creeps down the screen. Rows are
+# clipped to the console width instead; escape sequences are kept and only visible characters
+# count against it.
+function Get-TestClip([string]$Text, [int]$Columns) {
+  if (-not $Text) { return '' }
+  $esc = [string][char]27
+  $limit = $Columns - 1
+  $out = New-Object System.Text.StringBuilder
+  $width = 0
+  $i = 0
+  while ($i -lt $Text.Length) {
+    if ($Text[$i] -eq $esc) {
+      $j = $i + 1
+      if ($j -lt $Text.Length -and $Text[$j] -eq '[') {
+        $j = $j + 1
+        while ($j -lt $Text.Length -and -not [char]::IsLetter($Text[$j])) { $j = $j + 1 }
+        if ($j -lt $Text.Length) { $j = $j + 1 }
+      } elseif ($j -lt $Text.Length) {
+        $j = $j + 1
+      }
+      [void]$out.Append($Text.Substring($i, $j - $i))
+      $i = $j
+      continue
+    }
+    if ($width -ge $limit) {
+      [void]$out.Append($esc + '[0m')
+      break
+    }
+    [void]$out.Append($Text[$i])
+    $width = $width + 1
+    $i = $i + 1
   }
-  return $count
+  return $out.ToString()
 }
 
 function Set-TestWindow($Lines) {
@@ -414,15 +468,22 @@ function Write-TestWindow([string]$Message = '') {
   }
   $esc = [string][char]27
   $columns = [Math]::Max(20, $script:TestReport.Width)
-  $window = @($script:TestReport.Window)
-  $rows = Get-TestRowCount $window $columns
+  $window = New-Object System.Collections.Generic.List[string]
+  foreach ($line in @($script:TestReport.Window)) { $window.Add((Get-TestClip ([string]$line) $columns)) }
+  $messageText = ''
   $messageRows = 0
-  if ($Message) { $messageRows = Get-TestRowCount @($Message.TrimEnd("`r", "`n")) $columns }
+  if ($Message) {
+    $parts = New-Object System.Collections.Generic.List[string]
+    foreach ($part in ($Message.TrimEnd("`r", "`n") -split "`r`n|`r|`n")) { $parts.Add((Get-TestClip ([string]$part) $columns)) }
+    $messageText = ($parts -join "`r`n") + "`r`n"
+    $messageRows = $parts.Count
+  }
+  $rows = $window.Count
   $old = [int]$script:TestReport.WindowHeight
-  # The next frame clears exactly what this one wrote, so the height has to be the number of rows
-  # written: the message, then the padding that keeps the window where it was, then the window.
-  # A frame that grew (another part started) has no padding and simply extends downwards.
-  $padding = $old - $messageRows - $rows
+  # vitest counts the window only: the message above it is written outside the counted region,
+  # so a finished row stays on screen and the window keeps ending on the same line
+  $padding = $old - $rows
+  if ($padding -gt 0 -and $messageRows -gt 0) { $padding = $padding - $messageRows }
   if ($padding -lt 0) { $padding = 0 }
   $sb = New-Object System.Text.StringBuilder
   [void]$sb.Append($esc + '[?2026h')
@@ -433,12 +494,12 @@ function Write-TestWindow([string]$Message = '') {
     [void]$sb.Append($esc + '[K')
     for ($i = 1; $i -lt $old; $i++) { [void]$sb.Append($esc + '[1A' + $esc + '[K') }
   }
-  if ($Message) { [void]$sb.Append($Message) }
+  if ($messageText) { [void]$sb.Append($messageText) }
   if ($padding -gt 0) { [void]$sb.Append("`r`n" * $padding) }
   if ($rows -gt 0) { [void]$sb.Append(($window -join "`r`n")) }
   [void]$sb.Append($esc + '[?2026l')
   Write-TestOut $sb.ToString()
-  $script:TestReport.WindowHeight = $messageRows + $padding + $rows
+  $script:TestReport.WindowHeight = $rows + [Math]::Max(0, $padding)
 }
 
 function Clear-TestWindow {

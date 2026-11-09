@@ -25,35 +25,61 @@ $cli = Start-CliRunner $intDir
 function Run([string[]]$cliArgs, [switch]$Cold) { return (Invoke-CliRunner $cli $cliArgs -Cold:$Cold) }
 
 
-    # ------------------------------------------------- starring
-    [IO.File]::WriteAllLines($cfg2, @('MaxItems=300', 'Plugins=item-marks'), $Utf8)
-    [void](Run @('clear', '-All'))
-    [void](Run @('put', 'star-alpha'))
-    [void](Run @('put', 'star-beta'))
+Describe 'int' {
+  # the runner belongs to this block: it is stopped even when a row inside fails or throws
+  AfterAll { Stop-CliRunner $cli }
+
+  # ------------------------------------------------- starring
+  [IO.File]::WriteAllLines($cfg2, @('MaxItems=300', 'Plugins=item-marks'), $Utf8)
+  [void](Run @('clear', '-All'))
+  [void](Run @('put', 'star-alpha'))
+  [void](Run @('put', 'star-beta'))
+
+  It 'star command' {
+    Expect-HasAssertions
     $o = Run @('star', '1') -Cold
-    Check 'int' 'star command' ($o -match 'starred:') $o.Trim()
+    Expect-Match $o 'starred:' $o.Trim()
+  }
+  It 'status counts starred' {
     $o = Run @('status')
-    Check 'int' 'status counts starred' ($o -match '1 starred') $o.Trim()
+    Expect-Match $o '1 starred' $o.Trim()
+  }
+  It 'starred entry cannot be deleted' {
     $o = Run @('del', '1')
-    Check 'int' 'starred entry cannot be deleted' ($o -match 'starred entry, unstar it first') $o.Trim()
+    Expect-Match $o 'starred entry, unstar it first' $o.Trim()
+  }
+  It 'clear keeps starred' {
     $o = Run @('clear', '-All')
-    Check 'int' 'clear keeps starred' (($o -match '1 starred kept') -and ((Run @('list') -Cold) -match 'star-beta')) $o.Trim()
+    Expect (($o -match '1 starred kept') -and ((Run @('list') -Cold) -match 'star-beta')) $o.Trim()
+  }
+  It 'unstar command' {
     $o = Run @('unstar', '1') -Cold
-    Check 'int' 'unstar command' ($o -match 'unstarred:') $o.Trim()
+    Expect-Match $o 'unstarred:' $o.Trim()
+  }
+  It 'delete works after unstar' {
     $o = Run @('del', '1')
-    Check 'int' 'delete works after unstar' ($o -match 'deleted:') $o.Trim()
+    Expect-Match $o 'deleted:' $o.Trim()
+  }
 
-    # ------------------------------------------------- highlight
-    [void](Run @('put', 'mark-gamma'))
+  # ------------------------------------------------- highlight
+  [void](Run @('put', 'mark-gamma'))
+
+  It 'highlight command' {
     $o = Run @('highlight', '1') -Cold
-    Check 'int' 'highlight command' ($o -match 'highlighted:') $o.Trim()
+    Expect-Match $o 'highlighted:' $o.Trim()
+  }
+  It 'highlight is repeatable-safe' {
     $o = Run @('highlight', '1') -Cold
-    Check 'int' 'highlight is repeatable-safe' ($o -match 'already highlighted') $o.Trim()
+    Expect-Match $o 'already highlighted' $o.Trim()
+  }
+  It 'unhighlight command' {
     $o = Run @('unhighlight', '1') -Cold
-    Check 'int' 'unhighlight command' ($o -match 'highlight cleared:') $o.Trim()
+    Expect-Match $o 'highlight cleared:' $o.Trim()
+  }
+  It 'unhighlight reports the empty state' {
     $o = Run @('unhighlight', '1') -Cold
-    Check 'int' 'unhighlight reports the empty state' ($o -match 'not highlighted') $o.Trim()
+    Expect-Match $o 'not highlighted' $o.Trim()
+  }
+}
 
-
-Stop-CliRunner $cli
 Complete-TestPart -ResultFile $ResultFile -Quiet:$Quiet

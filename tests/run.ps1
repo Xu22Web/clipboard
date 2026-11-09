@@ -257,6 +257,26 @@ $script:Bailed = $false
 $script:ProgressAt = [DateTime]::MinValue
 $started = Get-Date
 $utf8 = New-Object System.Text.UTF8Encoding $false
+# A part is a script, not a collected test list: it cannot know how many checks it will run
+# before it runs them. The count each part ended with last time is kept here, so the running row
+# reads "<completed>/<total>" from the second run on; the first run of a part shows the
+# completed count alone.
+$script:TotalsFile = Join-Path $env:TEMP 'clipboard-tests-totals.txt'
+$script:Totals = @{}
+if (Test-Path -LiteralPath $script:TotalsFile) {
+  try {
+    foreach ($line in [IO.File]::ReadAllLines($script:TotalsFile)) {
+      $bits = $line -split '='
+      if ($bits.Count -eq 2 -and $bits[1] -match '^[0-9]+$') { $script:Totals[$bits[0]] = [int]$bits[1] }
+    }
+  } catch { $script:Totals = @{} }
+}
+
+function Save-TestTotals {
+  $lines = New-Object System.Collections.Generic.List[string]
+  foreach ($key in $script:Totals.Keys) { $lines.Add([string]$key + '=' + [string]$script:Totals[$key]) }
+  try { [IO.File]::WriteAllLines($script:TotalsFile, $lines.ToArray(), $utf8) } catch { }
+}
 
 function Start-Part($job) {
   $out = Join-Path $tmpRoot ($job.Name + '.json')
@@ -306,6 +326,8 @@ function Complete-Part($run) {
   $fails = @($rows | Where-Object { $_.Result -eq 'FAIL' })
   $skips = @($rows | Where-Object { $_.Result -eq 'SKIP' }).Count
   $results.Add(@{ Name = $run.Job.Name; Label = ($run.Job.Group + '\' + $run.Job.Name + '.ps1'); Seconds = $seconds; Rows = $rows })
+  $script:Totals[$run.Job.Name] = $rows.Count
+  Save-TestTotals
   foreach ($t in $timings) {
     if ($null -eq $t) { continue }
     $allTimings.Add([pscustomobject]@{ Part = $run.Job.Name; What = [string]$t.What; Ms = [long]$t.Ms })
@@ -345,10 +367,15 @@ function Get-TestWindowLines {
       try { $bits = @(([IO.File]::ReadAllText($a.Progress)).Trim() -split '\s+') } catch { $bits = @() }
       if ($bits.Count -ge 3 -and $bits[0] -match '^[0-9]+$') { $done = [int]$bits[0] + [int]$bits[1] + [int]$bits[2] }
     }
-    # vitest writes "<mark> <path> <completed>/<total>"; a part cannot know its own total while
-    # it runs, so the row carries the completed count only
-    $line = ' ' + [string]$script:TestReport.Marks['run'] + ' ' + $label
-    if ($done -gt 0) { $line = $line + ' ' + [string]$done }
+    # vitest writes "<mark> <path> <completed>/<total>": the pointer bold yellow, the count dim
+    $count = ''
+    if ($done -gt 0) {
+      $total = 0
+      if ($script:Totals.ContainsKey($a.Job.Name)) { $total = [int]$script:Totals[$a.Job.Name] }
+      if ($total -gt 0) { $count = ' ' + [string]$done + '/' + [string]$total }
+      else { $count = ' ' + [string]$done }
+    }
+    $line = (Get-TestColor 'boldyellow' (' ' + [string]$script:TestReport.Marks['run'] + ' ')) + (Get-TestPath $label) + (Get-TestColor 'dim' $count)
     $frame.Add($line)
   }
   if ($frame.Count -gt 0) { $frame.Add('') }
