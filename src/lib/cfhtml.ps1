@@ -11,11 +11,14 @@
 #            PowerPoint resolve <img> through a path and ignore a data: uri; a picture that is
 #            gone leaves a placeholder frame instead of an empty one (Get-CfHtmlOnDisk)
 #
+# A block that had to be read as a string instead of as bytes is recovered here too, and
+# dropped when the decode lost part of it (Get-CfHtmlFromString).
+#
 # Either rewrite changes the buffer length, so the four offsets are recomputed from the text
 # itself (utils/cfhtml.ps1 owns that and the tag reading; this file owns the files). Nothing
 # here touches a record, the store or the disk layout of an entry: lib/media.ps1 owns the files,
-# this file owns the clipboard format, and only the paste path (lib/clip.ps1) and the tests
-# load it.
+# this file owns the clipboard format, and only the capture and paste paths (lib/clip.ps1) and
+# the tests load it.
 
 # ---- inlining the pictures an html block points at --------------------------
 # Word, Excel and browsers leave the copied pictures in a temp folder and reference them by
@@ -66,6 +69,49 @@ function Get-CfHtmlInlined([byte[]]$html, [int]$maxImageBytes, [int]$maxTotalByt
     return $html
   }
   return (Set-CfHtmlOffsets $bytes)
+}
+
+# ---- a block that had to be read as a string --------------------------------
+# When another window holds the clipboard, the raw read comes back empty and the capture
+# falls back to the clipboard wrapper, which hands CF_HTML over as a string: it decodes the
+# block with the ANSI code page and keeps the padding the allocator left past EndHTML.
+# Encoding that string back the same way returns the original bytes only while every one of
+# them survived. A lead byte with no pair eats the character after it - a block containing
+# '</span>' read back as '?/span' on a 936 code page - and every offset in the header is then
+# off by the bytes that went missing. Both signs below mean exactly that loss, and no
+# formatting at all is better than a mangled one: the capture drops the html and the entry
+# pastes as text or as the blocks that did survive.
+function Get-CfHtmlFromString([string]$text) {
+  if ([string]::IsNullOrEmpty($text)) { return $null }
+  $end = Get-CfHtmlEndLength $text
+  $bytes = $null
+  try { $bytes = [Text.Encoding]::Default.GetBytes($text) } catch { return $null }
+  if ($null -eq $bytes -or $bytes.Length -eq 0) { return $null }
+  # Two ways a byte goes missing on the way through the string: an invalid pair collapses
+  # into one '?', which makes the block shorter than EndHTML, or into U+FFFD when the code
+  # page is UTF-8. Either one means a tag already lost its '<', so the html is dropped.
+  # The char overload is used on purpose: IndexOf(string) compares by culture, and U+FFFD
+  # carries no collation weight there - it matches at 0 in any text.
+  if (($text.IndexOf([char]0xFFFD) -ge 0) -or ($end -gt 0 -and $bytes.Length -lt $end)) {
+    Write-Log 'html fallback dropped: the string read lost bytes'
+    return $null
+  }
+  if ($end -gt 0) {
+    if ($bytes.Length -gt $end) {
+      $cut = New-Object byte[] $end
+      [Array]::Copy($bytes, $cut, $end)
+      return , $cut
+    }
+    return , $bytes
+  }
+  # a header without a usable end: only the NUL padding can be recognised as not being html
+  $last = $bytes.Length
+  while ($last -gt 0 -and $bytes[$last - 1] -eq 0) { $last-- }
+  if ($last -le 0) { return $null }
+  if ($last -eq $bytes.Length) { return , $bytes }
+  $trim = New-Object byte[] $last
+  [Array]::Copy($bytes, $trim, $last)
+  return , $trim
 }
 
 # ---- putting the inlined pictures back on disk ------------------------------

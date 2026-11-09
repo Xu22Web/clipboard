@@ -8,7 +8,8 @@
 # lib/cfhtml.ps1 keeps the two directions of the interchange, because both touch the disk: the
 # pictures a capture points at are read and inlined (so the entry still pastes after the temp
 # folder is gone), and the pictures a paste needs are written out again (because Word, Excel and
-# PowerPoint resolve <img> through a path and ignore a data: uri).
+# PowerPoint resolve <img> through a path and ignore a data: uri). The position the document
+# ends at is read here as well, so a block that came back as a string can be cut back to it.
 
 # the byte position where the html starts, taken from the header the block carries
 function Get-CfHtmlHeadLength([string]$text) {
@@ -25,6 +26,18 @@ function Get-CfHtmlHeadLength([string]$text) {
     if ($nl -ge 0) { return ($nl + 1) }
   }
   return 0
+}
+
+# the byte position the document ends at, read from the same header; 0 when it names none.
+# The clipboard hands the block over rounded up to the allocator's step, so a form of the
+# buffer that was not trimmed (a string read, see Get-CfHtmlFromString) is cut back to this.
+function Get-CfHtmlEndLength([string]$text) {
+  $m = [regex]::Match($text, 'EndHTML:\s*(\d+)')
+  if (-not $m.Success) { return 0 }
+  $end = 0
+  if (-not [int]::TryParse($m.Groups[1].Value, [ref]$end)) { return 0 }
+  if ($end -le 0) { return 0 }
+  return $end
 }
 
 # the four offsets in the CF_HTML header are byte positions in the buffer itself, so they are

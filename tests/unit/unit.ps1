@@ -990,6 +990,23 @@ try {
     Check 'unit' 'a vml picture is inlined too' (($vmlInlined -notmatch 'file:') -and ($vmlInlined -match 'v:imagedata src="data:image/png;base64,')) ''
     Remove-Item -LiteralPath $tmpPic -Force
 
+    # A block the clipboard wrapper hands over as a string (the fallback when the raw read
+    # could not open the clipboard) still carries the allocator padding and, when the ANSI
+    # decode ate a character, one byte less than EndHTML. The first is cut back, the second
+    # is dropped: a fragment whose tags lost a '<' is worse than no formatting at all.
+    $fbText = New-CfHtmlFixture '<p>fallback</p>'
+    $fbBytes = $Utf8.GetBytes($fbText)
+    $fbPadded = Get-CfHtmlFromString ($fbText + ('?' * 12))
+    $fbSame = ($null -ne $fbPadded) -and ([BitConverter]::ToString([byte[]]$fbPadded) -eq [BitConverter]::ToString($fbBytes))
+    Check 'unit' 'a string read is cut back to its end' $fbSame ([string]$fbPadded.Length)
+    $fbShort = Get-CfHtmlFromString ($fbText.Substring(0, $fbText.Length - 1))
+    Check 'unit' 'a string read that lost a byte is dropped' ($null -eq $fbShort) ''
+    $fbMarked = Get-CfHtmlFromString ($fbText.Insert(20, ([string][char]0xFFFD)))
+    Check 'unit' 'a string read with a replacement character is dropped' ($null -eq $fbMarked) ''
+    Check 'unit' 'an empty string is not an html block' ($null -eq (Get-CfHtmlFromString '')) ''
+    $fbNoHead = Get-CfHtmlFromString ('<p>no header</p>' + ([string][char]0) + ([string][char]0))
+    Check 'unit' 'nul padding goes without a header' (($null -ne $fbNoHead) -and ([Text.Encoding]::ASCII.GetString([byte[]]$fbNoHead) -eq '<p>no header</p>')) ''
+
     # the bytes of a formatted block have to stay bytes end to end: an Object[] from the
     # pipeline used to be stringified into "123 92 114 ..." and written as that text
     $rtfPic = '{\rtf1\ansi{\fonttbl{\f0 Arial;}}\f0 hello {\pict\pngblip\picw2\pich2 89504e47}world}'
@@ -1069,6 +1086,23 @@ try {
     Check 'unit' 'the html block comes back byte for byte' $htmlSame ''
     $rtfSame = ($null -ne $capRich) -and ($null -ne $capRich.Rich.Rtf) -and ([Text.Encoding]::Default.GetString($capRich.Rich.Rtf) -ceq $richRtf)
     Check 'unit' 'the rtf block comes back byte for byte' $rtfSame ''
+    # the same block as raw bytes through the OLE data object: that is the path the capture
+    # takes when another window holds the clipboard and the open above is refused
+    $oleHtml = $null
+    try { $oleHtml = [Cb.Win]::ReadFormatBytes('HTML Format') } catch { $oleHtml = $null }
+    $oleSame = ($null -ne $oleHtml) -and ([BitConverter]::ToString([byte[]]$oleHtml) -eq [BitConverter]::ToString($richCap.Html))
+    Check 'unit' 'the data object hands the same html bytes over' $oleSame ([string]$(if ($null -eq $oleHtml) { 'null' } else { $oleHtml.Length }))
+    # the raw read has to say when it could not open the clipboard, so the capture can retry
+    # it instead of falling back to the string path that loses bytes
+    $opened = $false
+    for ($i = 0; $i -lt 5; $i++) {
+      $openedHtml = $null
+      $openedRtf = $null
+      [Cb.Win]::ReadRichFormats([ref]$openedHtml, [ref]$openedRtf)
+      if ([Cb.Win]::ClipboardOpen) { $opened = $true; break }
+      Start-Sleep -Milliseconds 40
+    }
+    Check 'unit' 'a raw clipboard read says whether it opened the clipboard' $opened ''
     # A UTF-8 CF_HTML block that goes through a .NET string is decoded with the ANSI code page
     # and stored re-encoded, which is what made Word and Excel paste mojibake. The bytes the
     # clipboard hands over have to come back unchanged.

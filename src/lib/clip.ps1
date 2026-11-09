@@ -102,28 +102,49 @@ function Format-Capture([string]$text, $cap) {
 
 # The whole formatted snapshot: the html, the rtf and the picture blocks a target may prefer.
 # CF_HTML keeps byte offsets into its own buffer and RTF is an 8-bit format, so every block is
-# read raw and stored byte for byte - a .NET string decodes with the ANSI code page (UTF-8 html
-# becomes mojibake and the offsets stop pointing at the tags), which is what made Word and
-# Excel paste garbage. The html gets its temp-file pictures inlined first (see
-# Get-CfHtmlInlined). Each part has its own cap, so an oversized rtf no longer costs the html;
-# an rtf over MaxRtfBytes is dropped and the entry pastes as text.
+# taken as bytes - a .NET string decodes with the ANSI code page (UTF-8 html becomes mojibake
+# and the offsets stop pointing at the tags), which is what made Word and Excel paste garbage.
+# Two byte paths exist for that (the raw open, then the OLE data object), and a block that only
+# comes back as a string is encoded back only while nothing was lost. The html then gets its
+# temp-file pictures inlined (see Get-CfHtmlInlined). Each part has its own cap, so an
+# oversized rtf no longer costs the html; an rtf over MaxRtfBytes is dropped and the entry
+# pastes as text.
 function Get-RichCapture {
   $html = $null
   $rtf = $null
   $png = $null
   $dib = $null
   $emf = $null
+  $opened = $false
   try {
     Load-Forms
     Add-Native
-    [Cb.Win]::ReadRichFormats([ref]$html, [ref]$rtf, [ref]$png, [ref]$dib, [ref]$emf)
+    # The raw read is a single clipboard open, and another window (Office, a clipboard manager,
+    # a remote session) can hold the clipboard for a moment: the read then returns nothing
+    # although the formats are there. The string read below loses bytes, so the raw read is
+    # tried a few times first - it only retries when the clipboard refused to open.
+    for ($attempt = 0; $attempt -lt 5; $attempt++) {
+      [Cb.Win]::ReadRichFormats([ref]$html, [ref]$rtf, [ref]$png, [ref]$dib, [ref]$emf)
+      if ([Cb.Win]::ClipboardOpen) { $opened = $true; break }
+      Start-Sleep -Milliseconds 40
+    }
   } catch {
     $html = $null
     $rtf = $null
   }
+  if (-not $opened) {
+    # The open was refused, or there is no native layer at all: the OLE data object answers
+    # without that open and still carries the bytes the owner published. Only what is left
+    # after this goes to the wrapper below, whose string form is the one that can lose a byte.
+    # A capture of plain text costs nothing here: the open succeeded, so the formats are
+    # really absent and the wrapper would report the same.
+    try { $html = [Cb.Win]::ReadFormatBytes('HTML Format') } catch { $html = $null }
+    try { $rtf = [Cb.Win]::ReadFormatBytes('Rich Text Format') } catch { $rtf = $null }
+  }
   if ($null -eq $html -and $null -eq $rtf) {
-    # no native layer (or no such format): fall back to the data object, where a stream is
-    # still exact and a string has to be turned back into the ANSI bytes it came from
+    # no native layer, or a block neither byte path could hand over: fall back to the data
+    # object, where a stream is still exact and a string can be encoded back only when the
+    # wrapper left every byte of it in place (see Get-CfHtmlFromString)
     try {
       $do = [Windows.Forms.Clipboard]::GetDataObject()
       if ($null -ne $do -and $do.GetDataPresent([Windows.Forms.DataFormats]::Html)) {
@@ -136,7 +157,8 @@ function Get-RichCapture {
         } elseif ($obj -is [byte[]]) {
           $html = $obj
         } elseif ($obj -is [string]) {
-          $html = [Text.Encoding]::Default.GetBytes([string]$obj)
+          # the wrapper already decoded the block, so only a complete one can be encoded back
+          $html = Get-CfHtmlFromString ([string]$obj)
         }
       }
       if ($null -ne $do -and $do.GetDataPresent([Windows.Forms.DataFormats]::Rtf)) {

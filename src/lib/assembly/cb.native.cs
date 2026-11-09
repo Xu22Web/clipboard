@@ -53,6 +53,11 @@ namespace Cb {
       ReadRichFormats(ref html, ref rtf, ref png, ref dib, ref emf);
     }
 
+    // false after a read means another window held the clipboard, so the null blocks say
+    // nothing about what it carries: the caller retries the read instead of falling back to
+    // the string path, which decodes the block with the ANSI code page and can lose bytes
+    public static bool ClipboardOpen { get; private set; }
+
     // one clipboard open for the whole snapshot: the two text blocks plus the picture blocks a
     // target may ask for instead (an Excel chart arrives as a metafile, a Word shape as a
     // bitmap). Reading them apart would let a second copy slip in between.
@@ -62,7 +67,8 @@ namespace Cb {
       png = null;
       dib = null;
       emf = null;
-      if (!OpenClipboard(IntPtr.Zero)) { return; }
+      ClipboardOpen = OpenClipboard(IntPtr.Zero);
+      if (!ClipboardOpen) { return; }
       try {
         html = ReadBlock(RegisterClipboardFormat("HTML Format"), true);
         rtf = ReadBlock(RegisterClipboardFormat("Rich Text Format"), false);
@@ -70,6 +76,38 @@ namespace Cb {
         dib = ReadDib();
         emf = ReadEmf();
       } finally { CloseClipboard(); }
+    }
+
+    // The third way in, for when the open above was refused because another window held the
+    // clipboard. The OLE data object does not need that open, and it answers with the same
+    // HGLOBAL the owner published - unlike the wrapper WinForms builds, which hands CF_HTML
+    // over as a string that was decoded with the ANSI code page (a byte can go missing on the
+    // way, "</span>" reads back as "?/span").
+    [DllImport("ole32.dll")] private static extern int OleGetClipboard(out System.Runtime.InteropServices.ComTypes.IDataObject data);
+    [DllImport("ole32.dll")] private static extern void ReleaseStgMedium(ref System.Runtime.InteropServices.ComTypes.STGMEDIUM medium);
+
+    public static byte[] ReadFormatBytes(string format) {
+      if (string.IsNullOrEmpty(format)) { return null; }
+      System.Runtime.InteropServices.ComTypes.IDataObject data = null;
+      if (OleGetClipboard(out data) != 0 || data == null) { return null; }
+      uint cf = RegisterClipboardFormat(format);
+      if (cf == 0) { return null; }
+      System.Runtime.InteropServices.ComTypes.FORMATETC want =
+        new System.Runtime.InteropServices.ComTypes.FORMATETC();
+      want.cfFormat = (short)cf;
+      want.dwAspect = System.Runtime.InteropServices.ComTypes.DVASPECT.DVASPECT_CONTENT;
+      want.lindex = -1;
+      want.tymed = System.Runtime.InteropServices.ComTypes.TYMED.TYMED_HGLOBAL;
+      System.Runtime.InteropServices.ComTypes.STGMEDIUM got =
+        new System.Runtime.InteropServices.ComTypes.STGMEDIUM();
+      got.unionmember = IntPtr.Zero;
+      try { data.GetData(ref want, out got); } catch { return null; }
+      try {
+        if (got.tymed != System.Runtime.InteropServices.ComTypes.TYMED.TYMED_HGLOBAL) { return null; }
+        return ReadHandle(got.unionmember, format == "HTML Format");
+      } catch { return null; } finally {
+        try { ReleaseStgMedium(ref got); } catch { }
+      }
     }
 
     private static byte[] ReadBlock(uint format, bool html) {
