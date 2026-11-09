@@ -20,22 +20,24 @@ $script:Harness.Part = 'settings'
 Start-TestPart -Source $Source -ClipShared:$ClipShared -Quiet:$Quiet -ProgressFile $ProgressFile
 $intDir = New-FakeSandbox 'cli'
 $cfg2 = Join-Path $intDir 'clipboard.ini'
+$cli = Start-CliRunner $intDir
+function Run([string[]]$cliArgs, [switch]$Cold) { return (Invoke-CliRunner $cli $cliArgs -Cold:$Cold) }
 
 
     # config precedence: ini MaxItems=2 caps the list, whatever the command line asks for
     [IO.File]::WriteAllLines($cfg2, @('MaxItems=2'), $Utf8)
-    [void](Clip $intDir @('clear'))
-    1..3 | ForEach-Object { [void](Clip $intDir @('put', ('cfg-' + $_))) }
-    $o = Clip $intDir @('list')
+    [void](Run @('clear'))
+    1..3 | ForEach-Object { [void](Run @('put', ('cfg-' + $_))) }
+    $o = Run @('list') -Cold
     Check 'int' 'ini MaxItems respected' (@($o -split "`n" | Where-Object { $_ -match 'cfg-' }).Count -eq 2) $o.Trim()
 
-    [void](Clip $intDir @('clear'))
+    [void](Run @('clear'))
     # settings are config-only: a setting switch is refused, nothing is silently applied
-    [void](Clip $intDir @('put', 'cfg-guard'))
+    [void](Run @('put', 'cfg-guard'))
     $bad = & powershell -NoProfile -ExecutionPolicy Bypass -Sta -File (Join-Path $intDir 'clipboard.ps1') put 'cli-override' -MaxItems 5 2>&1
     $badText = ($bad -join ' ')
-    Check 'int' 'setting switches are refused' (($badText -match 'MaxItems') -and -not ((Clip $intDir @('get')) -match 'cli-override')) $badText.Trim()
-    $o = Clip $intDir @('help')
+    Check 'int' 'setting switches are refused' (($badText -match 'MaxItems') -and -not ((Run @('get')) -match 'cli-override')) $badText.Trim()
+    $o = Run @('help')
     Check 'int' 'help advertises no setting switches' ((-not ($o -match 'Options \(override')) -and ($o -match 'clipboard\.ini only') -and (-not ($o -match '-MaxItems'))) ''
 
     # the sandbox keeps its store next to its own script, never in the repo
@@ -53,23 +55,24 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
     Check 'int' 'DataDir from ini' (Test-Path -LiteralPath (Join-Path $altDir 'history.dat')) $altDir
 
     # the config verbs: read, write, and every refusal
-    $o = Clip $intDir @('config', 'get', 'Rows')
+    $o = Run @('config', 'get', 'Rows')
     Check 'int' 'config get' ($o -match 'Rows = 10') $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'Rows', '12')
+    $o = Run @('config', 'set', 'Rows', '12')
     $iniAfter = [IO.File]::ReadAllText($cfg2)
     Check 'int' 'config set writes' (($o -match '10 -> 12') -and ($iniAfter -match '(?m)^Rows=12\r?$')) $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'Rows', '1')
+    $o = Run @('config', 'set', 'Rows', '1')
     Check 'int' 'config set rejects range' ($o -match 'must be >= 3') $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'NopeKey', '1')
+    $o = Run @('config', 'set', 'NopeKey', '1')
     Check 'int' 'config set rejects unknown key' ($o -match 'unknown key') $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'DataDir', 'D:\x')
+    $o = Run @('config', 'set', 'DataDir', 'D:\x')
     Check 'int' 'config set rejects DataDir' ($o -match 'DataDir cannot be changed') $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'Hotkey', 'Ctrl+Nope')
+    $o = Run @('config', 'set', 'Hotkey', 'Ctrl+Nope')
     Check 'int' 'config set rejects bad hotkey' ($o -match 'unknown key name') $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'PreviewDelay', '900')
+    $o = Run @('config', 'set', 'PreviewDelay', '900')
     Check 'int' 'a preview setting is writable' ($o -match '350 -> 900') $o.Trim()
-    $o = Clip $intDir @('config', 'set', 'PreviewDelay', '350')
+    $o = Run @('config', 'set', 'PreviewDelay', '350')
     Check 'int' 'a preview setting is restorable' ($o -match '900 -> 350') $o.Trim()
 
 
+Stop-CliRunner $cli
 Complete-TestPart -ResultFile $ResultFile -Quiet:$Quiet

@@ -23,6 +23,8 @@ $script:Harness.Part = 'history'
 Start-TestPart -Source $Source -ClipShared:$ClipShared -Quiet:$Quiet -ProgressFile $ProgressFile
 $intDir = New-FakeSandbox 'cli'
 $cfg2 = Join-Path $intDir 'clipboard.ini'
+$cli = Start-CliRunner $intDir
+function Run([string[]]$cliArgs, [switch]$Cold) { return (Invoke-CliRunner $cli $cliArgs -Cold:$Cold) }
 
 
     # A sandbox can carry its own clipboard (tests\lib\fake-clip.ps1), which is what lets the
@@ -30,17 +32,19 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
     # checks below are the contract: the same commands, the same answers, and the machine's
     # clipboard untouched.
     $fakeDir = New-FakeSandbox 'fakeclip'
+    $fakeCli = Start-CliRunner $fakeDir
+    function RunFake([string[]]$cliArgs, [switch]$Cold) { return (Invoke-CliRunner $fakeCli $cliArgs -Cold:$Cold) }
     $realBefore = ''
     try { $realBefore = [string](Get-Clipboard -Raw -ErrorAction Stop) } catch { $realBefore = '' }
-    $o = Clip $fakeDir @('put', 'fake-one')
+    $o = RunFake @('put', 'fake-one')
     Check 'int' 'a sandbox can carry its own clipboard' ($o -match 'clipboard set') $o.Trim()
-    $o = Clip $fakeDir @('get')
+    $o = RunFake @('get')
     Check 'int' 'the fake clipboard reads back' ($o -match 'fake-one') $o.Trim()
-    $o = Clip $fakeDir @('list')
+    $o = RunFake @('list') -Cold
     Check 'int' 'a capture from the fake clipboard is stored' ($o -match 'fake-one') $o.Trim()
-    $o = Clip $fakeDir @('pick', '1')
+    $o = RunFake @('pick', '1') -Cold
     Check 'int' 'picking writes the fake clipboard' (($o -match 'clipboard set') -or ($o -match 'picked')) $o.Trim()
-    $o = Clip $fakeDir @('get')
+    $o = RunFake @('get')
     Check 'int' 'the picked entry comes back through the fake clipboard' ($o -match 'fake-one') $o.Trim()
     $realAfter = ''
     try { $realAfter = [string](Get-Clipboard -Raw -ErrorAction Stop) } catch { $realAfter = '' }
@@ -58,7 +62,7 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
     # Win+V works keeps a clean status. The probe lives in the product module, which this
     # process never loads: without it the expected value would be '' and the check would only
     # ever pass where Win+V happens to work - a runner without the shell service failed here.
-    $o = Clip $intDir @('status')
+    $o = Run @('status') -Cold
     if (-not (Get-Command Get-WinVState -ErrorAction SilentlyContinue)) {
       $nativeFile = Join-Path $script:srcRoot 'lib\native.ps1'
       if (Test-Path -LiteralPath $nativeFile) { . $nativeFile }
@@ -72,50 +76,52 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
       Skip 'int' 'status states the win+v state only when it is not usable' 'the probe module is not loadable here'
     }
 
-    $o = Clip $intDir @('config')
+    $o = Run @('config')
     Check 'int' 'config shows ini path' ($o -match 'clipboard\.ini') ''
 
-    $o = Clip $intDir @('put', 'itest-alpha')
+    $o = Run @('put', 'itest-alpha')
     Check 'int' 'put' ($o -match 'clipboard set') $o.Trim()
 
-    $o = Clip $intDir @('get')
+    $o = Run @('get')
     Check 'int' 'get' ($o -match 'itest-alpha') $o.Trim()
 
-    $o = Clip $intDir @('list', '-Count', '5')
+    $o = Run @('list', '-Count', '5') -Cold
     Check 'int' 'list' ($o -match 'itest-alpha') ''
 
-    $o = Clip $intDir @('pick', '1')
+    $o = Run @('pick', '1') -Cold
     Check 'int' 'pick' ($o -match 'clipboard set') $o.Trim()
-    $o = Clip $intDir @('get')
+    $o = Run @('get')
     Check 'int' 'pick sets clipboard' ($o -match 'itest-alpha') ''
 
-    $o = Clip $intDir @('del', '1')
+    $o = Run @('del', '1')
     Check 'int' 'del' ($o -match 'deleted') $o.Trim()
 
-    $o = Clip $intDir @('clear')
+    $o = Run @('clear')
     Check 'int' 'clear' ($o -match 'history cleared') ''
-    $o = Clip $intDir @('list')
+    $o = Run @('list') -Cold
     Check 'int' 'list empty after clear' ($o -match 'history is empty') ''
 
-    [void](Clip $intDir @('put', 'stdin-like-value'))
-    $o = Clip $intDir @('del', '9')
+    [void](Run @('put', 'stdin-like-value'))
+    $o = Run @('del', '9')
     Check 'int' 'del out of range' ($o -match 'index out of range') $o.Trim()
 
-    $o = Clip $intDir @('pick', 'x')
+    $o = Run @('pick', 'x') -Cold
     Check 'int' 'pick bad arg' ($o -match 'usage: clipboard pick') $o.Trim()
 
-    $o = Clip $intDir @('nosuchcommand')
+    $o = Run @('nosuchcommand')
     Check 'int' 'unknown command' ($o -match 'unknown command') ''
 
-    $o = Clip $intDir @('pause')
-    $s = Clip $intDir @('status')
+    $o = Run @('pause')
+    $s = Run @('status')
     Check 'int' 'pause' (($o -match 'paused') -and ($s -match 'capture     : paused')) ''
-    [void](Clip $intDir @('resume'))
-    $s = Clip $intDir @('status')
+    [void](Run @('resume'))
+    $s = Run @('status')
     Check 'int' 'resume' ($s -match 'capture     : active') ''
 
-    $o = Clip $intDir @('status')
+    $o = Run @('status')
     Check 'int' 'status fields' (($o -match 'autostart   :') -and ($o -match 'desktop     :') -and ($o -match 'store file')) ''
 
 
+Stop-CliRunner $cli
+Stop-CliRunner $fakeCli
 Complete-TestPart -ResultFile $ResultFile -Quiet:$Quiet

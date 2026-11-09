@@ -591,6 +591,7 @@ tools/utils/minify.ps1  压缩器（语法树重写）
 tests/run.ps1           自测驱动：按目录发现分件、并行执行、合并结果（打印在 tests\lib\reporter.ps1）
 tests/lib/harness.ps1   分件共用的断言、沙箱与命令调用
 tests/lib/reporter.ps1  测试打印：分件行、失败块、进度行与汇总
+tests/lib/cli-runner.ps1 分件内的命令执行器：一个进程内按请求调用命令行
 tests/lib/fake-clip.ps1 沙箱自带的剪贴板
 tests/unit/unit.ps1     结构与单元测试（进程内 dot-source）
 tests/cli/*.ps1         命令行分件
@@ -777,6 +778,8 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 
 一个分件一个文件、一个进程、一个沙箱；并行度默认按逻辑处理器数（`cli.ini` 的 `[test] Workers` 缺省即可，写 `1` 为串行，写其它值为该并发数，命令行 `cli test -Workers N` 可对单次运行覆盖）。全量 735 项，其中端到端 22 项。
 
+分件内的命令行调用默认走 `tests\lib\cli-runner.ps1`：分件启动时拉起一个子进程，每条命令在该进程内的独立 runspace 中执行，省去每条命令一次解释器启动；插件脚本块相关的命令（`pin` / `star` / `highlight` / `transform` / `kind` / `list` 等）仍起真实子进程，因为脚本块需要真实的模块加载作用域。
+
 输出分两部分：运行时每个分件完成一行（`ok  unit  579 tests  1m 04s`，失败为 `FAIL` 并紧接失败块），交互终端另有一行被覆盖的进度（已跑条数、失败数、每个运行中分件的进度）；结束时给出分件/断言计数、总时长、最慢分件与失败清单，最后一行 `TOTAL` 保留给脚本读取。分件自身的断言只决定结果，打印失败不会吞掉断言（原因写入 `%TEMP%\clipboard-tests-error.log`）。
 
 断言只写两类：守回归（对应实际缺陷）与守契约（对外行为、文件格式、命令行输出）。不复述常量、不断言私有实现细节、同一行为不写第二条等价断言。
@@ -787,7 +790,7 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
 |---|---|---|
 | 结构 | `tests/unit/unit.ps1`（总是执行） | 分层契约：46 个必需模块与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot` / `$PSCommandPath`、无重名顶层函数、载荷类型只通过 `base.ps1` 的谓词判断、行几何只从常量表读取、`$Root` 只算一次；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 大小写约定 |
 | 单元 | 同上，dot-source 后逐函数 | 纯函数与存储层：热键解析、条目文案、ini 读写与校验、`Apply-Config`、记录读写与版本识别、迁移引擎、图片与富文本编解码与媒体回收、CF_HTML 解析、真实剪贴板往返、标记与保护规则、面板几何与命中计算、主题发现与 `[metrics]` 重置、插件白名单 |
-| 命令行 | `tests/cli/*.ps1`（并行） | 每条 CLI 能力起子进程验证，含主题切换与非法主题名拒绝、插件白名单、只读命令不生成 ini、设置开关被参数绑定拒绝、`cli` 命令列表 |
+| 命令行 | `tests/cli/*.ps1`（并行） | 每条 CLI 能力验证（多数命令在分件进程内执行，插件脚本块相关的命令起子进程），含主题切换与非法主题名拒绝、插件白名单、只读命令不生成 ini、设置开关被参数绑定拒绝、`cli` 命令列表 |
 | 打包 | `tests/pkg/build.ps1` | 进包内容、`install.bat`、包内版本为常量、`Includes=` / `Excludes=` 裁剪、`Overwrite=0` 拒绝覆盖、清单缺少入口报错、编译产物与源码二者恰有其一 |
 | 端到端 | `tests/e2e/serve.ps1`（独占剪贴板） | 拉起常驻进程 → 校验热键注册 → 捕获链路 → 暂停后不捕获 → `stop` 后干净退出 |
 | 代理 | `tests/e2e/proxy.ps1`（同上泳道） | 代理结果与 `-NoProxy` 逐字节一致、确实更快、`status` 正确报告、`put` 与 stdin 两条路径、直连命令不被代理、`stop` 后静默回退 |

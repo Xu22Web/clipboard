@@ -148,6 +148,50 @@ function Clip([string]$sandbox, [string[]]$cliArgs) {
   Add-TestTiming (($cliArgs -join ' ')) $watch.ElapsedMilliseconds
   return $out
 }
+
+# A part that makes many calls can keep one runner (tests\lib\cli-runner.ps1) instead: the
+# interpreter start and the module load happen once, and every request still runs in a
+# runspace of its own. A command that reaches a plugin has to say -Cold and is run as a real
+# child process, because a plugin's script block does not survive a runspace that was not the
+# one the tool was dot-sourced into.
+$script:Harness.Runners = New-Object System.Collections.Generic.List[object]
+
+function Start-CliRunner([string]$Sandbox) {
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = 'powershell'
+  $psi.UseShellExecute = $false
+  $psi.CreateNoWindow = $true
+  $psi.RedirectStandardInput = $true
+  $psi.RedirectStandardOutput = $true
+  # stderr is left alone on purpose: a pipe nobody reads deadlocks, and a runner that dies
+  # should still be visible in the console the part was started from
+  $psi.Arguments = '-NoProfile -ExecutionPolicy Bypass -Sta -File "' + (Join-Path $PSScriptRoot 'cli-runner.ps1') + '" -Sandbox "' + $Sandbox + '"'
+  $p = [System.Diagnostics.Process]::Start($psi)
+  $state = @{ Process = $p; Sandbox = $Sandbox }
+  $script:Harness.Runners.Add($state)
+  return $state
+}
+
+function Invoke-CliRunner($Runner, [string[]]$CliArgs, [switch]$Cold) {
+  if ($null -eq $Runner -or $Runner.Process.HasExited) { return '' }
+  $req = @{ Args = @($CliArgs); Cold = [bool]$Cold } | ConvertTo-Json -Compress
+  $watch = [Diagnostics.Stopwatch]::StartNew()
+  $Runner.Process.StandardInput.WriteLine($req)
+  $Runner.Process.StandardInput.Flush()
+  $line = $Runner.Process.StandardOutput.ReadLine()
+  $watch.Stop()
+  Add-TestTiming (($CliArgs -join ' ') + $(if ($Cold) { ' [cold]' } else { ' [warm]' })) $watch.ElapsedMilliseconds
+  if ([string]::IsNullOrEmpty($line)) { return '' }
+  try { return [string](($line | ConvertFrom-Json).Text) } catch { return $line }
+}
+
+function Stop-CliRunner($Runner) {
+  if ($null -eq $Runner) { return }
+  try { $Runner.Process.StandardInput.Close() } catch { }
+  try { if (-not $Runner.Process.WaitForExit(5000)) { $Runner.Process.Kill() } } catch { }
+  try { $Runner.Process.Dispose() } catch { }
+  [void]$script:Harness.Runners.Remove($Runner)
+}
 # One command per process, never a batch: `-Media` and the plugin verbs are read from the real
 # command line, and `& clipboard.ps1 ...` inside a warm process does not answer the same way.
 
@@ -209,6 +253,7 @@ function Start-TestPart([string]$Source = '', [switch]$ClipShared, [switch]$Quie
 }
 
 function Complete-TestPart([string]$ResultFile = '', [switch]$Quiet) {
+  foreach ($r in @($script:Harness.Runners)) { Stop-CliRunner $r }
   $fail = @($script:Results | Where-Object { $_.Result -eq 'FAIL' }).Count
   if ($ResultFile) {
     # ToArray, not @($list): wrapping a List[object] throws "Argument types do not match" in 5.1
