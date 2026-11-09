@@ -761,27 +761,32 @@ CBHIST RS <数据版本> RS <flags> US <epoch 秒> US <extra> US <payload> RS <f
 
 ## 测试
 
-```powershell
-cli test                             # 全部分件（默认并行）
-cli test -Unit                       # 只跑单元分件
-cli test -Part transfer,history      # 指定分件
-cli test -Changed                    # 只跑本次改动可能影响到的分件
-cli test -Serial                     # 逐个跑
-cli test -Reporter verbose           # 每条断言一行（带分件路径与耗时）
-cli test -Bail                       # 首个失败后不再启动新分件
-cli test -Profile                    # 打印最慢的命令行调用与每个分件的命令行耗时
-cli test -NoProgress                 # 不刷运行中的实时块（重定向时自动关闭）
-cli test -NoColor                    # 不输出颜色，标记改用 ASCII（重定向时自动如此）
-cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
-```
+### 运行
 
-也可直接调用 `powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run.ps1`。
+| 命令 | 说明 |
+|---|---|
+| `cli test` | 全部分件，默认并行 |
+| `cli test -Unit` | 只跑单元分件 |
+| `cli test -Part transfer,history` | 指定分件 |
+| `cli test -Changed` | 只跑本次改动可能影响到的分件 |
+| `cli test -Serial` | 逐个运行 |
+| `cli test -Workers N` | 覆盖本次运行的并发数 |
+| `cli test -Reporter verbose` | 每条断言一行，不打印分件行；默认 `default`，其它值报 `unknown reporter` |
+| `cli test -Bail` | 首个失败后不再启动新分件 |
+| `cli test -Profile` | 打印最慢的命令行调用与每个分件的命令行耗时 |
+| `cli test -NoProgress` | 不绘制实时窗口 |
+| `cli test -NoColor` | 不输出颜色，标记改用 ASCII |
+| `cli test -Source dist\clipboard-0.1.0` | 对打包副本跑命令行分件 |
 
-一个分件一个文件、一个进程、一个沙箱；并行度默认按逻辑处理器数（`cli.ini` 的 `[test] Workers` 缺省即可，写 `1` 为串行，写其它值为该并发数，命令行 `cli test -Workers N` 可对单次运行覆盖）。全量 735 项，其中端到端 22 项。
+也可直接运行 `powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run.ps1`。
 
-分件内的命令行调用默认走 `tests\lib\cli-runner.ps1`：分件启动时拉起一个子进程，每条命令在该进程内的独立 runspace 中执行，省去每条命令一次解释器启动；插件脚本块相关的命令（`pin` / `star` / `highlight` / `transform` / `kind` / `list` 等）仍起真实子进程，因为脚本块需要真实的模块加载作用域。
+一个分件对应一个文件、一个进程、一个沙箱。并发数取逻辑处理器数，可由 `cli.ini` 的 `[test] Workers` 或 `-Workers` 指定，`1` 为串行。全量 735 项，其中端到端 22 项。
 
-输出与 vitest 的默认 reporter 相同：一行 `RUN` 头，每个分件完成时一行（标记、相对 `tests\` 的路径、括号里的断言数与耗时）。**只有运行里只有一个分件，或该分件有失败时**，分件行下面才打印它的树（组一行带该组的断言数与耗时，断言行不带耗时）；所有失败的断言与原因集中到末尾一块，然后是 `Test Files` / `Tests` / `Start at` / `Duration`。
+分件内的命令行调用默认经 `tests\lib\cli-runner.ps1`：分件启动时拉起一个子进程，每条命令在其内的独立 runspace 中执行，省去每次解释器启动。插件脚本块相关的命令（`pin`、`star`、`highlight`、`transform`、`kind`、`list` 等）仍起真实子进程，因为脚本块需要真实的模块加载作用域。
+
+### 输出
+
+与 vitest 默认 reporter 相同：`RUN` 头，每个分件完成时一行（标记、相对 `tests\` 的路径、括号内的断言数与耗时）。运行中只有一个分件，或该分件有失败时，分件行下才打印用例树（组行带该组的断言数与耗时，断言行不带耗时）。全部失败断言与原因集中在末尾的 `Failed Tests N` 块，随后是 `Test Files` / `Tests` / `Start at` / `Duration` 四行。
 
 ```text
  RUN  clipboard v0.1.0  D:\Users\xzz\Desktop\Project\clipboard
@@ -798,22 +803,19 @@ cli test -Source dist\clipboard-0.1.0   # 对打包副本跑命令行分件
    Duration  30.8s (slowest cli\settings.ps1 30.5s)
 ```
 
-两个开关改变输出：`-Reporter verbose` 每条断言一行（`✓ 分件路径 > 组 > 断言 耗时`，不打印分件行）；`-Reporter default` 为默认值，可省略，写其它值报 `unknown reporter`。
+交互终端中的标记为 `✓` / `❯` / `×` / `↓`，分隔线为 `⎯`，并带颜色；输出被重定向或使用 `-NoColor` 时改用 `ok` / `FAIL` / `skip` 与 `-`，便于 grep 且不依赖字体。打印失败不影响断言结果，原因写入 `%TEMP%\clipboard-tests-error.log`。
 
-运行时有一块实时窗口：正在跑的分件逐行列出，每行是 `❯` 加该分件的相对路径与 `已完成/总数`，空行之后是 `Test Files` / `Tests` / `Start at` / `Duration` 四行，与结束时的汇总同形。总数由分件在建完用例树后写进进度文件，所以第一条用例开始跑之前就已确定（仍是旧写法 `Check` 的分件没有总数，只显示已完成数）。整帧用同步输出序列（`ESC[?2026h` / `ESC[?2026l`）一次写入，重绘只清行并上移光标，约每 400 ms 一帧；分件完成时它的一行追加到窗口上方，与该帧同一次写入。输出被重定向时不画（`-NoProgress` 可显式关掉）。
+运行期间终端底部有一块实时窗口：正在跑的分件逐行列在已完成的行下方，每行由 `❯`、相对路径与 `已完成/总数` 组成，空行之后是 `Test Files` / `Tests` / `Start at` / `Duration`，与结束时的汇总同形。总数由分件建完用例树后写入进度文件，首条用例执行前即已确定；仍使用 `Check` 的旧分件没有总数，只显示已完成数。整帧以同步输出序列（`ESC[?2026h` / `ESC[?2026l`）一次写入，重绘只清行并上移光标，约 400 ms 一帧，分件完成时连同它的一行在同一帧提交。输出被重定向时不绘制。
 
-失败时那一个分件的行首标记是 `❯`，行下列出 `× 组 > 断言`，失败原因在末尾的 `Failed Tests N` 块里给出（`FAIL 分件 > 组 > 断言` 加一行细节）。交互终端里标记是 `✓` / `❯` / `×` / `↓`、分隔线是 `⎯` 并带颜色；重定向或 `-NoColor` 时换成 `ok` / `FAIL` / `skip` 与 `-`，日志因此可直接 grep，也不依赖字体。分件自身的断言只决定结果，打印失败不会吞掉断言（原因写入 `%TEMP%\clipboard-tests-error.log`）。
+### 用例写法
 
-断言只写两类：守回归（对应实际缺陷）与守契约（对外行为、文件格式、命令行输出）。不复述常量、不断言私有实现细节、同一行为不写第二条等价断言。
-
-分件里的用例按 vitest 的形状写：
+用例按 vitest 的形状书写：
 
 ```powershell
 Describe 'int' {
-  AfterAll { Stop-CliRunner $cli }        # 块结束一定执行，断言失败也一样
+  AfterAll { Stop-CliRunner $cli }
 
   It 'star command' {
-    Expect-HasAssertions
     $o = Run @('star', '1') -Cold
     Expect-Match $o 'starred:' $o.Trim()
   }
@@ -821,11 +823,27 @@ Describe 'int' {
 }
 ```
 
-`Describe` 可嵌套，分组名以 ` > ` 连接；`It` 一执行就记一条结果，`-Skip '原因'` 记为跳过，`-Cases` 按名称里的 `%s` 展开成多条。断言有 `Expect`（布尔）、`Expect-Match`（正则）、`Expect-Equal`、`Expect-Contains`、`Expect-Throws`（可带消息正则）、`Expect-Greater`、`Expect-Not`；`Expect-HasAssertions` 与 `Expect-Assertions N` 在该条没有断言或数量不符时判失败。块内抛异常或任一断言失败即判该条失败，失败信息取第一条断言的消息。钩子 `BeforeAll` / `AfterAll` / `BeforeEach` / `AfterEach` 写在 `Describe` 内，`AfterAll` 在块结束（含失败）时执行；`Wait-Until { 条件 } -Timeout 毫秒` 轮询到条件成立。旧写法 `Check` / `Skip` 仍然可用，未迁移的分件行为不变。
+| API | 说明 |
+|---|---|
+| `Describe` | 可嵌套，分组名以 ` > ` 连接 |
+| `It` | 一条结果；`-Skip '原因'` 记为跳过；`-Cases` 按名称中的 `%s` 展开为多条 |
+| `Expect` / `Expect-Match` / `Expect-Equal` / `Expect-Contains` | 布尔 / 正则 / 字符串相等 / 子串 |
+| `Expect-Throws` | 块必须抛出，可带错误消息正则 |
+| `Expect-Greater` / `Expect-Not` | 数值比较 / 取反 |
+| `Expect-HasAssertions` / `Expect-Assertions N` | 该条没有断言或断言数不符时判失败 |
+| `BeforeAll` / `AfterAll` / `BeforeEach` / `AfterEach` | 写在 `Describe` 内；`AfterAll` 在块结束时执行，断言失败也执行 |
+| `Wait-Until { 条件 } -Timeout 毫秒` | 轮询到条件成立 |
+| `Skip-Test '原因'` | 块内判定本机无法运行时，把该条记为跳过 |
 
-`Describe` 块里**只写声明**（`Describe` / `It` / 钩子）：代码先跑一遍收集用例、再按书写顺序执行，写在块内的普通语句会在收集阶段就执行，顺序与预期不符。准备与清理写进 `BeforeAll` / `BeforeEach` / `AfterEach` / `AfterAll`，分件顶层只留沙箱与进程这类一次性的准备。
+块内抛出异常或任一断言失败即判该条失败，失败信息取第一条断言的消息。`Check` / `Skip` 仍然可用，未迁移的分件行为不变。
 
-分件分三条泳道：`unit` 与 `e2e` 都要驱动真实剪贴板，两者互斥；命令行分件各用各的假剪贴板，只受 `Workers` 限制。打包副本中假剪贴板失效，命令行分件自动改为串行；`-Source` 指向产物时单元组跳过（它按名字调用内部函数），集成与端到端照常运行。
+`Describe` 块内只写声明（`Describe` / `It` / 钩子）。代码先收集用例再按书写顺序执行，写在块内的普通语句会在收集阶段执行，执行顺序与预期不符；准备与清理写入钩子，分件顶层只保留沙箱与进程这类一次性准备。
+
+断言只写两类：守回归（对应实际缺陷）与守契约（对外行为、文件格式、命令行输出）。不复述常量，不断言私有实现细节，同一行为不写第二条等价断言。
+
+### 分件与泳道
+
+分件分三条泳道：`unit` 与 `e2e` 驱动真实剪贴板，两者互斥；命令行分件各用各的假剪贴板，只受并发数限制。打包副本中假剪贴板失效，命令行分件自动改为串行；`-Source` 指向产物时单元组跳过（它按名字调用内部函数），集成与端到端照常运行。
 
 | 分件 | 所在 | 覆盖内容 |
 |---|---|---|
@@ -836,7 +854,8 @@ Describe 'int' {
 | 端到端 | `tests/e2e/serve.ps1`（独占剪贴板） | 拉起常驻进程 → 校验热键注册 → 捕获链路 → 暂停后不捕获 → `stop` 后干净退出 |
 | 代理 | `tests/e2e/proxy.ps1`（同上泳道） | 代理结果与 `-NoProxy` 逐字节一致、确实更快、`status` 正确报告、`put` 与 stdin 两条路径、直连命令不被代理、`stop` 后静默回退 |
 
-全部在 `%TEMP%` 下的沙箱副本中运行，不修改仓库的 `data/` 与 `clipboard.ini`；真实剪贴板在开始前备份、结束后还原。任一项失败时退出码为 1。检测到常驻进程时会临时 `pause`，跑完先恢复剪贴板再 `resume`。`-E2E` 运行期间占用全局热键并接管剪贴板，已有常驻进程时该组自动跳过；面板绘制与粘贴注入不在自动化范围内。
+全部在 `%TEMP%` 下的沙箱副本中运行，不修改仓库的 `data/` 与 `clipboard.ini`；真实剪贴板在开始前备份、结束后还原。任一项失败时退出码为 1。检测到常驻进程时会临时 `pause`，跑完先还原剪贴板再 `resume`。`-E2E` 运行期间占用全局热键并接管剪贴板，已有常驻进程时该组自动跳过；面板绘制与粘贴注入不在自动化范围内。
+
 
 ## 开发
 
