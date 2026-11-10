@@ -244,18 +244,24 @@ function Invoke-ServeOnce {
   # first hotkey would otherwise pay for the type load, the fonts, the GDI objects and every
   # event binding (~1.3 s, measured). The timer keeps it off the startup path; a failure is
   # only a log line, and the next hotkey builds the panel the usual way.
-  $warm = New-Object Windows.Forms.Timer
-  $warm.Interval = 1500
-  $warm.Add_Tick({
-      $warm.Stop()
-      $warm.Dispose()
+  # The timer lives on the script scope on purpose: an event handler resolves a plain name
+  # through whatever scope happens to be on the stack - the panel's own -Warm switch was
+  # found as "Warm", so this is named for what it is and pinned where it is set.
+  $script:WarmTimer = New-Object Windows.Forms.Timer
+  $script:WarmTimer.Interval = 1500
+  $script:WarmTimer.Add_Tick({
+      $script:WarmTimer.Stop()
+      $script:WarmTimer.Dispose()
+      # a panel that is already on screen is the warm-up: there is nothing left to build, and
+      # Show-Picker returns straight away for a warm run (it never closes a live panel)
+      if ($script:PickerOpen) { return }
       try {
         $tw = Get-Date
         Show-Picker -Warm
         Write-Log ('picker: warm-up in ' + [string]([int]((Get-Date) - $tw).TotalMilliseconds) + ' ms')
       } catch { Write-Log ('picker warm-up failed: ' + $_.Exception.Message) }
     })
-  $warm.Start()
+  $script:WarmTimer.Start()
 
   $script:LastSeq = [Cb.Win]::GetClipboardSequenceNumber()
   # resolved once: asking for the command on every poll costs more than the work it guards
