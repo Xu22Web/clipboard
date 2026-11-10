@@ -32,6 +32,7 @@
     InlineImageUpToBytes = @{ Type = 'int'; Ref = [ref]$script:InlineImageUpToBytes; Default = 4194304; Minimum = 0; Maximum = 10485760; Description = 'inline a temp-file picture the html points at when it is at most this large, 0 = never' }
     PasteRich         = @{ Type = 'bool'; Ref = [ref]$script:PasteRich; Default = 1; Description = '1 = paste the formatting back, 0 = always paste plain text' }
     PasteFilesAsText  = @{ Type = 'bool'; Ref = [ref]$script:PasteFilesAsText; Default = 1; Description = '1 = a file list also goes on the clipboard as text (paths), 0 = file list only' }
+    PasteTyping       = @{ Type = 'bool'; Ref = [ref]$script:PasteTyping; Default = 0; Description = '1 = type plain text into the focused control instead of sending the paste key' }
     AppRules          = @{ Type = 'apprule'; Ref = [ref]$script:AppRules; Default = ''; Description = 'per program paste behaviour: name:plain|rich|no-paste, separated by ; (a name is a process, * is the rest)' }
     BlobChars          = @{ Type = 'int'; Ref = [ref]$script:BlobChars; Default = 32768; Minimum = 0; Maximum = 1048576; Description = 'payloads above this many chars live in data\blobs, 0 = never' }
     Interval          = @{ Type = 'int'; Ref = [ref]$script:Interval; Default = 300; Minimum = 50; Maximum = 60000; Description = 'clipboard poll interval in ms' }
@@ -41,10 +42,12 @@
     ExcludePattern    = @{ Type = 'regex'; Ref = [ref]$script:ExcludePattern; Default = ''; Description = 'matching text is never saved' }
     WindowWidth       = @{ Type = 'int'; Ref = [ref]$script:WinWidth; Default = 700; Minimum = 460; Maximum = 4000; Description = 'panel width (96 dpi baseline)' }
     Rows              = @{ Type = 'int'; Ref = [ref]$script:Rows; Default = 10; Minimum = 3; Maximum = 50; Description = 'visible rows; the height follows from it (rows x 40 + 110)' }
-    WindowLeft        = @{ Type = 'int'; Ref = [ref]$script:WinLeft; Default = ''; Minimum = -32768; Maximum = 32767; Description = 'panel left, empty = centred' }
-    WindowTop         = @{ Type = 'int'; Ref = [ref]$script:WinTop; Default = ''; Minimum = -32768; Maximum = 32767; Description = 'panel top, empty = centred' }
+    WindowLeft        = @{ Type = 'int'; Ref = [ref]$script:WinLeft; Default = ''; Minimum = -32768; Maximum = 32767; Description = 'panel left, empty = decided by PlaceNearForeground' }
+    WindowTop         = @{ Type = 'int'; Ref = [ref]$script:WinTop; Default = ''; Minimum = -32768; Maximum = 32767; Description = 'panel top, empty = decided by PlaceNearForeground' }
     SaveWindowWidth   = @{ Type = 'bool'; Ref = [ref]$script:SaveWinWidth; Default = 0; Description = '1 = write the width you dragged back to this file' }
     SaveWindowPos     = @{ Type = 'bool'; Ref = [ref]$script:SaveWinPos; Default = 0; Description = '1 = write the moved panel back to this file' }
+    PlaceNearForeground = @{ Type = 'bool'; Ref = [ref]$script:PlaceNearForeground; Default = 0; Description = '1 = with no saved position, place the panel over the window it was opened from' }
+    ImeTakeover       = @{ Type = 'enum'; Ref = [ref]$script:ImeTakeover; Default = 'manual'; Enum = @('auto', 'manual', 'off'); Description = 'when the panel takes the foreground so an input method can compose: auto (first letter) / manual (a click on the search area) / off (never)' }
     ShowTime          = @{ Type = 'bool'; Ref = [ref]$script:ShowTime; Default = 1; Description = '1 = relative time column' }
     ShowTypeIcon      = @{ Type = 'bool'; Ref = [ref]$script:ShowTypeIcon; Default = 1; Description = '1 = show the row icon a plugin provides (none without one)' }
     ShowThumbnails    = @{ Type = 'bool'; Ref = [ref]$script:ShowThumbnails; Default = 1; Description = '1 = show a small picture in the icon slot of a picture or formatted-text row' }

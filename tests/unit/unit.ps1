@@ -228,7 +228,7 @@ try {
           'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\serve', 'lib\shortcut',
           'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch',
           'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey',
-          'utils\query-words', 'utils\pinyin', 'utils\transfer', 'utils\apprules', 'utils\fileio',
+          'utils\query-words', 'utils\transfer', 'utils\apprules', 'utils\fileio',
           'utils\hash', 'utils\cfhtml', 'utils\image',
           'schema\clipboard', 'schema\theme')
         $missingLib = @()
@@ -502,7 +502,21 @@ try {
       } -Skip $script:StructMinified
 
       It 'paste releases the key hook before injecting' {
-        Expect ($script:StructPickerText -match '(?s)function Paste-Clip\s*\{.{0,400}Disable-KeyHook') 'Disable-KeyHook missing before SendKeys'
+        Expect ($script:StructPickerText -match '(?s)function Paste-Clip[^\r\n]*\{.{0,600}Disable-KeyHook') 'Disable-KeyHook missing before SendKeys'
+      }
+
+      It 'gives the caret back after the foreground was moved' {
+        # a window that comes back is not a caret that comes back: the focused control is saved
+        # when the panel opens and asked for again after a hand-over and after a paste
+        Expect ($script:StructPickerText -match 'Save-TargetFocus') 'no Save-TargetFocus in the picker'
+        Expect ($script:StructPickerText -match 'Restore-TargetFocus') 'no Restore-TargetFocus in the picker'
+      }
+
+      It 'paste can type instead of injecting a paste key' {
+        # PasteTyping=1 hands the text to SendInput: the paste path has to keep that branch,
+        # and it must stay inside Paste-Clip so the hand-over and the settle still happen first
+        Expect ($script:StructPickerText -match '(?s)function Paste-Clip[^\r\n]*\{.{0,2000}SendUnicode\(\$TypedText\)') 'SendUnicode branch missing in Paste-Clip'
+        Expect ($script:StructPickerText -match '\$script:PasteTyping') 'PasteTyping never read'
       }
 
       It 'reads the list through its own members' {
@@ -2084,6 +2098,25 @@ try {
         $b = Get-PickerBounds 660 430 '' '' $script:PickerAreas $script:PickerFallbackArea
         Expect $b.Fitted ''
       }
+
+      It 'with no saved position the panel sits on the window it came from' {
+        $prefer = [pscustomobject]@{ Left = 200; Top = 300; Width = 800; Height = 600 }
+        $b = Get-PickerBounds 660 430 '' '' $script:PickerAreas $script:PickerFallbackArea $prefer
+        # 200 + (800-660)/2 = 270 and 300 + (600-430)/3 = 356.67 rounded = 357
+        Expect (($b.Left -eq 270) -and ($b.Top -eq 357) -and $b.Fitted) (($b.Left -as [string]) + ',' + ($b.Top -as [string]))
+      }
+
+      It 'a window on the second monitor keeps the panel there' {
+        $prefer = [pscustomobject]@{ Left = 2200; Top = 100; Width = 800; Height = 600 }
+        $b = Get-PickerBounds 660 430 '' '' $script:PickerAreas $script:PickerFallbackArea $prefer
+        Expect ($b.Left -eq 2270) ($b.Left -as [string])
+      }
+
+      It 'a saved position still wins over the window it came from' {
+        $prefer = [pscustomobject]@{ Left = 200; Top = 300; Width = 800; Height = 600 }
+        $b = Get-PickerBounds 660 430 '100' '200' $script:PickerAreas $script:PickerFallbackArea $prefer
+        Expect (($b.Left -eq 100) -and ($b.Top -eq 200)) (($b.Left -as [string]) + ',' + ($b.Top -as [string]))
+      }
     }
 
     Describe 'hit marks' {
@@ -2176,14 +2209,6 @@ try {
         Expect ((@($aged).Count -eq 1) -and (@($aged)[0].Payload -eq 'stale row')) ''
         $today = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
         Expect ((@(Invoke-Query $ageRows (New-Query -Line ('newer:' + $today))).Count) -eq 1) ''
-      }
-
-      It 'pinyin initials are matched' {
-        # level-1 hanzi are ordered by pinyin in GB2312, so this is a range lookup
-        $han = ([char]0x4E2D).ToString() + ([char]0x56FD).ToString()
-        Expect ((Get-PinyinInitial ([char]0x4E2D)) -eq 'Z') (Get-PinyinInitial ([char]0x4E2D))
-        Expect ((Get-PinyinInitial ([char]'a')) -eq '') (Get-PinyinInitial ([char]'a'))
-        Expect ((@(Invoke-Query @(New-Record $han 1 '') (New-Query -Line 'py:zg')).Count) -eq 1) ''
       }
 
       It 'the empty list explains itself' {
@@ -3215,6 +3240,43 @@ try {
       # The self-painted list freezes its first rows. 10 visible rows of 10px, 3 frozen, so
       # the scrollable window is 7 rows tall and TopIndex can never drop below 3.
       Add-PinList
+
+      # One setter decides how typing reaches the panel; the two flags the loop and the
+      # restore path read are derived from it, so they can no longer drift apart.
+      Describe 'the input mode' {
+        It 'derives the panel flags from the mode' {
+          foreach ($case in @(
+              @{ Mode = 'hook'; Hook = $true; Escalated = $false },
+              @{ Mode = 'takeover'; Hook = $false; Escalated = $true },
+              @{ Mode = 'none'; Hook = $false; Escalated = $false })) {
+            [void](Set-InputMode $case.Mode)
+            Expect ((Get-InputMode) -ceq $case.Mode) (Get-InputMode)
+            Expect ($script:PickerHook -eq $case.Hook) ([string]$script:PickerHook)
+            Expect ($script:PickerEscalated -eq $case.Escalated) ([string]$script:PickerEscalated)
+          }
+        }
+
+        It 'refuses a mode it does not know' {
+          $threw = $false
+          try { [void](Set-InputMode 'bogus') } catch { $threw = $true }
+          Expect $threw ''
+        }
+      }
+      [void](Set-InputMode 'none')
+
+      Describe 'the input-method hand-over' {
+        It 'follows the ImeTakeover setting' {
+          # auto: only an input method that is already composing, or a key it claimed, hands over
+          Expect (-not (Test-ImeTakeover 'auto' 0x41 $false $false)) 'auto handed over without an input method'
+          Expect (Test-ImeTakeover 'auto' 0x41 $true $false) 'auto refused a letter while an input method is on'
+          Expect (Test-ImeTakeover 'auto' 0x41 $false $true) 'auto refused a claimed key'
+          Expect (-not (Test-ImeTakeover 'auto' 0x20 $true $false)) 'auto handed over for a key the filter cannot take'
+          # manual and off never hand over from a key: a click (or nothing) is the only way
+          Expect (-not (Test-ImeTakeover 'manual' 0x41 $true $true)) 'manual handed over on a key'
+          Expect (-not (Test-ImeTakeover 'off' 0x41 $true $true)) 'off handed over on a key'
+        }
+      }
+      [void](Set-InputMode 'none')
 
       Describe 'the self-painted list' {
         It 'freezes the leading rows' {

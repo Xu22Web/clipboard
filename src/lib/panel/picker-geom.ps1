@@ -74,8 +74,9 @@ function Get-QuickKeyOffset([int]$digit) {
 }
 
 # Where the panel should appear. A saved position is only honoured when the panel still
-# lands on a screen; otherwise centre on the monitor of the window we came from.
-function Get-PickerBounds([int]$w, [int]$h, [string]$rawLeft, [string]$rawTop, $areas, $fallback) {
+# lands on a screen; otherwise sit on the window it was opened from when one is given, and
+# fall back to centring on the monitor of that window.
+function Get-PickerBounds([int]$w, [int]$h, [string]$rawLeft, [string]$rawTop, $areas, $fallback, $prefer = $null) {
   $l = 0
   $t = 0
   $hasL = [int]::TryParse([string]$rawLeft, [ref]$l)
@@ -88,6 +89,25 @@ function Get-PickerBounds([int]$w, [int]$h, [string]$rawLeft, [string]$rawTop, $
         $cl = [Math]::Max($a.Left, [Math]::Min($l, $a.Left + $a.Width - $w))
         $ct = [Math]::Max($a.Top, [Math]::Min($t, $a.Top + $a.Height - $h))
         return @{ Left = [int]$cl; Top = [int]$ct; Fitted = $false }
+      }
+    }
+  }
+  # nothing remembered: put the panel on the window the user came from (its horizontal
+  # centre, a third of the way down), clamped into the monitor that window sits on
+  if ($null -ne $prefer -and $areas) {
+    $pw = [int]$prefer.Width
+    $ph = [int]$prefer.Height
+    if ($pw -ge 120 -and $ph -ge 60) {
+      $pl = [int]$prefer.Left + [int](($pw - $w) / 2)
+      $pt = [int]$prefer.Top + [int](($ph - $h) / 3)
+      foreach ($a in @($areas)) {
+        $iw = [Math]::Min([int]$prefer.Left + $pw, $a.Left + $a.Width) - [Math]::Max([int]$prefer.Left, $a.Left)
+        $ih = [Math]::Min([int]$prefer.Top + $ph, $a.Top + $a.Height) - [Math]::Max([int]$prefer.Top, $a.Top)
+        if ($iw -ge 120 -and $ih -ge 60) {
+          $cl = [Math]::Max($a.Left, [Math]::Min($pl, $a.Left + $a.Width - $w))
+          $ct = [Math]::Max($a.Top, [Math]::Min($pt, $a.Top + $a.Height - $h))
+          return @{ Left = [int]$cl; Top = [int]$ct; Fitted = $true }
+        }
       }
     }
   }

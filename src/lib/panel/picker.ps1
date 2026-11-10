@@ -34,6 +34,9 @@ function Show-Picker([switch]$Warm) {
       elseif (Test-Font 'Segoe MDL2 Assets') { $script:IconFamily = 'Segoe MDL2 Assets' }
     }
     $prev = [Cb.Win]::GetForegroundWindow()
+    # the control that owns the keyboard there: restored when the panel hands the foreground
+    # over (an input method) and after the paste that follows a pick
+    $script:PrevFocus = Save-TargetFocus $prev
     $script:Entries = @(Get-Records)
     if ($script:Entries.Count -eq 0) { Write-Log 'picker: empty (showing hint)' }
     $msRecords = [int]$swOpen.ElapsedMilliseconds
@@ -73,9 +76,8 @@ function Show-Picker([switch]$Warm) {
     $script:Confirm = $false
     $script:CtrlHeld = $false
     $script:SearchFocus = $false
-    # true while the low-level hook is feeding the panel (the panel itself never activates)
-    $script:PickerHook = $false
-    $script:PickerEscalated = $false
+    # no keyboard path yet; the derived flags are owned by Set-InputMode (lib\panel\keyhook.ps1)
+    Set-InputMode 'none'
     $script:PrevMouseDown = $false
     $script:FootMode = 'hints'
     $script:FootMsg = ''
@@ -331,7 +333,16 @@ function Show-Picker([switch]$Warm) {
     try { $fallback = [Windows.Forms.Screen]::FromHandle($prev).WorkingArea } catch { }
     if (-not $fallback) { try { $fallback = [Windows.Forms.Screen]::FromPoint([Windows.Forms.Cursor]::Position).WorkingArea } catch { } }
     if (-not $fallback) { $fallback = New-Object Drawing.Rectangle -ArgumentList @(0, 0, $form.Width, $form.Height) }
-    $pb = Get-PickerBounds $form.Width $form.Height ([string]$script:WinLeft) ([string]$script:WinTop) $areas $fallback
+    # PlaceNearForeground: with no saved position the panel sits on the window it came from.
+    # A window that is gone, minimised or tiny keeps the centred fallback.
+    $preferBox = $null
+    if ($script:PlaceNearForeground -and $prev -ne [IntPtr]::Zero) {
+      try {
+        $b = [Cb.Win]::WindowBounds($prev)
+        if ($null -ne $b -and $b.Width -ge 200 -and $b.Height -ge 200) { $preferBox = $b }
+      } catch { $preferBox = $null }
+    }
+    $pb = Get-PickerBounds $form.Width $form.Height ([string]$script:WinLeft) ([string]$script:WinTop) $areas $fallback $preferBox
     $form.Left = [int]$pb.Left
     $form.Top = [int]$pb.Top
 
@@ -621,7 +632,7 @@ function Show-Picker([switch]$Warm) {
     # The picker already put the text on the clipboard: hide it and paste into the window
     # that was in front. Shared by Enter and by a plugin action that asks for
     # After = 'paste' (transform copies the rewritten text, then wants it pasted).
-    function Paste-Clip {
+    function Paste-Clip([string]$TypedText = '') {
       $target = $prev
       # the hook would eat the injected Ctrl+V, so it goes first in every path
       Disable-KeyHook
@@ -646,9 +657,19 @@ function Show-Picker([switch]$Warm) {
         Set-Foot 'Copied to the clipboard. The window did not come back to the front - press Ctrl+V there' ([int]$script:Timing['FootMessage'])
         return
       }
+      # the window is back but its caret may not be: give the control the keyboard again
+      [void](Restore-TargetFocus $target $script:PrevFocus)
       $form.Hide()
       Start-Sleep -Milliseconds $script:PasteSettle
-      try { [Windows.Forms.SendKeys]::SendWait($PasteKeys) } catch { Write-Log ('sendkeys fail: ' + $_.Exception.Message) }
+      if ($TypedText -ne '') {
+        # typing lands in the focused control through SendInput: no clipboard and no paste
+        # key, which is what a target that ignores Ctrl+V needs
+        $sent = 0
+        try { $sent = [Cb.Win]::SendUnicode($TypedText) } catch { Write-Log ('typing failed: ' + $_.Exception.Message) }
+        Write-Log ('typed ' + $sent + ' of ' + $TypedText.Length + ' characters')
+      } else {
+        try { [Windows.Forms.SendKeys]::SendWait($PasteKeys) } catch { Write-Log ('sendkeys fail: ' + $_.Exception.Message) }
+      }
       $form.Close()
     }
 
@@ -677,7 +698,11 @@ function Show-Picker([switch]$Warm) {
       if (-not (Set-ClipItem $payload $rich)) { Write-Log 'set clipboard failed'; $form.Close(); return }
       # our own write must not come back as a new capture
       Set-LastCapture $payload
-      Paste-Clip
+      # PasteTyping=1 skips the paste key. Only plain text can be typed: a file list and a
+      # picture still need the clipboard.
+      $typed = ''
+      if ($script:PasteTyping -and $rich -eq '' -and -not (Test-FilePayload $payload) -and -not (Test-ImagePayload $payload)) { $typed = $payload }
+      Paste-Clip -TypedText $typed
     }
 
     function Del-Index([int]$idx) {
@@ -1249,15 +1274,15 @@ function Show-Picker([switch]$Warm) {
     # hand-over an input method asks for). From then on the panel owns the foreground, which
     # is why the restore after the loop puts it back where it came from.
     function Claim-Search {
-      if ($null -eq $script:EditRow -and $script:PickerHook) {
+      # 'off' means the panel never takes the foreground, not even for a click on the field
+      if ($null -eq $script:EditRow -and $script:PickerHook -and $script:ImeTakeover -ne 'off') {
         if (Switch-ToTakeover $form.Handle $txt) {
-          $script:PickerHook = $false
-          $script:PickerEscalated = $true
+          Set-InputMode 'takeover'
           Write-Log 'picker: the search area was clicked, the panel took the keyboard'
         } else {
           # the hook is armed again when the hand-over fails, so the flag has to follow it or
           # the keys it takes are swallowed and read by nobody
-          $script:PickerHook = Restore-KeyHook $form.Handle
+          Set-InputMode $(if (Restore-KeyHook $form.Handle) { 'hook' } else { 'none' })
         }
       }
       Focus-Search
@@ -1277,16 +1302,15 @@ function Show-Picker([switch]$Warm) {
         # keyboard to the filter box and everything typed next would land there.
         $tg = $(if ($null -ne $script:HookTargetBox) { $script:HookTargetBox } else { $txt })
         # an input method needs a real focus: hand over and replay the key so it composes there
-        if ($plain -and ($claimed -or ($script:ImeNative -and $vk -ge 0x30 -and $vk -le 0x5A))) {
+        if ($plain -and (Test-ImeTakeover $script:ImeTakeover $vk ([bool]$script:ImeNative) $claimed)) {
           if (Switch-ToTakeover $form.Handle $tg) {
-            $script:PickerHook = $false
-            $script:PickerEscalated = $true
+            Set-InputMode 'takeover'
             Write-Log 'picker: handing the keyboard over for the input method'
             Send-HookedKeys $keys $i
           } else {
             # a refused hand-over re-arms the hook: the flag has to follow it, or the keys it
             # takes are swallowed and never read
-            $script:PickerHook = Restore-KeyHook $form.Handle
+            Set-InputMode $(if (Restore-KeyHook $form.Handle) { 'hook' } else { 'none' })
           }
           return
         }
@@ -1347,8 +1371,9 @@ function Show-Picker([switch]$Warm) {
     # Two input models: hook - the form never activates and a low-level hook feeds the
     # controls, so the window the user typed in keeps the focus; takeover - no hook or an
     # IME asked for a real focus, the panel activates and hands the foreground back on close.
-    $script:PickerHook = $false
-    $script:PickerEscalated = $false
+    # Every switch goes through Set-InputMode (lib\panel\keyhook.ps1), which owns the two
+    # derived flags the loop and the tests read.
+    Set-InputMode 'none'
     $script:ImeCheckAt = Get-Date; $script:ImeNative = $false
     # seed from the real button state: starting at $false would read a button the user is
     # already holding as a fresh click and close the panel on its first frame
@@ -1388,9 +1413,12 @@ function Show-Picker([switch]$Warm) {
     # the Ctrl combinations this panel answers, plugin keys included; the rest of the
     # keyboard still reaches the window behind
     Set-KeyHookCtrlKeys ([int[]]@($ctrlHints | ForEach-Object { [int][char]([string]$_.Key).ToUpperInvariant() }))
-    $script:PickerHook = Enable-KeyHook
-    if (-not $script:PickerHook) { [void](Switch-ToTakeover $form.Handle $txt) }
-    Write-Log ('picker: input=' + $(if ($script:PickerHook) { 'hook' } else { 'takeover' }))
+    Set-InputMode $(if (Enable-KeyHook) { 'hook' } else { 'none' })
+    if (-not $script:PickerHook) {
+      # no hook: the panel has to own the foreground, so record it as the takeover it is
+      if (Switch-ToTakeover $form.Handle $txt) { Set-InputMode 'takeover' }
+    }
+    Write-Log ('picker: input=' + (Get-InputMode))
     [void][Cb.Win]::SetWindowPos($form.Handle, [IntPtr](-1), 0, 0, 0, 0, 0x13)
 
     while (-not $form.IsDisposed) {
@@ -1459,6 +1487,7 @@ function Show-Picker([switch]$Warm) {
     # only takeover mode moved the foreground, which is also the only mode that restores it
     if ($script:PickerEscalated -or (-not $script:PickerHook)) {
       if ($prev -ne [IntPtr]::Zero) { [void][Cb.Win]::SetForegroundWindow($prev) }
+      [void](Restore-TargetFocus $prev $script:PrevFocus)
     }
 
     if ($script:SaveWinWidth -or $script:SaveWinPos) {

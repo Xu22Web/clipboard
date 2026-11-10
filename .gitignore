@@ -1,5 +1,6 @@
 *.bak
 *.tmp
+*.log
 _*.ps1
 _*.txt
 src/data/

@@ -17,16 +17,17 @@ $script:IniTemplateLayout = [ordered]@{
     'DataDir', 'Hotkey', 'HotkeyFallbacks', 'PasteKeys', 'ModReleaseTimeout', 'PasteSettle',
     'MaxTextBytes', 'MaxTextTotalBytes', 'MaxMediaTotalBytes', 'BlobChars',
     'CaptureImages', 'MaxImageBytes', 'CaptureRich', 'MaxHtmlBytes', 'MaxRtfBytes',
-    'RtfImagesUpToBytes', 'InlineImageUpToBytes', 'PasteRich', 'PasteFilesAsText',
+    'RtfImagesUpToBytes', 'InlineImageUpToBytes', 'PasteRich', 'PasteFilesAsText', 'PasteTyping',
     'AppRules', 'Interval', 'NoPaste', 'Balloon', 'Theme', 'ExcludePattern'
   )
   'panel geometry (96 dpi baseline, scaled by the system DPI)' = @(
-    'WindowWidth', 'Rows', 'WindowLeft', 'WindowTop', 'SaveWindowWidth', 'SaveWindowPos'
+    'WindowWidth', 'Rows', 'WindowLeft', 'WindowTop', 'SaveWindowWidth', 'SaveWindowPos',
+    'PlaceNearForeground'
   )
   'panel behaviour' = @(
     'ShowTime', 'ShowTypeIcon', 'ShowThumbnails', 'Highlight', 'HighlightMaxBytes',
     'ShowNewlineMarker', 'PreviewHover', 'PreviewDelay', 'PreviewChars', 'ScrollLines',
-    'Animations', 'DpiAware'
+    'Animations', 'DpiAware', 'ImeTakeover'
   )
   'history' = @('MaxItems', 'Undo')
   'install' = @('Autostart', 'DesktopShortcut')

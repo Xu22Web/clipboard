@@ -87,6 +87,7 @@ function Get-ConfigReport {
     InlineImageUpToBytes = [string]$script:InlineImageUpToBytes
     PasteRich         = [string][int][bool]$script:PasteRich
     PasteFilesAsText  = [string][int][bool]$script:PasteFilesAsText
+    PasteTyping       = [string][int][bool]$script:PasteTyping
     AppRules          = [string]$script:AppRules
     Interval          = [string]$Interval
     NoPaste           = [string][int][bool]$script:NoPaste
@@ -99,6 +100,8 @@ function Get-ConfigReport {
     WindowTop         = [string]$script:WinTop
     SaveWindowWidth   = [string][int][bool]$script:SaveWinWidth
     SaveWindowPos     = [string][int][bool]$script:SaveWinPos
+    PlaceNearForeground = [string][int][bool]$script:PlaceNearForeground
+    ImeTakeover       = [string]$script:ImeTakeover
     ShowTime          = [string][int][bool]$script:ShowTime
     ShowTypeIcon      = [string][int][bool]$script:ShowTypeIcon
     ShowThumbnails    = [string][int][bool]$script:ShowThumbnails

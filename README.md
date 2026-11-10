@@ -148,9 +148,8 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `age:7d` | 早于 7 天（单位 `d` `h` `m` `s`，纯数字按天） | `age:7d type:text` |
 | `newer:2026-11-01` / `older:2026-11-01` | 时间范围 | `newer:2026-11-01 older:2026-11-06 周报` |
 | `re:^alpha\s` | 正则表达式（忽略大小写，250 ms 超时） | `re:^https?://` |
-| `py:zg` | 拼音首字母（GB2312 一级字），前 128 个字符内有效 | `py:zg -草稿` |
 
-几种写法可任意组合，顺序无关，结果只会更窄。`-` 只能否定普通词与 `mark:`；`type:` `age:` `newer:` `older:` `re:` `py:` 没有否定写法。
+几种写法可任意组合，顺序无关，结果只会更窄。`-` 只能否定普通词与 `mark:`；`type:` `age:` `newer:` `older:` `re:` 没有否定写法。
 
 写错字段时面板提示「搜索无法理解」而非按普通词搜索：未知的 `type:`、编译失败的正则、非法时间都使本次搜索无结果。
 
@@ -158,11 +157,9 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 面板以不激活方式显示（`WS_EX_NOACTIVATE`），按键由低级键盘钩子（`WH_KEYBOARD_LL`）截获后转发给面板自身：原窗口保持前台、焦点、光标位置与层级不变，面板中可直接输入过滤，原窗口收不到字符。关闭面板（`Esc`、回车粘贴、再按热键、点击面板外部）即卸载钩子。
 
-输入法需要真实键盘焦点，因此面板在输入法处于中文组字模式（`IME_CMODE_NATIVE`）且收到可打印键时交接：卸载钩子、临时去掉 `WS_EX_NOACTIVATE`、用 `AttachThreadInput` 附加前台线程后调用 `SetForegroundWindow`，成为前台后重放该键与本批剩余按键；失败则不重放并重装钩子。纯英文与数字输入不触发交接，`Ctrl+Space` 等输入法切换键一律放行。取不到键盘钩子时，面板从打开起即为接管模式。编辑窗口打开时，按键与输入法交接均以编辑框为目标。
+输入法需要真实键盘焦点，因此面板按 `ImeTakeover` 决定何时交接：`manual`（默认）在点击搜索区（占位文字、图标、清空按钮与头部区域）时，`auto` 在输入法处于中文组字模式（`IME_CMODE_NATIVE`）时按下第一个可打印键，`off` 则从不。交接过程为卸载钩子、临时去掉 `WS_EX_NOACTIVATE`、用 `AttachThreadInput` 附加前台线程后调用 `SetForegroundWindow`，成为前台后重放该键与本批剩余按键；失败则不重放并重装钩子。`Ctrl+Space` 等输入法切换键一律放行。取不到键盘钩子时，面板从打开起即为接管模式。编辑窗口打开时，按键与交接都以编辑框为目标。关闭面板时前台还给打开它之前的窗口。
 
-点击搜索框（占位文字、搜索图标、清空按钮及它们所在的头部区域）是例外：视为要求键盘输入，走与输入法相同的交接，面板成为前台并持有焦点，关闭面板时前台还给打开它之前的窗口。
-
-粘贴前确认原窗口已回到前台（最多重试 24 次）；失败则不注入按键，保留面板并提示按 `Ctrl+V`。注入前按 `ModReleaseTimeout` 等待修饰键松开。
+粘贴前确认原窗口已回到前台（最多重试 24 次），并把键盘焦点还给该窗口原先的控件；失败则不注入按键，保留面板并提示按 `Ctrl+V`。注入前按 `ModReleaseTimeout` 等待修饰键松开。
 
 钩子仅接管面板使用的键：可打印字符、方向键与 `PgUp` `PgDn` `Home` `End`、`Delete`、`F2`、`Backspace` `Tab` `Enter` `Esc`，以及面板响应的 `Ctrl` 组合（`Ctrl+A`、`Ctrl+Z`、`Ctrl+Enter`、`Ctrl+0..9` 与插件注册的键）。其余交给系统，包括所有 `Alt` / `Win` 组合、`Ctrl+Space`、`Ctrl+Shift+Esc`、未处理的 `Ctrl` 快捷键、`F1` 与 `F3`–`F12`、`Insert`。
 
@@ -198,6 +195,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `InlineImageUpToBytes` | `4194304` | HTML 引用的本机图片单张不超过该字节数时内联为 `data:` URI；`0` = 不内联 |
 | `PasteRich` | `1` | `1` = 粘贴时同时写回格式，`0` = 只粘纯文本 |
 | `PasteFilesAsText` | `1` | `1` = 文件条目同时写入路径文本（地址栏、终端、编辑器才有内容） |
+| `PasteTyping` | `0` | `1` = 纯文本条目用逐字输入（`SendInput`）代替粘贴键，目标不接受 `Ctrl+V` 时仍能粘贴；文件与图片仍走剪贴板 |
 | `AppRules` | 空 | 按应用修改粘贴行为，格式见[按应用规则](#按应用规则) |
 | `Interval` | `300` | 剪贴板轮询间隔（毫秒） |
 | `NoPaste` | `0` | `1` = 只写剪贴板，不自动粘贴 |
@@ -206,9 +204,11 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `ExcludePattern` | 空 | 正则，匹配到的文本不入库 |
 | `WindowWidth` | `700` | 面板宽度（96 dpi 基准，高 DPI 按比例缩放） |
 | `Rows` | `10` | 可见行数，面板高度的唯一来源：高度 = 行数 × 行高 + 头部 + 底栏 + 边框；受屏幕工作区限制 |
-| `WindowLeft` / `WindowTop` | 空 | 面板位置；空 = 在呼出窗口所在显示器的中上部 |
+| `WindowLeft` / `WindowTop` | 空 | 面板位置（96 dpi 基准）；空 = 按 `PlaceNearForeground` 放置 |
 | `SaveWindowWidth` | `0` | `1` = 关闭面板时把宽度写回 ini（高度由 `Rows` 决定） |
 | `SaveWindowPos` | `0` | `1` = 关闭面板时把位置写回 ini |
+| `PlaceNearForeground` | `0` | 没有保存位置时的落点：`1` = 呼出它的窗口上（水平居中、纵向三分之一处，限制在该窗口所在显示器内）；`0` = 该显示器的中上部 |
+| `ImeTakeover` | `manual` | 面板何时为了输入法而接管前台：`auto` = 输入法处于中文组字模式时按下第一个可打印键；`manual` = 点搜索区时；`off` = 从不，连点搜索区也不接管（面板只能靠钩子收键，输入法无法组字） |
 | `ShowTime` | `1` | `1` = 显示相对时间列 |
 | `ShowTypeIcon` | `1` | `1` = 显示插件提供的行图标 |
 | `ShowThumbnails` | `1` | `1` = 图片条目在图标槽内绘制缩略图 |
@@ -670,7 +670,6 @@ src/                    程序本体（打包只读这个目录）
   utils/log.ps1           日志文件写入
   utils/time.ps1          epoch、相对时间与时间串（7d / 12h）解析
   utils/query-words.ps1   把一行搜索切成词
-  utils/pinyin.ps1        汉字首字母（GB2312 一级字）
   utils/format.ps1        字节计数
   utils/dpi.ps1           DPI 缩放与圆角路径
 
@@ -849,7 +848,7 @@ Describe 'int' {
 
 | 分件 | 所在 | 覆盖内容 |
 |---|---|---|
-| 结构 | `tests/unit/unit.ps1`（总是执行） | 分层契约：49 个必需模块与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot` / `$PSCommandPath`、无重名顶层函数、载荷类型只通过 `base.ps1` 的谓词判断、行几何只从常量表读取、`$Root` 只算一次；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 大小写约定 |
+| 结构 | `tests/unit/unit.ps1`（总是执行） | 分层契约：48 个必需模块与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot` / `$PSCommandPath`、无重名顶层函数、载荷类型只通过 `base.ps1` 的谓词判断、行几何只从常量表读取、`$Root` 只算一次；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 大小写约定 |
 | 单元 | 同上，dot-source 后逐函数 | 纯函数与存储层：热键解析、条目文案、ini 读写与校验、`Apply-Config`、记录读写与版本识别、迁移引擎、图片与富文本编解码与媒体回收、CF_HTML 解析、真实剪贴板往返、标记与保护规则、面板几何与命中计算、主题发现与 `[metrics]` 重置、插件白名单 |
 | 命令行 | `tests/cli/*.ps1`（并行） | 每条 CLI 能力验证（多数命令在分件进程内执行，插件脚本块相关的命令起子进程），含主题切换与非法主题名拒绝、插件白名单、只读命令不生成 ini、设置开关被参数绑定拒绝、`cli` 命令列表 |
 | 打包 | `tests/pkg/build.ps1` | 进包内容、`install.bat`、包内版本为常量、`Includes=` / `Excludes=` 裁剪、`Overwrite=0` 拒绝覆盖、清单缺少入口报错、编译产物与源码二者恰有其一 |

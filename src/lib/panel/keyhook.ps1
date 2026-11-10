@@ -59,7 +59,55 @@ function Disable-KeyHook {
 # $true when the type is loaded and the hook is installed; both are asked together because every
 # caller that removes or reports the hook has to know the type exists first
 function Test-KeyHook { return ('Cb.KeyHook' -as [type]) -and [Cb.KeyHook]::Active }
+# How the panel receives typing. Every path ends here, so the rest of the panel reads one
+# value instead of keeping two flags in step by hand:
+#   hook     - WH_KEYBOARD_LL feeds the controls, the foreground window is untouched
+#   takeover - the panel owns the foreground (a click on the search field, or an input method
+#              that needs a real focus); the foreground is handed back when the panel closes
+#   none     - no keyboard path (the hook could not be installed)
+# $script:PickerHook / $script:PickerEscalated stay as derived values: the panel loop, the
+# logs and the tests read them, and only this function writes them.
+function Set-InputMode([string]$mode) {
+  if (@('hook', 'takeover', 'none') -notcontains $mode) { throw ('unknown input mode: ' + $mode) }
+  $script:InputMode = $mode
+  $script:PickerHook = ($mode -eq 'hook')
+  $script:PickerEscalated = ($mode -eq 'takeover')
+  return $mode
+}
 
+function Get-InputMode { return [string]$script:InputMode }
+
+# When the panel hands the foreground over so an input method can compose. That hand-over is
+# the only way to type CJK into the filter, and it gives up what the hook exists for, so it is
+# a setting:
+#   auto   - the first letter (or a key the input method already claimed) hands over
+#   manual - only a click on the search area asks for it
+#   off    - never; the filter stays fed by the hook and no input method can compose
+# The character range is the same one the filter accepts: letters and digits, never a
+# modifier or a shortcut key.
+function Test-ImeTakeover([string]$mode, [int]$vk, [bool]$imeNative, [bool]$claimed) {
+  if ($mode -ne 'auto') { return $false }
+  if ($claimed) { return $true }
+  return ($imeNative -and $vk -ge 0x30 -and $vk -le 0x5A)
+}
+
+# The control that owned the keyboard in the window the panel came from, remembered at open so
+# a hand-over (or the paste after a pick) can put the caret back where it was. Zero means the
+# window has no focused control.
+function Save-TargetFocus([IntPtr]$hwnd) {
+  if ($hwnd -eq [IntPtr]::Zero) { return [IntPtr]::Zero }
+  try { return [Cb.Win]::FocusOfWindow($hwnd) } catch { return [IntPtr]::Zero }
+}
+
+# Give that control the keyboard back. False means it is gone or refused; the caller restores
+# the window either way.
+function Restore-TargetFocus([IntPtr]$hwnd, [IntPtr]$focus) {
+  if ($hwnd -eq [IntPtr]::Zero -or $focus -eq [IntPtr]::Zero) { return $false }
+  $ok = $false
+  try { $ok = [Cb.Win]::FocusControl($hwnd, $focus) } catch { $ok = $false }
+  Write-Log ('focus restored=' + $ok)
+  return $ok
+}
 # Hand the keyboard over for real: an input method needs an ordinary window that owns the
 # foreground and the focus. SetForegroundWindow is refused while another process owns the
 # foreground (the foreground lock), so the call attaches to that thread first - the

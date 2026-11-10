@@ -95,6 +95,9 @@ $script:WinLeft = ''
 $script:WinTop = ''
 $script:SaveWinWidth = $false
 $script:SaveWinPos = $false
+# with no saved position the panel sits on the window it was opened from instead of the
+# centre of that monitor; opt-in, because the middle of the screen is the familiar spot
+$script:PlaceNearForeground = $false
 $script:ShowTime = $true
 $script:ShowTypeIcon = $true
 # a picture or formatted-text row shows a small copy of its first picture in the icon slot
@@ -150,6 +153,14 @@ $script:RtfImagesUpToBytes = 8388608
 $script:PasteRich = $true
 # a file list also goes on the clipboard as text, so an address bar or a terminal gets the paths
 $script:PasteFilesAsText = $true
+# type plain text into the focused control instead of sending the paste key: kept off by
+# default, because it is slower on long text and cannot carry formatting
+$script:PasteTyping = $false
+# when the panel hands the foreground over so an input method can compose:
+#   auto   - the first letter typed into the filter hands over
+#   manual - only a click on the search area hands over (default)
+#   off    - never; the hook keeps feeding the filter and no input method can compose
+$script:ImeTakeover = 'manual'
 # per program paste behaviour, empty = every program behaves the same (see utils/apprules.ps1)
 $script:AppRules = ''
 $script:Interval = 300

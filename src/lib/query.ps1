@@ -11,7 +11,6 @@
 #   age:7d          older than seven days (d, h, m, s, or a plain number of days)
 #   newer:2026-11-01  captured on or after that date;  older:...  before it
 #   re:<pattern>    regular expression over the head of the payload
-#   py:zg           pinyin initials (GB2312 level-1 hanzi), see utils/pinyin.ps1
 #
 # An unknown type or a pattern that does not compile is reported in Bad and makes the query
 # match nothing: silently dropping it would answer a different question than the one asked.
@@ -28,7 +27,6 @@ function Get-QueryFields {
     newer = 'a date, e.g. 2026-11-01'
     older = 'a date'
     re    = 'a regular expression'
-    py    = 'pinyin initials, e.g. zg'
   }
 }
 
@@ -43,7 +41,6 @@ function New-Query {
     Patterns = New-Object System.Collections.Generic.List[object]
     Types    = New-Object System.Collections.Generic.List[object]
     Marks    = New-Object System.Collections.Generic.List[object]
-    Initials = New-Object System.Collections.Generic.List[string]
     Newer    = [long]0
     Older    = [long]0
     Bad      = New-Object System.Collections.Generic.List[string]
@@ -108,11 +105,6 @@ function New-Query {
         $t = ConvertTo-TimeEpoch $value
         if ($t -lt 0) { $q.Bad.Add('older: needs a date') } else { $q.Older = $t }
       }
-      'py' {
-        $q.Count++
-        if ($value -match '^[A-Za-z]+$') { $q.Initials.Add($value.ToLowerInvariant()) }
-        else { $q.Bad.Add('py: wants latin initials') }
-      }
       default {
         $q.Count++
         if ($p.Negated) { $q.Excludes.Add([string]$p.Text) } else { $q.Terms.Add([string]$p.Text) }
@@ -166,9 +158,6 @@ function Test-QueryRecord($record, $query) {
   }
   if ($query.Newer -gt 0 -and [long]$record.Time -lt $query.Newer) { return $false }
   if ($query.Older -gt 0 -and [long]$record.Time -ge $query.Older) { return $false }
-  foreach ($token in $query.Initials) {
-    if (-not (Test-PinyinHit $head $token)) { return $false }
-  }
   return $true
 }
 
@@ -178,7 +167,7 @@ function Test-QueryRecord($record, $query) {
 # -ab rejected rows containing 'ab' and -abc rejects fewer.
 function Test-QueryNarrow($old, $new) {
   if ($null -eq $old) { return $false }
-  if (($old.Types.Count -gt 0) -or ($old.Marks.Count -gt 0) -or ($old.Patterns.Count -gt 0) -or ($old.Initials.Count -gt 0)) { return $false }
+  if (($old.Types.Count -gt 0) -or ($old.Marks.Count -gt 0) -or ($old.Patterns.Count -gt 0)) { return $false }
   if (([long]$old.Newer -ne [long]$new.Newer) -or ([long]$old.Older -ne [long]$new.Older)) { return $false }
   $oldTerms = $old.Terms
   $newTerms = $new.Terms
@@ -226,7 +215,7 @@ function Invoke-Query($entries, $query) {
   # -exclusions - is spelled out here; a query carrying a filter falls back to the per record
   # test below, which is the readable version of the same rules.
   $plain = (($query.Types.Count -eq 0) -and ($query.Marks.Count -eq 0) -and
-            ($query.Patterns.Count -eq 0) -and ($query.Initials.Count -eq 0) -and
+            ($query.Patterns.Count -eq 0) -and
             ([long]$query.Newer -le 0) -and ([long]$query.Older -le 0))
   $rows = New-Object System.Collections.Generic.List[object]
   if ($plain) {

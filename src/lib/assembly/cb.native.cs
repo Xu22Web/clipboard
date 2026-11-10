@@ -28,8 +28,107 @@ namespace Cb {
     [DllImport("user32.dll")] public static extern bool ReleaseCapture();
     [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    // ---- the focus the panel has to give back ----------------------------------------
+    // While the hook feeds the panel nothing has to be restored. The panel does move the
+    // foreground twice (an input method composing, and the paste that follows a pick), and
+    // putting the window back is not enough: the control that owned the caret has to be asked
+    // for by name, or it comes back with the focus on the window frame instead.
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GUITHREADINFO {
+      public int cbSize; public int flags;
+      public IntPtr hwndActive; public IntPtr hwndFocus; public IntPtr hwndCapture;
+      public IntPtr hwndMenuOwner; public IntPtr hwndMoveSize; public IntPtr hwndCaret;
+      public WINRECT rcCaret;
+    }
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool GetGUIThreadInfo(uint tid, ref GUITHREADINFO info);
+    [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr h);
+    [DllImport("user32.dll")] private static extern IntPtr SetFocus(IntPtr h);
+
+    // the control that owns the keyboard in that window, or IntPtr.Zero
+    public static IntPtr FocusOfWindow(IntPtr hwnd) {
+      if (hwnd == IntPtr.Zero) { return IntPtr.Zero; }
+      uint tid = GetWindowThreadProcessId(hwnd, IntPtr.Zero);
+      if (tid == 0) { return IntPtr.Zero; }
+      GUITHREADINFO info = new GUITHREADINFO();
+      info.cbSize = Marshal.SizeOf(typeof(GUITHREADINFO));
+      if (!GetGUIThreadInfo(tid, ref info)) { return IntPtr.Zero; }
+      if (info.hwndFocus == IntPtr.Zero || !IsWindow(info.hwndFocus)) { return IntPtr.Zero; }
+      return info.hwndFocus;
+    }
+
+    // SetFocus only works for a thread attached to the focus window's thread. Returns true
+    // when that control really owns the keyboard afterwards.
+    public static bool FocusControl(IntPtr hwnd, IntPtr focus) {
+      if (hwnd == IntPtr.Zero || focus == IntPtr.Zero || !IsWindow(focus)) { return false; }
+      uint target = GetWindowThreadProcessId(hwnd, IntPtr.Zero);
+      if (target == 0) { return false; }
+      uint mine = GetCurrentThreadId();
+      bool attached = false;
+      try {
+        if (target != mine) { attached = AttachThreadInput(mine, target, true); }
+        SetFocus(focus);
+        return (FocusOfWindow(hwnd) == focus);
+      } finally {
+        if (attached) { AttachThreadInput(mine, target, false); }
+      }
+    }
+
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern uint GetDpiForSystem();
+
+    // where a window is on screen, as a rectangle the geometry helpers can read. Empty for a
+    // window that is gone, minimised or has no area, so the caller keeps its own fallback.
+    [StructLayout(LayoutKind.Sequential)] private struct WINRECT { public int Left; public int Top; public int Right; public int Bottom; }
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool GetWindowRect(IntPtr h, out WINRECT rect);
+    public static System.Drawing.Rectangle WindowBounds(IntPtr h) {
+      WINRECT r;
+      if (h == IntPtr.Zero || !GetWindowRect(h, out r)) { return System.Drawing.Rectangle.Empty; }
+      int w = r.Right - r.Left;
+      int hh = r.Bottom - r.Top;
+      if (w <= 0 || hh <= 0) { return System.Drawing.Rectangle.Empty; }
+      return new System.Drawing.Rectangle(r.Left, r.Top, w, hh);
+    }
+
+    // ---- typing without the clipboard ------------------------------------------------
+    // SendInput with KEYEVENTF_UNICODE puts the characters straight into the focused control,
+    // so a target that ignores Ctrl+V still receives the text and the clipboard is not
+    // touched. INPUT must stay the size the API expects: MOUSEINPUT is its largest member, so
+    // the union is 32 bytes on x64 and 24 on x86, and a short union fails with
+    // ERROR_INVALID_PARAMETER (87).
+    [DllImport("user32.dll", SetLastError = true)] private static extern uint SendInput(uint count, INPUT[] inputs, int size);
+    [StructLayout(LayoutKind.Sequential)] private struct KEYBDINPUT {
+      public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr extra;
+    }
+    [StructLayout(LayoutKind.Sequential)] private struct MOUSEINPUT {
+      public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr extra;
+    }
+    [StructLayout(LayoutKind.Explicit)] private struct INPUTUNION {
+      [FieldOffset(0)] public MOUSEINPUT mi;
+      [FieldOffset(0)] public KEYBDINPUT ki;
+    }
+    [StructLayout(LayoutKind.Sequential)] private struct INPUT { public uint type; public INPUTUNION u; }
+    private const uint INPUT_KEYBOARD = 1;
+    private const uint KEYEVENTF_KEYUP = 0x0002;
+    private const uint KEYEVENTF_UNICODE = 0x0004;
+
+    // number of UTF-16 code units the input queue accepted (a surrogate pair counts twice)
+    public static int SendUnicode(string text) {
+      if (string.IsNullOrEmpty(text)) { return 0; }
+      int sent = 0;
+      int size = Marshal.SizeOf(typeof(INPUT));
+      for (int i = 0; i < text.Length; i++) {
+        INPUT down = new INPUT();
+        INPUT up = new INPUT();
+        down.type = INPUT_KEYBOARD;
+        up.type = INPUT_KEYBOARD;
+        down.u.ki.wScan = text[i];
+        up.u.ki.wScan = text[i];
+        down.u.ki.dwFlags = KEYEVENTF_UNICODE;
+        up.u.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+        if (SendInput(2, new INPUT[] { down, up }, size) == 2) { sent++; }
+      }
+      return sent;
+    }
 
     // ---- formatted text, straight out of the clipboard ----
     // CF_HTML carries byte offsets into its own buffer, and both blocks are 8-bit buffers:
