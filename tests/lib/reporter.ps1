@@ -45,7 +45,6 @@ $script:TestReport = @{
   Progress = $false
   Window   = @()
   WindowHeight = 0
-  FrameRows = 0                 # height the live block keeps once it is on screen
   Capture  = $null
   Width    = 100
   LastMark = $null
@@ -119,7 +118,6 @@ function Initialize-TestReporter([string]$Mode = 'default', [switch]$Quiet, [swi
   $script:TestReport.Progress = $vt -and (-not [bool]$NoProgress)
   $script:TestReport.Window = @()
   $script:TestReport.WindowHeight = 0
-  $script:TestReport.FrameRows = 0
   $script:TestReport.Capture = $null
   if ($script:TestReport.Glyphs) {
     $script:TestReport.Marks = @{
@@ -490,42 +488,32 @@ function Write-TestWindow([string]$Message = '') {
     $messageText = ($parts -join "`r`n") + "`r`n"
     $messageRows = $parts.Count
   }
-  # The frame must stay inside the screen: the moment the block reaches past the last row the
-  # terminal scrolls, and a scrolled block leaves a copy of itself in the scrollback that no
-  # erase can reach - that is the block that repeats when you scroll up. So the frame keeps a
-  # fixed height that never changes after the first one, and the block is cut to fit under the
-  # rows printed above it. The frame starts eight rows short of the screen: the banner and
-  # whatever the shell printed before it sit above the block.
+  # The block must stay inside the screen: the moment it reaches past the last row the terminal
+  # scrolls, and a scrolled block leaves a copy of itself in the scrollback that no erase can
+  # reach - that is the block that repeats when you scroll up. So it is cut to fit under the rows
+  # printed above it, and it never grows past the screen minus the banner and a little slack.
+  # A host that cannot say how tall the screen is gets the short answer: an uncapped block is
+  # exactly the case that repeats.
   $screen = 0
   try { $screen = [Console]::WindowHeight } catch { $screen = 0 }
   $cap = 8
   if ($screen -gt 8) { $cap = $screen - 8 } else { $cap = [Math]::Max(1, $screen - 5) }
-  $frame = [int]$script:TestReport.FrameRows
-  $need = $messageRows + $window.Count
-  if ($frame -le 0) {
-    $frame = [Math]::Min($cap, [Math]::Max(1, $need))
-  } elseif ($need -gt $frame -and $frame -lt $cap) {
-    # the first frames can come before every part has started, so the frame grows to fit the
-    # rest - but only up to the cap, which is what keeps its last row inside the screen
-    $frame = [Math]::Min($cap, $need)
-  }
-  $budget = $frame - $messageRows
-  if ($budget -lt 1) { $budget = 1 }
   $dropped = 0
-  if ($window.Count -gt $budget) {
-    $dropped = $window.Count - $budget + 1
+  if ($window.Count -gt $cap) {
+    $dropped = $window.Count - $cap + 1
     $kept = New-Object System.Collections.Generic.List[string]
     $kept.Add((Get-TestDim (' ... ' + [string]$dropped + ' more')))
-    for ($i = $window.Count - ($budget - 1); $i -lt $window.Count; $i++) { $kept.Add($window[$i]) }
+    for ($i = $window.Count - ($cap - 1); $i -lt $window.Count; $i++) { $kept.Add($window[$i]) }
     $window = $kept
   }
   $rows = $window.Count
   $old = [int]$script:TestReport.WindowHeight
   # vitest counts the window only: the message above it is written outside the counted region,
   # so a finished row stays on screen and the window keeps ending on the same line. The padding
-  # takes the message's rows, which keeps the frame's own height - and therefore its last row,
-  # the one the screen would scroll - where it was.
-  $padding = $frame - $messageRows - $rows
+  # gives back whatever the message took, which keeps the block's last row - the one the screen
+  # would scroll on - where it was.
+  $padding = $old - $rows
+  if ($padding -gt 0 -and $messageRows -gt 0) { $padding = $padding - $messageRows }
   if ($padding -lt 0) { $padding = 0 }
   $sb = New-Object System.Text.StringBuilder
   [void]$sb.Append($esc + '[?2026h')
@@ -535,12 +523,14 @@ function Write-TestWindow([string]$Message = '') {
     [void]$sb.Append("`r")
     [void]$sb.Append($esc + '[K')
     for ($i = 1; $i -lt $old; $i++) { [void]$sb.Append($esc + '[1A' + $esc + '[K') }
-  } elseif ($frame -gt 1) {
-    # nothing to erase yet: reserve the frame with blank lines first. A cursor that already sits
-    # on the last row then scrolls blanks into the scrollback instead of a copy of the block.
-    [void]$sb.Append("`r`n" * ($frame + $messageRows - 1))
+  } elseif ($messageRows + $rows -gt 1) {
+    # nothing to erase yet: reserve the rows the frame needs with blank lines first. A cursor
+    # that already sits on the last row then scrolls blanks into the scrollback instead of a
+    # copy of the block.
+    $reserve = $messageRows + $rows - 1
+    [void]$sb.Append("`r`n" * $reserve)
     [void]$sb.Append("`r")
-    for ($i = 1; $i -lt ($frame + $messageRows); $i++) { [void]$sb.Append($esc + '[1A') }
+    for ($i = 0; $i -lt $reserve; $i++) { [void]$sb.Append($esc + '[1A') }
   }
   if ($messageText) { [void]$sb.Append($messageText) }
   if ($padding -gt 0) { [void]$sb.Append("`r`n" * $padding) }
@@ -549,12 +539,11 @@ function Write-TestWindow([string]$Message = '') {
   Write-TestOut $sb.ToString()
   if ([string]$env:CB_TEST_WINDOW_LOG) {
     try {
-      $rec = 'old=' + $old + ' rows=' + $rows + ' msg=' + $messageRows + ' pad=' + $padding + ' frame=' + $frame + ' cap=' + $cap + ' drop=' + $dropped + ' cols=' + $columns + ' screen=' + $screen + "`r`n"
+      $rec = 'old=' + $old + ' rows=' + $rows + ' msg=' + $messageRows + ' pad=' + $padding + ' cap=' + $cap + ' drop=' + $dropped + ' cols=' + $columns + ' screen=' + $screen + "`r`n"
       [IO.File]::AppendAllText([string]$env:CB_TEST_WINDOW_LOG, $rec)
     } catch { }
   }
-  $script:TestReport.FrameRows = $frame
-  $script:TestReport.WindowHeight = $frame
+  $script:TestReport.WindowHeight = $rows + [Math]::Max(0, $padding)
 }
 
 function Clear-TestWindow {
