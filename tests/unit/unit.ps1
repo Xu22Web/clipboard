@@ -578,6 +578,20 @@ try {
         Expect ($shownHelper -eq 1) ([string]$shownHelper + ' Focus-Search call(s)')
         Expect ($shownPaint -eq 1) ([string]$shownPaint + ' search box mark(s)')
       } -Skip $script:StructMinified
+
+      It 'a click in the search area takes the keyboard for real' {
+        # opening only paints the field (the hook keeps the window in front untouched); a click
+        # on the field is a request for the keyboard, and the hook cannot deliver that without
+        # the panel owning the foreground - so the search area hands over instead
+        Expect ($script:StructPickerText -match '(?s)function Claim-Search\s*\{.{0,400}Switch-ToTakeover') 'Claim-Search does not hand the keyboard over'
+        foreach ($handler in @('\$head', '\$box', '\$txt', '\$ph', '\$icon')) {
+          $hit = ($script:StructPickerText -match ($handler + '\.Add_Click\(\{ Claim-Search \}\)'))
+          Expect $hit ($handler + ' still focuses without claiming')
+        }
+        # the placeholder covers the empty field: without its own claim an empty box would only
+        # take the keyboard when the text box, hidden under it, happened to be hit
+        Expect (([regex]::Matches($script:StructPickerText, '\.Add_Click\(\{ Claim-Search \}\)')).Count -ge 5) 'search area handlers missing'
+      } -Skip $script:StructMinified
     }
   }
 
@@ -3158,6 +3172,43 @@ try {
         It 'an edit in progress lists only the editor keys' {
           $hEdit = Get-HintText (Get-PanelHints 5 0 $true 0 $false @() $true $true)
           Expect ((($hEdit -match 'Save') -and ($hEdit -match 'Newline')) -and (-not ($hEdit -match 'Paste'))) $hEdit
+        }
+
+        It 'the editor card draws the same chips as the footer' {
+          # the card covers the footer, so it draws its own row from the same list: two copies
+          # of the text is how 'Save' and 'save' ended up in the same panel
+          $editPairs = @(Get-EditHints)
+          $footerPairs = @(Get-PanelHints 5 0 $true 0 $false @() $true $true)
+          $same = ($editPairs.Count -eq 3 -and $footerPairs.Count -eq 3)
+          for ($i = 0; $same -and $i -lt $editPairs.Count; $i++) {
+            if (((@($editPairs[$i]) -join '|') -cne (@($footerPairs[$i]) -join '|'))) { $same = $false }
+          }
+          Expect $same ((@($editPairs | ForEach-Object { @($_)[1] }) -join ','))
+        }
+
+        It 'every action label is capitalised like the panel labels' {
+          # Paste, Copy, Delete, Close: an action in the footer or on the editor card starts
+          # with a capital, so 'save' next to 'Save' cannot come back
+          $all = New-Object System.Collections.Generic.List[object]
+          $sets = @(
+            (Get-PanelHints 5 0 $true 0 $false @()),
+            (Get-PanelHints 5 3 $true 0 $true @()),
+            (Get-PanelHints 0 0 $false 0 $false @()),
+            (Get-EditHints)
+          )
+          foreach ($set in $sets) {
+            $pairs = @($set)
+            # a set with one pair arrives flat (Draw-KeyChips repairs it the same way)
+            if ($pairs.Count -gt 0 -and -not ($pairs[0] -is [array])) {
+              $fixed = @()
+              for ($i = 0; ($i + 1) -lt $pairs.Count; $i += 2) { $fixed += ,@([string]$pairs[$i], [string]$pairs[$i + 1]) }
+              $pairs = $fixed
+            }
+            foreach ($p in $pairs) { $all.Add(@($p)) }
+          }
+          $bad = @($all | Where-Object { ([string](@($_)[1])) -cnotmatch '^[A-Z]' })
+          Expect ($all.Count -ge 10) ([string]$all.Count + ' label(s)')
+          Expect ($bad.Count -eq 0) ((@($bad | ForEach-Object { (@($_)[0..1] -join '=') }) -join ', '))
         }
       }
 

@@ -2,7 +2,12 @@
 # filter, draw, keys, paste); the standalone pieces live in picker-geom / entry / plugins.
 
 function Show-Picker([switch]$Warm) {
-  if ($script:PickerOpen) { $script:PickerClose = $true; return }   # a second hotkey press closes it
+  if ($script:PickerOpen) {
+    # a second hotkey press closes the panel; a warm run only builds and throws away, so it
+    # must leave a panel the user is working in alone
+    if (-not $Warm) { $script:PickerClose = $true }
+    return
+  }
   $script:PickerOpen = $true
   $script:PickerClose = $false
   # how long the window takes to appear: one line per open, so a slow start can be told
@@ -218,14 +223,14 @@ function Show-Picker([switch]$Warm) {
     $head.Dock = 'Top'
     $head.Height = Px $script:Metric['HeadHeight']
     $head.BackColor = $ui.Surface
-    # an empty piece of the header is still "the search area": clicking it puts the caret
-    # in the box (the panel opens without the keyboard, so the first click brings it over)
-    $head.Add_Click({ Focus-Search })
+    # an empty piece of the header is still "the search area": clicking it asks for the
+    # keyboard, so the panel takes it over (see Claim-Search)
+    $head.Add_Click({ Claim-Search })
 
     $box = New-Object Windows.Forms.Panel
     $box.SetBounds((Px 14), (Px 14), ($form.ClientSize.Width - (Px 30)), (Px 40))
     $box.BackColor = $ui.Field
-    $box.Add_Click({ Focus-Search })
+    $box.Add_Click({ Claim-Search })
     $box.Add_Paint({
         param($s, $e)
         try {
@@ -255,7 +260,7 @@ function Show-Picker([switch]$Warm) {
     $icon.BackColor = $ui.Field
     $icon.TextAlign = 'MiddleCenter'
     $icon.Cursor = 'IBeam'
-    $icon.Add_Click({ Focus-Search })
+    $icon.Add_Click({ Claim-Search })
 
     $txt = New-Object Windows.Forms.TextBox
     $txt.BorderStyle = 'None'
@@ -264,6 +269,8 @@ function Show-Picker([switch]$Warm) {
     $txt.ForeColor = $ui.Text
     $txt.Font = $fBody
     $txt.AccessibleName = 'Search clipboard history'
+    # the box itself takes the click before its parent panel ever sees it
+    $txt.Add_Click({ Claim-Search })
 
     $ph = New-Object Windows.Forms.Label
     $ph.SetBounds((Px 40), (Px 10), ($box.Width - (Px 106)), (Px 22))
@@ -273,6 +280,9 @@ function Show-Picker([switch]$Warm) {
     $ph.BackColor = $ui.Field
     $ph.TextAlign = 'MiddleLeft'
     $ph.Cursor = 'IBeam'
+    # the placeholder covers the empty box, so this is what a click on an empty search field
+    # actually hits
+    $ph.Add_Click({ Claim-Search })
 
     $clr = New-Object Windows.Forms.Label
     $clr.SetBounds(($box.Width - (Px 30)), (Px 10), (Px 20), (Px 22))
@@ -659,10 +669,11 @@ function Show-Picker([switch]$Warm) {
           }
         } catch { Write-Log ('transform skipped: ' + $_.Exception.Message) }
       }
-      if ($script:NoPaste -or $NoInject.IsPresent -or (Test-AppRuleNoPaste)) { $form.Hide(); [void](Set-ClipItem $payload $rich); Set-LastCapture $payload; $form.Close(); return }
+      if ($script:NoPaste -or $NoInject.IsPresent -or (Test-AppRuleNoPaste $prev)) { $form.Hide(); [void](Set-ClipItem $payload $rich); Set-LastCapture $payload; $form.Close(); return }
       # the program in front decides whether the formatting travels with the paste:
-      # a terminal wants the text, an editor wants the layout
-      if ($rich -and -not (Test-AppRuleKeepsRich)) { $rich = '' }
+      # a terminal wants the text, an editor wants the layout. The window asked about is the
+      # one the paste goes back to - the panel itself may be in front after a hand-over.
+      if ($rich -and -not (Test-AppRuleKeepsRich $prev)) { $rich = '' }
       if (-not (Set-ClipItem $payload $rich)) { Write-Log 'set clipboard failed'; $form.Close(); return }
       # our own write must not come back as a new capture
       Set-LastCapture $payload
@@ -1115,7 +1126,7 @@ function Show-Picker([switch]$Warm) {
     $txt.Add_TextChanged({ Sync-Placeholder; $deb.Stop(); $deb.Start() })
     $txt.Add_GotFocus({ $script:SearchFocus = $true; Set-AnimTarget $script:Anim 'Field' 1.0 })
     $txt.Add_LostFocus({ $script:SearchFocus = $false; Set-AnimTarget $script:Anim 'Field' 0.0 })
-    $clr.Add_Click({ $txt.Text = ''; Focus-Search })
+    $clr.Add_Click({ $txt.Text = ''; Claim-Search })
     $form.Add_KeyDown({
         param($s, $e)
         # The editor owns the keyboard while it is open. KeyPreview runs this handler before
@@ -1232,6 +1243,26 @@ function Show-Picker([switch]$Warm) {
       if (-not $script:PickerHook) { $txt.Focus() }
     }
 
+    # Opening the panel only paints the field as active (see Add_Shown): the window in front
+    # keeps the keyboard and the hook feeds the panel. A click is a different statement - the
+    # user is aiming at the field - so the keyboard is handed over for real (the same
+    # hand-over an input method asks for). From then on the panel owns the foreground, which
+    # is why the restore after the loop puts it back where it came from.
+    function Claim-Search {
+      if ($null -eq $script:EditRow -and $script:PickerHook) {
+        if (Switch-ToTakeover $form.Handle $txt) {
+          $script:PickerHook = $false
+          $script:PickerEscalated = $true
+          Write-Log 'picker: the search area was clicked, the panel took the keyboard'
+        } else {
+          # the hook is armed again when the hand-over fails, so the flag has to follow it or
+          # the keys it takes are swallowed and read by nobody
+          $script:PickerHook = Restore-KeyHook $form.Handle
+        }
+      }
+      Focus-Search
+    }
+
     function Invoke-HookedKey {
       $keys = @(Get-HookedKeys)
       if ($keys.Count -eq 0) { return }
@@ -1253,7 +1284,9 @@ function Show-Picker([switch]$Warm) {
             Write-Log 'picker: handing the keyboard over for the input method'
             Send-HookedKeys $keys $i
           } else {
-            Restore-KeyHook $form.Handle
+            # a refused hand-over re-arms the hook: the flag has to follow it, or the keys it
+            # takes are swallowed and never read
+            $script:PickerHook = Restore-KeyHook $form.Handle
           }
           return
         }
@@ -1269,8 +1302,6 @@ function Show-Picker([switch]$Warm) {
         } catch { return }
       }
     }
-
-    $ph.Add_Click({ Focus-Search })
 
     $form.Add_Paint({
         param($s, $e)

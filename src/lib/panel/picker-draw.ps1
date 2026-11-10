@@ -19,6 +19,17 @@ function Update-PanelRegion($form) {
   } catch { }
 }
 
+# The keys the in-place editor answers. One list, used by the panel footer and by the editor
+# card that covers it, so the two cannot spell the same action differently - and every action
+# is capitalised like the panel's own labels (Paste, Copy, Delete, Close).
+function Get-EditHints {
+  $pairs = New-Object System.Collections.Generic.List[object]
+  $pairs.Add(@('Enter', 'Save'))
+  $pairs.Add(@('Shift+Enter', 'Newline'))
+  $pairs.Add(@('Esc', 'Cancel'))
+  return $pairs.ToArray()
+}
+
 # Shortcut hints as Fluent key chips: [key] action. Plain data, so the footer can be checked
 # without a window and the panel only has to say what state it is in.
 #
@@ -30,7 +41,7 @@ function Update-PanelRegion($form) {
 function Get-PanelHints([int]$rows, [int]$selected, [bool]$editable, [int]$queryLen, [bool]$ctrlHeld, $ctrlKeys, [bool]$editing, [bool]$undoOn) {
   # while the editor covers the list, only the editor's own keys work
   if ($editing) {
-    return @(@('Enter', 'Save'), @('Shift+Enter', 'Newline'), @('Esc', 'Cancel'))
+    return (Get-EditHints)
   }
   if ($rows -le 0) {
     # the comma keeps the pair nested: a one-element array would be unrolled by the function

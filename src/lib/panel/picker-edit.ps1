@@ -254,7 +254,8 @@ function Begin-RowEdit {
   $err.SetBounds($pad, ($ch - (Px 74)), ($cw - (2 * $pad) - (Px 200)), (Px 18))
 
   # the footer is covered, so the same key chips the panel draws there are drawn here: the
-  # editor speaks the panel's language instead of a plain hint line
+  # editor speaks the panel's language instead of a plain hint line. The pairs come from
+  # Get-EditHints, the list the panel footer uses as well, so the two cannot drift apart.
   $hint = New-Object Windows.Forms.Panel
   $hint.BackColor = $ctx.Ui.Surface
   $hint.SetBounds($pad, ($ch - (Px 46)), ($cw - (2 * $pad) - (Px 200)), (Px 26))
@@ -264,7 +265,7 @@ function Begin-RowEdit {
         $g = $e.Graphics
         $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
-        Draw-KeyChips $g 0 ([int]($s.ClientSize.Height / 2)) @(@('Enter', 'save'), @('Shift+Enter', 'newline'), @('Esc', 'cancel')) $script:EditorCtx.Ui.Dim $script:EditorCtx.Ui.Faint ([int]$s.ClientSize.Width)
+        Draw-KeyChips $g 0 ([int]($s.ClientSize.Height / 2)) (Get-EditHints) $script:EditorCtx.Ui.Dim $script:EditorCtx.Ui.Faint ([int]$s.ClientSize.Width)
       } catch { }
     })
 
@@ -312,7 +313,9 @@ function Request-RowEdit([bool]$save, $box) {
     $changed = ([string]$box.Text -cne [string]$rec.Payload)
     if ((-not $changed) -or ($script:EditArm -eq 'cancel')) { Invoke-RowEditLater $false; return }
     $script:EditArm = 'cancel'
-    & $ctx.Note 'Press Esc again to discard the change' ([int]$script:Timing['FootShort'])
+    # the panel footer is under the card, so the question has to be asked on the card itself:
+    # a note in the footer would be painted behind the card and never seen
+    try { $script:EditRow.Err.Text = 'Press Esc again to discard the change' } catch { }
     return
   }
   Invoke-RowEditLater $true
