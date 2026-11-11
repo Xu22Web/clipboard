@@ -496,8 +496,34 @@ function Show-Picker([switch]$Warm) {
     $wheelLines = $(try { [Windows.Forms.SystemInformation]::MouseWheelScrollLines } catch { 3 })
     if ($script:ScrollLines -gt 0) { $wheelLines = [int]$script:ScrollLines }
     $lst.WheelRows = [Math]::Max(1, [int]$wheelLines)
+    # The rows move under a pointer that does not: after a scroll, or after the filter narrowed
+    # the list, the row below the cursor is a different one. Reading it again here keeps the
+    # highlight and the card on the row the user is actually pointing at, and the rest timer
+    # starts over - a preview follows a cursor that has come to rest, so sweeping the list with
+    # the wheel no longer flashes a card between two notches. MouseMove only sees the pointer
+    # move, which is why this cannot live there.
+    function Sync-HoverFromCursor {
+      $i = -1
+      try {
+        if (-not $lst.IsDisposed) {
+          $p = $lst.PointToClient([Windows.Forms.Cursor]::Position)
+          if ($lst.ClientRectangle.Contains($p)) { $i = $lst.IndexFromPoint($p) }
+        }
+      } catch { $i = -1 }
+      if ($i -ne [int]$script:Hover) {
+        $old = [int]$script:Hover
+        $script:Hover = $i
+        Set-AnimHover $script:Anim $i
+        foreach ($k in @($old, $i)) {
+          if ($k -ge 0 -and $k -lt $lst.ItemCount) { $lst.Invalidate($lst.GetItemRectangle($k)) }
+        }
+      }
+      $script:PvAt = Get-Date
+      $script:PvIdx = -1
+      Hide-Preview $pv
+    }
     # every way the list can scroll (wheel, drag, keys, selection) has to move the thumb
-    $lst.Add_ScrollChanged({ Sync-Sb; Hide-Preview $pv; $script:PvIdx = -1 })
+    $lst.Add_ScrollChanged({ Sync-Sb; Sync-HoverFromCursor })
 
     # the list scrolls itself on the wheel; with the pointer anywhere else it bubbles here
     $form.Add_MouseWheel({
@@ -621,8 +647,8 @@ function Show-Picker([switch]$Warm) {
       } else {
         $empty.Visible = $false
       }
-      Hide-Preview $pv
-      $script:PvIdx = -1
+      # the filter changed what sits under the pointer: same reading as after a scroll
+      Sync-HoverFromCursor
       Sync-Placeholder
       $lst.Invalidate()
       Sync-Sb

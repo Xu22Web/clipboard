@@ -625,6 +625,17 @@ try {
         Expect (-not ($script:StructPickerText -match '\$lst\.Items\b')) '$lst.Items found'
       }
 
+      It 'the row under the cursor is read again after the list moves' {
+        # A wheel notch moves the rows, not the pointer: without reading the row again the card
+        # belongs to the row that moved away, and every notch cleared the "already shown" mark
+        # while leaving the rest timer alone - so a pause mid-scroll flashed a card.
+        Expect ($script:StructPickerText -match '(?s)function Sync-HoverFromCursor\s*\{.{0,900}IndexFromPoint') 'the hover is not read from the cursor'
+        Expect ($script:StructPickerText -match '(?s)function Sync-HoverFromCursor\s*\{.{0,1200}\$script:PvAt = Get-Date') 'the rest timer is not started over'
+        Expect ($script:StructPickerText -match 'Add_ScrollChanged\(\{ Sync-Sb; Sync-HoverFromCursor \}\)') 'the scroll does not sync the hover'
+        # a filter narrows the list under a pointer that stays put, which is the same problem
+        Expect ($script:StructPickerText -match '(?s)Trim-Selection.{0,1200}Sync-HoverFromCursor') 'Update-List does not sync the hover'
+      }
+
       It 'closes the menu before it closes itself' {
         # A drop-down that outlives the panel keeps the menu filter WinForms installed for it,
         # and that filter eats every later click of the process: whichever path closes the panel

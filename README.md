@@ -186,6 +186,8 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 悬停预览卡放在面板两侧：放不下整张卡时先收窄，换到另一侧，两侧都不够时放在面板下方，不覆盖行。
 
+卡片只跟随停住的光标：滚动列表或改变过滤词都会让行在光标下换掉，此时重新读光标下的行、收起已有的卡片，并重新计 `PreviewDelay`，所以滚轮扫过列表不会闪出卡片，停住后弹出的是光标下的那一行。
+
 ## 配置
 
 程序启动时只读取脚本旁的 `clipboard.ini`，文件或某个键缺失时按内置默认值运行。只有 `config init` / `config set` / `config reset`、开启 `SaveWindowPos` 时的位置回写，以及托盘勾选 `Compact mode` 时写入 `CompactMode`，会写入该文件。
