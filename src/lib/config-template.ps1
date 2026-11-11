@@ -1,13 +1,14 @@
 # lib/config-template.ps1 - the clipboard.ini this build writes: the commented template, the
-# gap-filling merge, and the file reset. Nothing here applies a setting; it only decides what
-# the file says. lib/config.ps1 owns the command surface, lib/settings.ps1 owns reading a
-# value back.
+# file reset, and the one call that fits an existing file to it. Nothing here applies a setting;
+# it only decides what the file says. lib/config.ps1 owns the command surface, lib/settings.ps1
+# owns reading a value back, and utils/ini.ps1 owns every edit to a parsed file.
 #
 # What a key means and which value it starts with are read from schema\clipboard.ps1, so the
 # comment in the file, the `config` listing and the default in `config set` all come from one
 # place. What lives here is the layout: the prose at the top, which heading a key sits under,
-# and the order of the lines. `config init` (which only fills gaps) and `config reset` (which
-# replaces the file) share this one source, so the two can never drift apart.
+# and the order of the lines. `config init` (which fits the file to the template) and
+# `config reset` (which replaces the file) share this one source, so the two can never drift
+# apart.
 
 # The shape of the file a user reads: a heading and the keys under it, in this order. A key
 # the schema knows but this table forgets fails loudly below, because `config init` comments
@@ -109,116 +110,28 @@ function Get-IniTemplateLines {
 }
 
 
-# Where a key of the template's header-less base block, or of one heading block, ends in this
-# file: the end of the block carrying that heading, and - when the file has no such block - the
-# first heading or [section] marker, which is always the start of the grouped part. Appending at
-# the end of the file instead would drop a base key into whichever section comes last.
-function Find-TemplateInsertAt($doc, [string]$heading) {
-  $lines = @($doc.Lines)
-  $start = -1
-  for ($i = 0; $i -lt $lines.Count; $i++) {
-    $t = ([string]$lines[$i]).Trim()
-    if ($t -match '^#\s*----\s*(.+?)\s*----\s*$') {
-      # the block ends with the first marker after its own
-      if ($start -ge 0) { return $i }
-      if ($Matches[1] -eq $heading) { $start = $i }
-      continue
-    }
-    if ($start -ge 0 -and $t -match '^\[.+\]$') { return $i }
-  }
-  if ($start -ge 0) { return $lines.Count }
-  # a heading the file does not have yet: the new key starts the grouped part, which keeps the
-  # comment of the block that follows glued to its own header
-  for ($i = 0; $i -lt $lines.Count; $i++) {
-    $t = ([string]$lines[$i]).Trim()
-    if ($t -match '^\[.+\]$' -or $t -match '^#\s*----\s*.+?\s*----\s*$') { return $i }
-  }
-  return $lines.Count
-}
-
-# `config init`: bring the file in line with this version - add the keys that appeared,
-# comment out the ones that no longer exist, and leave every value alone. A value the user
-# set - a plugin setting in particular - is never replaced by its default. Returns the two
-# counts so the caller can say what happened.
+# `config init`: bring the file in line with this version. The template is the shape of the
+# file, so the file is written from it - the same headings, the same order, one comment above
+# each key - with every value the file already holds. Filling gaps by inserting single keys is
+# what left blank lines inside blocks and comments without the key they describe.
+#
+# A value the user set, a plugin setting in particular, is never replaced. A key this version
+# does not know is kept as a comment at the end, where removing the '#' brings it back, so
+# nothing is lost and `config init` stays repeatable. Only text that actually changes is
+# written. Returns the two counts the caller reports.
+#
+# What the file should say is Merge-IniDocTemplate's job (utils/ini.ps1); this function owns
+# only the file around it: reading it, deciding whether anything changed, and writing it.
 function Merge-IniDefaults {
   Ensure-Dir
-  $tpl = @(Get-IniTemplateLines)
-  # everything the program can write is "known"; anything else is left over from an older
-  # version or a plugin that is gone. The template is read with the same reader as the file, so
-  # "[item-marks]" + "MaxPins=50" counts as item-marks.MaxPins here exactly as it does there.
-  $known = @{}
-  foreach ($k in @((Read-IniDoc $tpl).Keys)) { $known[([string]$k).ToLowerInvariant()] = $true }
-  # the file as a document: comments, blank lines and the order of every key stay where they are
-  $lines = @()
-  if (Test-Path -LiteralPath $IniPath) { $lines = [IO.File]::ReadAllLines($IniPath, [Text.Encoding]::UTF8) }
-  $doc = Read-IniDoc $lines
-  # a key this version does not know is kept readable but out of the way: removing the '#'
-  # brings it back
-  $pruned = 0
-  foreach ($k in @($doc.Keys)) {
-    if ($known.ContainsKey(([string]$k).ToLowerInvariant())) { continue }
-    foreach ($n in @($doc.Index[$k].Lines)) {
-      $at = [int]$n
-      $doc = Set-IniDocLine $doc $at ('# [unknown] ' + ([string]$doc.Lines[$at]).Trim())
-      $pruned++
-    }
+  $before = @()
+  if (Test-Path -LiteralPath $IniPath) {
+    $before = [IO.File]::ReadAllLines($IniPath, [Text.Encoding]::UTF8)
   }
-  # comments are buffered so an added key keeps the explanation that introduces it; a
-  # section header is buffered with them, so a gap is filled inside its own [section].
-  # A section the file already has gets no second header - the key joins the block it has.
-  $pending = New-Object System.Collections.Generic.List[string]
-  $tplSectionName = ''
-  $tplHeading = ''
-  $added = 0
-  foreach ($raw in $tpl) {
-    $s = [string]$raw
-    $tl = $s.Trim()
-    if ($tl -eq '' -or $tl.StartsWith('#')) {
-      if ($tl -match '^#\s*----\s*(.+?)\s*----\s*$') {
-        $tplHeading = [string]$Matches[1]
-        # a heading the file already carries is not printed twice: its keys join that block
-        $already = @($doc.Lines | Where-Object { ([string]$_).Trim() -eq $tl })
-        if ($already.Count -gt 0) { $pending.Clear(); continue }
-      }
-      $pending.Add($s)
-      continue
-    }
-    if ($tl -match '^\[(.+)\]$') {
-      $tplSectionName = $Matches[1].Trim()
-      if ($null -ne (Get-IniDocSection $doc $tplSectionName)) { $pending.Clear(); continue }
-      $pending.Add($s)
-      continue
-    }
-    if ($tl -notmatch '^\s*([A-Za-z0-9_.-]+)\s*=') { $pending.Clear(); continue }
-    $key = $Matches[1]
-    if ($tplSectionName) { $key = $tplSectionName + '.' + $key }
-    if (Test-IniDocKey $doc $key) { $pending.Clear(); continue }
-    $block = @()
-    foreach ($p in $pending) { $block += $p }
-    $block += $s
-    $sec = $null
-    if ($tplSectionName) { $sec = Get-IniDocSection $doc $tplSectionName }
-    if ($null -ne $sec) {
-      # the section is already in the file: insert after its last line, comments included
-      $doc = Insert-IniDocLines $doc ([int]$sec.Last + 1) $block
-    } else {
-      # the key belongs to a heading block of the template, so it joins that block and never
-      # the tail of the file (see Find-TemplateInsertAt)
-      $cur = @($doc.Lines)
-      $at = Find-TemplateInsertAt $doc $tplHeading
-      if ($at -gt 0 -and $at -le $cur.Count -and $cur[$at - 1].Trim()) {
-        $doc = Insert-IniDocLines $doc $at @('')
-        $at++
-      }
-      $doc = Insert-IniDocLines $doc $at $block
-    }
-    $pending.Clear()
-    $added++
-  }
-  if ($added -gt 0 -or $pruned -gt 0 -or -not (Test-Path -LiteralPath $IniPath)) {
-    [void](Save-IniDoc $IniPath $doc)
-  }
-  return @{ Added = $added; Pruned = $pruned }
+  $doc = Read-IniDoc $before
+  $next = Merge-IniDocTemplate $doc @(Get-IniTemplateLines)
+  if (-not (Test-IniLinesSame $before $next.Lines)) { [void](Save-IniLines $IniPath $next.Lines) }
+  return @{ Added = $next.Added; Pruned = $next.Unknown }
 }
 
 

@@ -630,10 +630,47 @@ function Show-Picker([switch]$Warm) {
     }
 
     # The picker already put the text on the clipboard: hide it and paste into the window
-    # that was in front. Shared by Enter and by a plugin action that asks for
+    # that is in front. Shared by Enter and by a plugin action that asks for
     # After = 'paste' (transform copies the rewritten text, then wants it pasted).
+    #
+    # Which window that is gets decided when the key is pressed, not when the panel opened:
+    # the hook lets Alt+Tab through, so the user can bring another application forward while
+    # the panel is up, and the text still has to land where they are looking now. A window of
+    # this process does not count - after an input-method hand-over the panel itself is in
+    # front, and the daemon's own console can be too. Those are not places to paste into, and
+    # the window the panel came from is the answer for them.
+    function Get-PasteTarget {
+      try {
+        $fgNow = [Cb.Win]::GetForegroundWindow()
+        if ($fgNow -ne [IntPtr]::Zero -and -not [Cb.Win]::IsOwnWindow($fgNow)) { return $fgNow }
+      } catch { }
+      return $prev
+    }
+
+    # One line for a window. A paste that lands elsewhere is the one report that cannot be
+    # reproduced from a screenshot, and a handle alone says nothing: the program name and the
+    # title are what the user recognises.
+    function Format-WindowName([IntPtr]$hwnd) {
+      $where = 'hwnd=0x' + ([int64]$hwnd).ToString('X')
+      $proc = ''
+      try { $proc = Get-WindowProcessName $hwnd } catch { }
+      if ($proc) { $where = $where + ' ' + $proc }
+      try {
+        $title = [Cb.Win]::WindowTitle($hwnd, 40)
+        if ($title) { $where = $where + ' "' + $title + '"' }
+      } catch { }
+      return $where
+    }
+
+    function Format-PasteTarget([IntPtr]$target) {
+      $where = Format-WindowName $target
+      if ($target -ne $prev) { $where = $where + ' (switched, was 0x' + ([int64]$prev).ToString('X') + ')' }
+      return $where
+    }
+
     function Paste-Clip([string]$TypedText = '') {
-      $target = $prev
+      $target = Get-PasteTarget
+      Write-Log ('paste target: ' + (Format-PasteTarget $target))
       # the hook would eat the injected Ctrl+V, so it goes first in every path
       Disable-KeyHook
       if ($script:NoPaste) { $form.Hide(); $form.Close(); return }
@@ -644,23 +681,30 @@ function Show-Picker([switch]$Warm) {
         if (Test-Modifiers-Up) { break }
         Start-Sleep -Milliseconds 30
       }
+      # waiting only works when the key is let go of soon: a modifier that is still down when
+      # the wait ends is released, so the paste cannot arrive as another shortcut
+      if (-not (Test-Modifiers-Up)) { Release-HeldModifiers }
       # SetForegroundWindow can be refused by the foreground lock and SendKeys types into
       # whatever is in front, so hand over and verify before typing.
-      $ready = $false
-      for ($try = 0; $try -lt 24 -and -not $ready; $try++) {
-        [void][Cb.Win]::SetForegroundWindow($target)
-        Start-Sleep -Milliseconds 25
-        if ([Cb.Win]::GetForegroundWindow() -eq $target) { $ready = $true }
-      }
-      if (-not $ready) {
+      if (-not (Take-Foreground $target)) {
         Write-Log 'paste skipped: the target window did not take the foreground'
         Set-Foot 'Copied to the clipboard. The window did not come back to the front - press Ctrl+V there' ([int]$script:Timing['FootMessage'])
         return
       }
-      # the window is back but its caret may not be: give the control the keyboard again
-      [void](Restore-TargetFocus $target $script:PrevFocus)
+      # the window is back but its caret may not be: give the control the keyboard again.
+      # Only the window the panel came from has a remembered control; after a switch the
+      # caret already sits where the user left it.
+      if ($target -eq $prev) { [void](Restore-TargetFocus $target $script:PrevFocus) }
       $form.Hide()
       Start-Sleep -Milliseconds $script:PasteSettle
+      # hiding the panel moves the foreground for a moment, and a target that noticed can be
+      # behind it by now: the keys only mean anything while the target still has the front
+      if ([Cb.Win]::GetForegroundWindow() -ne $target) {
+        $moved = [Cb.Win]::GetForegroundWindow()
+        Write-Log ('paste: the foreground moved after the panel hid (' + (Format-WindowName $moved) + '), taking it back')
+        [void](Take-Foreground $target)
+        if ($target -eq $prev) { [void](Restore-TargetFocus $target $script:PrevFocus) }
+      }
       if ($TypedText -ne '') {
         # typing lands in the focused control through SendInput: no clipboard and no paste
         # key, which is what a target that ignores Ctrl+V needs
@@ -670,6 +714,10 @@ function Show-Picker([switch]$Warm) {
       } else {
         try { [Windows.Forms.SendKeys]::SendWait($PasteKeys) } catch { Write-Log ('sendkeys fail: ' + $_.Exception.Message) }
       }
+      try {
+        $after = [Cb.Win]::GetForegroundWindow()
+        if ($after -ne $target) { Write-Log ('paste: the foreground changed while the keys were sent (' + (Format-WindowName $after) + ')') }
+      } catch { }
       $form.Close()
     }
 
@@ -690,11 +738,12 @@ function Show-Picker([switch]$Warm) {
           }
         } catch { Write-Log ('transform skipped: ' + $_.Exception.Message) }
       }
-      if ($script:NoPaste -or $NoInject.IsPresent -or (Test-AppRuleNoPaste $prev)) { $form.Hide(); [void](Set-ClipItem $payload $rich); Set-LastCapture $payload; $form.Close(); return }
+      $pasteTo = Get-PasteTarget
+      if ($script:NoPaste -or $NoInject.IsPresent -or (Test-AppRuleNoPaste $pasteTo)) { $form.Hide(); [void](Set-ClipItem $payload $rich); Set-LastCapture $payload; $form.Close(); return }
       # the program in front decides whether the formatting travels with the paste:
       # a terminal wants the text, an editor wants the layout. The window asked about is the
       # one the paste goes back to - the panel itself may be in front after a hand-over.
-      if ($rich -and -not (Test-AppRuleKeepsRich $prev)) { $rich = '' }
+      if ($rich -and -not (Test-AppRuleKeepsRich $pasteTo)) { $rich = '' }
       if (-not (Set-ClipItem $payload $rich)) { Write-Log 'set clipboard failed'; $form.Close(); return }
       # our own write must not come back as a new capture
       Set-LastCapture $payload

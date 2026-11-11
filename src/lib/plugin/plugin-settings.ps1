@@ -52,6 +52,10 @@ function Register-PluginSettings {
         continue
       }
       if (-not (Add-SchemaProperty $script:SettingsSchema $full $s)) {
+        # A second Initialize-Main in the same process - the one-shot retry after a module the
+        # command needed was missing - registers the same key again. The spec is the same, so
+        # that is not a collision: only a key this plugin does not own is refused.
+        if ($script:IniSchema.Contains($full)) { $own[$full] = $s; continue }
         Write-Log ('plugin setting ignored (duplicate key): ' + $full)
         continue
       }

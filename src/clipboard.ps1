@@ -77,12 +77,15 @@ $groupModules = @{
   transfer = @('lib\transfer', 'utils\transfer', 'lib\migrate')
   config   = @('lib\config', 'lib\config-template', 'lib\shortcut', 'utils\dpi')
   panel    = @('utils\image', 'lib\panel\media-render', 'lib\panel\anim', 'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\keyhook', 'lib\panel\picker', 'lib\panel\picker-geom', 'lib\serve')
+  # the panel size and shape are arithmetic over the metric table: `status` prints them, and no
+  # window, palette or renderer is involved
+  panelgeom = @('lib\panel\picker-geom')
 }
 # what each command can reach. A name that is not listed here is a plugin verb: those read and
 # write entries, so they get the store group.
 $commandGroups = @{
   'version'   = @()
-  'status'    = @('store', 'config')
+  'status'    = @('store', 'config', 'panelgeom')
   'list'      = @('store')
   'get'       = @('store')
   'put'       = @('store')

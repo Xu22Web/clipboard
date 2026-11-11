@@ -159,6 +159,20 @@ function Get-UiaCaretRect([IntPtr]$hwnd) {
     # the line, and the left edge is where that line starts
     if ($h -le 0) { $h = [int][Math]::Max(1, [int]$script:Metric['RowHeight'] / 2) }
     if ($w -le 0) { $w = 1 }
+    # A caret is inside the element that owns it. A provider answering from a stale node
+    # reports a rectangle somewhere else on screen, which is worse than no answer at all.
+    $inside = $true
+    try {
+      $b = $el.Current.BoundingRectangle
+      $bx = [double]$b.Left; $by = [double]$b.Top
+      $bw = [double]$b.Width; $bh = [double]$b.Height
+      if (-not [double]::IsInfinity($bw) -and -not [double]::IsInfinity($bh) -and $bw -gt 0 -and $bh -gt 0) {
+        $tol = 4
+        $inside = ($x -ge ($bx - $tol)) -and ($y -ge ($by - $tol)) -and
+          (($x + $w) -le ($bx + $bw + $tol)) -and (($y + $h) -le ($by + $bh + $tol))
+      }
+    } catch { $inside = $true }
+    if (-not $inside) { return [Drawing.Rectangle]::Empty }
     return New-Object Drawing.Rectangle -ArgumentList @($x, $y, $w, $h)
   } catch {
     Write-Log ('uia caret: ' + $_.Exception.Message)

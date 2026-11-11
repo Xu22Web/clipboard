@@ -20,8 +20,9 @@
 # both are read case-insensitively.
 #
 # Every writer changes Lines and then reindexes, so a key keeps its line, the comment above it
-# and the order of the file. `config set` writes one key and `config init` adds the ones this
-# version has: both go through the functions below instead of walking the text themselves.
+# and the order of the file. `config set` writes one key, `config init` fits the whole file to
+# the template this version writes: both go through the functions below instead of walking the
+# text themselves, and none of them opens a file.
 
 # rebuild Map, Keys, Index and Sections from Lines
 function Update-IniDocIndex($doc) {
@@ -95,6 +96,15 @@ function Get-IniDocValue($doc, [string]$key) {
 function Test-IniDocKey($doc, [string]$key) {
   if ($null -eq $doc) { return $false }
   return $doc.Map.ContainsKey($key)
+}
+
+# one line of the file as it is written, the one a reader would see when a key appears twice
+function Get-IniDocLine($doc, [string]$key) {
+  if ($null -eq $doc -or -not $key) { return '' }
+  if (-not $doc.Index.ContainsKey($key)) { return '' }
+  $lines = @($doc.Index[$key].Lines)
+  if ($lines.Count -eq 0) { return '' }
+  return [string]$doc.Lines[[int]$lines[$lines.Count - 1]]
 }
 
 # the header line and the last line of a block, $null when the file has no such section
@@ -172,6 +182,69 @@ function Select-IniDocKeys($doc, [string]$prefix = '') {
     if ($name.StartsWith($head, [StringComparison]::OrdinalIgnoreCase)) { $out.Add($name) }
   }
   return $out.ToArray()
+}
+
+# Fit a doc to a template: the template is the shape the file should have, the doc holds the
+# values that are already there. A template is lines this version wrote itself, so it is not
+# parsed - it carries the headings, one comment above each key and one line per key, and every
+# key line is replaced by the value the doc has for it. A key the doc does not have keeps the
+# template's line, which is where the default comes from.
+#
+# A key the doc has but the template does not is not dropped: it is written as a comment at the
+# end, where removing the '#' brings it back. Pure: the doc is not touched, and the lines that
+# would be written come back with the two counts a caller reports.
+function Merge-IniDocTemplate($doc, [string[]]$template) {
+  $out = [System.Collections.Generic.List[string]]::new()
+  $known = @{}
+  $section = ''
+  $added = 0
+  foreach ($raw in @($template)) {
+    $s = [string]$raw
+    $t = $s.Trim()
+    if ($t -match '^\[(.+)\]$') { $section = $Matches[1].Trim(); $out.Add($s); continue }
+    if ($t -eq '' -or $t.StartsWith('#') -or $t.StartsWith(';')) { $out.Add($s); continue }
+    if ($t -notmatch '^([A-Za-z0-9_.-]+)\s*=') { $out.Add($s); continue }
+    $leaf = $Matches[1]
+    $full = $leaf
+    if ($section) { $full = $section + '.' + $leaf }
+    $known[$full.ToLowerInvariant()] = $true
+    $line = Get-IniDocLine $doc $full
+    if ($line) {
+      # keep the value exactly, re-spelled in the template's 'Key=value' shape
+      $value = [string]($line.Trim() -replace '^[^=]*=', '')
+      $out.Add($leaf + '=' + $value)
+      continue
+    }
+    $added++
+    $out.Add($s)
+  }
+  # keys this version does not know: readable, out of the way, one comment each
+  $unknown = [System.Collections.Generic.List[string]]::new()
+  if ($null -ne $doc) {
+    foreach ($k in @($doc.Keys)) {
+      if ($known.ContainsKey(([string]$k).ToLowerInvariant())) { continue }
+      foreach ($n in @($doc.Index[$k].Lines)) {
+        $unknown.Add('# [unknown] ' + ([string]$doc.Lines[[int]$n]).Trim())
+      }
+    }
+  }
+  if ($unknown.Count -gt 0) {
+    $out.Add('')
+    $out.Add('# ---- keys this version does not know (remove the # to keep one) ----')
+    foreach ($l in $unknown) { $out.Add($l) }
+  }
+  return @{ Lines = $out.ToArray(); Added = $added; Unknown = $unknown.Count }
+}
+
+# the two line sets say the same thing; trailing whitespace an editor added does not count
+function Test-IniLinesSame([string[]]$a, [string[]]$b) {
+  $x = @($a)
+  $y = @($b)
+  if ($x.Count -ne $y.Count) { return $false }
+  for ($i = 0; $i -lt $x.Count; $i++) {
+    if (([string]$x[$i]).TrimEnd() -cne ([string]$y[$i]).TrimEnd()) { return $false }
+  }
+  return $true
 }
 
 # the file as it would be written: the lines that were read, with every edit in place

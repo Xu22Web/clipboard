@@ -108,28 +108,60 @@ function Restore-TargetFocus([IntPtr]$hwnd, [IntPtr]$focus) {
   Write-Log ('focus restored=' + $ok)
   return $ok
 }
+# a modifier that is still down turns "Ctrl+V" into a different shortcut, so it is let go of
+# instead of waited for: the keys are only ever sent up, never down
+function Release-HeldModifiers {
+  foreach ($vk in @($script:ModifierKeys)) {
+    try {
+      if ((([Cb.Win]::GetAsyncKeyState([int]$vk) -band 0x8000) -ne 0)) {
+        [Cb.Win]::keybd_event([byte]$vk, 0, 2, [IntPtr]::Zero)
+        Write-Log ('released a held modifier: vk=0x' + ([int]$vk).ToString('X'))
+      }
+    } catch { }
+  }
+}
+
+# Bring a window to the front for real. SetForegroundWindow alone is refused while another
+# process owns the foreground (the foreground lock), so a refused call is repeated with the
+# input queues attached - the documented workaround - and the result is checked, never assumed.
+# $WhileAttached runs inside that window, where a control can still be given the focus.
+function Take-Foreground([IntPtr]$hwnd, $WhileAttached = $null) {
+  if ($hwnd -eq [IntPtr]::Zero) { return $false }
+  for ($try = 0; $try -lt 3; $try++) {
+    try { [void][Cb.Win]::SetForegroundWindow($hwnd) } catch { }
+    Start-Sleep -Milliseconds 25
+    if ([Cb.Win]::GetForegroundWindow() -eq $hwnd) {
+      if ($null -ne $WhileAttached) { [void](& $WhileAttached) }
+      return $true
+    }
+    $otid = [Cb.Win]::GetCurrentThreadId()
+    $fg = [Cb.Win]::GetForegroundWindow()
+    $ftid = [uint32]0
+    if ($fg -ne [IntPtr]::Zero) { $ftid = [Cb.Win]::GetWindowThreadProcessId($fg, [IntPtr]::Zero) }
+    $attached = $false
+    try {
+      if ($ftid -ne 0 -and $ftid -ne $otid) { $attached = [Cb.Win]::AttachThreadInput($otid, $ftid, $true) }
+      [void][Cb.Win]::BringWindowToTop($hwnd)
+      [void][Cb.Win]::SetForegroundWindow($hwnd)
+      if ($null -ne $WhileAttached) { [void](& $WhileAttached) }
+      Start-Sleep -Milliseconds 25
+    } finally {
+      if ($attached) { [void][Cb.Win]::AttachThreadInput($otid, $ftid, $false) }
+    }
+    if ([Cb.Win]::GetForegroundWindow() -eq $hwnd) { return $true }
+  }
+  return $false
+}
+
 # Hand the keyboard over for real: an input method needs an ordinary window that owns the
-# foreground and the focus. SetForegroundWindow is refused while another process owns the
-# foreground (the foreground lock), so the call attaches to that thread first - the
-# documented workaround - and WS_EX_NOACTIVATE comes off for as long as the IME needs it.
+# foreground and the focus. WS_EX_NOACTIVATE comes off for as long as the IME needs it.
 function Switch-ToTakeover([IntPtr]$hwnd, $TextBox) {
   Disable-KeyHook
   [Cb.Win]::SetNoActivate($hwnd, $false)
-  $otid = [Cb.Win]::GetCurrentThreadId()
-  $fg = [Cb.Win]::GetForegroundWindow()
-  $ftid = [uint32]0
-  if ($fg -ne [IntPtr]::Zero) { $ftid = [Cb.Win]::GetWindowThreadProcessId($fg, [IntPtr]::Zero) }
-  $attached = $false
-  try {
-    if ($ftid -ne 0 -and $ftid -ne $otid) { $attached = [Cb.Win]::AttachThreadInput($otid, $ftid, $true) }
-    [void][Cb.Win]::BringWindowToTop($hwnd)
-    [void][Cb.Win]::SetForegroundWindow($hwnd)
-    if ($null -ne $TextBox) { try { $TextBox.Focus() } catch { } }
-  } finally {
-    if ($attached) { [void][Cb.Win]::AttachThreadInput($otid, $ftid, $false) }
-  }
-  $ok = ([Cb.Win]::GetForegroundWindow() -eq $hwnd)
-  Write-Log ('takeover: foreground=' + $ok + ' fgTid=' + $ftid + ' ourTid=' + $otid)
+  $give = $null
+  if ($null -ne $TextBox) { $give = { try { $TextBox.Focus() } catch { } } }
+  $ok = Take-Foreground $hwnd $give
+  Write-Log ('takeover: foreground=' + $ok + ' ourTid=' + [Cb.Win]::GetCurrentThreadId())
   return $ok
 }
 

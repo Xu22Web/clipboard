@@ -159,7 +159,9 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 输入法需要真实键盘焦点，因此面板按 `ImeTakeover` 决定何时交接：`manual`（默认）在点击搜索区（占位文字、图标、清空按钮与头部区域）时，`auto` 在输入法处于中文组字模式（`IME_CMODE_NATIVE`）时按下第一个可打印键，`off` 则从不。交接过程为卸载钩子、临时去掉 `WS_EX_NOACTIVATE`、用 `AttachThreadInput` 附加前台线程后调用 `SetForegroundWindow`，成为前台后重放该键与本批剩余按键；失败则不重放并重装钩子。`Ctrl+Space` 等输入法切换键一律放行。取不到键盘钩子时，面板从打开起即为接管模式。编辑窗口打开时，按键与交接都以编辑框为目标。关闭面板时前台还给打开它之前的窗口。
 
-粘贴前确认原窗口已回到前台（最多重试 24 次），并把键盘焦点还给该窗口原先的控件；失败则不注入按键，保留面板并提示按 `Ctrl+V`。注入前按 `ModReleaseTimeout` 等待修饰键松开。
+粘贴前把目标窗口切回前台并确认，再把键盘焦点还给该窗口原先的控件；前台被别的进程占住时用 `AttachThreadInput` 附加后再取一次，仍失败则不注入按键，保留面板并提示按 `Ctrl+V`。面板隐藏后重新确认前台，被别的窗口抢走时再取回。注入前按 `ModReleaseTimeout` 等待修饰键松开，超时后仍按住的修饰键会被松开，避免 `Ctrl+V` 变成 `Ctrl+Alt+V` 之类的别的快捷键。
+
+目标窗口是**按键那一刻**的前台窗口（钩子放行 `Alt+Tab`，面板打开后换到别的程序，文本就落在新窗口）；属于本进程的窗口（交接后的面板本身、常驻进程的控制台）不算目标，此时用打开面板前的那个窗口。
 
 钩子仅接管面板使用的键：可打印字符、方向键与 `PgUp` `PgDn` `Home` `End`、`Delete`、`F2`、`Backspace` `Tab` `Enter` `Esc`，以及面板响应的 `Ctrl` 组合（`Ctrl+A`、`Ctrl+Z`、`Ctrl+Enter`、`Ctrl+0..9` 与插件注册的键）。其余交给系统，包括所有 `Alt` / `Win` 组合、`Ctrl+Space`、`Ctrl+Shift+Esc`、未处理的 `Ctrl` 快捷键、`F1` 与 `F3`–`F12`、`Insert`。
 
@@ -190,7 +192,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 读取时做一次全量校验：未知键、类型或范围不符、主题名不存在、枚举项非法，都在 `clipboard config` 顶部逐条列出，`status` 只给出计数（`[!] N value(s) need attention`）；出错项按默认值继续运行。
 
-`config init` 写出带注释的模板：只补缺失的键，保留已有值（含插件设置），列出全部插件的设置键（无论在 `Plugins=` 中是否启用），并把本版本不认识的键改为 `# [unknown] 原内容`，可重复执行。`config reset` 用默认值重写整个文件。
+`config init` 按模板重写文件：同样的标题与顺序、每个键上方一行说明，已有的值全部保留（含插件设置），本版本不认识的键改写成 `# [unknown] 原内容` 放在文件末尾；内容没有变化时不写盘，可重复执行。`config reset` 用默认值重写整个文件。
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
@@ -198,7 +200,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `Hotkey` | `Ctrl+Alt+V` | 全局热键；`Win+V` 在多数系统上被占用，注册失败时回退 |
 | `HotkeyFallbacks` | 空 | 逗号分隔的回退链；空 = Ctrl+Alt+V / Win+V / Alt+反引号 / Win+Shift+V |
 | `PasteKeys` | `^v` | 选定后用 SendKeys 发送的按键（`^+v` = Ctrl+Shift+V） |
-| `ModReleaseTimeout` | `1200` | 最多等待修饰键松开的时间（毫秒） |
+| `ModReleaseTimeout` | `1200` | 最多等待修饰键松开的时间（毫秒）；超时后仍按住的修饰键会被松开 |
 | `PasteSettle` | `80` | 切回原窗口后到发送 `PasteKeys` 之间的等待（毫秒） |
 | `MaxItems` | `300` | 最多保留条数（带保护标记的行不受裁剪影响） |
 | `MaxTextBytes` | `204800` | 单条纯文本上限（字节），超出不入库 |
@@ -355,7 +357,7 @@ AppRules=windowsterminal.exe:plain;code.exe:rich;*:no-paste
 | `*` | 兜底，未被前面规则命中的程序使用 |
 
 - 程序名写进程名，`.exe` 可省略，大小写不敏感；`;` 或 `,` 分隔。
-- 判断依据是粘贴目标窗口，即打开面板前的那个窗口；面板接管前台时不变。
+- 判断依据是粘贴目标窗口（含义见「焦点模型」）。
 - `PasteRich=0` 时 `rich` 规则同样不粘格式。
 - 非法动作在 `config set` 时报 `unknown action`。
 
@@ -646,14 +648,14 @@ src/                    程序本体（打包只读这个目录）
   lib/marks.ps1           标记的读写与含义查询
   lib/ordering.ps1        行序规则：排序标记置顶、粘性置顶的可冻结行数
   lib/migrate.ps1         数据格式迁移：检测版本、备份、逐级升级
-  lib/modifiers.ps1       修饰键状态
+  lib/modifiers.ps1       修饰键状态（真实键盘状态，不看线程队列）
   lib/entry.ps1           条目分类（text / files / image / empty）与条目文案
   lib/query.ps1           搜索语法：字段含义、正则编译、类型判定、匹配
   lib/select.ps1          批量选择：Ctrl/Shift 规则、批量复制与删除
   lib/serve.ps1           常驻进程：捕获循环、热键、托盘、崩溃重启
   lib/shortcut.ps1        开机自启与桌面快捷方式的安装与卸载
   lib/config.ps1          config 命令面：应用设置、打印有效值、重启常驻
-  lib/config-template.ps1 写进文件的 clipboard.ini：行序与分组、补键合并、reset
+  lib/config-template.ps1 写进文件的 clipboard.ini：行序与分组、按模板重写、reset
   lib/usage.ps1           help 输出
   lib/dispatch.ps1        Invoke-Main：Initialize-Main（Apply-Config + 装配插件）→ Invoke-Dispatch
   lib/proxy.ps1           命令代理
@@ -669,7 +671,7 @@ src/                    程序本体（打包只读这个目录）
   lib/panel/pinlist.ps1     自绘列表控件 Cb.PinList
   lib/panel/preview.ps1     悬停预览卡片
   lib/panel/anim.ps1        过渡动画的数值层
-  lib/panel/keyhook.ps1     低级键盘钩子
+  lib/panel/keyhook.ps1     低级键盘钩子、取前台、松开仍按住的修饰键
   lib/panel/media-render.ps1 图片与富文本的位图与缓存
 
   lib/plugin/             插件层：三个文件要么全有要么全无
@@ -679,7 +681,7 @@ src/                    程序本体（打包只读这个目录）
   plugins/*.ps1           插件（item-marks / entry-actions / transform / retention）
   themes/*.ini            主题（win11-dark / win11-light）
 
-  utils/ini.ps1           文本 → 文档与文档上的增删改查（纯函数）
+  utils/ini.ps1           文本 → 文档与文档上的增删改查（纯函数，含按模板重写）
   utils/inifile.ps1       导入 ini 文件（按路径缓存）与写回单个键
   utils/schema.ps1        schema 的加载 / 校验 / 单值转换
   utils/hotkey.ps1        热键字符串 → 修饰键 + 虚拟键码
@@ -704,7 +706,7 @@ src/                    程序本体（打包只读这个目录）
 
 结构约束：`$Root` 只在入口文件中计算（点源文件中 `$PSScriptRoot` 指向 `lib\`，据此拼接路径会使 `themes\`、`plugins\`、`data\` 错一层）；只有 `base.ps1` 与 `config.ps1` 在加载时赋值，其余模块只定义函数。除 `lib\themes.ps1` 与插件三件套外，模块缺失会报 `missing: …` 并以退出码 1 结束。
 
-模块按命令加载：`$baseModules` 是每条命令都需要的 18 个文件，四个可选组 `store` / `transfer` / `config` / `panel` 由 `$commandGroups` 按命令决定，因此 `version` 只解析 18 个文件，`list` 约 30 个，只有绘制命令才加载面板；`-Library`（测试用）加载全部。
+模块按命令加载：`$baseModules` 是每条命令都需要的 18 个文件，五个可选组 `store` / `transfer` / `config` / `panel` / `panelgeom` 由 `$commandGroups` 按命令决定（`panelgeom` 只有面板尺寸的纯计算，`status` 打印面板形状时用它），因此 `version` 只解析 18 个文件，`list` 约 30 个，只有绘制命令才加载面板；`-Library`（测试用）加载全部。
 
 写入位置由 `DataDir=` 决定，留空则使用脚本旁的 `data\`；`config` 的 `data dir` 与 `status` 的 `store file` 显示实际位置。程序不写入 `%LOCALAPPDATA%` 或其它用户目录：位置不可写时报错并以退出码 1 结束。除 `install`（快捷方式）与 `restore`（注册表项）外不写注册表。
 
@@ -722,7 +724,10 @@ src/                    程序本体（打包只读这个目录）
 | `store: folded` | 历史折叠：折叠后行数与耗时 |
 | `formatted text rtf skipped` / `html image not inlined` | 命中尺寸限制而被丢弃的块 / 未内联的图 |
 | `html fallback dropped` | 剪贴板被其他程序占用时只能按字符串读回，读到的字节有丢失即丢弃该 html（文本与 RTF 照常保存） |
+| `paste target:` | 每次粘贴的目标窗口：句柄、进程名与标题；`(switched, was …)` 表示按键那一刻前台已不是打开面板时的窗口 |
 | `paste skipped` / `sendkeys fail` | 未能夺回前台因而未注入 / 注入失败 |
+| `paste: the foreground moved…` / `paste: the foreground changed…` | 面板隐藏后前台被别的窗口抢走并已取回 / 注入按键时前台已经变了 |
+| `released a held modifier` | 等待超时后仍按住的修饰键被松开 |
 
 这些行只在状态变化时产生（每次复制、首次渲染、每次粘贴），不随轮询或悬停频率增长。
 

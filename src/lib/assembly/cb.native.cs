@@ -92,6 +92,15 @@ namespace Cb {
     // completion list would appear next to. Empty when the window is gone, has no focused
     // control, or that control shows no caret right now - a zero height is what a control
     // reports while it is scrolled away or in the middle of a layout pass.
+    //
+    // rcCaret is documented as screen coordinates, but a Win32 edit control reports it inside
+    // its own client area (measured: a text box at 308,231 with the caret after "hello" answers
+    // 104,1). Both are handled: the rect is taken as it is when it already lies inside the
+    // control that holds the keyboard, and otherwise moved there with ClientToScreen. A caret
+    // that fits neither way is returned raw, and the caller's validity test decides.
+    [StructLayout(LayoutKind.Sequential)] private struct CARETPOINT { public int X; public int Y; }
+    [DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr h, ref CARETPOINT p);
+
     public static System.Drawing.Rectangle CaretOfWindow(IntPtr hwnd) {
       if (hwnd == IntPtr.Zero) { return System.Drawing.Rectangle.Empty; }
       uint tid = GetWindowThreadProcessId(hwnd, IntPtr.Zero);
@@ -105,7 +114,18 @@ namespace Cb {
       if (ch <= 0) { return System.Drawing.Rectangle.Empty; }
       int cw = r.Right - r.Left;
       if (cw <= 0) { cw = 1; }
-      return new System.Drawing.Rectangle(r.Left, r.Top, cw, ch);
+      System.Drawing.Rectangle caret = new System.Drawing.Rectangle(r.Left, r.Top, cw, ch);
+      if (info.hwndFocus == IntPtr.Zero || !IsWindow(info.hwndFocus)) { return caret; }
+      System.Drawing.Rectangle bounds = WindowBounds(info.hwndFocus);
+      if (bounds.IsEmpty) { return caret; }
+      System.Drawing.Rectangle room = System.Drawing.Rectangle.Inflate(bounds, 4, 4);
+      if (room.Contains(caret)) { return caret; }
+      CARETPOINT origin = new CARETPOINT();
+      if (ClientToScreen(info.hwndFocus, ref origin)) {
+        System.Drawing.Rectangle moved = new System.Drawing.Rectangle(caret.Left + origin.X, caret.Top + origin.Y, cw, ch);
+        if (room.Contains(moved)) { return moved; }
+      }
+      return caret;
     }
 
     // The rectangle of the control that owns the keyboard in that window, in screen pixels.
@@ -120,6 +140,29 @@ namespace Cb {
       if (!GetGUIThreadInfo(tid, ref info)) { return System.Drawing.Rectangle.Empty; }
       if (info.hwndFocus == IntPtr.Zero || !IsWindow(info.hwndFocus)) { return System.Drawing.Rectangle.Empty; }
       return WindowBounds(info.hwndFocus);
+    }
+
+    // ---- naming a window in a log line ------------------------------------------------
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowTextW(IntPtr h, System.Text.StringBuilder s, int n);
+
+    // The title a user would read. A paste that landed in the wrong window is told apart by the
+    // name of the window, never by its handle, so the log carries one narrow copy of it.
+    public static string WindowTitle(IntPtr h, int max) {
+      if (h == IntPtr.Zero) { return ""; }
+      System.Text.StringBuilder sb = new System.Text.StringBuilder(320);
+      if (GetWindowTextW(h, sb, sb.Capacity) <= 0) { return ""; }
+      string t = sb.ToString().Replace("\r", " ").Replace("\n", " ").Trim();
+      if (max > 0 && t.Length > max) { t = t.Substring(0, max) + "..."; }
+      return t;
+    }
+
+    // True when the window belongs to this process: the panel, a tray or message window of the
+    // daemon, or the console it was started from. None of them is somewhere to paste into.
+    public static bool IsOwnWindow(IntPtr h) {
+      if (h == IntPtr.Zero) { return false; }
+      uint pid;
+      GetWindowOwnerProcessId(h, out pid);
+      return pid != 0 && pid == (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
     }
 
     // A window that does not answer WM_NULL within the budget is one whose accessibility calls

@@ -159,6 +159,48 @@ Describe 'int' {
     }
   }
 
+  # `config init` rewrites the file from the template, so the result is the same file every
+  # time: one comment per key, no blank line inside a block, no key twice in one section
+  Describe 'config init keeps the file regular' {
+    BeforeAll {
+      # a file an older build left behind: a stray blank line inside a block, a key written
+      # twice, and a comment whose key is gone
+      [IO.File]::WriteAllText($roIni, ("Rows=7`r`n`r`n`r`nMaxItems=42`r`nMaxItems=44`r`n# a comment left behind`r`n`r`n[transform]`r`nMode=upper`r`n"), $Utf8)
+    }
+    It 'config init writes the template shape back' {
+      $o = Run @('config', 'init')
+      $txt = [IO.File]::ReadAllText($roIni)
+      $lines = @($txt -split "`r?`n")
+      $blanks = 0
+      $run = 0
+      $dups = @()
+      $seen = @{}
+      $section = ''
+      foreach ($ln in $lines) {
+        $t = $ln.Trim()
+        if ($t -eq '') { $run++; if ($run -gt 1) { $blanks++ }; continue }
+        $run = 0
+        if ($t -match '^\[(.+)\]$') { $section = $Matches[1]; continue }
+        if ($t -notmatch '^([A-Za-z0-9_.-]+)\s*=') { continue }
+        $full = $Matches[1]
+        if ($section) { $full = $section + '.' + $full }
+        if ($seen.ContainsKey($full)) { $dups += $full } else { $seen[$full] = $true }
+      }
+      Expect (($blanks -eq 0) -and ($dups.Count -eq 0)) ('blank runs=' + $blanks + ' duplicates=' + ($dups -join ','))
+      Expect (-not ($txt -match 'a comment left behind')) 'a comment without its key should be gone'
+    }
+    It 'the values of the old file survive the rewrite' {
+      $txt = [IO.File]::ReadAllText($roIni)
+      Expect (($txt -match '(?m)^Rows=7\r?$') -and ($txt -match '(?m)^MaxItems=44\r?$') -and ($txt -match '(?m)^Mode=upper\r?$')) 'the last value wins and nothing is reset'
+    }
+    It 'a second run changes nothing' {
+      $first = [IO.File]::ReadAllText($roIni)
+      $o = Run @('config', 'init')
+      $second = [IO.File]::ReadAllText($roIni)
+      Expect (($first -ceq $second) -and ($o -match '0 key\(s\) added')) $o.Trim()
+    }
+  }
+
   Describe 'config reset' {
     It 'config reset restores the defaults' {
       $o = Run @('config', 'reset')

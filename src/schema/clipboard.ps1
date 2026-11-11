@@ -17,7 +17,7 @@
     Hotkey            = @{ Type = 'hotkey'; Ref = [ref]$script:Hotkey; Default = 'Ctrl+Alt+V'; Description = 'global hotkey' }
     HotkeyFallbacks   = @{ Type = 'string'; Ref = [ref]$script:HotkeyFallbacks; Default = ''; Description = 'comma separated fallback chain, empty = the built-in chain' }
     PasteKeys         = @{ Type = 'string'; Ref = [ref]$script:PasteKeys; Default = '^v'; Description = 'SendKeys sent after picking' }
-    ModReleaseTimeout = @{ Type = 'int'; Ref = [ref]$script:ModReleaseTimeout; Default = 1200; Minimum = 0; Maximum = 60000; Description = 'ms to wait for the modifiers to be released' }
+    ModReleaseTimeout = @{ Type = 'int'; Ref = [ref]$script:ModReleaseTimeout; Default = 1200; Minimum = 0; Maximum = 60000; Description = 'ms to wait for the modifiers; one still held afterwards is released' }
     PasteSettle       = @{ Type = 'int'; Ref = [ref]$script:PasteSettle; Default = 80; Minimum = 0; Maximum = 10000; Description = 'ms to wait before sending PasteKeys' }
     MaxItems           = @{ Type = 'int'; Ref = [ref]$script:MaxItems; Default = 300; Minimum = 1; Maximum = 100000; Description = 'entry cap (rows a mark protects are exempt)' }
     MaxTextBytes       = @{ Type = 'int'; Ref = [ref]$script:MaxTextBytes; Default = 204800; Minimum = 1; Maximum = 104857600; Description = 'per text entry cap in bytes; a larger payload is not saved' }

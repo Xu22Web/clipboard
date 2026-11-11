@@ -306,9 +306,10 @@ try {
     Describe 'entry point' {
       It 'stays an entry point' {
         $entryLines = @([IO.File]::ReadAllLines($script:StructEntryPath)).Count
-        # 220, not 200: the entry also decides whether the resident answers the command instead
-        # of a fresh process (the proxy block), which is a table plus a few lines of glue
-        Expect ($entryLines -le 220) ([string]$entryLines + ' lines')
+        # 224, not 200: the entry also decides whether the resident answers the command instead
+        # of a fresh process (the proxy block), which is a table plus a few lines of glue, and
+        # `status` needs a group of its own for the panel geometry it prints
+        Expect ($entryLines -le 224) ([string]$entryLines + ' lines')
       } -Skip $script:StructMinified
 
       It 'computes the tool root once' {
@@ -350,6 +351,31 @@ try {
       It 'names only modules that exist' {
         $missingGroupFile = @($script:StructGroupFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $srcRoot ($_ + '.ps1'))) })
         Expect ($script:StructGroupFiles.Count -ge 15 -and $missingGroupFile.Count -eq 0) (($missingGroupFile -join ', ') + ' / ' + $script:StructGroupFiles.Count + ' modules')
+      } -Skip $script:StructMinified
+
+      It 'every command can reach the functions it calls' {
+        # `status` prints the panel size and shape, which needs picker-geom: without it the
+        # one-shot path throws, reloads every group and registers the plugins a second time -
+        # which is where the "duplicate key" lines in the log came from
+        $entryText = [IO.File]::ReadAllText($script:StructEntryPath)
+        $groupBlock = ($entryText -split '\$groupModules = @\{')[1]
+        if ($groupBlock) { $groupBlock = ($groupBlock -split "\r?\n\}")[0] }
+        $need = @{
+          'status' = @('lib\panel\picker-geom')
+          'list'   = @('lib\store')
+          'config' = @('lib\config-template')
+        }
+        foreach ($cmd in @($need.Keys)) {
+          $line = [regex]::Match($entryText, "(?m)^  '" + $cmd + "'\s*= @\(([^)]*)\)")
+          Expect ($line.Success) ($cmd + ' is not in the module table')
+          $files = @()
+          foreach ($g in @([regex]::Matches($line.Groups[1].Value, "'([a-z]+)'") | ForEach-Object { $_.Groups[1].Value })) {
+            $m = [regex]::Match($groupBlock, "(?m)^  " + $g + "\s+= @\(([^)]*)\)")
+            if ($m.Success) { $files += @([regex]::Matches($m.Groups[1].Value, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value }) }
+          }
+          $missing = @($need[$cmd] | Where-Object { $files -notcontains $_ })
+          Expect ($missing.Count -eq 0) ($cmd + ' cannot reach ' + ($missing -join ', '))
+        }
       } -Skip $script:StructMinified
     }
 
@@ -505,6 +531,41 @@ try {
         Expect ($script:StructPickerText -match '(?s)function Paste-Clip[^\r\n]*\{.{0,600}Disable-KeyHook') 'Disable-KeyHook missing before SendKeys'
       }
 
+      It 'the paste target is the window in front, and never one of ours' {
+        # after an input-method hand-over the panel itself is in front; the daemon's console can
+        # be too. Neither is somewhere to paste into, so the window the panel came from is used.
+        Expect ($script:StructPickerText -match 'Get-PasteTarget') 'no Get-PasteTarget in the picker'
+        Expect ($script:StructPickerText -match 'IsOwnWindow') 'the paste may be aimed at one of our own windows'
+        Expect ($script:StructPickerText -match 'Format-PasteTarget') 'the paste target is not written to the log'
+      }
+
+      It 'the foreground is taken by one helper, shared with the hand-over' {
+        # the panel is refused the foreground while another process owns it, and the documented
+        # workaround (AttachThreadInput) is worth writing once, not twice
+        Expect ($script:StructPickerText -match 'Take-Foreground') 'the paste does not use Take-Foreground'
+        $khText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\keyhook.ps1'))
+        Expect ($khText -match '(?s)function Take-Foreground') 'Take-Foreground missing'
+        Expect ($khText -match '(?s)function Switch-ToTakeover[^\r\n]*\{(?:(?!function ).){0,600}Take-Foreground') 'the hand-over does not use Take-Foreground'
+        Expect (-not ($khText -match '(?s)function Switch-ToTakeover[^\r\n]*\{(?:(?!function ).){0,600}AttachThreadInput')) 'the attach is still written in Switch-ToTakeover as well'
+      }
+
+      It 'the foreground is checked again after the panel hides' {
+        # hiding the panel can leave another window in front - the keys only mean anything while
+        # the target still has it, so the check cannot be left at the moment of the hand-over
+        Expect ($script:StructPickerText -match '(?s)\$form\.Hide\(\).{0,600}GetForegroundWindow') 'the foreground is not re-checked after the panel hid'
+      }
+
+      It 'a modifier still held at the timeout is released' {
+        # Control.ModifierKeys reads the calling thread's key state, and the panel never owns the
+        # keyboard: waiting on it alone would send Ctrl+V with Alt still down
+        $modText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'modifiers.ps1'))
+        $khText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\keyhook.ps1'))
+        Expect ($modText -match '(?s)function Get-HeldModifier\s*\{.{0,400}GetAsyncKeyState') 'the modifier wait does not read the real key state'
+        Expect ($modText -match 'function Test-Modifiers-Up\s*\{\s*return \(\(Get-HeldModifier\)') 'Test-Modifiers-Up still reads the thread key state'
+        Expect ($khText -match '(?s)function Release-HeldModifiers') 'no Release-HeldModifiers'
+        Expect ($script:StructPickerText -match 'Release-HeldModifiers') 'a held modifier is never released before the paste'
+      }
+
       It 'gives the caret back after the foreground was moved' {
         # a window that comes back is not a caret that comes back: the focused control is saved
         # when the panel opens and asked for again after a hand-over and after a paste
@@ -544,10 +605,17 @@ try {
         Expect ($script:StructWinText -match 'Current\.ProcessId') 'the focused element is trusted without a process check'
       }
 
+      It 'the caret is read in screen pixels' {
+        # a Win32 edit control answers rcCaret inside its own client area - measured: a text box
+        # at 308,231 with the caret after "hello" answers 104,1 - so the rect has to be moved to
+        # the screen, or the panel anchors at the top left corner of the window it came from
+        Expect ($script:StructWinText -match '(?s)CaretOfWindow.{0,2000}ClientToScreen') 'the caret rect is not moved to screen coordinates'
+      }
+
       It 'paste can type instead of injecting a paste key' {
         # PasteTyping=1 hands the text to SendInput: the paste path has to keep that branch,
         # and it must stay inside Paste-Clip so the hand-over and the settle still happen first
-        Expect ($script:StructPickerText -match '(?s)function Paste-Clip[^\r\n]*\{.{0,2000}SendUnicode\(\$TypedText\)') 'SendUnicode branch missing in Paste-Clip'
+        Expect ($script:StructPickerText -match '(?s)function Paste-Clip[^\r\n]*\{.{0,3000}SendUnicode\(\$TypedText\)') 'SendUnicode branch missing in Paste-Clip'
         Expect ($script:StructPickerText -match '\$script:PasteTyping') 'PasteTyping never read'
       }
 
@@ -780,6 +848,32 @@ try {
         $parsed = Read-IniDoc @('[pkg]', 'B=1', 'A=2', 'B=3')
         Expect ($parsed.Map['pkg.B'] -eq '3') ('B=' + $parsed.Map['pkg.B'])
         Expect (($parsed.Keys -join ',') -eq 'pkg.B,pkg.A') ($parsed.Keys -join ',')
+        # the line a key was written on is the last one it appears on
+        Expect ((Get-IniDocLine $parsed 'pkg.B') -eq 'B=3') (Get-IniDocLine $parsed 'pkg.B')
+      }
+
+      It 'a template keeps the values the file already holds' {
+        # fitting a file to the template is one pure step: the template brings the headings, the
+        # order and one line per key, the file brings the values
+        $doc = Read-IniDoc @('', '# ---- panel behaviour ----', 'ShowTime=0', '[item-marks]', 'MaxPins=7', 'Leftover=1')
+        $tpl = @('# head', '', '# ---- panel behaviour ----', '# about it', 'ShowTime=1', 'CompactMode=0', '', '# ---- plugin: item-marks ----', '[item-marks]', 'MaxPins=50')
+        $r = Merge-IniDocTemplate $doc $tpl
+        $text = ($r.Lines -join '|')
+        Expect ($text.Contains('ShowTime=0')) ('value kept: ' + $text)
+        Expect ($text.Contains('CompactMode=0')) ('template line kept: ' + $text)
+        Expect ($text.Contains('[item-marks]|MaxPins=7')) ('plugin value kept: ' + $text)
+        Expect ($r.Added -eq 1) ('added=' + $r.Added)
+        # a key this version does not know survives as a comment, at the end
+        Expect ($r.Unknown -eq 1) ('unknown=' + $r.Unknown)
+        Expect ($text.Contains('# [unknown] Leftover=1')) ('unknown key kept: ' + $text)
+        Expect (($r.Lines[$r.Lines.Count - 1]) -eq '# [unknown] Leftover=1') 'the unknown key is not last'
+      }
+
+      It 'the same lines compare equal, trailing whitespace aside' {
+        Expect (Test-IniLinesSame @('A=1', 'B=2') @('A=1', 'B=2')) ''
+        Expect (Test-IniLinesSame @('A=1  ') @('A=1')) ''
+        Expect (-not (Test-IniLinesSame @('A=1') @('A=2'))) ''
+        Expect (-not (Test-IniLinesSame @('A=1') @('A=1', 'B=2'))) ''
       }
 
       It 'Apply-Config picks up the paste timings and the fallback list' {
