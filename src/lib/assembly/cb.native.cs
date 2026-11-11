@@ -218,6 +218,18 @@ namespace Cb {
       return sb.ToString();
     }
 
+    // The window just below this one in the z-order, skipping the invisible ones: what a flyout
+    // shows when it goes away is whatever was behind it, and that is the window to hand the
+    // foreground to when the flyout ignores Escape.
+    [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr h, uint cmd);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+    public static IntPtr WindowBelow(IntPtr h) {
+      if (h == IntPtr.Zero) { return IntPtr.Zero; }
+      IntPtr w = GetWindow(h, 2);   // GW_HWNDNEXT
+      while (w != IntPtr.Zero && !IsWindowVisible(w)) { w = GetWindow(w, 2); }
+      return w;
+    }
+
     // True when the window is an always-on-top one. The panel is topmost too but never activates,
     // so an active topmost window stays above it - measured on the shell's search flyout, which
     // sits there without UIAccess and stayed in front of the panel.

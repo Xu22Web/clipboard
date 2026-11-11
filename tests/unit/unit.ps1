@@ -637,8 +637,9 @@ try {
         # closes that window and opens anyway; a window that is not the shell's own flyout is
         # left alone instead
         $rules = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'apprules.ps1'))
-        Expect ($script:StructPickerText -match '(?s)Test-UncoverableWindow \$prev\).{0,400}Close-ShellFlyout') 'the picker gives up instead of closing the flyout'
-        Expect ($script:StructPickerText -match '(?s)Release-HeldModifiers.{0,200}Close-ShellFlyout') 'Escape is sent with the hotkey modifiers still down'
+        Expect ($script:StructPickerText -match '(?s)Test-UncoverableWindow \$prev\).{0,700}Close-ShellFlyout') 'the picker gives up instead of closing the flyout'
+        Expect ($script:StructPickerText -match '(?s)Release-HeldModifiers.{0,700}Close-ShellFlyout') 'Escape is sent with the hotkey modifiers still down'
+        Expect ($script:StructPickerText -match '(?s)while \(\$tries -lt 3.{0,200}Test-ShellFlyout') 'closing search never goes on to the Start menu behind it'
         Expect ($script:StructPickerText -match '(?s)Close-ShellFlyout \$prev\).{0,300}closed the flyout') 'the flyout is closed without a word in the log'
         Expect ($script:StructPickerText -match 'not opened \(the window in front cannot be covered\)') 'a window that cannot be covered is opened over anyway'
         Expect ($script:StructPickerText -match '(?s)Test-ShellFlyout \$fgShell\).{0,200}dismissed') 'the picker stays open when Start / search comes up'
@@ -649,7 +650,8 @@ try {
         Expect ($rules -match '(?s)function Test-UncoverableWindow.{0,600}IsTopmost') 'a topmost window in front is not what decides it'
         Expect ($rules -match '(?s)function Test-UncoverableWindow.{0,900}HasUiAccess') 'UIAccess windows are not recognised'
         Expect ($rules -match '(?s)function Close-ShellFlyout.{0,400}0x1B') 'the flyout is not closed with Escape'
-        Expect ($rules -match '(?s)function Close-ShellFlyout.{0,700}Test-ShellFlyout') 'an arbitrary window would be closed'
+        Expect ($rules -match '(?s)function Close-ShellFlyout.{0,900}WindowBelow') 'a flyout that ignores Escape is never deactivated'
+        Expect ($rules -match '(?s)function Close-ShellFlyout.{0,1300}Test-ShellFlyout') 'an arbitrary window would be closed'
       }
 
       It 'paste can type instead of injecting a paste key' {

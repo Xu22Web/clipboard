@@ -87,20 +87,35 @@ function Format-ForegroundWindow($hwnd) {
 }
 
 # Close the shell flyout that is in front, so the panel can open over what is behind it (the way
-# Ditto does it). Escape is what the flyout itself listens for; the wait is for its window to go
-# before the panel reads the foreground it will paste back to.
+# Ditto does it). Two ways, because the flyout is not ours to configure: Escape is what Start and
+# search listen for, and a shell flyout also closes when it loses the foreground, so the window
+# below it in the z-order is brought forward when Escape is ignored. The wait is for its window
+# to go before the panel reads the foreground it will paste back to.
 function Close-ShellFlyout($hwnd) {
   try {
     if (-not (Test-ShellFlyout $hwnd)) { return $false }
+    $h = [IntPtr]$hwnd
     [Cb.Win]::keybd_event(0x1B, 0, 0, [IntPtr]::Zero)
     [Cb.Win]::keybd_event(0x1B, 0, 2, [IntPtr]::Zero)
-    $deadline = (Get-Date).AddMilliseconds(400)
-    while ((Get-Date) -lt $deadline) {
-      Start-Sleep -Milliseconds 25
-      if (-not (Test-ShellFlyout ([Cb.Win]::GetForegroundWindow()))) { return $true }
+    if (Wait-FlyoutGone 400) { return $true }
+    $below = [Cb.Win]::WindowBelow($h)
+    while ($below -ne [IntPtr]::Zero -and ([Cb.Win]::IsOwnWindow($below) -or (Test-ShellFlyout $below))) {
+      $below = [Cb.Win]::WindowBelow($below)
     }
-    return $false
+    if ($below -eq [IntPtr]::Zero) { return $false }
+    [void][Cb.Win]::SetForegroundWindow($below)
+    return (Wait-FlyoutGone 300)
   } catch { return $false }
+}
+
+# wait for the foreground to stop being a shell flyout, answer whether it did
+function Wait-FlyoutGone([int]$Milliseconds) {
+  $deadline = (Get-Date).AddMilliseconds($Milliseconds)
+  while ((Get-Date) -lt $deadline) {
+    Start-Sleep -Milliseconds 25
+    try { if (-not (Test-ShellFlyout ([Cb.Win]::GetForegroundWindow()))) { return $true } } catch { return $true }
+  }
+  return $false
 }
 
 # The action the rules give this program: '' means "no rule, do what the settings say".

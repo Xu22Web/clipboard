@@ -43,10 +43,15 @@ function Show-Picker([switch]$Warm) {
       # the hotkey arrives while Ctrl and Alt are still held, and Escape with them down is a
       # different key that the flyout ignores
       try { Release-HeldModifiers } catch { }
-      if (Close-ShellFlyout $prev) {
+      # closing search can reveal the Start menu it was opened from, so this repeats a few times
+      $tries = 0
+      while ($tries -lt 3 -and (Test-ShellFlyout $prev)) {
+        $tries++
+        if (-not (Close-ShellFlyout $prev)) { break }
         Write-Log ('picker: closed the flyout in front (it cannot be covered): ' + (Format-ForegroundWindow $prev))
         $prev = [Cb.Win]::GetForegroundWindow()
-      } else {
+      }
+      if (Test-UncoverableWindow $prev) {
         Write-Log ('picker: not opened (the window in front cannot be covered): ' + (Format-ForegroundWindow $prev))
         $script:PickerOpen = $false
         return
