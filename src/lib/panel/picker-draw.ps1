@@ -11,12 +11,85 @@
 # The panel and its header field are rounded by a window region. A replaced region has to be
 # disposed by hand - WinForms does not own it - so every open and every resize would
 # otherwise leak one HRGN into the resident process.
+# One radius for every window the panel opens - the panel, the editor card that covers it and
+# the hover card - so the three silhouettes cannot drift apart. Fluent puts its flyouts and
+# cards on 8 px (inner controls, such as the search field, stay on 4); a theme may restyle the
+# metric and all three follow.
+function Get-WindowRadius { return [int](Px ([Math]::Max(2, [int]$script:Metric['PanelRadius']))) }
+
 function Update-PanelRegion($form) {
   try {
     $old = $form.Region
-    $form.Region = New-RoundRegion ([int]$form.ClientSize.Width) ([int]$form.ClientSize.Height) (Px $script:Metric['PanelRadius'])
+    $form.Region = New-RoundRegion ([int]$form.ClientSize.Width) ([int]$form.ClientSize.Height) (Get-WindowRadius)
     if ($null -ne $old) { $old.Dispose() }
   } catch { }
+}
+
+# A window edge has to hold its own: there is no drop shadow behind this window, and the theme's
+# separator colour is about 8% white, which reads as nothing against the surface. The frame is
+# lifted to this alpha; a theme that already asks for a stronger border keeps its own value.
+$script:FrameAlphaMin = 46
+
+# The 1 px frame of a window that carries a rounded region. A stroked path is the wrong tool
+# here: the region is the silhouette, so it clips whatever falls outside, and on a curve a
+# 1 px stroke rarely covers a pixel whole - the straight edges stay solid while the arcs keep
+# only a broken chain at about half strength, which reads as a frame that is missing exactly
+# where it turns. Filling a 1 px ring instead puts whole pixels on the arcs too, so the corners
+# come out at the same weight as the sides. Every custom-drawn window edge goes through here.
+function Draw-PanelFrame($g, [int]$w, [int]$h, $color, [int]$radius) {
+  if ($null -eq $g -or $w -lt 6 -or $h -lt 6) { return }
+  $t = [Math]::Max(1, (Px 1))
+  if (($radius * 2) -gt ($w - 3) -or ($radius * 2) -gt ($h - 3)) { $radius = [int]([Math]::Min($w - 3, $h - 3) / 2) }
+  # a translucent separator colour is lifted, so the silhouette reads on a dark surface
+  if ($color.A -lt $script:FrameAlphaMin) { $color = [Drawing.Color]::FromArgb([int]$script:FrameAlphaMin, [int]$color.R, [int]$color.G, [int]$color.B) }
+  $outer = $null
+  $inner = $null
+  $ring = New-Object Drawing.Drawing2D.GraphicsPath
+  $brush = New-Object Drawing.SolidBrush $color
+  # no antialiasing: the point is a line made of whole pixels, and a smoothed edge would be
+  # soft again - the window's own region edge is just as hard. The caller's mode is put back,
+  # because the text and the pictures drawn after this want their smoothing.
+  $was = $g.SmoothingMode
+  $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::None
+  try {
+    $ring.FillMode = [Drawing.Drawing2D.FillMode]::Alternate
+    # the shape spans the whole pixel grid, not its last centre: a fill keeps the pixels whose
+    # centre is inside, so a path that ends at w-1 loses the last column and row - the frame
+    # then ran along the top and left only
+    $outer = New-RoundPath 0 0 $w $h $radius
+    $inner = New-RoundPath $t $t ($w - (2 * $t)) ($h - (2 * $t)) ([Math]::Max(1, $radius - $t))
+    $ring.AddPath($outer, $true)
+    $ring.AddPath($inner, $true)
+    $g.FillPath($brush, $ring)
+  } finally {
+    $g.SmoothingMode = $was
+    if ($null -ne $outer) { $outer.Dispose() }
+    if ($null -ne $inner) { $inner.Dispose() }
+    $ring.Dispose()
+    $brush.Dispose()
+  }
+}
+
+# A docked child reaches the window corner and paints over the frame there: the border survives
+# along the sides, which the child never touches, and disappears in the arcs, which it does. The
+# header and the footer are clipped to a rounded shape one pixel inside the frame instead, so the
+# arcs stay on screen. Only the corners that meet the window are rounded - the other side keeps
+# its square edge, or a separator line inside the child would be cut short.
+function Set-FrameCornerRegion($ctl, [int]$radius, [string]$corners = 'top') {
+  if ($null -eq $ctl -or $ctl.Width -lt 6 -or $ctl.Height -lt 6) { return }
+  try {
+    $old = $ctl.Region
+    $w = [int]$ctl.Width
+    $h = [int]$ctl.Height
+    $r = [Math]::Max(1, [Math]::Min($radius, [int]([Math]::Min($w, $h) / 2)))
+    $reg = New-RoundRegion $w $h $r
+    if ($corners -ceq 'bottom') { [void]$reg.Union((New-Object Drawing.Rectangle 0, 0, $w, ($h - $r))) }
+    else { [void]$reg.Union((New-Object Drawing.Rectangle 0, $r, $w, ($h - $r))) }
+    $ctl.Region = $reg
+    if ($null -ne $old) { $old.Dispose() }
+  } catch {
+    Write-Log ('frame corner region failed: ' + $_.Exception.Message)
+  }
 }
 
 # The keys the in-place editor answers. One list, used by the panel footer and by the editor

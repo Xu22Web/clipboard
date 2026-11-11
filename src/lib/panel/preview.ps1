@@ -188,14 +188,7 @@ function Draw-CardContent($g, $win, $ps, $c) {
   # Fill through Clear: the window carries the same rounded region as the panel, so this
   # covers the whole silhouette without leaving a rim of the form colour in any corner.
   $g.Clear($c.Bg)
-  $path = New-RoundPath 0 0 ($win.ClientSize.Width - 1) ($win.ClientSize.Height - 1) (Px 8)
-  $pen = New-Object Drawing.Pen $c.Border, 1
-  try {
-    $g.DrawPath($pen, $path)
-  } finally {
-    $pen.Dispose()
-    $path.Dispose()
-  }
+  Draw-PanelFrame $g ([int]$win.ClientSize.Width) ([int]$win.ClientSize.Height) $c.Border (Get-WindowRadius)
   $y = $c.Pad
   $caption = New-Object Drawing.RectangleF -ArgumentList @([single]$c.Pad, [single]$y, [single]($c.W - 2 * $c.Pad), [single]$c.LineH)
   # the caption line is the card's own chrome, so the wait belongs there: a line inside the
@@ -412,7 +405,7 @@ function Show-PreviewCard($ps, $cfg, $panel, $anchorTop) {
   if ($null -eq $win -or $win.IsDisposed) { $win = New-PreviewWindow $ps }
   if ($win.BackColor -ne $cfg.Bg) { $win.BackColor = $cfg.Bg }
   $win.SetBounds($at.X, $at.Y, $w, $h)
-  Set-CardRegion $win (Px 8)
+  Set-CardRegion $win (Get-WindowRadius)
   if (-not $win.Visible) { $win.Show() }
   [void][Cb.Win]::SetWindowPos($win.Handle, [IntPtr](-1), 0, 0, 0, 0, 0x13)
   # a flyout fades in; with animations off the card is simply there

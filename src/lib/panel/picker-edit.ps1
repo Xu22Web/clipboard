@@ -178,15 +178,10 @@ function Begin-RowEdit {
       param($s, $e)
       try {
         $g = $e.Graphics
-        $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $pal = $script:EditorCtx.Ui
         # the same 1 px edge the panel itself draws: the editor covers the whole client area,
         # so an accent frame would read as a second window on top of the panel
-        $pen = New-Object Drawing.Pen $pal.Border
-        $gp = New-RoundPath 0 0 ([int]$s.Width - 1) ([int]$s.Height - 1) (Px 8)
-        $g.DrawPath($pen, $gp)
-        $pen.Dispose()
-        $gp.Dispose()
+        Draw-PanelFrame $g ([int]$s.Width) ([int]$s.Height) $pal.Border (Get-WindowRadius)
         # the box has no border of its own (a native one cannot follow the theme), so the
         # field outline is drawn here, one pixel outside the control
         $st = $script:EditRow
@@ -285,7 +280,7 @@ function Begin-RowEdit {
   $card.Controls.Add($cancel)
   $ctx.Form.Controls.Add($card)
   $card.BringToFront()
-  try { $card.Region = New-RoundRegion $card.Width $card.Height (Px 8) } catch { }
+  try { $card.Region = New-RoundRegion $card.Width $card.Height (Get-WindowRadius) } catch { }
   $script:EditRow = @{ Rec = $rec; Box = $box; Card = $card; Stat = $stat; Err = $err; Payload = $payload; Save = $save; Cancel = $cancel }
   $script:HookTargetBox = $box
   $box.Add_TextChanged({

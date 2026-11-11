@@ -407,6 +407,10 @@ function Show-Picker([switch]$Warm) {
       if ($preset.ShowFootRight) {
         try { $footR.SetBounds(($foot.ClientSize.Width - (Px 210)), 0, (Px 196), $foot.ClientSize.Height) } catch { }
       }
+      # the two children that reach the rounded edge would paint over the frame's arcs
+      $cornerR = [Math]::Max(2, (Get-WindowRadius) - 1)
+      Set-FrameCornerRegion $head $cornerR 'top'
+      Set-FrameCornerRegion $foot $cornerR 'bottom'
       $footL.Invalidate()
     }
 
@@ -916,10 +920,10 @@ function Show-Picker([switch]$Warm) {
             $owner = [string]$act['Plugin']
             if ($owner -ne $lastOwner) {
               if ($lastOwner) { [void]$cm.Items.Add((New-Object Windows.Forms.ToolStripSeparator)) }
-              $head = $cm.Items.Add($owner)
-              $head.Enabled = $false
-              if ($null -ne $groupFont) { $head.Font = $groupFont }
-              $groupHeads.Add(@{ Item = $head; Owner = $owner; Index = ($cm.Items.Count - 1) })
+              $groupItem = $cm.Items.Add($owner)
+              $groupItem.Enabled = $false
+              if ($null -ne $groupFont) { $groupItem.Font = $groupFont }
+              $groupHeads.Add(@{ Item = $groupItem; Owner = $owner; Index = ($cm.Items.Count - 1) })
               $lastOwner = $owner
             }
             $item = $cm.Items.Add((Get-ActionText $act $null))
@@ -1437,12 +1441,7 @@ function Show-Picker([switch]$Warm) {
 
     $form.Add_Paint({
         param($s, $e)
-        $e.Graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
-        $pen = New-Object Drawing.Pen $ui.Border
-        $gp = New-RoundPath 0 0 ($form.ClientSize.Width - 1) ($form.ClientSize.Height - 1) (Px 8)
-        $e.Graphics.DrawPath($pen, $gp)
-        $gp.Dispose()
-        $pen.Dispose()
+        Draw-PanelFrame $e.Graphics $form.ClientSize.Width $form.ClientSize.Height $ui.Border (Get-WindowRadius)
       })
     $form.Add_Shown({
         # the layout and the list were built before Show() (see below), so this only takes

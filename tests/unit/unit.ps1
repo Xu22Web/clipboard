@@ -3466,6 +3466,66 @@ try {
           }
           Expect $flatOk $flatErr
         }
+
+        It 'draws the frame on every side and every corner' {
+          # a fill keeps only the pixels whose centre is inside the shape, so the path has to span
+          # the whole pixel grid: ending it at width-1 lost the last column and the last row, and
+          # the panel showed a frame along the top and the left only
+          $fw = 140
+          $fh = 90
+          $frame = New-Object Drawing.Bitmap $fw, $fh
+          $fg = [Drawing.Graphics]::FromImage($frame)
+          $clip = New-RoundRegion $fw $fh (Px 8)
+          try {
+            $fg.Clear([Drawing.Color]::FromArgb(255, 32, 32, 32))
+            $fg.SetClip($clip, [Drawing.Drawing2D.CombineMode]::Replace)
+            Draw-PanelFrame $fg $fw $fh ([Drawing.Color]::FromArgb(255, 51, 51, 51)) (Px 8)
+          } finally {
+            $fg.Dispose()
+            $clip.Dispose()
+          }
+          $sides = @(0, 0, 0, 0)
+          for ($fx = 40; $fx -lt 100; $fx++) {
+            if ($frame.GetPixel($fx, 0).R -eq 51) { $sides[0]++ }
+            if ($frame.GetPixel($fx, ($fh - 1)).R -eq 51) { $sides[1]++ }
+          }
+          for ($fy = 30; $fy -lt 60; $fy++) {
+            if ($frame.GetPixel(0, $fy).R -eq 51) { $sides[2]++ }
+            if ($frame.GetPixel(($fw - 1), $fy).R -eq 51) { $sides[3]++ }
+          }
+          # one pixel thick: the row and the column behind each side stay surface
+          $inner = 0
+          for ($fx = 40; $fx -lt 100; $fx++) { if ($frame.GetPixel($fx, 1).R -ne 32) { $inner++ } }
+          for ($fy = 30; $fy -lt 60; $fy++) { if ($frame.GetPixel(1, $fy).R -ne 32) { $inner++ } }
+          $arc = 0
+          foreach ($corner in @(@(0, 0), @(($fw - 9), 0), @(0, ($fh - 9)), @(($fw - 9), ($fh - 9)))) {
+            for ($fy = 0; $fy -lt 9; $fy++) {
+              for ($fx = 0; $fx -lt 9; $fx++) {
+                if ($frame.GetPixel(($corner[0] + $fx), ($corner[1] + $fy)).R -eq 51) { $arc++ }
+              }
+            }
+          }
+          $frame.Dispose()
+          Expect ((($sides[0] -eq 60) -and ($sides[1] -eq 60) -and ($sides[2] -eq 30) -and ($sides[3] -eq 30))) ([string]$sides[0] + '/' + [string]$sides[1] + '/' + [string]$sides[2] + '/' + [string]$sides[3])
+          Expect ($inner -eq 0) ([string]$inner + ' pixels behind the frame')
+          Expect ($arc -ge 20) ([string]$arc + ' pixels on the four arcs')
+        }
+
+        It 'clips the corner children away from the frame' {
+          # the header and the footer reach the window edge and paint over the frame's arcs there;
+          # they are clipped inside it instead, and only on the side that meets the window, so a
+          # separator line inside them keeps both of its ends
+          Load-Forms
+          $ctl = New-Object Windows.Forms.Panel
+          $ctl.Size = New-Object Drawing.Size 200, 60
+          Set-FrameCornerRegion $ctl 7 'top'
+          $tl = $ctl.Region.IsVisible(1, 1)
+          $tr = $ctl.Region.IsVisible(198, 1)
+          $bl = $ctl.Region.IsVisible(1, 58)
+          $mid = $ctl.Region.IsVisible(100, 30)
+          $ctl.Dispose()
+          Expect ((-not $tl) -and (-not $tr) -and $bl -and $mid) ([string]$tl + '/' + [string]$tr + '/' + [string]$bl + '/' + [string]$mid)
+        }
       }
 
       Describe 'the hint footer' {
