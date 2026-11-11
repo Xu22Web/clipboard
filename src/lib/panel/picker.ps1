@@ -34,11 +34,9 @@ function Show-Picker([switch]$Warm) {
       elseif (Test-Font 'Segoe MDL2 Assets') { $script:IconFamily = 'Segoe MDL2 Assets' }
     }
     $prev = [Cb.Win]::GetForegroundWindow()
-    # Windows Start and its search flyout keep themselves above every other topmost window while
-    # they are up (their process runs with UIAccess, so no z-order call moves a normal window
-    # over them - measured with topmost, notopmost-then-topmost, BringWindowToTop and HWND_TOP).
-    # A panel opened there is invisible, and its hook would swallow the keys meant for the search
-    # box: nothing good comes of opening over them.
+    # Windows Start and its search flyout stay above every other topmost window (their process
+    # runs with UIAccess, so no z-order call wins over them) and take the keyboard with them: a
+    # panel opened there would be invisible while its hook swallowed the keys for the search box.
     if (-not $Warm -and (Test-ShellFlyout $prev)) {
       Write-Log 'picker: not opened (Windows Start / search is in front)'
       $script:PickerOpen = $false
@@ -1534,10 +1532,7 @@ function Show-Picker([switch]$Warm) {
         try { $lst.Invalidate() } catch { }
         try { $footL.Invalidate() } catch { }
       }
-      # Windows Start / search calls up a topmost flyout that no other window can cover, and it
-      # takes the keyboard with it: a panel left open would be invisible and its hook would
-      # swallow the keys the user is typing into the search box. Calling the shell up dismisses
-      # the panel - the same answer as a click outside.
+      # the same flyout coming up while the panel is open closes it, like a click outside
       if (((Get-Date) - $script:ShellCheckAt).TotalMilliseconds -gt 300) {
         $script:ShellCheckAt = Get-Date
         $fgShell = [Cb.Win]::GetForegroundWindow()

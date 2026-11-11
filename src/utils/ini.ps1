@@ -92,12 +92,6 @@ function Get-IniDocValue($doc, [string]$key) {
   return ''
 }
 
-# true when the key exists, whatever its value
-function Test-IniDocKey($doc, [string]$key) {
-  if ($null -eq $doc) { return $false }
-  return $doc.Map.ContainsKey($key)
-}
-
 # one line of the file as it is written, the one a reader would see when a key appears twice
 function Get-IniDocLine($doc, [string]$key) {
   if ($null -eq $doc -or -not $key) { return '' }
@@ -113,17 +107,6 @@ function Get-IniDocSection($doc, [string]$name) {
   $key = $name.Trim().ToLowerInvariant()
   if (-not $doc.Sections.ContainsKey($key)) { return $null }
   return $doc.Sections[$key]
-}
-
-# replace one line by its number; the index is rebuilt, so a key commented out here stops
-# being a key
-function Set-IniDocLine($doc, [int]$index, [string]$text) {
-  if ($null -eq $doc) { return $doc }
-  $lines = @($doc.Lines)
-  if ($index -lt 0 -or $index -ge $lines.Count) { return $doc }
-  $lines[$index] = [string]$text
-  $doc.Lines = $lines
-  return (Update-IniDocIndex $doc)
 }
 
 # put a block of lines (a comment, a section header and a key, say) in at one position

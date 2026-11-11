@@ -222,18 +222,17 @@ function Get-UiaBoxRect([IntPtr]$hwnd) {
   } catch { return [Drawing.Rectangle]::Empty }
 }
 
-# The anchor the panel is placed against, and the name of the source that answered, so the log
-# says why a position was chosen. Empty means nothing is known and the monitor decides.
-# The height of one line of text where the caret is, for the sources that report a point and no
-# box (GetCaretPos). Unscaled 18 px is one line of the interface font at 96 dpi; the panel only
-# needs it to know where the line ends, so the value is the length of a caret rather than a
-# measurement of the target's font.
+# The height of one line of text, for the sources that report a point and no box (GetCaretPos).
+# 18 px is one line of the interface font at 96 dpi before scaling: the value only has to say
+# where the caret's line ends, not how tall the target's font is.
 function Get-CaretLineHeight {
   $h = [int][Math]::Round(18 * [double]$script:UiScale)
   if ($h -lt 12) { $h = 12 }
   return $h
 }
 
+# The anchor the panel is placed against, and the name of the source that answered, so the log
+# says why a position was chosen. Empty means nothing is known and the monitor decides.
 function Get-CaretAnchor([IntPtr]$hwnd) {
   $script:CaretSource = 'none'
   if ($hwnd -eq [IntPtr]::Zero) { return [Drawing.Rectangle]::Empty }
