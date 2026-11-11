@@ -33,9 +33,11 @@ function Get-ForegroundProcessName {
 # keyboard with them. The panel gets out of the way for them: while it is open its hook swallows
 # the printable keys, so the box the user is typing into would never see them - and the flyout
 # would cover the panel anyway. The class name is what the shell's own UX frame uses; the process
-# names cover the builds where that frame is hosted by a different process.
+# names cover the builds where that frame is hosted by a different process (Windows 11 search is
+# SearchHost, Windows 10 1903-2004 is SearchApp, Windows 10 1809 and earlier is SearchUI).
 $script:ShellFlyoutClasses = @('shelluxframewindowclass')
-$script:ShellFlyoutProcesses = @('startmenuexperiencehost.exe', 'searchhost.exe', 'shellhost.exe', 'shellexperiencehost.exe')
+$script:ShellFlyoutProcesses = @('startmenuexperiencehost.exe', 'searchhost.exe', 'searchapp.exe',
+  'searchui.exe', 'shellhost.exe', 'shellexperiencehost.exe')
 
 # pure: is this the program that hosts Start / search
 function Test-ShellProcessName([string]$name) {

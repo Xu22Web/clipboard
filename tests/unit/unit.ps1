@@ -1259,6 +1259,9 @@ try {
         # its hook would swallow the keys meant for the search box
         Expect (Test-ShellProcessName 'shellhost.exe') ''
         Expect (Test-ShellProcessName 'SearchHost.exe') ''
+        # the search host was renamed twice: SearchApp on Windows 10 1903-2004, SearchUI before it
+        Expect (Test-ShellProcessName 'SearchApp.exe') ''
+        Expect (Test-ShellProcessName 'SearchUI.exe') ''
         Expect (Test-ShellProcessName 'startmenuexperiencehost.exe') ''
         Expect (Test-ShellProcessName 'shellexperiencehost.exe') ''
         Expect (-not (Test-ShellProcessName 'code.exe')) 'code.exe is not a shell flyout'
