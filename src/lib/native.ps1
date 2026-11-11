@@ -224,6 +224,16 @@ function Get-UiaBoxRect([IntPtr]$hwnd) {
 
 # The anchor the panel is placed against, and the name of the source that answered, so the log
 # says why a position was chosen. Empty means nothing is known and the monitor decides.
+# The height of one line of text where the caret is, for the sources that report a point and no
+# box (GetCaretPos). Unscaled 18 px is one line of the interface font at 96 dpi; the panel only
+# needs it to know where the line ends, so the value is the length of a caret rather than a
+# measurement of the target's font.
+function Get-CaretLineHeight {
+  $h = [int][Math]::Round(18 * [double]$script:UiScale)
+  if ($h -lt 12) { $h = 12 }
+  return $h
+}
+
 function Get-CaretAnchor([IntPtr]$hwnd) {
   $script:CaretSource = 'none'
   if ($hwnd -eq [IntPtr]::Zero) { return [Drawing.Rectangle]::Empty }
@@ -232,6 +242,15 @@ function Get-CaretAnchor([IntPtr]$hwnd) {
   try {
     $r = [Cb.Win]::CaretOfWindow($hwnd)
     if ($r.Height -gt 0 -and (Test-AnchorRect $r $window)) { $script:CaretSource = 'caret'; return $r }
+  } catch { }
+  # The caret the input queue knows, for a control that draws its own and reports no rcCaret:
+  # a point and no height, so one line of text is what turns it into an anchor.
+  try {
+    $r = [Cb.Win]::AttachedCaret($hwnd)
+    if ($r.Width -gt 0 -and $r.Height -le 0) {
+      $r = New-Object Drawing.Rectangle -ArgumentList @([int]$r.Left, [int]$r.Top, [int]$r.Width, (Get-CaretLineHeight))
+    }
+    if ($r.Height -gt 0 -and (Test-AnchorRect $r $window)) { $script:CaretSource = 'caret-pos'; return $r }
   } catch { }
   try {
     $r = Get-UiaCaretRect $hwnd

@@ -155,7 +155,9 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 ### 焦点模型
 
-面板以不激活方式显示（`WS_EX_NOACTIVATE`），按键由低级键盘钩子（`WH_KEYBOARD_LL`）截获后转发给面板自身：原窗口保持前台、焦点、光标位置与层级不变，面板中可直接输入过滤，原窗口收不到字符。关闭面板（`Esc`、回车粘贴、再按热键、点击面板外部）即卸载钩子。
+面板以不激活方式显示（`WS_EX_NOACTIVATE`），按键由低级键盘钩子（`WH_KEYBOARD_LL`）截获后转发给面板自身：原窗口保持前台、焦点、光标位置与层级不变，面板中可直接输入过滤，原窗口收不到字符。关闭面板（`Esc`、回车粘贴、再按热键、点击面板外部、呼出开始菜单或 Windows 搜索）即卸载钩子。
+
+开始菜单与 Windows 搜索的唤出窗口始终压在其他程序的置顶窗口之上（它们的进程带 UIAccess，`SetWindowPos`、先取消置顶再置顶、`BringWindowToTop`、`HWND_TOP` 都无法超越，已逐一实测），并且会接管键盘。因此面板与它们不共存：面板打开期间呼出开始菜单/搜索会关闭面板；在它们之上呼出面板则不开（否则面板会整个被遮住，而它的钩子仍会吞掉本该进搜索框的字符）。
 
 输入法需要真实键盘焦点，因此面板按 `ImeTakeover` 决定何时交接：`manual`（默认）在点击搜索区（占位文字、图标、清空按钮与头部区域）时，`auto` 在输入法处于中文组字模式（`IME_CMODE_NATIVE`）时按下第一个可打印键，`off` 则从不。交接过程为卸载钩子、临时去掉 `WS_EX_NOACTIVATE`、用 `AttachThreadInput` 附加前台线程后调用 `SetForegroundWindow`，成为前台后重放该键与本批剩余按键；失败则不重放并重装钩子。`Ctrl+Space` 等输入法切换键一律放行。取不到键盘钩子时，面板从打开起即为接管模式。编辑窗口打开时，按键与交接都以编辑框为目标。关闭面板时前台还给打开它之前的窗口。
 
@@ -182,7 +184,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 窗口宽度固定，高度由行数得出，两者都在开窗时定下，面板不能拖动改变尺寸。形态由 `CompactMode` 选择，托盘菜单的 `Compact mode` 勾选项直接改写该键，下一次打开生效。
 
-插入符锚点依次取：控件自己的 `rcCaret`（Win32 编辑控件）；UI Automation 的文本选区矩形（Electron、浏览器、RichEdit 这类自绘光标的程序走这条）；焦点元素的矩形（命令面板的一行、一个输入框）；焦点控件的窗口矩形。坐标 0,0 且没有尺寸的矩形、以及覆盖整个窗口的矩形都判为无效，否则面板会贴到屏幕角上；四级都取不到时依次退到呼出窗口与显示器居中。面板左边缘对齐锚点，与文本行留 4 px 间距。完整模式默认不贴插入符，`PlaceAtCaret=1` 可打开；紧凑形态不读保存的位置。
+插入符锚点依次取：控件自己的 `rcCaret`（Win32 编辑控件）；输入队列知道的插入符 `GetCaretPos`（附加目标线程后读取，只有点没有高度，按一行文本补高，用于自绘光标或光标被隐藏的控件）；UI Automation 的文本选区矩形（Electron、浏览器、RichEdit 这类自绘光标的程序走这条）；焦点元素的矩形（命令面板的一行、一个输入框）；焦点控件的窗口矩形。坐标 0,0 且没有尺寸的矩形、以及覆盖整个窗口的矩形都判为无效，否则面板会贴到屏幕角上；四级都取不到时依次退到呼出窗口与显示器居中。面板左边缘对齐锚点，与文本行留 4 px 间距。完整模式默认不贴插入符，`PlaceAtCaret=1` 可打开；紧凑形态不读保存的位置。
 
 悬停预览卡放在面板两侧：放不下整张卡时先收窄，换到另一侧，两侧都不够时放在面板下方，不覆盖行。
 
@@ -727,6 +729,8 @@ src/                    程序本体（打包只读这个目录）
 | `formatted text rtf skipped` / `html image not inlined` | 命中尺寸限制而被丢弃的块 / 未内联的图 |
 | `html fallback dropped` | 剪贴板被其他程序占用时只能按字符串读回，读到的字节有丢失即丢弃该 html（文本与 RTF 照常保存） |
 | `paste target:` | 每次粘贴的目标窗口：句柄、进程名与标题；`(switched, was …)` 表示按键那一刻前台已不是打开面板时的窗口 |
+| `picker: dismissed (Windows Start / search came up)` | 面板打开期间呼出了开始菜单或 Windows 搜索，面板已关闭 |
+| `picker: not opened (Windows Start / search is in front)` | 在开始菜单或 Windows 搜索之上按了热键，面板不开 |
 | `paste skipped` / `sendkeys fail` | 未能夺回前台因而未注入 / 注入失败 |
 | `paste: the foreground moved…` / `paste: the foreground changed…` | 面板隐藏后前台被别的窗口抢走并已取回 / 注入按键时前台已经变了 |
 | `released a held modifier` | 等待超时后仍按住的修饰键被松开 |

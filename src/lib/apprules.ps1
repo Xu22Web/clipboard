@@ -29,6 +29,33 @@ function Get-ForegroundProcessName {
   try { return (Get-WindowProcessName ([Cb.Win]::GetForegroundWindow())) } catch { return '' }
 }
 
+# Windows Start and the search flyout are topmost windows of the shell, and they take the
+# keyboard with them. The panel gets out of the way for them: while it is open its hook swallows
+# the printable keys, so the box the user is typing into would never see them - and the flyout
+# would cover the panel anyway. The class name is what the shell's own UX frame uses; the process
+# names cover the builds where that frame is hosted by a different process.
+$script:ShellFlyoutClasses = @('shelluxframewindowclass')
+$script:ShellFlyoutProcesses = @('startmenuexperiencehost.exe', 'searchhost.exe', 'shellhost.exe', 'shellexperiencehost.exe')
+
+# pure: is this the program that hosts Start / search
+function Test-ShellProcessName([string]$name) {
+  if (-not $name) { return $false }
+  return ($script:ShellFlyoutProcesses -contains $name.Trim().ToLowerInvariant())
+}
+
+function Test-ShellFlyout($hwnd) {
+  try {
+    if ($null -eq $hwnd) { return $false }
+    $h = [IntPtr]$hwnd
+    if ($h -eq [IntPtr]::Zero) { return $false }
+    $cls = ''
+    if (Get-Command Test-NativeAssembly -ErrorAction SilentlyContinue) { [void](Test-NativeAssembly) }
+    try { $cls = [string][Cb.Win]::WindowClass($h) } catch { $cls = '' }
+    if ($cls -and ($script:ShellFlyoutClasses -contains $cls.ToLowerInvariant())) { return $true }
+    return (Test-ShellProcessName (Get-WindowProcessName $h))
+  } catch { return $false }
+}
+
 # The action the rules give this program: '' means "no rule, do what the settings say".
 function Get-AppRuleAction([string]$processName = '') {
   $rules = $null

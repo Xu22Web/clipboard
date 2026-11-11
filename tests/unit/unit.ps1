@@ -585,7 +585,7 @@ try {
         Expect ($script:StructPickerText -match '\$footR\.Visible = \[bool\]\$preset\.ShowFootRight') 'the corner count ignores the preset'
         # placing the label happens before Show(), where Visible is still false: the decision
         # has to come from the preset or the count lands in the top left corner
-        Expect ($script:StructPickerText -match '(?s)function Layout-Chrome\s*\{.{0,800}if \(\$preset\.ShowFootRight\)') 'the corner count is placed from Visible instead of the preset'
+        Expect ($script:StructPickerText -match '(?s)function Layout-Chrome\s*\{.{0,1200}if \(\$preset\.ShowFootRight\)') 'the corner count is placed from Visible instead of the preset'
       }
 
       It 'the width is fixed: no drag grip and no saved width' {
@@ -605,11 +605,34 @@ try {
         Expect ($script:StructWinText -match 'Current\.ProcessId') 'the focused element is trusted without a process check'
       }
 
+      It 'asks the input queue for the caret when rcCaret is empty' {
+        # Ditto's third source (ExternalWindowTracker::FocusCaret): GetCaretPos on the attached
+        # thread, which answers with a point and no height, so one line is added
+        Expect ($script:StructWinText -match '(?s)public static System\.Drawing\.Rectangle AttachedCaret') 'no AttachedCaret in the assembly'
+        Expect ($script:StructWinText -match '(?s)AttachedCaret.{0,900}AttachThreadInput') 'the queues are never attached for GetCaretPos'
+        Expect ($script:StructWinText -match 'function Get-CaretLineHeight') 'a caret point has no height to place below'
+        # it belongs after rcCaret and before UI Automation: it is cheaper than a cross-process
+        # accessibility call and more precise than the focused element's box
+        $iCaret = $script:StructWinText.IndexOf('[Cb.Win]::CaretOfWindow($hwnd)')
+        $iPos = $script:StructWinText.IndexOf('[Cb.Win]::AttachedCaret($hwnd)')
+        $iUia = $script:StructWinText.IndexOf('Get-UiaCaretRect $hwnd')
+        Expect ($iCaret -ge 0 -and $iPos -gt $iCaret -and $iUia -gt $iPos) ('order ' + $iCaret + '/' + $iPos + '/' + $iUia)
+      }
+
       It 'the caret is read in screen pixels' {
         # a Win32 edit control answers rcCaret inside its own client area - measured: a text box
         # at 308,231 with the caret after "hello" answers 104,1 - so the rect has to be moved to
         # the screen, or the panel anchors at the top left corner of the window it came from
         Expect ($script:StructWinText -match '(?s)CaretOfWindow.{0,2000}ClientToScreen') 'the caret rect is not moved to screen coordinates'
+      }
+
+      It 'keeps out of the Windows Start / search flyout' {
+        # that window stays above every other topmost window (its process runs with UIAccess), so
+        # a panel there would be invisible while its hook swallowed the keys meant for the search
+        # box: it is neither opened over the flyout nor left open when the flyout comes up
+        Expect ($script:StructPickerText -match '(?s)Test-ShellFlyout \$prev\).{0,200}not opened') 'the picker opens over Start / search'
+        Expect ($script:StructPickerText -match '(?s)Test-ShellFlyout \$fgShell\).{0,200}dismissed') 'the picker stays open when Start / search comes up'
+        Expect ($script:StructPickerText -match 'ShellCheckAt') 'the flyout is never polled while the panel is up'
       }
 
       It 'paste can type instead of injecting a paste key' {
@@ -1212,6 +1235,18 @@ try {
 
       It 'the rule setting carries a default' {
         Expect ($null -ne $sch['AppRules'] -and $sch['AppRules'].Default -eq '') ''
+      }
+
+      It 'recognises the shell flyouts that take the keyboard' {
+        # Start and search are topmost windows of the shell: the panel closes for them, because
+        # its hook would swallow the keys meant for the search box
+        Expect (Test-ShellProcessName 'shellhost.exe') ''
+        Expect (Test-ShellProcessName 'SearchHost.exe') ''
+        Expect (Test-ShellProcessName 'startmenuexperiencehost.exe') ''
+        Expect (Test-ShellProcessName 'shellexperiencehost.exe') ''
+        Expect (-not (Test-ShellProcessName 'code.exe')) 'code.exe is not a shell flyout'
+        Expect (-not (Test-ShellProcessName 'notepad.exe')) 'notepad.exe is not a shell flyout'
+        Expect (-not (Test-ShellProcessName '')) 'an empty name is not a shell flyout'
       }
     }
 

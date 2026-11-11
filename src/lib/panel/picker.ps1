@@ -34,6 +34,16 @@ function Show-Picker([switch]$Warm) {
       elseif (Test-Font 'Segoe MDL2 Assets') { $script:IconFamily = 'Segoe MDL2 Assets' }
     }
     $prev = [Cb.Win]::GetForegroundWindow()
+    # Windows Start and its search flyout keep themselves above every other topmost window while
+    # they are up (their process runs with UIAccess, so no z-order call moves a normal window
+    # over them - measured with topmost, notopmost-then-topmost, BringWindowToTop and HWND_TOP).
+    # A panel opened there is invisible, and its hook would swallow the keys meant for the search
+    # box: nothing good comes of opening over them.
+    if (-not $Warm -and (Test-ShellFlyout $prev)) {
+      Write-Log 'picker: not opened (Windows Start / search is in front)'
+      $script:PickerOpen = $false
+      return
+    }
     # the control that owns the keyboard there: restored when the panel hands the foreground
     # over (an input method) and after the paste that follows a pick
     $script:PrevFocus = Save-TargetFocus $prev
@@ -372,7 +382,11 @@ function Show-Picker([switch]$Warm) {
         $txt.SetBounds((Px 38), (Px 10), ($box.Width - (Px 80)), (Px 22))
         $ph.SetBounds((Px 40), (Px 10), ($box.Width - (Px 106)), (Px 22))
         $clr.SetBounds(($box.Width - (Px 30)), (Px 10), (Px 20), (Px 22))
+        # Layout runs on every open and every resize: the region the box had is dropped here
+        # instead of waiting for the process to end
+        $oldBoxRegion = $box.Region
         $box.Region = New-RoundRegion $box.Width $box.Height (Px 4)
+        if ($null -ne $oldBoxRegion) { $oldBoxRegion.Dispose() }
       } catch { }
       # the preset decides, not $footR.Visible: a control whose form is not shown yet reports
       # Visible = false, and this runs before Show(), which left the count label at the top
@@ -1456,6 +1470,7 @@ function Show-Picker([switch]$Warm) {
     # derived flags the loop and the tests read.
     Set-InputMode 'none'
     $script:ImeCheckAt = Get-Date; $script:ImeNative = $false
+    $script:ShellCheckAt = Get-Date
     # seed from the real button state: starting at $false would read a button the user is
     # already holding as a fresh click and close the panel on its first frame
     $script:MenuClosedAt = $null
@@ -1518,6 +1533,18 @@ function Show-Picker([switch]$Warm) {
         $script:CtrlHeld = $ctrlNow
         try { $lst.Invalidate() } catch { }
         try { $footL.Invalidate() } catch { }
+      }
+      # Windows Start / search calls up a topmost flyout that no other window can cover, and it
+      # takes the keyboard with it: a panel left open would be invisible and its hook would
+      # swallow the keys the user is typing into the search box. Calling the shell up dismisses
+      # the panel - the same answer as a click outside.
+      if (((Get-Date) - $script:ShellCheckAt).TotalMilliseconds -gt 300) {
+        $script:ShellCheckAt = Get-Date
+        $fgShell = [Cb.Win]::GetForegroundWindow()
+        if ($fgShell -ne $form.Handle -and (Test-ShellFlyout $fgShell)) {
+          Write-Log 'picker: dismissed (Windows Start / search came up)'
+          $form.Close(); break
+        }
       }
       if ($script:PickerHook) {
         # cache the IME state instead of asking per keystroke (a cross-process call); the

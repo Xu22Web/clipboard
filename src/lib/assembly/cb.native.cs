@@ -142,6 +142,37 @@ namespace Cb {
       return WindowBounds(info.hwndFocus);
     }
 
+    // The caret position the input queue keeps for the focused thread, in screen pixels. The
+    // third source, after rcCaret and before UI Automation: GetCaretPos only answers for the
+    // calling thread, so the queues are attached for the call. rcCaret is empty whenever the
+    // control draws its own caret or the caret is hidden, and the position is still known here.
+    // No size comes with it - the caller adds the height of one line.
+    [DllImport("user32.dll")] private static extern bool GetCaretPos(out CARETPOINT p);
+
+    public static System.Drawing.Rectangle AttachedCaret(IntPtr hwnd) {
+      if (hwnd == IntPtr.Zero) { return System.Drawing.Rectangle.Empty; }
+      uint target = GetWindowThreadProcessId(hwnd, IntPtr.Zero);
+      if (target == 0) { return System.Drawing.Rectangle.Empty; }
+      IntPtr focus = FocusOfWindow(hwnd);
+      IntPtr owner = focus != IntPtr.Zero ? focus : hwnd;
+      uint mine = GetCurrentThreadId();
+      bool attached = false;
+      try {
+        if (target != mine) { attached = AttachThreadInput(mine, target, true); }
+        CARETPOINT p;
+        if (!GetCaretPos(out p)) { return System.Drawing.Rectangle.Empty; }
+        CARETPOINT origin;
+        origin.X = 0; origin.Y = 0;
+        if (!ClientToScreen(owner, ref origin)) { return System.Drawing.Rectangle.Empty; }
+        // a point, not a box: height 0 says "one line, the caller knows how tall that is"
+        return new System.Drawing.Rectangle(p.X + origin.X, p.Y + origin.Y, 1, 0);
+      } catch {
+        return System.Drawing.Rectangle.Empty;
+      } finally {
+        if (attached) { AttachThreadInput(mine, target, false); }
+      }
+    }
+
     // ---- naming a window in a log line ------------------------------------------------
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowTextW(IntPtr h, System.Text.StringBuilder s, int n);
 
@@ -163,6 +194,16 @@ namespace Cb {
       uint pid;
       GetWindowOwnerProcessId(h, out pid);
       return pid != 0 && pid == (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
+    }
+
+    // The window class a user never sees but a tool has to recognise: the shell's own UX frame
+    // (Start, the search flyout) is one class, whatever process hosts it in this build.
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassNameW(IntPtr h, System.Text.StringBuilder s, int n);
+    public static string WindowClass(IntPtr h) {
+      if (h == IntPtr.Zero) { return ""; }
+      System.Text.StringBuilder sb = new System.Text.StringBuilder(256);
+      if (GetClassNameW(h, sb, sb.Capacity) <= 0) { return ""; }
+      return sb.ToString();
     }
 
     // A window that does not answer WM_NULL within the budget is one whose accessibility calls
