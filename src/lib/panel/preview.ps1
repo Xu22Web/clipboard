@@ -493,7 +493,7 @@ function Get-PreviewCacheDir {
 
 # the tag is part of the key: when the card is drawn differently, the old pictures are
 # ignored instead of being shown with the previous look
-$script:PreviewCacheTag = 'v1'
+$script:PreviewCacheTag = 'v2'
 
 function Get-PreviewCachePath([string]$ref, [int]$w, [int]$h, [string]$mode = 'full') {
   # the store path is in the key too: two copies of the tool share one temp folder, and a

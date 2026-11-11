@@ -516,6 +516,67 @@ function Draw-CardImagePlaceholders($g, $box, [int]$maxW, $paper, [string]$token
   }
 }
 
+# ---- the width the document asks for ----------------------------------------
+# The layout engine fits the page into the room it is handed, and it does the same to a table:
+# the columns are narrowed until the words inside them wrap, so a row that reads as one line
+# in the source comes apart on the card. The paste is unaffected - a target parses the rtf
+# itself - which leaves the card as the only place that disagrees with the entry.
+#
+# The widths are in the rtf: \cellx is the right edge of a cell in twips, counted from the left
+# margin, so the widest row states the width the table was written with. The page is laid out
+# at that width and the result scaled down to the card, which keeps the table whole. Text
+# without a table is left at the card width: it wraps without losing anything and stays full
+# size. Past this factor the page would shrink so far that nothing reads any more, and the
+# card width wins again.
+$script:CardRtfWideMax = 4
+
+function Get-RtfLayoutWidth([string]$rtf, [int]$maxW) {
+  if ([string]::IsNullOrEmpty($rtf) -or $maxW -lt 16) { return $maxW }
+  # an ordinal search over a 13 MB document costs 8 ms, the case-insensitive one 62 ms already
+  # spent by the picture pass; a document that spells the word otherwise just keeps the card
+  # width, which is the behaviour before this rule existed
+  if ($rtf.IndexOf('\cellx', [StringComparison]::Ordinal) -lt 0) { return $maxW }
+  $tw = 0
+  foreach ($m in [regex]::Matches($rtf, '\\cellx(-?\d+)')) {
+    $v = 0
+    if ([int]::TryParse($m.Groups[1].Value, [ref]$v) -and $v -gt $tw) { $tw = $v }
+  }
+  if ($tw -le 0) { return $maxW }
+  # 1 px = 15 twips at 96 dpi
+  $w = [int][Math]::Ceiling([double]$tw / 15.0)
+  if ($w -le $maxW) { return $maxW }
+  $cap = $maxW * $script:CardRtfWideMax
+  if ($w -gt $cap) { $w = $cap }
+  return $w
+}
+
+# The page scaled down to the card, drawn on the paper colour. The shared scaler hands the
+# outermost row and column to the pixel offset, which leaves them transparent - and the crop
+# below reads a transparent row as ink, so it would keep the whole page.
+function New-CardPageScaled($src, [int]$maxW, [int]$maxH, $paper) {
+  if ($null -eq $src -or $src.Width -lt 1 -or $src.Height -lt 1) { return $null }
+  $scale = [Math]::Min([double]$maxW / [double]$src.Width, [double]$maxH / [double]$src.Height)
+  if ($scale -gt 1.0) { $scale = 1.0 }
+  $w = [Math]::Max(1, [int][Math]::Floor([double]$src.Width * $scale))
+  $h = [Math]::Max(1, [int][Math]::Floor([double]$src.Height * $scale))
+  $out = New-Object Drawing.Bitmap $w, $h, ([Drawing.Imaging.PixelFormat]::Format32bppRgb)
+  $g = $null
+  try {
+    $g = [Drawing.Graphics]::FromImage($out)
+    $g.Clear($paper)
+    $g.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $g.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::Half
+    $g.DrawImage($src, (New-Object Drawing.Rectangle 0, 0, $w, $h))
+    return $out
+  } catch {
+    Write-Log ('card page scale failed: ' + $_.Exception.Message)
+    try { $out.Dispose() } catch { }
+    return $null
+  } finally {
+    if ($null -ne $g) { $g.Dispose() }
+  }
+}
+
 function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $paper, [string]$mode = 'full') {
   if (-not $ref -or $maxW -lt 16 -or $maxH -lt 16) { return $null }
   if ($mode -ceq 'none' -or $mode -ceq 'text') { return $null }
@@ -524,6 +585,11 @@ function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $pap
   if ($null -ne $hit) { return $hit }
   $rtf = Read-RichRtf $ref
   if (-not $rtf) { return $null }
+  # a page wider than the card is laid out at its own width and scaled afterwards; the room
+  # grows with it, so the scaled page still shows as many lines as the card would have held
+  $layoutW = Get-RtfLayoutWidth $rtf $maxW
+  $layoutH = $maxH
+  if ($layoutW -gt $maxW) { $layoutH = [int][Math]::Ceiling(([double]$maxH * $layoutW) / [double]$maxW) }
   # both cards end up with the same marker token; each mode decides separately what the marker
   # paragraph reserves, once the card's own line height is known
   $token = $script:CardPicToken
@@ -534,6 +600,8 @@ function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $pap
   $full = $null
   $g = $null
   $out = $null
+  # the smallest page the card shows: one text line plus the room the crop keeps
+  $minH = 16
   # each mode fills this with a width,rows pair per block, in document order, so the rectangle
   # painted afterwards is exactly the room the marker paragraph reserved
   $boxes = @()
@@ -541,9 +609,10 @@ function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $pap
     $box.BorderStyle = 'None'
     $box.DetectUrls = $false
     $box.WordWrap = $true
-    $box.Size = New-Object Drawing.Size $maxW, $maxH
+    $box.Size = New-Object Drawing.Size $layoutW, $layoutH
     $box.BackColor = $paper
     if ($null -ne $font) { $box.Font = $font }
+    try { $minH = [Math]::Max(16, [int]$box.Font.Height + 4) } catch { }
     # a handle is all the layout needs: the control never has to be on screen
     [void]$box.Handle
     if ($mode -ceq 'plain') {
@@ -552,8 +621,8 @@ function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $pap
       # around a picture stay where the layout put them.
       try {
         $gap = [int](Px 10)
-        $avail0 = $maxW - ($gap * 2)
-        if ($avail0 -lt 40) { $avail0 = $maxW }
+        $avail0 = $layoutW - ($gap * 2)
+        if ($avail0 -lt 40) { $avail0 = $layoutW }
         $band = [Math]::Min($script:CardPicWidth, $avail0)
         $rtf = [Cb.Rtf]::PadPictures($rtf, $token, [int]$box.Font.Height, $band, 60, $script:CardPicRows, [ref]$boxes)
         $gray = Add-RtfGrayColor $rtf
@@ -569,8 +638,8 @@ function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $pap
       # pixels that were already decoded, or from the png header when it was too big to decode.
       try {
         $gap = [int](Px 10)
-        $avail0 = $maxW - ($gap * 2)
-        if ($avail0 -lt 40) { $avail0 = $maxW }
+        $avail0 = $layoutW - ($gap * 2)
+        if ($avail0 -lt 40) { $avail0 = $layoutW }
         $band = [Math]::Min($script:CardPicWidth, $avail0)
         $rtf = ConvertTo-CardRtf $rtf $token ([int]$box.Font.Height) $band 60 $script:CardPicRows ([ref]$boxes)
       } catch {
@@ -578,29 +647,21 @@ function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $pap
       }
     }
     try { $box.Rtf = $rtf } catch { return $null }
-    $full = New-Object Drawing.Bitmap $maxW, $maxH, ([Drawing.Imaging.PixelFormat]::Format32bppRgb)
+    $full = New-Object Drawing.Bitmap $layoutW, $layoutH, ([Drawing.Imaging.PixelFormat]::Format32bppRgb)
     $g = [Drawing.Graphics]::FromImage($full)
     $g.Clear($paper)
-    [void][Cb.Rich]::RenderTo($box, $g, $maxW, $maxH)
+    [void][Cb.Rich]::RenderTo($box, $g, $layoutW, $layoutH)
     # before the crop: a placeholder taller than the words has to count as ink
     if ($token) {
-      try { Draw-CardImagePlaceholders $g $box $maxW $paper $token $boxes $maxH }
+      try { Draw-CardImagePlaceholders $g $box $layoutW $paper $token $boxes $layoutH }
       catch { Write-Log ('card placeholder failed: ' + $_.Exception.Message) }
     }
     $g.Dispose()
     $g = $null
-    # a two line note must not get a full page: crop to the rows that carry ink
-    $used = Get-InkBottom $full $paper
-    $minH = 16
-    try { $minH = [Math]::Max(16, [int]$box.Font.Height + 4) } catch { }
-    if ($used -lt $minH) { $used = $minH }
-    if ($used -gt $maxH) { $used = $maxH }
-    if ($used -eq $maxH) {
-      $out = $full
-      $full = $null
-    } else {
-      $out = $full.Clone((New-Object Drawing.Rectangle 0, 0, $maxW, $used), [Drawing.Imaging.PixelFormat]::Format32bppRgb)
-    }
+    # the page is kept whole: the card scale runs first and the crop after it, so the ink scan
+    # walks the card instead of a page that may be four times wider
+    $out = $full
+    $full = $null
   } catch {
     Write-Log ('rich preview failed: ' + $_.Exception.Message)
     $out = $null
@@ -612,6 +673,23 @@ function Get-RichPreviewBitmap([string]$ref, [int]$maxW, [int]$maxH, $font, $pap
   if ($null -eq $out) {
     try { if ([Cb.Rich]::LastError) { Write-Log ('rich layout: ' + [Cb.Rich]::LastError) } } catch { }
     return $null
+  }
+  # the page was laid out wider than the card so its tables keep their columns; shrinking it
+  # here is what makes it fit, and the columns stay the width the document gave them
+  if ($layoutW -gt $maxW) {
+    $small = New-CardPageScaled $out $maxW $maxH $paper
+    try { $out.Dispose() } catch { }
+    $out = $small
+    if ($null -eq $out) { return $null }
+  }
+  # a two line note must not get a full page: crop to the rows that carry ink
+  $used = Get-InkBottom $out $paper
+  if ($used -lt $minH) { $used = $minH }
+  if ($used -gt $out.Height) { $used = $out.Height }
+  if ($used -lt $out.Height) {
+    $crop = $out.Clone((New-Object Drawing.Rectangle 0, 0, $out.Width, $used), [Drawing.Imaging.PixelFormat]::Format32bppRgb)
+    try { $out.Dispose() } catch { }
+    $out = $crop
   }
   return (Set-MediaCache $key $out)
 }

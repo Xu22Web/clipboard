@@ -1771,6 +1771,11 @@ try {
     $cardRtf = '{\rtf1\ansi\deff0\fs20 before {\pict\pngblip\picw48\pich48\picwgoal720\pichgoal720 ' + $cardHex + '} after\par}'
     $cardRef = New-RichRef @{ Html = $null; Rtf = $Utf8.GetBytes($cardRtf) }
     [void](Write-RichMedia $cardRef @{ Html = $null; Rtf = $Utf8.GetBytes($cardRtf) })
+    # a table with columns of its own: 8640 twips is 576 px, which the card cannot hold, so the
+    # layout engine squeezes the cells instead of laying the rows out the way they were written
+    $tableRow = '\trowd\trgaph108\trleft-108\cellx2880\cellx5760\cellx8640'
+    $tableRtf = '{\rtf1\ansi\deff0{\fonttbl{\f0\fnil Calibri;}}' + $tableRow + '\intbl 1111111\cell 1111111111111\cell 1111111\cell\row' +
+      $tableRow + '\intbl 1111111111111\cell 1111111111111111111\cell 111111111111111111111111\cell\row\pard after\par}'
 
     Describe 'the card' {
       It 'a png picture is re-spelled for the layout' {
@@ -1794,6 +1799,19 @@ try {
           $cardBudget = ConvertTo-CardRtf $cardRtf
           Expect ((-not ($cardBudget -match '\\pngblip')) -and ($cardBudget -match '\@cbimg\@')) ''
         } finally { $script:CardRtfMaxDib = $savedDib }
+      }
+
+      It 'a table keeps the width it was written with' {
+        # the layout engine fits the page into the room it is handed and narrows the columns to
+        # do it, so the words in a cell wrap and the table comes apart - while the paste, which
+        # parses the rtf itself, stays whole. The widths are in the rtf: \cellx is the right
+        # edge of a cell in twips, and 15 twips make a pixel at 96 dpi.
+        Expect ((Get-RtfLayoutWidth $tableRtf 380) -eq 576) ([string](Get-RtfLayoutWidth $tableRtf 380))
+        # text without a table wraps at the card width: it loses nothing by wrapping
+        Expect ((Get-RtfLayoutWidth '{\rtf1\ansi plain words\par}' 380) -eq 380) ''
+        # a page that would shrink past the widest card keeps the card width instead
+        $hugeRtf = '{\rtf1\ansi\trowd\cellx' + [string](380 * 15 * 8) + '\intbl a\cell\row}'
+        Expect ((Get-RtfLayoutWidth $hugeRtf 380) -eq (380 * $script:CardRtfWideMax)) ([string](Get-RtfLayoutWidth $hugeRtf 380))
       }
 
       It 'the card draws the picture of a formatted entry' {
