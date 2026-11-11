@@ -142,25 +142,37 @@ namespace Cb {
       return WindowBounds(info.hwndFocus);
     }
 
-    // The caret position the input queue keeps for the focused thread, in screen pixels. The
-    // third source, after rcCaret and before UI Automation: GetCaretPos only answers for the
-    // calling thread, so the queues are attached for the call. rcCaret is empty whenever the
-    // control draws its own caret or the caret is hidden, and the position is still known here.
-    // No size comes with it - the caller adds the height of one line.
+    // The caret the input queue keeps for the focused thread, in screen pixels. The third
+    // source, after rcCaret and before UI Automation: GetCaretPos only answers for the calling
+    // thread, so the queues are attached for the call.
+    //
+    // It answers TRUE with 0,0 when the thread has no caret at all (measured on an Explorer
+    // search box and on Electron windows, where hwndCaret is 0), which put the panel at the
+    // corner of the window. hwndCaret is the thread's own answer to which window owns the
+    // caret, and the point is read relative to that window, so it is both the test and the
+    // origin. No size comes with the point - the caller adds the height of one line.
     [DllImport("user32.dll")] private static extern bool GetCaretPos(out CARETPOINT p);
+    [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr h, out WINRECT r);
 
     public static System.Drawing.Rectangle AttachedCaret(IntPtr hwnd) {
       if (hwnd == IntPtr.Zero) { return System.Drawing.Rectangle.Empty; }
       uint target = GetWindowThreadProcessId(hwnd, IntPtr.Zero);
       if (target == 0) { return System.Drawing.Rectangle.Empty; }
-      IntPtr focus = FocusOfWindow(hwnd);
-      IntPtr owner = focus != IntPtr.Zero ? focus : hwnd;
+      GUITHREADINFO info = new GUITHREADINFO();
+      info.cbSize = Marshal.SizeOf(typeof(GUITHREADINFO));
+      if (!GetGUIThreadInfo(target, ref info)) { return System.Drawing.Rectangle.Empty; }
+      IntPtr owner = info.hwndCaret;
+      if (owner == IntPtr.Zero || !IsWindow(owner)) { return System.Drawing.Rectangle.Empty; }
+      WINRECT client;
+      if (!GetClientRect(owner, out client)) { return System.Drawing.Rectangle.Empty; }
       uint mine = GetCurrentThreadId();
       bool attached = false;
       try {
         if (target != mine) { attached = AttachThreadInput(mine, target, true); }
         CARETPOINT p;
         if (!GetCaretPos(out p)) { return System.Drawing.Rectangle.Empty; }
+        // a position left over from before the control lost the caret is outside the window
+        if (p.X < 0 || p.Y < 0 || p.X > client.Right || p.Y > client.Bottom) { return System.Drawing.Rectangle.Empty; }
         CARETPOINT origin;
         origin.X = 0; origin.Y = 0;
         if (!ClientToScreen(owner, ref origin)) { return System.Drawing.Rectangle.Empty; }
@@ -204,6 +216,46 @@ namespace Cb {
       System.Text.StringBuilder sb = new System.Text.StringBuilder(256);
       if (GetClassNameW(h, sb, sb.Capacity) <= 0) { return ""; }
       return sb.ToString();
+    }
+
+    // True when the window is an always-on-top one. The panel is topmost too but never activates,
+    // so an active topmost window stays above it - measured on the shell's search flyout, which
+    // sits there without UIAccess and stayed in front of the panel.
+    public static bool IsTopmost(IntPtr h) {
+      if (h == IntPtr.Zero) { return false; }
+      return (GetWindowLong(h, -20) & 0x8) != 0;   // GWL_EXSTYLE, WS_EX_TOPMOST
+    }
+
+    // A window whose process holds UIAccess is drawn in a band above every topmost window, so no
+    // z-order call puts a normal window over it: this is the general form of "the panel cannot go
+    // there", and it costs no interaction with that process. Start and the search flyout are the
+    // ones a user runs into; the band itself is not queryable (GetWindowBand is undocumented and
+    // not exported by name, and calling the wrong ordinal kills the caller).
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+    [DllImport("advapi32.dll", SetLastError = true)] private static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+    [DllImport("advapi32.dll", SetLastError = true)] private static extern bool GetTokenInformation(IntPtr token, int cls, out int value, int len, out int needed);
+    [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr h);
+
+    public static bool HasUiAccess(IntPtr hwnd) {
+      if (hwnd == IntPtr.Zero) { return false; }
+      uint pid;
+      if (GetWindowOwnerProcessId(hwnd, out pid) == 0 || pid == 0) { return false; }
+      IntPtr process = IntPtr.Zero;
+      IntPtr token = IntPtr.Zero;
+      try {
+        process = OpenProcess(0x1000, false, pid);                                  // PROCESS_QUERY_LIMITED_INFORMATION
+        if (process == IntPtr.Zero) { return false; }
+        if (!OpenProcessToken(process, 0x0008, out token)) { return false; }        // TOKEN_QUERY
+        int value;
+        int needed;
+        if (!GetTokenInformation(token, 26, out value, 4, out needed)) { return false; }   // TokenUIAccess
+        return value != 0;
+      } catch {
+        return false;
+      } finally {
+        if (token != IntPtr.Zero) { CloseHandle(token); }
+        if (process != IntPtr.Zero) { CloseHandle(process); }
+      }
     }
 
     // A window that does not answer WM_NULL within the budget is one whose accessibility calls

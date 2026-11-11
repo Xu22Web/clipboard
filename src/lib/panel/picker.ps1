@@ -34,13 +34,23 @@ function Show-Picker([switch]$Warm) {
       elseif (Test-Font 'Segoe MDL2 Assets') { $script:IconFamily = 'Segoe MDL2 Assets' }
     }
     $prev = [Cb.Win]::GetForegroundWindow()
-    # Windows Start and its search flyout stay above every other topmost window (their process
-    # runs with UIAccess, so no z-order call wins over them) and take the keyboard with them: a
-    # panel opened there would be invisible while its hook swallowed the keys for the search box.
-    if (-not $Warm -and (Test-ShellFlyout $prev)) {
-      Write-Log 'picker: not opened (Windows Start / search is in front)'
-      $script:PickerOpen = $false
-      return
+    # A window in the UIAccess band cannot be covered by any topmost window, so a panel opened
+    # over it is invisible while its hook swallows the keys meant for it. Ditto closes that
+    # window instead of giving up, and so does this: Escape it away, then open over what is
+    # behind it. A window that is not the shell's own flyout is left alone - closing somebody
+    # else's window is not this tool's business, so the panel stays closed.
+    if (-not $Warm -and (Test-UncoverableWindow $prev)) {
+      # the hotkey arrives while Ctrl and Alt are still held, and Escape with them down is a
+      # different key that the flyout ignores
+      try { Release-HeldModifiers } catch { }
+      if (Close-ShellFlyout $prev) {
+        Write-Log ('picker: closed the flyout in front (it cannot be covered): ' + (Format-ForegroundWindow $prev))
+        $prev = [Cb.Win]::GetForegroundWindow()
+      } else {
+        Write-Log ('picker: not opened (the window in front cannot be covered): ' + (Format-ForegroundWindow $prev))
+        $script:PickerOpen = $false
+        return
+      }
     }
     # the control that owns the keyboard there: restored when the panel hands the foreground
     # over (an input method) and after the paste that follows a pick

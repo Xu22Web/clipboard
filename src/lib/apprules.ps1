@@ -56,6 +56,51 @@ function Test-ShellFlyout($hwnd) {
   } catch { return $false }
 }
 
+# A window the topmost panel cannot be placed over: the panel is topmost but never activates,
+# so an active topmost window stays above it, and a process with UIAccess sits in a band above
+# every topmost window. Own windows are not one of them - the panel, a tray icon and the console
+# run in this process.
+function Test-UncoverableWindow($hwnd) {
+  try {
+    if ($null -eq $hwnd) { return $false }
+    $h = [IntPtr]$hwnd
+    if ($h -eq [IntPtr]::Zero) { return $false }
+    if ([Cb.Win]::IsOwnWindow($h)) { return $false }
+    if (Test-ShellFlyout $h) { return $true }
+    if ([Cb.Win]::IsTopmost($h)) { return $true }
+    return [Cb.Win]::HasUiAccess($h)
+  } catch { return $false }
+}
+
+# a window as a log line names it: its class, then the program that owns it
+function Format-ForegroundWindow($hwnd) {
+  try {
+    $h = [IntPtr]$hwnd
+    $what = ''
+    try { $what = [string][Cb.Win]::WindowClass($h) } catch { $what = '' }
+    try { $p = Get-WindowProcessName $h; if ($p) { $what = ($what + ' ' + $p).Trim() } } catch { }
+    if (-not $what) { $what = 'hwnd=0x' + ([int64]$h).ToString('X') }
+    return $what
+  } catch { return '' }
+}
+
+# Close the shell flyout that is in front, so the panel can open over what is behind it (the way
+# Ditto does it). Escape is what the flyout itself listens for; the wait is for its window to go
+# before the panel reads the foreground it will paste back to.
+function Close-ShellFlyout($hwnd) {
+  try {
+    if (-not (Test-ShellFlyout $hwnd)) { return $false }
+    [Cb.Win]::keybd_event(0x1B, 0, 0, [IntPtr]::Zero)
+    [Cb.Win]::keybd_event(0x1B, 0, 2, [IntPtr]::Zero)
+    $deadline = (Get-Date).AddMilliseconds(400)
+    while ((Get-Date) -lt $deadline) {
+      Start-Sleep -Milliseconds 25
+      if (-not (Test-ShellFlyout ([Cb.Win]::GetForegroundWindow()))) { return $true }
+    }
+    return $false
+  } catch { return $false }
+}
+
 # The action the rules give this program: '' means "no rule, do what the settings say".
 function Get-AppRuleAction([string]$processName = '') {
   $rules = $null

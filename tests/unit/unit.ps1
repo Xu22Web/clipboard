@@ -609,7 +609,12 @@ try {
         # Ditto's third source (ExternalWindowTracker::FocusCaret): GetCaretPos on the attached
         # thread, which answers with a point and no height, so one line is added
         Expect ($script:StructWinText -match '(?s)public static System\.Drawing\.Rectangle AttachedCaret') 'no AttachedCaret in the assembly'
-        Expect ($script:StructWinText -match '(?s)AttachedCaret.{0,900}AttachThreadInput') 'the queues are never attached for GetCaretPos'
+        Expect ($script:StructWinText -match '(?s)AttachedCaret.{0,1400}AttachThreadInput') 'the queues are never attached for GetCaretPos'
+        # GetCaretPos answers TRUE with 0,0 when the thread has no caret (Explorer's search box),
+        # which placed the panel at the window corner: hwndCaret says whether a caret exists and
+        # which window owns the point, and a point outside that window is a stale one
+        Expect ($script:StructWinText -match '(?s)AttachedCaret.{0,1400}hwndCaret') 'the caret point is trusted without asking whether the thread has one'
+        Expect ($script:StructWinText -match '(?s)AttachedCaret.{0,1600}GetClientRect') 'the caret point is not checked against the window that owns it'
         Expect ($script:StructWinText -match 'function Get-CaretLineHeight') 'a caret point has no height to place below'
         # it belongs after rcCaret and before UI Automation: it is cheaper than a cross-process
         # accessibility call and more precise than the focused element's box
@@ -626,13 +631,25 @@ try {
         Expect ($script:StructWinText -match '(?s)CaretOfWindow.{0,2000}ClientToScreen') 'the caret rect is not moved to screen coordinates'
       }
 
-      It 'keeps out of the Windows Start / search flyout' {
-        # that window stays above every other topmost window (its process runs with UIAccess), so
-        # a panel there would be invisible while its hook swallowed the keys meant for the search
-        # box: it is neither opened over the flyout nor left open when the flyout comes up
-        Expect ($script:StructPickerText -match '(?s)Test-ShellFlyout \$prev\).{0,200}not opened') 'the picker opens over Start / search'
+      It 'closes the flyout that cannot be covered' {
+        # a window whose process holds UIAccess sits in a band above every topmost window, so a
+        # panel there would be invisible while its hook swallowed the keys meant for it. Ditto
+        # closes that window and opens anyway; a window that is not the shell's own flyout is
+        # left alone instead
+        $rules = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'apprules.ps1'))
+        Expect ($script:StructPickerText -match '(?s)Test-UncoverableWindow \$prev\).{0,400}Close-ShellFlyout') 'the picker gives up instead of closing the flyout'
+        Expect ($script:StructPickerText -match '(?s)Release-HeldModifiers.{0,200}Close-ShellFlyout') 'Escape is sent with the hotkey modifiers still down'
+        Expect ($script:StructPickerText -match '(?s)Close-ShellFlyout \$prev\).{0,300}closed the flyout') 'the flyout is closed without a word in the log'
+        Expect ($script:StructPickerText -match 'not opened \(the window in front cannot be covered\)') 'a window that cannot be covered is opened over anyway'
         Expect ($script:StructPickerText -match '(?s)Test-ShellFlyout \$fgShell\).{0,200}dismissed') 'the picker stays open when Start / search comes up'
         Expect ($script:StructPickerText -match 'ShellCheckAt') 'the flyout is never polled while the panel is up'
+        # the general test is the window style and the process token - the band itself cannot be
+        # queried - and only a shell flyout is closed, never somebody else's window
+        Expect ($script:StructWinText -match '(?s)bool IsTopmost\(IntPtr h\).{0,300}0x8') 'an active topmost window is not recognised'
+        Expect ($rules -match '(?s)function Test-UncoverableWindow.{0,600}IsTopmost') 'a topmost window in front is not what decides it'
+        Expect ($rules -match '(?s)function Test-UncoverableWindow.{0,900}HasUiAccess') 'UIAccess windows are not recognised'
+        Expect ($rules -match '(?s)function Close-ShellFlyout.{0,400}0x1B') 'the flyout is not closed with Escape'
+        Expect ($rules -match '(?s)function Close-ShellFlyout.{0,700}Test-ShellFlyout') 'an arbitrary window would be closed'
       }
 
       It 'paste can type instead of injecting a paste key' {
