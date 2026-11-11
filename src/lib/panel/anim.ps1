@@ -9,15 +9,14 @@
 # no-activate model cannot afford; instead the transitions are drawn as alpha ramps inside
 # the existing controls, driven by the picker's own message loop.
 
-# the values that can be in flight: rows fade in and out, the scrollbar and grip grow on
-# hover, the search underline slides in when the box is active, the editor's two buttons light
-# up on hover
-$script:AnimKeys = @('Hover', 'Sel', 'PrevSel', 'Sb', 'Grip', 'Field', 'EditBtn')
+# the values that can be in flight: rows fade in and out, the scrollbar grows on hover, the
+# search underline slides in when the box is active, the editor's two buttons light up on
+# hover
+$script:AnimKeys = @('Hover', 'Sel', 'PrevSel', 'Sb', 'Field', 'EditBtn')
 
 # which repaint each key needs, as a bit mask the picker turns into Invalidate calls:
-# 1 = the list, 2 = the scrollbar, 4 = the resize grip, 8 = the search field, 16 = the
-# editor's buttons
-$script:AnimPaint = @{ Hover = 1; Sel = 1; PrevSel = 1; Sb = 2; Grip = 4; Field = 8; EditBtn = 16 }
+# 1 = the list, 2 = the scrollbar, 8 = the search field, 16 = the editor's buttons
+$script:AnimPaint = @{ Hover = 1; Sel = 1; PrevSel = 1; Sb = 2; Field = 8; EditBtn = 16 }
 
 function New-AnimState {
   $s = @{ HoverIndex = -1; PrevHoverIndex = -1; SelIndex = -1; PrevSelIndex = -1 }

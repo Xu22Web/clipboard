@@ -38,7 +38,7 @@ function Get-EditHints {
 # has no text to edit so F2 would only promise something the editor refuses, and Esc clears the
 # search before it closes the panel. The footer truncates from the right, so the keys that
 # change something come before the one that leaves.
-function Get-PanelHints([int]$rows, [int]$selected, [bool]$editable, [int]$queryLen, [bool]$ctrlHeld, $ctrlKeys, [bool]$editing, [bool]$undoOn) {
+function Get-PanelHints([int]$rows, [int]$selected, [bool]$editable, [int]$queryLen, [bool]$ctrlHeld, $ctrlKeys, [bool]$editing, [bool]$undoOn, [bool]$compact = $false) {
   # while the editor covers the list, only the editor's own keys work
   if ($editing) {
     return (Get-EditHints)
@@ -47,6 +47,21 @@ function Get-PanelHints([int]$rows, [int]$selected, [bool]$editable, [int]$query
     # the comma keeps the pair nested: a one-element array would be unrolled by the function
     # return and each string would then be read as a list of characters
     return ,@(@('Esc', 'Close'))
+  }
+  if ($compact) {
+    # the compact footer has no room for five pairs and no count label to share the row with:
+    # pick and leave first, then the two extras that change something
+    $pairs = New-Object System.Collections.Generic.List[object]
+    if ($selected -gt 1) {
+      $pairs.Add(@('Ctrl+Enter', ('Copy ' + $selected.ToString())))
+      $pairs.Add(@('Del', ('Delete ' + $selected.ToString())))
+    } else {
+      $pairs.Add(@('Enter', 'Paste'))
+      $pairs.Add(@('Ctrl+Enter', 'Copy'))
+      if ($editable) { $pairs.Add(@('F2', 'Edit')) }
+    }
+    if ($queryLen -gt 0) { $pairs.Add(@('Esc', 'Clear')) } else { $pairs.Add(@('Esc', 'Close')) }
+    return $pairs.ToArray()
   }
   $multi = ($selected -gt 1)
   # the count is worked out first: inside the array below, '+ [string]$selected' would be read

@@ -228,6 +228,7 @@ switch ($Command.ToLower()) {
     Write-Host ('data        : v' + $script:DataVersion + '   (file: ' + $sv.Label + ')')
     if (@('old', 'newer', 'unknown') -contains $sv.Kind) { Write-Host ('migration   : [!] ' + (Get-StoreAdvice $sv)) }
     Write-Host ('panel       : ' + $script:WinWidth + 'x' + (Get-PanelHeight $script:Rows (Get-PanelRowHeight) (Get-PanelChrome)) + '  rows=' + $script:Rows + '  theme=' + $script:Theme + '  dpi=' + $script:UiScale)
+    Write-Host ('compact     : ' + $(if ($script:CompactMode) { 'on   ' + $script:CompactWidth + 'x' + $script:CompactRows + ' rows' } else { 'off' }))
     $hkFile = Join-Path $StoreDir 'hotkey.txt'
     $eff = '(daemon never started)'
     if (Test-Path -LiteralPath $hkFile) { $eff = ([IO.File]::ReadAllText($hkFile, [Text.Encoding]::UTF8)).Trim() }

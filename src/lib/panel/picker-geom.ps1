@@ -20,6 +20,33 @@ function Get-PanelRowHeight { return [int]$script:Metric['RowHeight'] }
 # everything that is not a row: header, footer and the 1 px border on each side
 function Get-PanelChrome { return ([int]$script:Metric['HeadHeight'] + [int]$script:Metric['FootHeight'] + 2) }
 
+# Chrome of one panel shape. The preset carries the header and footer heights because the
+# compact panel keeps the theme's colours but not its taller chrome.
+function Get-PresetChrome($preset) {
+  if ($null -eq $preset) { return (Get-PanelChrome) }
+  return ([int]$preset.Head + [int]$preset.Foot + 2)
+}
+
+# The two panel shapes and what actually differs between them. This is the only place that
+# decides, so the drawing, the keys and the paste stay one code path. Full keeps every column
+# and the theme's chrome; compact drops the time column, the right-hand count and the version,
+# uses a shorter header and footer, and always follows the caret. Width and row count come from
+# the setting of each shape, so neither number means two things.
+function Get-PanelPreset([string]$mode) {
+  if ($mode -eq 'compact') {
+    return @{
+      Mode = 'compact'; Width = [int]$script:CompactWidth; Rows = [int]$script:CompactRows
+      Head = 60; Foot = 32
+      ShowTime = $false; ShowFootRight = $false; AnchorCaret = $true
+    }
+  }
+  return @{
+    Mode = 'full'; Width = [int]$script:WinWidth; Rows = [int]$script:Rows
+    Head = [int]$script:Metric['HeadHeight']; Foot = [int]$script:Metric['FootHeight']
+    ShowTime = [bool]$script:ShowTime; ShowFootRight = $true; AnchorCaret = [bool]$script:PlaceAtCaret
+  }
+}
+
 # The window height is never a setting of its own: it follows from the number of rows, so
 # a row is never half cut off and raising the row count cannot silently make the panel
 # taller than the screen. These two are the only conversion, shared by the panel and by
@@ -74,9 +101,9 @@ function Get-QuickKeyOffset([int]$digit) {
 }
 
 # Where the panel should appear. A saved position is only honoured when the panel still
-# lands on a screen; otherwise sit on the window it was opened from when one is given, and
-# fall back to centring on the monitor of that window.
-function Get-PickerBounds([int]$w, [int]$h, [string]$rawLeft, [string]$rawTop, $areas, $fallback, $prefer = $null) {
+# lands on a screen; otherwise sit on the caret the user is typing at, then on the window it
+# was opened from, and fall back to centring on the monitor of that window.
+function Get-PickerBounds([int]$w, [int]$h, [string]$rawLeft, [string]$rawTop, $areas, $fallback, $prefer = $null, $anchor = $null, [int]$gap = 4) {
   $l = 0
   $t = 0
   $hasL = [int]::TryParse([string]$rawLeft, [ref]$l)
@@ -91,6 +118,23 @@ function Get-PickerBounds([int]$w, [int]$h, [string]$rawLeft, [string]$rawTop, $
         return @{ Left = [int]$cl; Top = [int]$ct; Fitted = $false }
       }
     }
+  }
+  # the caret is the tightest anchor: below it, and above it when the bottom of the monitor
+  # comes first. The caret sits in a line of text, so the panel starts at its left edge and
+  # the line stays readable; the monitor it is on decides the clamping.
+  if ($null -ne $anchor -and $areas -and [int]$anchor.Width -gt 0 -and [int]$anchor.Height -gt 0) {
+    $ax = [int]$anchor.Left
+    $ay = [int]$anchor.Top
+    $area = $null
+    foreach ($a in @($areas)) {
+      if ($ax -ge $a.Left -and $ax -le ($a.Left + $a.Width) -and $ay -ge $a.Top -and $ay -le ($a.Top + $a.Height)) { $area = $a; break }
+    }
+    if ($null -eq $area) { $area = $fallback }
+    $top = $ay + [int]$anchor.Height + $gap
+    if ($top + $h -gt $area.Top + $area.Height) { $top = $ay - $gap - $h }
+    $left = [Math]::Max($area.Left, [Math]::Min($ax, $area.Left + $area.Width - $w))
+    $top = [Math]::Max($area.Top, [Math]::Min($top, $area.Top + $area.Height - $h))
+    return @{ Left = [int]$left; Top = [int]$top; Fitted = $true }
   }
   # nothing remembered: put the panel on the window the user came from (its horizontal
   # centre, a third of the way down), clamped into the monitor that window sits on

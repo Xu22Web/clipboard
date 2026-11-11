@@ -90,6 +90,150 @@ function Initialize-Dpi {
   } catch { $script:UiScale = 1.0 }
 }
 
+# ---- where the keyboard is ---------------------------------------------------------
+# The panel wants the spot the user is typing at, and no single API covers the field:
+#
+#   caret   - GUITHREADINFO.rcCaret, filled only by controls that use the old Win32 caret
+#   uia     - UI Automation's TextPattern selection, which is what Electron, browsers,
+#             RichEdit and UWP report instead of a caret
+#   control - the focused control's own rectangle, the last thing that always exists
+#
+# The first two answer for most applications; the third keeps a meaningless rectangle from
+# being used as if it were a caret. UI Automation is loaded once (~150 ms) and answers in
+# single-digit milliseconds afterwards, which is why the panel's warm-up runs this path too.
+function Initialize-CaretLookup {
+  if ($null -ne $script:CaretUiaReady) { return $script:CaretUiaReady }
+  $script:CaretUiaReady = $false
+  try {
+    Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop
+    Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop
+    $script:CaretUiaReady = $true
+  } catch { Write-Log ('uia unavailable: ' + $_.Exception.Message) }
+  return $script:CaretUiaReady
+}
+
+# The caret rectangle of the focused text element, or Empty. Both the process check and the
+# responsiveness check matter: FocusedElement can belong to another application, and a window
+# that hangs turns the accessibility call into a blocking wait.
+function Get-UiaCaretRect([IntPtr]$hwnd) {
+  if ($hwnd -eq [IntPtr]::Zero) { return [Drawing.Rectangle]::Empty }
+  if (-not (Initialize-CaretLookup)) { return [Drawing.Rectangle]::Empty }
+  try { if (-not [Cb.Win]::IsResponsive($hwnd, 40)) { return [Drawing.Rectangle]::Empty } } catch { }
+  $el = $null
+  try { $el = [Windows.Automation.AutomationElement]::FocusedElement } catch { return [Drawing.Rectangle]::Empty }
+  if ($null -eq $el) { return [Drawing.Rectangle]::Empty }
+  $targetPid = [uint32]0
+  try { [void][Cb.Win]::GetWindowOwnerProcessId($hwnd, [ref]$targetPid) } catch { return [Drawing.Rectangle]::Empty }
+  if ([int]$targetPid -le 0 -or [int]$el.Current.ProcessId -ne [int]$targetPid) { return [Drawing.Rectangle]::Empty }
+  $pattern = $null
+  try {
+    foreach ($p in @($el.GetSupportedPatterns())) {
+      if ($p.ProgrammaticName -eq 'TextPatternIdentifiers.Pattern') { $pattern = $p; break }
+    }
+  } catch { return [Drawing.Rectangle]::Empty }
+  if ($null -eq $pattern) { return [Drawing.Rectangle]::Empty }
+  try {
+    $tp = $el.GetCurrentPattern($pattern)
+    $range = $null
+    foreach ($rg in $tp.GetSelection()) { $range = $rg; break }
+    if ($null -eq $range) { return [Drawing.Rectangle]::Empty }
+    # The rectangles come back as an array that PowerShell hands over as one object, and the
+    # framework converts each entry to System.Windows.Rect: the four numbers are read from the
+    # first rectangle, whichever of the two shapes it arrives in.
+    $vals = New-Object System.Collections.Generic.List[double]
+    foreach ($v in $range.GetBoundingRectangles()) {
+      if ($null -ne $v -and $null -ne $v.PSObject.Properties['Left']) {
+        $vals.Add([double]$v.Left); $vals.Add([double]$v.Top)
+        $vals.Add([double]$v.Width); $vals.Add([double]$v.Height)
+        break
+      }
+      $vals.Add([double]$v)
+      if ($vals.Count -ge 4) { break }
+    }
+    if ($vals.Count -lt 4) { return [Drawing.Rectangle]::Empty }
+    $x = [int][Math]::Round($vals[0])
+    $y = [int][Math]::Round($vals[1])
+    $w = [int][Math]::Round($vals[2])
+    $h = [int][Math]::Round($vals[3])
+    # an editor may report the whole line for a collapsed selection: the height still marks
+    # the line, and the left edge is where that line starts
+    if ($h -le 0) { $h = [int][Math]::Max(1, [int]$script:Metric['RowHeight'] / 2) }
+    if ($w -le 0) { $w = 1 }
+    return New-Object Drawing.Rectangle -ArgumentList @($x, $y, $w, $h)
+  } catch {
+    Write-Log ('uia caret: ' + $_.Exception.Message)
+    return [Drawing.Rectangle]::Empty
+  }
+}
+
+# A rectangle the panel may be anchored to. Two kinds are refused: the one a provider reports
+# when it knows nothing (0,0 and no size), and the one that covers the whole window - an editor
+# filling its client area says no more than the window does, and anchoring to it puts the panel
+# in a screen corner instead of near the typing.
+function Test-AnchorRect($rect, $window) {
+  if ($null -eq $rect) { return $false }
+  $w = [int]$rect.Width
+  $h = [int]$rect.Height
+  if ($w -le 0 -and $h -le 0) { return $false }
+  if ([int]$rect.Left -eq 0 -and [int]$rect.Top -eq 0) { return $false }
+  if ($null -ne $window -and [int]$window.Width -gt 0 -and [int]$window.Height -gt 0) {
+    if ($w -ge [int]([int]$window.Width * 0.9) -and $h -ge [int]([int]$window.Height * 0.9)) { return $false }
+  }
+  return $true
+}
+
+# The box of the focused element, for elements that expose no text selection: a palette row or
+# a plain text field still says where the typing goes. Empty when it cannot be read.
+function Get-UiaBoxRect([IntPtr]$hwnd) {
+  if ($hwnd -eq [IntPtr]::Zero) { return [Drawing.Rectangle]::Empty }
+  if (-not (Initialize-CaretLookup)) { return [Drawing.Rectangle]::Empty }
+  try { if (-not [Cb.Win]::IsResponsive($hwnd, 40)) { return [Drawing.Rectangle]::Empty } } catch { return [Drawing.Rectangle]::Empty }
+  $el = $null
+  try { $el = [Windows.Automation.AutomationElement]::FocusedElement } catch { return [Drawing.Rectangle]::Empty }
+  if ($null -eq $el) { return [Drawing.Rectangle]::Empty }
+  $targetPid = [uint32]0
+  try { [void][Cb.Win]::GetWindowOwnerProcessId($hwnd, [ref]$targetPid) } catch { return [Drawing.Rectangle]::Empty }
+  if ([int]$targetPid -le 0 -or [int]$el.Current.ProcessId -ne [int]$targetPid) { return [Drawing.Rectangle]::Empty }
+  try {
+    $b = $el.Current.BoundingRectangle
+    $w = [double]$b.Width
+    $h = [double]$b.Height
+    if ([double]::IsInfinity($w) -or [double]::IsInfinity($h) -or $w -le 0 -or $h -le 0) { return [Drawing.Rectangle]::Empty }
+    # an element that small is a button, a status-bar item or an icon: it is where the focus
+    # happens to be, not where text is typed, and anchoring to it is worse than centring
+    if ($w -lt 120 -or $h -lt 16) { return [Drawing.Rectangle]::Empty }
+    return New-Object Drawing.Rectangle -ArgumentList @(
+      [int][Math]::Round([double]$b.Left), [int][Math]::Round([double]$b.Top),
+      [int][Math]::Round($w), [int][Math]::Round($h))
+  } catch { return [Drawing.Rectangle]::Empty }
+}
+
+# The anchor the panel is placed against, and the name of the source that answered, so the log
+# says why a position was chosen. Empty means nothing is known and the monitor decides.
+function Get-CaretAnchor([IntPtr]$hwnd) {
+  $script:CaretSource = 'none'
+  if ($hwnd -eq [IntPtr]::Zero) { return [Drawing.Rectangle]::Empty }
+  $window = $null
+  try { $window = [Cb.Win]::WindowBounds($hwnd) } catch { $window = $null }
+  try {
+    $r = [Cb.Win]::CaretOfWindow($hwnd)
+    if ($r.Height -gt 0 -and (Test-AnchorRect $r $window)) { $script:CaretSource = 'caret'; return $r }
+  } catch { }
+  try {
+    $r = Get-UiaCaretRect $hwnd
+    if ($r.Height -gt 0 -and (Test-AnchorRect $r $window)) { $script:CaretSource = 'uia'; return $r }
+  } catch { }
+  try {
+    $r = Get-UiaBoxRect $hwnd
+    if ($r.Height -gt 0 -and (Test-AnchorRect $r $window)) { $script:CaretSource = 'uia-box'; return $r }
+  } catch { }
+  try {
+    $r = [Cb.Win]::FocusControlBounds($hwnd)
+    if ($r.Height -gt 0 -and (Test-AnchorRect $r $window)) { $script:CaretSource = 'control'; return $r }
+  } catch { }
+  return [Drawing.Rectangle]::Empty
+}
+
 # Whether the shell's own clipboard history (Win+V) is usable here. This tool keeps its own
 # history, so the answer is only ever a hint - but it is the one thing the user cannot work
 # out from the tool: the switch is a registry value, the block is a policy, and the service

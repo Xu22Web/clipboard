@@ -111,6 +111,14 @@ function Show-Picker([switch]$Warm) {
       return $null
     }
 
+    # Two shapes, one code path: what differs is resolved here, before a control exists,
+    # because the window height is fixed for the life of the panel.
+    $preset = Get-PanelPreset $(if ($script:CompactMode) { 'compact' } else { 'full' })
+    $script:PanelPreset = $preset
+    $rowsKey = $(if ($preset.Mode -eq 'compact') { 'CompactRows' } else { 'Rows' })
+    # the search field sits in the middle of the header: 14 px above it in a 68 px one
+    $boxTop = [int](($preset.Head - 40) / 2)
+
     $form = New-Object Cb.FluentForm
     $form.FormBorderStyle = 'None'
     $form.StartPosition = 'Manual'
@@ -120,15 +128,15 @@ function Show-Picker([switch]$Warm) {
     $form.KeyPreview = $true
     $form.Text = 'Clipboard history'
     $form.AccessibleName = 'Clipboard history'
-    $form.Width = Px $script:WinWidth
+    $form.Width = Px $preset.Width
     # The height comes from the row count, never from a setting of its own, so no row is ever
-    # half cut off; the screen caps it and matching Min/Max heights leave the drag to width.
+    # half cut off. The screen caps it, and Min = Max keeps the window to the size it opens at.
     $screenH = 0; try { $screenH = [Windows.Forms.Screen]::FromPoint([Windows.Forms.Cursor]::Position).WorkingArea.Height } catch { }
-    $rows = Get-RowsForScreen $script:Rows ([int]([double]$screenH / [double]$script:UiScale)) (Get-PanelRowHeight) (Get-PanelChrome) ([int]$script:IniSchema['Rows'].Minimum)
-    if ($rows -ne $script:Rows) { Write-Log ('picker: rows ' + $script:Rows + ' -> ' + $rows + ' to fit this screen') }
-    $form.Height = Px (Get-PanelHeight $rows (Get-PanelRowHeight) (Get-PanelChrome))
-    $form.MinimumSize = New-Object Drawing.Size -ArgumentList @((Px ([int]$script:IniSchema['WindowWidth'].Minimum)), $form.Height)
-    $form.MaximumSize = New-Object Drawing.Size -ArgumentList @((Px ([int]$script:IniSchema['WindowWidth'].Maximum)), $form.Height)
+    $rows = Get-RowsForScreen $preset.Rows ([int]([double]$screenH / [double]$script:UiScale)) (Get-PanelRowHeight) (Get-PresetChrome $preset) ([int]$script:IniSchema[$rowsKey].Minimum)
+    if ($rows -ne $preset.Rows) { Write-Log ('picker: rows ' + $preset.Rows + ' -> ' + $rows + ' to fit this screen') }
+    $form.Height = Px (Get-PanelHeight $rows (Get-PanelRowHeight) (Get-PresetChrome $preset))
+    $form.MinimumSize = New-Object Drawing.Size -ArgumentList @($form.Width, $form.Height)
+    $form.MaximumSize = New-Object Drawing.Size -ArgumentList @($form.Width, $form.Height)
     $form.BackColor = $ui.Surface
     $form.Padding = New-Object Windows.Forms.Padding(1)
 
@@ -193,7 +201,7 @@ function Show-Picker([switch]$Warm) {
     # A thin rounded thumb is painted instead, brightening on hover.
     $sbar = New-Object Windows.Forms.Panel
     $sbar.Dock = 'Right'
-    $sbar.Width = Px 10
+    $sbar.Width = Px 6
     $sbar.BackColor = $ui.Surface
     $script:SbTop = 0
     $script:SbLen = 0
@@ -202,7 +210,7 @@ function Show-Picker([switch]$Warm) {
 
     $foot = New-Object Windows.Forms.Panel
     $foot.Dock = 'Bottom'
-    $foot.Height = Px $script:Metric['FootHeight']
+    $foot.Height = Px $preset.Foot
     $foot.BackColor = $ui.Surface
 
     $footR = New-Object Windows.Forms.Label
@@ -213,6 +221,9 @@ function Show-Picker([switch]$Warm) {
     $footR.BackColor = $ui.Surface
     $footR.AutoEllipsis = $true
     $footR.Text = ''
+    # the count, the pin count and the version are scan-the-corner information: the compact
+    # panel gives that width to the hints instead
+    $footR.Visible = [bool]$preset.ShowFootRight
 
     $footL = New-Object Windows.Forms.Panel
     $footL.Dock = 'Fill'
@@ -223,14 +234,14 @@ function Show-Picker([switch]$Warm) {
 
     $head = New-Object Windows.Forms.Panel
     $head.Dock = 'Top'
-    $head.Height = Px $script:Metric['HeadHeight']
+    $head.Height = Px $preset.Head
     $head.BackColor = $ui.Surface
     # an empty piece of the header is still "the search area": clicking it asks for the
     # keyboard, so the panel takes it over (see Claim-Search)
     $head.Add_Click({ Claim-Search })
 
     $box = New-Object Windows.Forms.Panel
-    $box.SetBounds((Px 14), (Px 14), ($form.ClientSize.Width - (Px 30)), (Px 40))
+    $box.SetBounds((Px 14), (Px $boxTop), ($form.ClientSize.Width - (Px 30)), (Px 40))
     $box.BackColor = $ui.Field
     $box.Add_Click({ Claim-Search })
     $box.Add_Paint({
@@ -313,17 +324,10 @@ function Show-Picker([switch]$Warm) {
     $head.Controls.Add($box)
     $head.Controls.Add($line)
 
-    # drag grip: width only - the height follows from the row count (see MinimumSize above)
-    $grip = New-Object Windows.Forms.Panel
-    $grip.Size = New-Object Drawing.Size -ArgumentList @((Px 16), (Px 16))
-    $grip.BackColor = $ui.Surface
-    $grip.Cursor = 'SizeWE'
-
     $form.Controls.Add($listHost)
     $form.Controls.Add($sbar)
     $form.Controls.Add($foot)
     $form.Controls.Add($head)
-    $form.Controls.Add($grip)
     $msWidgets = [int]$swOpen.ElapsedMilliseconds
 
     # A remembered position wins only when the panel still lands on a screen.
@@ -342,26 +346,40 @@ function Show-Picker([switch]$Warm) {
         if ($null -ne $b -and $b.Width -ge 200 -and $b.Height -ge 200) { $preferBox = $b }
       } catch { $preferBox = $null }
     }
-    $pb = Get-PickerBounds $form.Width $form.Height ([string]$script:WinLeft) ([string]$script:WinTop) $areas $fallback $preferBox
+    # the caret is the tightest anchor there is: it marks the line being typed at. A target
+    # that reports no caret right now falls through to the window or the centre.
+    $caretBox = $null
+    if ($preset.AnchorCaret -and $prev -ne [IntPtr]::Zero) {
+      try {
+        $c = Get-CaretAnchor $prev
+        if ($null -ne $c -and $c.Width -gt 0 -and $c.Height -gt 0) {
+          $caretBox = $c
+          Write-Log ('picker: anchor=' + $script:CaretSource + ' at ' + $c.Left + ',' + $c.Top + ' ' + $c.Width + 'x' + $c.Height)
+        } else { Write-Log 'picker: anchor=none' }
+      } catch { $caretBox = $null; Write-Log ('picker: anchor failed: ' + $_.Exception.Message) }
+    }
+    # a saved position belongs to the full panel: the compact one is placed on every open
+    $savedLeft = $(if ($preset.Mode -eq 'compact') { '' } else { [string]$script:WinLeft })
+    $savedTop = $(if ($preset.Mode -eq 'compact') { '' } else { [string]$script:WinTop })
+    $pb = Get-PickerBounds $form.Width $form.Height $savedLeft $savedTop $areas $fallback $preferBox $caretBox
     $form.Left = [int]$pb.Left
     $form.Top = [int]$pb.Top
 
     function Layout-Chrome {
       try {
         $cw = $form.ClientSize.Width
-        $box.SetBounds((Px 14), (Px 14), ($cw - (Px 30)), (Px 40))
+        $box.SetBounds((Px 14), (Px $boxTop), ($cw - (Px 30)), (Px 40))
         $txt.SetBounds((Px 38), (Px 10), ($box.Width - (Px 80)), (Px 22))
         $ph.SetBounds((Px 40), (Px 10), ($box.Width - (Px 106)), (Px 22))
         $clr.SetBounds(($box.Width - (Px 30)), (Px 10), (Px 20), (Px 22))
         $box.Region = New-RoundRegion $box.Width $box.Height (Px 4)
       } catch { }
-      try {
-        $grip.SetBounds(($form.ClientSize.Width - (Px 18)), ($form.ClientSize.Height - (Px 18)), (Px 16), (Px 16))
-        $grip.BringToFront()
-      } catch { }
-      try {
-        $footR.SetBounds(($foot.ClientSize.Width - (Px 210)), 0, (Px 196), $foot.ClientSize.Height)
-      } catch { }
+      # the preset decides, not $footR.Visible: a control whose form is not shown yet reports
+      # Visible = false, and this runs before Show(), which left the count label at the top
+      # left corner in the full panel
+      if ($preset.ShowFootRight) {
+        try { $footR.SetBounds(($foot.ClientSize.Width - (Px 210)), 0, (Px 196), $foot.ClientSize.Height) } catch { }
+      }
       $footL.Invalidate()
     }
 
@@ -391,7 +409,7 @@ function Show-Picker([switch]$Warm) {
           if ($chipLimit -lt (Px 60)) { $chipLimit = $footL.ClientSize.Width - (Px 8) }
           $hintRec = $null
           if ($lst.SelectedIndex -ge 0 -and $lst.SelectedIndex -lt $script:Filtered.Count) { $hintRec = $script:Filtered[$lst.SelectedIndex] }
-          Draw-KeyChips $g (Px 14) $cy (Get-PanelHints $script:Filtered.Count (Get-SelectionCount $script:Sel) (Test-RowEditable $hintRec) $txt.Text.Length $script:CtrlHeld $ctrlHints ($null -ne $script:EditRow) $script:UndoOn) $ui.Dim $ui.Faint $chipLimit
+          Draw-KeyChips $g (Px 14) $cy (Get-PanelHints $script:Filtered.Count (Get-SelectionCount $script:Sel) (Test-RowEditable $hintRec) $txt.Text.Length $script:CtrlHeld $ctrlHints ($null -ne $script:EditRow) $script:UndoOn ($preset.Mode -eq 'compact')) $ui.Dim $ui.Faint $chipLimit
         } catch { }
       })
 
@@ -494,24 +512,6 @@ function Show-Picker([switch]$Warm) {
         [void][Cb.Win]::ReleaseCapture()
         [void][Cb.Win]::SendMessage($form.Handle, 0xA1, [IntPtr]2, [IntPtr]::Zero)
       })
-    $grip.Add_Paint({
-        param($s, $e)
-        if ($script:Anim.Grip -le 0.02) { return }
-        try {
-          $e.Graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
-          $pen = New-Object Drawing.Pen (Scale-Alpha ([Drawing.Color]::FromArgb(120, $ui.Dim)) ([double]$script:Anim.Grip)), 1
-          $cw = $grip.ClientSize.Width
-          $e.Graphics.DrawLine($pen, ($cw - (Px 4)), ($cw - (Px 9)), ($cw - (Px 9)), ($cw - (Px 4)))
-          $e.Graphics.DrawLine($pen, ($cw - (Px 4)), ($cw - (Px 13)), ($cw - (Px 13)), ($cw - (Px 4)))
-          $pen.Dispose()
-        } catch { }
-      })
-    $grip.Add_MouseEnter({ Set-AnimTarget $script:Anim 'Grip' 1.0 })
-    $grip.Add_MouseLeave({ Set-AnimTarget $script:Anim 'Grip' 0.0 })
-    $grip.Add_MouseDown({
-        [void][Cb.Win]::ReleaseCapture()
-        [void][Cb.Win]::SendMessage($form.Handle, 0xA1, [IntPtr]0x11, [IntPtr]::Zero)
-      })
 
     $sbar.Add_Paint({
         param($s, $e)
@@ -520,7 +520,7 @@ function Show-Picker([switch]$Warm) {
         $hot = ($script:SbHot -or $script:SbDrag -ge 0)
         $k = [double]$script:Anim.Sb
         if ($hot) { $k = 1.0 }
-        $w = [int][Math]::Round((Px 3) + ($k * ((Px 6) - (Px 3))))
+        $w = [int][Math]::Round((Px 3) + ($k * ((Px 5) - (Px 3))))
         $alpha = [int][Math]::Round(110 + ($k * 80))
         $x = [int](($sbar.ClientSize.Width - $w) / 2)
         $br = New-Object Drawing.SolidBrush ([Drawing.Color]::FromArgb($alpha, $ui.Dim))
@@ -943,9 +943,15 @@ function Show-Picker([switch]$Warm) {
         $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $b = $e.Bounds
         $m = $script:Metric
-        $rowW = [Math]::Min($b.Width, $listHost.ClientSize.Width) - (Px $m['RowRight'])
+        # The list gives up a column on the right for the scrollbar, so insetting both sides by
+        # the same amount would leave every row sitting one gutter to the left of centre. The
+        # gutter is added to the left inset and taken off the width instead, which balances the
+        # block against the window while RowRight stays twice RowInset (11 px each side at
+        # 700 wide, 96 dpi; see the metric table in lib\base.ps1).
+        $gutter = [int]$sbar.Width
+        $rowW = [Math]::Min($b.Width, $listHost.ClientSize.Width) - (Px $m['RowRight']) - $gutter
         if ($rowW -lt (Px $m['RowMinWidth'])) { $rowW = Px $m['RowMinWidth'] }
-        $r = New-Object Drawing.Rectangle -ArgumentList @(($b.X + (Px $m['RowInset'])), ($b.Y + (Px $m['RowGap'])), $rowW, ($b.Height - (Px (2 * $m['RowGap']))))
+        $r = New-Object Drawing.Rectangle -ArgumentList @(($b.X + (Px $m['RowInset']) + $gutter), ($b.Y + (Px $m['RowGap'])), $rowW, ($b.Height - (Px (2 * $m['RowGap']))))
         $sel = ((($e.State -band [Windows.Forms.DrawItemState]::Selected) -ne 0) -or $lst.IsMulti($e.Index))
         $isData = ($e.Index -lt $script:Filtered.Count)
         $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
@@ -992,14 +998,14 @@ function Show-Picker([switch]$Warm) {
         $capH = Px $m['CapHeight']
         $capX = $r.Right - (Px $m['CapGap']) - $capW
         $capY = $r.Y + [int](($r.Height - $capH) / 2)
-        $timeW = Px $m['TimeWidth']
-        $timeX = $capX - (Px $m['TimeGap']) - $timeW
+        $timeW = $(if ($script:PanelPreset.ShowTime) { Px $m['TimeWidth'] } else { 0 })
+        $timeX = $capX - $(if ($timeW -gt 0) { Px $m['TimeGap'] } else { 0 }) - $timeW
         $markR = $timeX - (Px $m['MarkGap']) - (Px $m['MarkSlot'])
         $markL = $markR - (Px $m['MarkGap2']) - (Px $m['MarkSlot'])
         $offset = $e.Index - $lst.TopIndex
         $showCap = ($offset -ge 0 -and $offset -le 9 -and $offset -lt (Get-Rows) -and -not $script:Confirm)
 
-        if ($script:ShowTime) {
+        if ($timeW -gt 0) {
           $timeRect = New-Object Drawing.RectangleF -ArgumentList @([single]$timeX, [single]$r.Y, [single]$timeW, [single]$r.Height)
           $g.DrawString((Get-RelTime $rec.Time), $fSmall, (Get-Brush $ui.Faint), $timeRect, $sfRight)
         }
@@ -1392,6 +1398,7 @@ function Show-Picker([switch]$Warm) {
     $shape = (' ms (records ' + $msRecords + ', widgets ' + $msWidgets + ', bind ' + ($msBuild - $msWidgets) + ', items ' + $script:Entries.Count + ')')
     # a warm run is a different event in the log: it built the panel and threw it away
     if ($Warm) { Write-Log ('picker: warm ' + $msBuild + $shape) } else { Write-Log ('picker: open ' + $msBuild + $shape) }
+    Write-Log ('picker: mode=' + $preset.Mode + ' rows=' + $rows + ' width=' + $preset.Width)
     # A warm run (see Start-Serve) builds everything and throws it away: the first hotkey then
     # pays only for Show(), which is what the resident wants to avoid after a restart.
     if ($Warm) {
@@ -1425,7 +1432,7 @@ function Show-Picker([switch]$Warm) {
       [Windows.Forms.Application]::DoEvents()
       $am = Invoke-AnimFrame $script:Anim $(if ($script:Animations) { 0.4 } else { 1.0 })
       # repaint only the rows whose alpha moved, not the whole list on every tick
-      if ($am -ne 0 -and -not $form.IsDisposed) { try { if ($am -band 1) { foreach ($i in @($script:Anim.HoverIndex, $script:Anim.PrevHoverIndex, $script:Anim.SelIndex, $script:Anim.PrevSelIndex)) { if ($i -ge 0 -and $i -lt $lst.ItemCount) { $lst.Invalidate($lst.GetItemRectangle($i)) } } }; if ($am -band 2) { $sbar.Invalidate() }; if ($am -band 4) { $grip.Invalidate() }; if ($am -band 8) { $box.Invalidate() }; if ($am -band 16) { if ($null -ne $script:EditRow) { $script:EditRow.Save.Invalidate(); $script:EditRow.Cancel.Invalidate() } } } catch { } }
+      if ($am -ne 0 -and -not $form.IsDisposed) { try { if ($am -band 1) { foreach ($i in @($script:Anim.HoverIndex, $script:Anim.PrevHoverIndex, $script:Anim.SelIndex, $script:Anim.PrevSelIndex)) { if ($i -ge 0 -and $i -lt $lst.ItemCount) { $lst.Invalidate($lst.GetItemRectangle($i)) } } }; if ($am -band 2) { $sbar.Invalidate() }; if ($am -band 8) { $box.Invalidate() }; if ($am -band 16) { if ($null -ne $script:EditRow) { $script:EditRow.Save.Invalidate(); $script:EditRow.Cancel.Invalidate() } } } catch { } }
       if ($script:PickerClose) { $form.Close(); break }
       # Ctrl is a modifier, not a key the hook answers: it stays with the window behind, so a
       # KeyDown for it never reaches the panel while the hook owns the keyboard, and the key
@@ -1490,21 +1497,17 @@ function Show-Picker([switch]$Warm) {
       [void](Restore-TargetFocus $prev $script:PrevFocus)
     }
 
-    if ($script:SaveWinWidth -or $script:SaveWinPos) {
+    # the compact panel is placed on every open, so there is no position of its own to keep
+    if ($script:SaveWinPos -and $preset.Mode -ne 'compact') {
       try {
         $geo = $script:PickerGeo
         if ($null -eq $geo) {
           # the form is gone by now: without the capture from FormClosing there is nothing
-          # safe to read, so leave the stored geometry alone
+          # safe to read, so leave the stored position alone
           Write-Log 'save window state skipped: geometry was not captured'
         } else {
-          if ($script:SaveWinWidth) {
-            [void](Set-IniKey 'WindowWidth' ([string][int]([double]$geo.W / [double]$script:UiScale)))
-          }
-          if ($script:SaveWinPos) {
-            [void](Set-IniKey 'WindowLeft' ([string]$geo.L))
-            [void](Set-IniKey 'WindowTop' ([string]$geo.T))
-          }
+          [void](Set-IniKey 'WindowLeft' ([string]$geo.L))
+          [void](Set-IniKey 'WindowTop' ([string]$geo.T))
         }
       } catch { Write-Log ('save window state failed: ' + $_.Exception.Message) }
     }

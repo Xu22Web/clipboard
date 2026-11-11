@@ -96,11 +96,14 @@ function Get-ConfigReport {
     ExcludePattern    = [string]$script:ExcludePattern
     WindowWidth       = [string]$script:WinWidth
     Rows              = [string]$script:Rows
+    CompactMode       = [string][int][bool]$script:CompactMode
+    CompactWidth      = [string]$script:CompactWidth
+    CompactRows       = [string]$script:CompactRows
     WindowLeft        = [string]$script:WinLeft
     WindowTop         = [string]$script:WinTop
-    SaveWindowWidth   = [string][int][bool]$script:SaveWinWidth
     SaveWindowPos     = [string][int][bool]$script:SaveWinPos
     PlaceNearForeground = [string][int][bool]$script:PlaceNearForeground
+    PlaceAtCaret      = [string][int][bool]$script:PlaceAtCaret
     ImeTakeover       = [string]$script:ImeTakeover
     ShowTime          = [string][int][bool]$script:ShowTime
     ShowTypeIcon      = [string][int][bool]$script:ShowTypeIcon

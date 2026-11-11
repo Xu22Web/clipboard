@@ -165,6 +165,18 @@ function Invoke-ServeOnce {
     $iShow = $dm.Items.Add('Show history')
     $iShow.Add_Click({ try { Show-Picker } catch { } })
     try { $iShow.Font = New-Object Drawing.Font($dm.Font, [Drawing.FontStyle]::Bold) } catch { }
+    # The two panel shapes are a user preference, not a momentary state, so the tick writes the
+    # ini key and the running copy of it: the next open is the other shape.
+    $iCompact = $dm.Items.Add('Compact mode')
+    $iCompact.Add_Click({
+        try {
+          $on = -not [bool]$script:CompactMode
+          $script:CompactMode = $on
+          $iCompact.Checked = $on
+          [void](Set-IniKey 'CompactMode' $(if ($on) { '1' } else { '0' }))
+          Write-Log ('tray: compact mode=' + $on)
+        } catch { Write-Log ('tray compact: ' + $_.Exception.Message) }
+      })
     $iInfo = $dm.Items.Add('clipboard')
     $iInfo.Enabled = $false
     [void]$dm.Items.Add('-')
@@ -225,6 +237,7 @@ function Invoke-ServeOnce {
 
     $dm.Add_Opening({
         try { $iPause.Checked = Test-Path -LiteralPath $Paused } catch { }
+        try { $iCompact.Checked = [bool]$script:CompactMode } catch { }
         try {
           $n = @(Get-Records).Count
           $iInfo.Text = $n.ToString() + $(if ($n -eq 1) { ' entry' } else { ' entries' }) + '   ' + $eff

@@ -21,11 +21,11 @@ $script:IniTemplateLayout = [ordered]@{
     'AppRules', 'Interval', 'NoPaste', 'Balloon', 'Theme', 'ExcludePattern'
   )
   'panel geometry (96 dpi baseline, scaled by the system DPI)' = @(
-    'WindowWidth', 'Rows', 'WindowLeft', 'WindowTop', 'SaveWindowWidth', 'SaveWindowPos',
-    'PlaceNearForeground'
+    'WindowWidth', 'Rows', 'CompactWidth', 'CompactRows',
+    'WindowLeft', 'WindowTop', 'SaveWindowPos', 'PlaceNearForeground', 'PlaceAtCaret'
   )
   'panel behaviour' = @(
-    'ShowTime', 'ShowTypeIcon', 'ShowThumbnails', 'Highlight', 'HighlightMaxBytes',
+    'CompactMode', 'ShowTime', 'ShowTypeIcon', 'ShowThumbnails', 'Highlight', 'HighlightMaxBytes',
     'ShowNewlineMarker', 'PreviewHover', 'PreviewDelay', 'PreviewChars', 'ScrollLines',
     'Animations', 'DpiAware', 'ImeTakeover'
   )
@@ -109,6 +109,33 @@ function Get-IniTemplateLines {
 }
 
 
+# Where a key of the template's header-less base block, or of one heading block, ends in this
+# file: the end of the block carrying that heading, and - when the file has no such block - the
+# first heading or [section] marker, which is always the start of the grouped part. Appending at
+# the end of the file instead would drop a base key into whichever section comes last.
+function Find-TemplateInsertAt($doc, [string]$heading) {
+  $lines = @($doc.Lines)
+  $start = -1
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    $t = ([string]$lines[$i]).Trim()
+    if ($t -match '^#\s*----\s*(.+?)\s*----\s*$') {
+      # the block ends with the first marker after its own
+      if ($start -ge 0) { return $i }
+      if ($Matches[1] -eq $heading) { $start = $i }
+      continue
+    }
+    if ($start -ge 0 -and $t -match '^\[.+\]$') { return $i }
+  }
+  if ($start -ge 0) { return $lines.Count }
+  # a heading the file does not have yet: the new key starts the grouped part, which keeps the
+  # comment of the block that follows glued to its own header
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    $t = ([string]$lines[$i]).Trim()
+    if ($t -match '^\[.+\]$' -or $t -match '^#\s*----\s*.+?\s*----\s*$') { return $i }
+  }
+  return $lines.Count
+}
+
 # `config init`: bring the file in line with this version - add the keys that appeared,
 # comment out the ones that no longer exist, and leave every value alone. A value the user
 # set - a plugin setting in particular - is never replaced by its default. Returns the two
@@ -141,11 +168,21 @@ function Merge-IniDefaults {
   # A section the file already has gets no second header - the key joins the block it has.
   $pending = New-Object System.Collections.Generic.List[string]
   $tplSectionName = ''
+  $tplHeading = ''
   $added = 0
   foreach ($raw in $tpl) {
     $s = [string]$raw
     $tl = $s.Trim()
-    if ($tl -eq '' -or $tl.StartsWith('#')) { $pending.Add($s); continue }
+    if ($tl -eq '' -or $tl.StartsWith('#')) {
+      if ($tl -match '^#\s*----\s*(.+?)\s*----\s*$') {
+        $tplHeading = [string]$Matches[1]
+        # a heading the file already carries is not printed twice: its keys join that block
+        $already = @($doc.Lines | Where-Object { ([string]$_).Trim() -eq $tl })
+        if ($already.Count -gt 0) { $pending.Clear(); continue }
+      }
+      $pending.Add($s)
+      continue
+    }
     if ($tl -match '^\[(.+)\]$') {
       $tplSectionName = $Matches[1].Trim()
       if ($null -ne (Get-IniDocSection $doc $tplSectionName)) { $pending.Clear(); continue }
@@ -165,9 +202,15 @@ function Merge-IniDefaults {
       # the section is already in the file: insert after its last line, comments included
       $doc = Insert-IniDocLines $doc ([int]$sec.Last + 1) $block
     } else {
+      # the key belongs to a heading block of the template, so it joins that block and never
+      # the tail of the file (see Find-TemplateInsertAt)
       $cur = @($doc.Lines)
-      if ($cur.Count -gt 0 -and $cur[$cur.Count - 1].Trim()) { $doc = Insert-IniDocLines $doc $cur.Count @('') }
-      $doc = Insert-IniDocLines $doc @($doc.Lines).Count $block
+      $at = Find-TemplateInsertAt $doc $tplHeading
+      if ($at -gt 0 -and $at -le $cur.Count -and $cur[$at - 1].Trim()) {
+        $doc = Insert-IniDocLines $doc $at @('')
+        $at++
+      }
+      $doc = Insert-IniDocLines $doc $at $block
     }
     $pending.Clear()
     $added++

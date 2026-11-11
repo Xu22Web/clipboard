@@ -512,6 +512,38 @@ try {
         Expect ($script:StructPickerText -match 'Restore-TargetFocus') 'no Restore-TargetFocus in the picker'
       }
 
+      It 'the window size comes from the preset, not from the settings directly' {
+        Expect ($script:StructPickerText -match '\$preset = Get-PanelPreset') 'no preset resolved in the picker'
+        Expect ($script:StructPickerText -match '\$form\.Width = Px \$preset\.Width') 'the width is not taken from the preset'
+        Expect ($script:StructPickerText -match 'Get-PresetChrome \$preset') 'the chrome is not taken from the preset'
+        Expect (-not ($script:StructPickerText -match 'Get-PanelChrome\)')) 'the theme chrome is still read by the picker'
+      }
+
+      It 'the compact shape drops the time column and the corner count' {
+        Expect ($script:StructPickerText -match '\$script:PanelPreset\.ShowTime') 'the time column ignores the preset'
+        Expect ($script:StructPickerText -match '\$footR\.Visible = \[bool\]\$preset\.ShowFootRight') 'the corner count ignores the preset'
+        # placing the label happens before Show(), where Visible is still false: the decision
+        # has to come from the preset or the count lands in the top left corner
+        Expect ($script:StructPickerText -match '(?s)function Layout-Chrome\s*\{.{0,800}if \(\$preset\.ShowFootRight\)') 'the corner count is placed from Visible instead of the preset'
+      }
+
+      It 'the width is fixed: no drag grip and no saved width' {
+        Expect (-not ($script:StructPickerText -match '\$grip')) 'the drag grip is still in the picker'
+        Expect (-not ($script:StructPickerText -match 'SaveWinWidth')) 'a saved width is still read by the picker'
+      }
+
+      It 'the caret anchors the compact panel' {
+        Expect ($script:StructPickerText -match 'Get-CaretAnchor') 'the picker never asks for the caret'
+        Expect ($script:StructPickerText -match '\$preset\.AnchorCaret') 'the caret anchor ignores the preset'
+        # no single API covers the field: the caret, UI Automation's text selection and the
+        # focused control are all tried, cheapest first, and a hung window is skipped
+        Expect ($script:StructWinText -match 'function Get-CaretAnchor') 'the anchor helper is missing'
+        Expect ($script:StructWinText -match 'function Get-UiaCaretRect') 'the uia tier is missing'
+        Expect ($script:StructWinText -match 'IsResponsive') 'a hung window is never skipped'
+        Expect ($script:StructWinText -match 'FocusControlBounds') 'the focused-control tier is missing'
+        Expect ($script:StructWinText -match 'Current\.ProcessId') 'the focused element is trusted without a process check'
+      }
+
       It 'paste can type instead of injecting a paste key' {
         # PasteTyping=1 hands the text to SendInput: the paste path has to keep that branch,
         # and it must stay inside Paste-Clip so the hand-over and the settle still happen first
@@ -2045,6 +2077,40 @@ try {
       It 'the chrome is the header plus the footer' {
         Expect ((Get-PanelChrome) -eq ($script:Metric['HeadHeight'] + $script:Metric['FootHeight'] + 2)) ((Get-PanelChrome) -as [string])
       }
+
+      It 'the row block is inset the same on both sides' {
+        # the scrollbar lane shifts the block right, so the right inset is the left one doubled;
+        # breaking that puts every row off centre by half the difference
+        Expect ($script:Metric['RowRight'] -eq (2 * $script:Metric['RowInset'])) ('RowInset=' + $script:Metric['RowInset'] + ' RowRight=' + $script:Metric['RowRight'])
+      }
+
+      It 'each shape brings its own width, rows and chrome' {
+        $full = Get-PanelPreset 'full'
+        $compact = Get-PanelPreset 'compact'
+        Expect (($full.Mode -eq 'full') -and ($compact.Mode -eq 'compact')) ([string]$compact.Mode)
+        Expect (($full.Width -eq $script:WinWidth) -and ($full.Rows -eq $script:Rows)) (($full.Width -as [string]) + '/' + ($full.Rows -as [string]))
+        Expect (($compact.Width -eq $script:CompactWidth) -and ($compact.Rows -eq $script:CompactRows)) (($compact.Width -as [string]) + '/' + ($compact.Rows -as [string]))
+        # the compact header and footer are shorter than the theme's, so the panel really is small
+        Expect ((Get-PresetChrome $compact) -lt (Get-PanelChrome)) ((Get-PresetChrome $compact) -as [string])
+        Expect ((Get-PresetChrome $full) -eq (Get-PanelChrome)) ((Get-PresetChrome $full) -as [string])
+      }
+
+      It 'the compact shape drops the time column and the corner count' {
+        $full = Get-PanelPreset 'full'
+        $compact = Get-PanelPreset 'compact'
+        Expect (($compact.ShowTime -eq $false) -and ($compact.ShowFootRight -eq $false)) ([string]$compact.ShowTime)
+        Expect (($full.ShowTime -eq [bool]$script:ShowTime) -and ($full.ShowFootRight -eq $true)) ([string]$full.ShowTime)
+      }
+
+      It 'the compact panel always follows the caret, the full one only when asked' {
+        Expect ((Get-PanelPreset 'compact').AnchorCaret -eq $true) ''
+        # the full panel is the taller one: following the caret is opt-in there
+        $script:PlaceAtCaret = $false
+        Expect ((Get-PanelPreset 'full').AnchorCaret -eq $false) ''
+        $script:PlaceAtCaret = $true
+        Expect ((Get-PanelPreset 'full').AnchorCaret -eq $true) ''
+        $script:PlaceAtCaret = $false
+      }
     }
 
     Describe 'quick keys' {
@@ -2116,6 +2182,78 @@ try {
         $prefer = [pscustomobject]@{ Left = 200; Top = 300; Width = 800; Height = 600 }
         $b = Get-PickerBounds 660 430 '100' '200' $script:PickerAreas $script:PickerFallbackArea $prefer
         Expect (($b.Left -eq 100) -and ($b.Top -eq 200)) (($b.Left -as [string]) + ',' + ($b.Top -as [string]))
+      }
+
+      It 'the compact panel opens right under the caret' {
+        $caret = [pscustomobject]@{ Left = 400; Top = 300; Width = 2; Height = 20 }
+        $b = Get-PickerBounds 520 290 '' '' $script:PickerAreas $script:PickerFallbackArea $null $caret
+        # the caret line starts the panel: 300 + 20 + the 4 px gap
+        Expect (($b.Left -eq 400) -and ($b.Top -eq 324) -and $b.Fitted) (($b.Left -as [string]) + ',' + ($b.Top -as [string]))
+      }
+
+      It 'with no room below it flips above the caret' {
+        $caret = [pscustomobject]@{ Left = 400; Top = 1000; Width = 2; Height = 20 }
+        $b = Get-PickerBounds 520 290 '' '' $script:PickerAreas $script:PickerFallbackArea $null $caret
+        # 1020 + 4 + 290 runs off the bottom, so the panel sits above: 1000 - 4 - 290
+        Expect ($b.Top -eq 706) ($b.Top -as [string])
+      }
+
+      It 'a caret at the right edge keeps the panel on that screen' {
+        $caret = [pscustomobject]@{ Left = 1900; Top = 300; Width = 2; Height = 20 }
+        $b = Get-PickerBounds 520 290 '' '' $script:PickerAreas $script:PickerFallbackArea $null $caret
+        Expect ($b.Left -eq 1400) ($b.Left -as [string])
+      }
+
+      It 'a caret on the second monitor decides the screen' {
+        $caret = [pscustomobject]@{ Left = 2200; Top = 300; Width = 2; Height = 20 }
+        $b = Get-PickerBounds 520 290 '' '' $script:PickerAreas $script:PickerFallbackArea $null $caret
+        Expect ($b.Left -eq 2200) ($b.Left -as [string])
+      }
+
+      It 'a saved position still wins over the caret' {
+        $caret = [pscustomobject]@{ Left = 400; Top = 300; Width = 2; Height = 20 }
+        $b = Get-PickerBounds 660 430 '100' '200' $script:PickerAreas $script:PickerFallbackArea $null $caret
+        Expect (($b.Left -eq 100) -and ($b.Top -eq 200)) (($b.Left -as [string]) + ',' + ($b.Top -as [string]))
+      }
+
+      It 'a caret with no size falls through to the window' {
+        $prefer = [pscustomobject]@{ Left = 200; Top = 300; Width = 800; Height = 600 }
+        $empty = [pscustomobject]@{ Left = 0; Top = 0; Width = 0; Height = 0 }
+        $b = Get-PickerBounds 660 430 '' '' $script:PickerAreas $script:PickerFallbackArea $prefer $empty
+        Expect (($b.Left -eq 270) -and ($b.Top -eq 357)) (($b.Left -as [string]) + ',' + ($b.Top -as [string]))
+      }
+    }
+
+    Describe 'preview slot' {
+      BeforeAll {
+        $script:PvArea = [pscustomobject]@{ Left = 0; Top = 0; Width = 1920; Height = 1080 }
+      }
+
+      It 'the card takes the side that has room' {
+        $panel = [pscustomobject]@{ Left = 300; Top = 200; Width = 520; Height = 290 }
+        $s = Get-PreviewSlot $panel $script:PvArea 420 10
+        Expect (($s.X -eq 830) -and ($s.W -eq 420) -and (-not $s.Below)) (($s.X -as [string]) + '/' + ($s.W -as [string]))
+      }
+
+      It 'the card flips to the left when the right edge is near' {
+        $panel = [pscustomobject]@{ Left = 1400; Top = 200; Width = 520; Height = 290 }
+        $s = Get-PreviewSlot $panel $script:PvArea 420 10
+        # 1400 - 10 - 420; right side has only 10 px
+        Expect (($s.X -eq 970) -and ($s.W -eq 420) -and (-not $s.Below)) (($s.X -as [string]) + '/' + ($s.W -as [string]))
+      }
+
+      It 'a narrow gap narrows the card instead of pushing it off screen' {
+        $panel = [pscustomobject]@{ Left = 200; Top = 200; Width = 1400; Height = 290 }
+        $s = Get-PreviewSlot $panel $script:PvArea 420 10
+        # 310 px on the right and 190 px on the left: the wider side keeps the card, narrowed
+        Expect (($s.W -eq 310) -and ($s.X -eq 1610) -and (-not $s.Below)) (($s.X -as [string]) + '/' + ($s.W -as [string]))
+      }
+
+      It 'with no room beside the panel the card goes under it' {
+        $tight = [pscustomobject]@{ Left = 150; Top = 100; Width = 650; Height = 900 }
+        $panel = [pscustomobject]@{ Left = 200; Top = 100; Width = 520; Height = 290 }
+        $s = Get-PreviewSlot $panel $tight 420 10
+        Expect $s.Below (($s.X -as [string]) + '/' + ($s.Below -as [string]))
       }
     }
 
@@ -3192,6 +3330,16 @@ try {
           Expect $shapeOk ((@($ctrlPairs | ForEach-Object { @($_).Count }) -join ','))
           $hNoUndo = Get-HintText (Get-PanelHints 5 0 $true 0 $true @() $false $false)
           Expect (-not ($hNoUndo -match 'Undo')) $hNoUndo
+        }
+
+        It 'the compact footer keeps three chips and no count row' {
+          $hCompact = Get-HintText (Get-PanelHints 5 0 $true 0 $false @() $false $true $true)
+          Expect ((($hCompact -match 'Paste') -and ($hCompact -match 'Copy')) -and (($hCompact -match 'Close') -and (-not ($hCompact -match 'Undo')))) $hCompact
+          $pairs = @(Get-PanelHints 5 0 $true 0 $false @() $false $true $true)
+          Expect ($pairs.Count -le 4) ([string]$pairs.Count)
+          # Esc still clears a search before it closes the panel, in either shape
+          $hQuery = Get-HintText (Get-PanelHints 5 0 $true 4 $false @() $false $true $true)
+          Expect ($hQuery -match 'Clear') $hQuery
         }
 
         It 'an edit in progress lists only the editor keys' {

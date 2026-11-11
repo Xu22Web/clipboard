@@ -129,9 +129,9 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `Ctrl+Enter`（多选） | 按列表顺序以换行拼接后复制 |
 | 清空确认中的 `Enter` / `Esc` | `Enter` 确认清空，`Esc` 或其它键取消 |
 | `Esc` | 有搜索词时清空搜索，否则关闭面板 |
-| 拖动标题区 / 右下角手柄 | 移动 / 缩放面板（手柄悬停时显示） |
+| 拖动标题区 | 移动面板 |
 
-底部提示按当前可用操作生成，不是固定表：纯文本行显示 `Enter` Paste · `Ctrl+Enter` Copy · `F2` Edit · `Del` Delete · `Esc` Close；图片与带格式行没有 `F2`；多选时换成 `Ctrl+Enter` Copy N · `Del` Delete N；按住 `Ctrl` 时换成 `Ctrl+1-9,0` Pick · `Ctrl+Enter` Copy · `Ctrl+Z` Undo（`Undo=1` 时）与插件快捷键；编辑中只列 `Enter` Save · `Shift+Enter` Newline · `Esc` Cancel。删除、置顶、清空的结果与被拒绝的原因显示在同一行。
+底部提示按当前可用操作生成，不是固定表：纯文本行显示 `Enter` Paste · `Ctrl+Enter` Copy · `F2` Edit · `Del` Delete · `Esc` Close；图片与带格式行没有 `F2`；多选时换成 `Ctrl+Enter` Copy N · `Del` Delete N；按住 `Ctrl` 时换成 `Ctrl+1-9,0` Pick · `Ctrl+Enter` Copy · `Ctrl+Z` Undo（`Undo=1` 时）与插件快捷键；紧凑形态只列 `Enter` Paste · `Ctrl+Enter` Copy · `Esc` Close（多选时换成 `Ctrl+Enter` Copy N · `Del` Delete N）；编辑中只列 `Enter` Save · `Shift+Enter` Newline · `Esc` Cancel。删除、置顶、清空的结果与被拒绝的原因显示在同一行。
 
 ### 搜索语法
 
@@ -165,9 +165,28 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 插件通过 `PanelKeys` 注册面板按键：`item-marks` 提供 `Ctrl+P` / `Ctrl+S` / `Ctrl+H`，`entry-actions` 提供 `Ctrl+O`，均列在 `clipboard help` 的 Panel keys 中并标注来源插件。
 
+### 面板形态
+
+面板有两种形态，走同一份绘制、按键与粘贴代码，区别只在开窗时解析的一组值：
+
+| | 完整 | 紧凑 |
+|---|---|---|
+| 宽度 | `WindowWidth` | `CompactWidth` |
+| 可见行数 | `Rows` | `CompactRows` |
+| 头部 / 页脚高度 | 主题 `[metrics]` | 60 / 32 |
+| 时间列 | 跟随 `ShowTime` | 不显示 |
+| 右侧计数与版本 | 显示 | 不显示 |
+| 位置 | 保存位置 → 呼出窗口 → 显示器居中 | 插入符下方，放不下时在其上方 |
+
+窗口宽度固定，高度由行数得出，两者都在开窗时定下，面板不能拖动改变尺寸。形态由 `CompactMode` 选择，托盘菜单的 `Compact mode` 勾选项直接改写该键，下一次打开生效。
+
+插入符锚点依次取：控件自己的 `rcCaret`（Win32 编辑控件）；UI Automation 的文本选区矩形（Electron、浏览器、RichEdit 这类自绘光标的程序走这条）；焦点元素的矩形（命令面板的一行、一个输入框）；焦点控件的窗口矩形。坐标 0,0 且没有尺寸的矩形、以及覆盖整个窗口的矩形都判为无效，否则面板会贴到屏幕角上；四级都取不到时依次退到呼出窗口与显示器居中。面板左边缘对齐锚点，与文本行留 4 px 间距。完整模式默认不贴插入符，`PlaceAtCaret=1` 可打开；紧凑形态不读保存的位置。
+
+悬停预览卡放在面板两侧：放不下整张卡时先收窄，换到另一侧，两侧都不够时放在面板下方，不覆盖行。
+
 ## 配置
 
-程序启动时只读取脚本旁的 `clipboard.ini`，文件或某个键缺失时按内置默认值运行。只有 `config init` / `config set` / `config reset`，以及开启 `SaveWindowWidth` / `SaveWindowPos` 时的窗口尺寸回写，会写入该文件。
+程序启动时只读取脚本旁的 `clipboard.ini`，文件或某个键缺失时按内置默认值运行。只有 `config init` / `config set` / `config reset`、开启 `SaveWindowPos` 时的位置回写，以及托盘勾选 `Compact mode` 时写入 `CompactMode`，会写入该文件。
 
 读取时做一次全量校验：未知键、类型或范围不符、主题名不存在、枚举项非法，都在 `clipboard config` 顶部逐条列出，`status` 只给出计数（`[!] N value(s) need attention`）；出错项按默认值继续运行。
 
@@ -204,10 +223,13 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `ExcludePattern` | 空 | 正则，匹配到的文本不入库 |
 | `WindowWidth` | `700` | 面板宽度（96 dpi 基准，高 DPI 按比例缩放） |
 | `Rows` | `10` | 可见行数，面板高度的唯一来源：高度 = 行数 × 行高 + 头部 + 底栏 + 边框；受屏幕工作区限制 |
-| `WindowLeft` / `WindowTop` | 空 | 面板位置（96 dpi 基准）；空 = 按 `PlaceNearForeground` 放置 |
-| `SaveWindowWidth` | `0` | `1` = 关闭面板时把宽度写回 ini（高度由 `Rows` 决定） |
-| `SaveWindowPos` | `0` | `1` = 关闭面板时把位置写回 ini |
+| `CompactMode` | `0` | `1` = 打开紧凑形态，`0` = 完整形态；托盘勾选项改写该键 |
+| `CompactWidth` | `520` | 紧凑形态宽度（96 dpi 基准），最小 360 |
+| `CompactRows` | `5` | 紧凑形态可见行数 |
+| `WindowLeft` / `WindowTop` | 空 | 面板位置（96 dpi 基准）；空 = 按 `PlaceNearForeground` 放置；紧凑形态不使用 |
+| `SaveWindowPos` | `0` | `1` = 关闭面板时把位置写回 ini（紧凑形态不写） |
 | `PlaceNearForeground` | `0` | 没有保存位置时的落点：`1` = 呼出它的窗口上（水平居中、纵向三分之一处，限制在该窗口所在显示器内）；`0` = 该显示器的中上部 |
+| `PlaceAtCaret` | `0` | `1` = 完整形态也贴在插入符下方；紧凑形态始终如此 |
 | `ImeTakeover` | `manual` | 面板何时为了输入法而接管前台：`auto` = 输入法处于中文组字模式时按下第一个可打印键；`manual` = 点搜索区时；`off` = 从不，连点搜索区也不接管（面板只能靠钩子收键，输入法无法组字） |
 | `ShowTime` | `1` | `1` = 显示相对时间列 |
 | `ShowTypeIcon` | `1` | `1` = 显示插件提供的行图标 |

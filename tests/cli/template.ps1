@@ -142,6 +142,23 @@ Describe 'int' {
     }
   }
 
+  # a filled-in key belongs where the template puts it: appending at the end of the file would
+  # drop a base key into whichever [section] happens to be last
+  Describe 'new keys land in their own block' {
+    BeforeAll { [IO.File]::WriteAllText($roIni, ("Rows=7`r`n`r`n[transform]`r`nMode=upper`r`n"), $Utf8) }
+    It 'a key without a section is written before the first section' {
+      $o = Run @('config', 'init')
+      $iniTpl = [IO.File]::ReadAllText($roIni)
+      $firstSection = $iniTpl.IndexOf('[transform]')
+      $added = $iniTpl.IndexOf('Hotkey=')
+      Expect (($firstSection -gt 0) -and ($added -ge 0) -and ($added -lt $firstSection)) ('at=' + [string]$added + ' section=' + [string]$firstSection)
+    }
+    It 'the added key is not read back as a plugin key' {
+      $o = Run @('config')
+      Expect (-not ($o -match 'unknown key: transform\.Hotkey')) $o.Trim()
+    }
+  }
+
   Describe 'config reset' {
     It 'config reset restores the defaults' {
       $o = Run @('config', 'reset')

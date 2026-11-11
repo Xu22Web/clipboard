@@ -42,11 +42,14 @@
     ExcludePattern    = @{ Type = 'regex'; Ref = [ref]$script:ExcludePattern; Default = ''; Description = 'matching text is never saved' }
     WindowWidth       = @{ Type = 'int'; Ref = [ref]$script:WinWidth; Default = 700; Minimum = 460; Maximum = 4000; Description = 'panel width (96 dpi baseline)' }
     Rows              = @{ Type = 'int'; Ref = [ref]$script:Rows; Default = 10; Minimum = 3; Maximum = 50; Description = 'visible rows; the height follows from it (rows x 40 + 110)' }
+    CompactMode       = @{ Type = 'bool'; Ref = [ref]$script:CompactMode; Default = 0; Description = '1 = open the compact panel, 0 = the full panel (the tray item writes this)' }
+    CompactWidth      = @{ Type = 'int'; Ref = [ref]$script:CompactWidth; Default = 520; Minimum = 360; Maximum = 4000; Description = 'compact panel width (96 dpi baseline)' }
+    CompactRows       = @{ Type = 'int'; Ref = [ref]$script:CompactRows; Default = 5; Minimum = 3; Maximum = 20; Description = 'compact panel visible rows' }
     WindowLeft        = @{ Type = 'int'; Ref = [ref]$script:WinLeft; Default = ''; Minimum = -32768; Maximum = 32767; Description = 'panel left, empty = decided by PlaceNearForeground' }
     WindowTop         = @{ Type = 'int'; Ref = [ref]$script:WinTop; Default = ''; Minimum = -32768; Maximum = 32767; Description = 'panel top, empty = decided by PlaceNearForeground' }
-    SaveWindowWidth   = @{ Type = 'bool'; Ref = [ref]$script:SaveWinWidth; Default = 0; Description = '1 = write the width you dragged back to this file' }
-    SaveWindowPos     = @{ Type = 'bool'; Ref = [ref]$script:SaveWinPos; Default = 0; Description = '1 = write the moved panel back to this file' }
+    SaveWindowPos     = @{ Type = 'bool'; Ref = [ref]$script:SaveWinPos; Default = 0; Description = '1 = write the moved panel back to this file (never for the compact panel)' }
     PlaceNearForeground = @{ Type = 'bool'; Ref = [ref]$script:PlaceNearForeground; Default = 0; Description = '1 = with no saved position, place the panel over the window it was opened from' }
+    PlaceAtCaret      = @{ Type = 'bool'; Ref = [ref]$script:PlaceAtCaret; Default = 0; Description = '1 = place the full panel below the caret too; the compact panel always does' }
     ImeTakeover       = @{ Type = 'enum'; Ref = [ref]$script:ImeTakeover; Default = 'manual'; Enum = @('auto', 'manual', 'off'); Description = 'when the panel takes the foreground so an input method can compose: auto (first letter) / manual (a click on the search area) / off (never)' }
     ShowTime          = @{ Type = 'bool'; Ref = [ref]$script:ShowTime; Default = 1; Description = '1 = relative time column' }
     ShowTypeIcon      = @{ Type = 'bool'; Ref = [ref]$script:ShowTypeIcon; Default = 1; Description = '1 = show the row icon a plugin provides (none without one)' }

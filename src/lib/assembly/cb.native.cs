@@ -75,7 +75,6 @@ namespace Cb {
 
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern uint GetDpiForSystem();
-
     // where a window is on screen, as a rectangle the geometry helpers can read. Empty for a
     // window that is gone, minimised or has no area, so the caller keeps its own fallback.
     [StructLayout(LayoutKind.Sequential)] private struct WINRECT { public int Left; public int Top; public int Right; public int Bottom; }
@@ -87,6 +86,50 @@ namespace Cb {
       int hh = r.Bottom - r.Top;
       if (w <= 0 || hh <= 0) { return System.Drawing.Rectangle.Empty; }
       return new System.Drawing.Rectangle(r.Left, r.Top, w, hh);
+    }
+
+    // The caret the window is typing at, in screen pixels: the spot an input method or a
+    // completion list would appear next to. Empty when the window is gone, has no focused
+    // control, or that control shows no caret right now - a zero height is what a control
+    // reports while it is scrolled away or in the middle of a layout pass.
+    public static System.Drawing.Rectangle CaretOfWindow(IntPtr hwnd) {
+      if (hwnd == IntPtr.Zero) { return System.Drawing.Rectangle.Empty; }
+      uint tid = GetWindowThreadProcessId(hwnd, IntPtr.Zero);
+      if (tid == 0) { return System.Drawing.Rectangle.Empty; }
+      GUITHREADINFO info = new GUITHREADINFO();
+      info.cbSize = Marshal.SizeOf(typeof(GUITHREADINFO));
+      if (!GetGUIThreadInfo(tid, ref info)) { return System.Drawing.Rectangle.Empty; }
+      if (info.hwndActive == IntPtr.Zero) { return System.Drawing.Rectangle.Empty; }
+      WINRECT r = info.rcCaret;
+      int ch = r.Bottom - r.Top;
+      if (ch <= 0) { return System.Drawing.Rectangle.Empty; }
+      int cw = r.Right - r.Left;
+      if (cw <= 0) { cw = 1; }
+      return new System.Drawing.Rectangle(r.Left, r.Top, cw, ch);
+    }
+
+    // The rectangle of the control that owns the keyboard in that window, in screen pixels.
+    // Controls that draw their own caret (RichEdit, Electron, terminals) report no rcCaret, so
+    // this is the last thing that always exists: the area the typing goes into.
+    public static System.Drawing.Rectangle FocusControlBounds(IntPtr hwnd) {
+      if (hwnd == IntPtr.Zero) { return System.Drawing.Rectangle.Empty; }
+      uint tid = GetWindowThreadProcessId(hwnd, IntPtr.Zero);
+      if (tid == 0) { return System.Drawing.Rectangle.Empty; }
+      GUITHREADINFO info = new GUITHREADINFO();
+      info.cbSize = Marshal.SizeOf(typeof(GUITHREADINFO));
+      if (!GetGUIThreadInfo(tid, ref info)) { return System.Drawing.Rectangle.Empty; }
+      if (info.hwndFocus == IntPtr.Zero || !IsWindow(info.hwndFocus)) { return System.Drawing.Rectangle.Empty; }
+      return WindowBounds(info.hwndFocus);
+    }
+
+    // A window that does not answer WM_NULL within the budget is one whose accessibility calls
+    // would block the caller, so the caret lookup is skipped for it instead of waiting.
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
+    public static bool IsResponsive(IntPtr hwnd, uint timeoutMs) {
+      if (hwnd == IntPtr.Zero) { return false; }
+      IntPtr result;
+      return SendMessageTimeout(hwnd, 0, IntPtr.Zero, IntPtr.Zero, 0x0002, timeoutMs, out result) != IntPtr.Zero;
     }
 
     // ---- typing without the clipboard ------------------------------------------------

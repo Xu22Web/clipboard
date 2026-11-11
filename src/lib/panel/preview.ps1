@@ -309,6 +309,25 @@ function Place-Preview($x, $y, $w, $h, $area) {
   return @{ X = $x; Y = $y }
 }
 
+# Which side of the panel the card goes on, and how wide it may be. The side with room wins;
+# when neither holds the full card the wider one is narrowed instead of letting the card run
+# off the monitor, and with no room beside it at all the card goes under the panel - never on
+# top of it, because the row under the cursor has to stay readable. Pure, so the rule can be
+# checked without a window.
+function Get-PreviewSlot($panel, $area, [int]$wantW, [int]$gap, [int]$minW = 220) {
+  $panelLeft = [int]$panel.Left
+  $panelRight = $panelLeft + [int]$panel.Width
+  $areaLeft = [int]$area.Left
+  $areaRight = $areaLeft + [int]$area.Width
+  $rightGap = $areaRight - ($panelRight + $gap)
+  $leftGap = $panelLeft - $gap - $areaLeft
+  if ($rightGap -ge $wantW) { return @{ X = $panelRight + $gap; W = $wantW; Below = $false } }
+  if ($leftGap -ge $wantW) { return @{ X = $panelLeft - $gap - $wantW; W = $wantW; Below = $false } }
+  if ($rightGap -ge $minW -and $rightGap -ge $leftGap) { return @{ X = $panelRight + $gap; W = $rightGap; Below = $false } }
+  if ($leftGap -ge $minW) { return @{ X = $panelLeft - $gap - $leftGap; W = $leftGap; Below = $false } }
+  return @{ X = $panelLeft; W = $wantW; Below = $true }
+}
+
 # Show the card for one record, or do nothing when it already shows it. Everything expensive
 # happens on a record change and nowhere else.
 function Update-Preview($ps, $record, $anchorTop, $cfg, $panel) {
@@ -385,9 +404,10 @@ function Show-PreviewCard($ps, $cfg, $panel, $anchorTop) {
   }
   # beside the panel, on the side that has room; never under the cursor, so the row keeps
   # its hover while the card is up
-  $x = $panel.Right + $cfg.Gap
-  if ($x + $w -gt $cfg.Area.Right) { $x = $panel.Left - $cfg.Gap - $w }
-  $at = Place-Preview $x ($anchorTop - (Px 4)) $w $h $cfg.Area
+  $slot = Get-PreviewSlot $panel $cfg.Area ([int]$w) $cfg.Gap
+  $w = [int]$slot.W
+  $anchorY = $(if ($slot.Below) { [int]$panel.Top + [int]$panel.Height + $cfg.Gap } else { $anchorTop - (Px 4) })
+  $at = Place-Preview ([int]$slot.X) $anchorY $w $h $cfg.Area
   $win = $ps.Win
   if ($null -eq $win -or $win.IsDisposed) { $win = New-PreviewWindow $ps }
   if ($win.BackColor -ne $cfg.Bg) { $win.BackColor = $cfg.Bg }

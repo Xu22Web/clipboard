@@ -51,7 +51,10 @@ $StoreLock = 'Local\clipboard.store'
 # table Apply-Theme restores first, so switching themes never leaves a value behind.
 $script:Metric = @{
   RowHeight = 40; HeadHeight = 68; FootHeight = 40; PanelRadius = 8
-  RowInset = 6; RowGap = 2; RowRight = 12; RowRadius = 4; RowMinWidth = 60
+  # The row block is balanced against the window: the scrollbar lane shifts it right, so the
+  # two insets are not equal - RowRight must stay twice RowInset or every row sits off centre
+  # (left margin = 1 + RowInset + lane, right margin = lane + RowRight - RowInset + 1).
+  RowInset = 4; RowGap = 2; RowRight = 8; RowRadius = 4; RowMinWidth = 60
   TextInset = 12; IconX = 10; IconSlot = 20; TextGap = 38
   TextMarkGap = 8; TextMinWidth = 20
   MarkSlot = 16; MarkCount = 2; MarkGlyphWidth = 14; MarkGap = 6; MarkGap2 = 2
@@ -91,13 +94,20 @@ $script:WinWidth = 700
 # knob is how many rows are visible. The row height and chrome live in $script:Metric above
 # (a theme may restyle them) and are read through Get-PanelRowHeight / Get-PanelChrome.
 $script:Rows = 10
+# The compact panel is the same window with fewer rows, a narrower width and less chrome. Its
+# own two numbers keep Rows / WindowWidth meaning the full panel.
+$script:CompactMode = $false
+$script:CompactRows = 5
+$script:CompactWidth = 520
 $script:WinLeft = ''
 $script:WinTop = ''
-$script:SaveWinWidth = $false
 $script:SaveWinPos = $false
 # with no saved position the panel sits on the window it was opened from instead of the
 # centre of that monitor; opt-in, because the middle of the screen is the familiar spot
 $script:PlaceNearForeground = $false
+# a caret is a tighter anchor than the window: the compact panel always uses it, the full
+# panel only when asked, because its height would cover the line being read
+$script:PlaceAtCaret = $false
 $script:ShowTime = $true
 $script:ShowTypeIcon = $true
 # a picture or formatted-text row shows a small copy of its first picture in the icon slot
