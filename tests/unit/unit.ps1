@@ -60,6 +60,10 @@ if ($isPackaged) {
 # it takes the describe/it layer from the shared harness and keeps its own results and
 # sandbox below. harness.ps1 loads the reporter as well.
 . (Join-Path $repoRoot 'tests\lib\harness.ps1')
+# The tooling's logger prints every step a tool runs, and its duration helper is what the rows
+# below read. It is loaded here, at the top, because a hook runs in the harness scope and its
+# functions would not reach the checks.
+. (Join-Path $repoRoot 'tools\utils\console.ps1')
 $script:results = New-Object System.Collections.Generic.List[object]
 # the label every row prints with
 $script:Harness.Part = 'unit\unit'
@@ -381,6 +385,14 @@ try {
 
     # the tooling lives outside src\: package.ini declares the commands, cli runs them
     Describe 'tooling' {
+      It 'a duration reads in milliseconds under a second and in seconds above it' {
+        # every finished step prints through this, so the boundary is what a log reader sees
+        Expect ((Format-Duration 0) -eq '0 ms') (Format-Duration 0)
+        Expect ((Format-Duration 999) -eq '999 ms') (Format-Duration 999)
+        Expect ((Format-Duration 1000) -eq '1 s') (Format-Duration 1000)
+        Expect ((Format-Duration 1234) -eq '1.23 s') (Format-Duration 1234)
+        Expect ((Format-Duration -5) -eq '0 ms') (Format-Duration -5)
+      }
       It 'ships with the repo' {
         $tooling = @('package.ini', 'cli.ini', 'cli.ps1', 'cli.cmd', 'cli.sh',
           'tools\build.ps1', 'tools\dev.ps1', 'tools\test.ps1', 'tools\bench.ps1', 'tools\shot.ps1',
@@ -676,9 +688,17 @@ try {
         # while leaving the rest timer alone - so a pause mid-scroll flashed a card.
         Expect ($script:StructPickerText -match '(?s)function Sync-HoverFromCursor\s*\{.{0,900}IndexFromPoint') 'the hover is not read from the cursor'
         Expect ($script:StructPickerText -match '(?s)function Sync-HoverFromCursor\s*\{.{0,1200}\$script:PvAt = Get-Date') 'the rest timer is not started over'
-        Expect ($script:StructPickerText -match 'Add_ScrollChanged\(\{ Sync-Sb; Sync-HoverFromCursor \}\)') 'the scroll does not sync the hover'
+        Expect ($script:StructPickerText -match 'Add_ScrollChanged\(\{[^}\n]*Sync-HoverFromCursor') 'the scroll does not sync the hover'
         # a filter narrows the list under a pointer that stays put, which is the same problem
         Expect ($script:StructPickerText -match '(?s)Trim-Selection.{0,1200}Sync-HoverFromCursor') 'Update-List does not sync the hover'
+      }
+
+      It 'a scroll never leaves the selected row off screen' {
+        # Enter pastes the selection: the wheel, a page key and the scrollbar move the view
+        # without it, and a selection left outside the view would paste a row the user cannot
+        # see. Keep-SelectionInView pulls it to the edge the view moved toward.
+        Expect ($script:StructPickerText -match 'Add_ScrollChanged\(\{[^}\n]*Keep-SelectionInView') 'the scroll does not keep the selection in view'
+        Expect ($script:StructPickerText -match '(?s)function Keep-SelectionInView\s*\{.{0,1400}\$lst\.SelectedIndex = \$last') 'the selection is not pulled into the view'
       }
 
       It 'closes the menu before it closes itself' {
@@ -2229,6 +2249,16 @@ try {
         Expect ((Get-VisibleRowCount 340 34) -eq 10) ((Get-VisibleRowCount 340 34) -as [string])
         Expect ((Get-VisibleRowCount 100 34) -eq 2) ''
         Expect ((Get-VisibleRowCount 10 40) -eq 1) ''
+      }
+
+      It 'a wheel notch covers a quarter of the rows on screen' {
+        # a short panel must not lose most of its content to one notch, a tall one must not
+        # take a dozen, neither may cross a whole screen at once, and ScrollLines wins
+        Expect ((Get-WheelStep 6 0) -eq 2) ((Get-WheelStep 6 0) -as [string])
+        Expect ((Get-WheelStep 11 0) -eq 3) ((Get-WheelStep 11 0) -as [string])
+        Expect ((Get-WheelStep 30 0) -eq 8) ((Get-WheelStep 30 0) -as [string])
+        Expect ((Get-WheelStep 2 0) -eq 1) ((Get-WheelStep 2 0) -as [string])
+        Expect ((Get-WheelStep 30 2) -eq 2) ((Get-WheelStep 30 2) -as [string])
       }
     }
 

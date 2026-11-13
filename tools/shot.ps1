@@ -40,6 +40,7 @@ public static class Shot {
 '@ -ReferencedAssemblies System.Drawing, System.Windows.Forms
 
 $root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
+. (Join-Path $root 'tools\utils\console.ps1')
 $srcDir = Join-Path $root 'src'
 $docsDir = Join-Path $root 'docs'
 $rsChar = [string][char]30
@@ -170,7 +171,7 @@ function Save-Shot {
   $out = Join-Path $docsDir ('screenshot-' + $themeName + '.png')
   $bmp.Save($out, [Drawing.Imaging.ImageFormat]::Png)
   $bmp.Dispose()
-  Write-Host ('[ok] ' + $out + '   ' + $width + 'x' + $height)
+  Write-Ok ($out + '   ' + $width + 'x' + $height)
 
   [Shot]::keybd_event(0x1B, 0, 0, [IntPtr]::Zero)
   Start-Sleep -Milliseconds 60
@@ -192,7 +193,7 @@ foreach ($t in $themes) {
     Set-Seed $box
     Save-Shot $box $t $Select
   } finally {
-    if ($KeepBox) { Write-Host ('[..] kept ' + $box) }
+    if ($KeepBox) { Write-Note ('kept ' + $box) }
     else { Remove-Item -LiteralPath $box -Recurse -Force -ErrorAction SilentlyContinue }
   }
 }

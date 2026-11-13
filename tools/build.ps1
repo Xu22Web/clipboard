@@ -77,7 +77,7 @@ $cfg = Import-IniMap $Config
 . (Join-Path $root 'tools\utils\schema.ps1')
 $problems = @(Test-ToolConfigMap (Import-ToolSchema (Join-Path $root 'tools\schema\cli.ps1')) $cfg (Split-Path -Leaf $Config) 'build')
 if ($problems.Count -gt 0) {
-  foreach ($p in $problems) { Write-Host ('[x] ' + $p) }
+  foreach ($p in $problems) { Write-Fail $p }
   exit 1
 }
 
@@ -150,11 +150,12 @@ if (-not $baseSetting) { Fail 'cli.ini [build] BaseUrl is empty' }
 $baseDir = Resolve-BaseDir $root $baseSetting
 if (-not (Test-Path -LiteralPath $baseDir)) { Fail ('cli.ini [build] BaseUrl does not exist: ' + $baseSetting) }
 
-Write-Step ('settings ' + $Config)
-Write-Step ('  version ' + $version + '   (package.ini)')
-Write-Step ('  output  ' + $dest)
-Write-Step ('  minify  ' + $(if ($minify) { 'yes' } else { 'no' }) + '   rename ' + $(if ($rename) { 'yes' } else { 'no' }) + '   verify ' + $(if ($verify) { 'yes' } else { 'no' }) + '   zip ' + $(if ($wantZip) { 'yes' } else { 'no' }))
-Write-Step ('  files   ' + [string]$includeGlobs.Count + ' glob(s)   overwrite ' + $(if ($overwrite) { 'yes' } else { 'no' }))
+$swBuild = Start-Step
+Write-Step ('build ' + $name)
+Write-Note ('settings ' + (Split-Path -Leaf $Config) + '   version ' + $version + '   from package.ini')
+Write-Note ('output   ' + $dest)
+Write-Note ('minify   ' + $(if ($minify) { 'yes' } else { 'no' }) + '   rename ' + $(if ($rename) { 'yes' } else { 'no' }) + '   verify ' + $(if ($verify) { 'yes' } else { 'no' }) + '   zip ' + $(if ($wantZip) { 'yes' } else { 'no' }))
+Write-Note ('files    ' + [string]$includeGlobs.Count + ' glob(s)   overwrite ' + $(if ($overwrite) { 'yes' } else { 'no' }))
 
 if ((Test-Path -LiteralPath $dest) -and -not $overwrite) { Fail ('already exists: ' + $dest + '   (set Overwrite=1 to replace it)') }
 
@@ -164,7 +165,7 @@ if ((Test-Path -LiteralPath $dest) -and -not $overwrite) { Fail ('already exists
 $pkgFiles = @(Expand-GlobList $baseDir $includeGlobs $excludeGlobs)
 if ($pkgFiles.Count -eq 0) { Fail 'cli.ini [build] Includes reaches no file' }
 $dropped = @(Expand-GlobList $baseDir $includeGlobs @()).Count - $pkgFiles.Count
-if ($dropped -gt 0) { Write-Step ('excluded ' + [string]$dropped + ' file(s) listed in cli.ini [build] Excludes') }
+if ($dropped -gt 0) { Write-Note ('excluded ' + [string]$dropped + ' file(s) listed in cli.ini [build] Excludes') }
 $scriptFiles = @($pkgFiles | Where-Object { $_ -like '*.ps1' })
 
 # ---------------------------------------------------------------- products (ahead of time)
@@ -187,14 +188,15 @@ foreach ($p in @(Get-ProductList)) {
   $built = Join-Path $srcRoot $p.Out
   $compiler = Join-Path $root $p.Script
   if (Test-Path -LiteralPath $compiler) {
-    Write-Step ('compiling ' + $p.Label)
+    $swProduct = Start-Step
     $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $compiler -Out $built 2>&1
-    foreach ($line in @($log)) { Write-Host ('    ' + ([string]$line).Trim()) }
+    foreach ($line in @($log)) { Write-Note (([string]$line).Trim()) }
+    Write-Done $swProduct ('compiled ' + $p.Label)
   }
   if (Test-Path -LiteralPath $built) {
     $productOut[$p.Out] = $built
   } else {
-    Write-Step ('  no ' + $p.Label + ': its sources travel and the program compiles them')
+    Write-Note ('no ' + $p.Label + ' - its sources travel and the program compiles them')
     foreach ($s in @($productSources[$p.Dir])) { $plainFiles.Add($s) }
   }
 }
@@ -211,6 +213,7 @@ $stageRoot = Join-Path $env:TEMP ($app + '-build-' + [guid]::NewGuid().ToString(
 $stage = Join-Path $stageRoot $name
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 try {
+  $swStage = Start-Step
   Write-Step ('staging ' + $name)
 
   $map = @{}
@@ -220,7 +223,7 @@ try {
     . (Join-Path $root 'tools\utils\minify.ps1')
     if ($rename) {
       $map = New-FunctionMap $scriptFiles
-      Write-Step ('internal functions renamed: ' + $map.Count)
+      Write-Note ('internal functions renamed: ' + $map.Count)
       # one scope for the main script and everything it dot-sources, one per script the
       # program calls by path (the table in tools\utils\pipeline.ps1 names that folder)
       $sharedFiles = @($scriptFiles | Where-Object { -not (Test-OwnScope (Get-PackageRel $_)) })
@@ -230,13 +233,13 @@ try {
       }
       $scopeCount = $shared.Count
       foreach ($k in $scopeMaps.Keys) { $scopeCount += $scopeMaps[$k].Count }
-      Write-Step ('script variables renamed: ' + $scopeCount)
+      Write-Note ('script variables renamed: ' + $scopeCount)
       $scopeMaps['*'] = $shared
       # Names assigned outside every function (constants, defaults, paths) live in the one
       # scope the dot-sourced modules share, so they need one project-wide table. Without
       # it lib\base.ps1 could pick the same short name as the entry file and overwrite $Root.
       $globalMap = New-GlobalVariableMap $sharedFiles
-      Write-Step ('shared scope variables renamed: ' + $globalMap.Count)
+      Write-Note ('shared scope variables renamed: ' + $globalMap.Count)
     }
   }
 
@@ -332,16 +335,16 @@ try {
   }
 
   if ($minify -and $rows.Count -gt 0) {
-    Write-Host ''
+    Write-Text ''
     foreach ($r in $rows) {
       $pct = 0
       if ($r.Before -gt 0) { $pct = [Math]::Round(100 * (1 - $r.After / $r.Before)) }
-      Write-Host ('  {0,-26} {1,8} -> {2,7}  ({3}%)' -f (Split-Path -Leaf $r.Path), $r.Before, $r.After, $pct)
+      Write-Text ('  {0,-26} {1,8} -> {2,7}  ({3}%)' -f (Split-Path -Leaf $r.Path), $r.Before, $r.After, $pct)
     }
     $totalPct = 0
     if ($before -gt 0) { $totalPct = [Math]::Round(100 * (1 - $after / $before), 1) }
-    Write-Host ('  {0,-26} {1,8} -> {2,7}  ({3}%)' -f 'scripts total', $before, $after, $totalPct)
-    Write-Host ''
+    Write-Text ('  {0,-26} {1,8} -> {2,7}  ({3}%)' -f 'scripts total', $before, $after, $totalPct)
+    Write-Text ''
   }
 
   # ------------------------------------------------------------ publish
@@ -349,9 +352,9 @@ try {
   if (-not (Test-Path -LiteralPath $outDir)) { New-Item -ItemType Directory -Path $outDir -Force | Out-Null }
   Move-Item -LiteralPath $stage -Destination $dest
   $count = @(Get-ChildItem -LiteralPath $dest -Recurse -File).Count
-  Write-Host ('[ok] ' + $dest + '   ' + $count + ' files')
+  Write-Done $swStage ('staged ' + $name + '   ' + $count + ' files')
 } catch {
-  Write-Host ('[x] ' + $_.Exception.Message)
+  Write-Fail $_.Exception.Message
   exit 1
 } finally {
   if (Test-Path -LiteralPath $stageRoot) { Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue }
@@ -361,6 +364,7 @@ try {
 if ($verify) {
   $suite = Join-Path $root 'tests\run.ps1'
   if (-not (Test-Path -LiteralPath $suite)) { Fail ('test suite not found: ' + $suite) }
+  $swVerify = Start-Step
   Write-Step 'running the CLI suite against the package'
   # no -Serial: the driver sees that -Source is not src\ and keeps the cli parts one at a time
   # (a packaged copy has no fake clipboard), while the packaging part still runs beside them
@@ -379,22 +383,23 @@ if ($verify) {
     $p = Join-Path $dest $leak
     if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue }
   }
+  Write-Done $swVerify 'the packaged copy passed its own tests'
 }
 
 # ---------------------------------------------------------------- zip (optional)
 if ($wantZip) {
   $zip = Join-Path $outDir ($name + '.zip')
-  Write-Step ('packing ' + $zip)
+  $swZip = Start-Step
   Compress-Archive -LiteralPath $dest -DestinationPath $zip -CompressionLevel Optimal -Force
   $size = [Math]::Round((Get-Item -LiteralPath $zip).Length / 1KB, 1)
-  Write-Host ('[ok] ' + $zip + '   ' + $size + ' KB')
+  Write-Done $swZip ('packed ' + $zip + '   ' + $size + ' KB')
 }
 
 Write-Host ''
-Write-Host 'result:'
-Write-Host ('  ' + $dest)
-Write-Host '  install.bat                   settings template + startup / desktop shortcuts'
-Write-Host '  uninstall.bat                 stop, remove the shortcuts, delete data\ and the ini'
-Write-Host ('  ' + $app + '.cmd config init      write a commented ' + $app + '.ini')
-Write-Host ('  ' + $app + '.cmd install         startup shortcut + desktop shortcut')
+Write-Done $swBuild ('build finished - ' + $dest)
+Write-Host ''
+Write-Note ('install.bat                   settings template + startup / desktop shortcuts')
+Write-Note ('uninstall.bat                 stop, remove the shortcuts, delete data\ and the ini')
+Write-Note ($app + '.cmd config init      write a commented ' + $app + '.ini')
+Write-Note ($app + '.cmd install         startup shortcut + desktop shortcut')
 exit 0

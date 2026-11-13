@@ -26,7 +26,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
-# the same two prefixes the build prints: [..] for a step, [x] for a failure
+# the same logger every tool prints through: [..] for a step, [ok] for a finished one, [x] for
+# a failure
 . (Join-Path $root 'tools\utils\console.ps1')
 $srcDir = Join-Path $root 'src'
 # package.ini owns the program name, and the name owns the entry: nothing here spells it out
@@ -58,7 +59,7 @@ $cfg = Import-IniMap $cfgFile
 # value is a broken file, not a default to fall back on (tools\schema\cli.ps1).
 $problems = @(Test-ToolConfigMap (Import-ToolSchema (Join-Path $root 'tools\schema\cli.ps1')) $cfg 'cli.ini' 'dev')
 if ($problems.Count -gt 0) {
-  foreach ($p in $problems) { Write-Host ('[x] ' + $p) }
+  foreach ($p in $problems) { Write-Fail $p }
   exit 1
 }
 
@@ -87,9 +88,10 @@ function Invoke-NativeBuild($products) {
     $out = Join-Path $srcDir $p.Out
     $parent = Split-Path -Parent $out
     if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-    Write-Step ('compiling ' + $p.Label)
+    $swProduct = Start-Step
     $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $compiler -Out $out 2>&1
-    foreach ($line in @($log)) { Write-Host ('    ' + ([string]$line).Trim()) }
+    foreach ($line in @($log)) { Write-Note (([string]$line).Trim()) }
+    Write-Done $swProduct ('compiled ' + $p.Label)
   }
 }
 
@@ -276,9 +278,9 @@ function Start-DevLoop {
   $stamps = Get-WatchStamps $set.Files
   $started = Start-Resident
   if (-not $started) {
-    Write-Host ('[x] the resident did not start - run ' + (Format-WatchPath $entry) + ' serve to see the error, the next change retries')
+    Write-Warn ('the resident did not start - run ' + (Format-WatchPath $entry) + ' serve to see the error, the next change retries')
   }
-  Write-Host ('     watching ' + $stamps.Count + ' file(s), poll ' + $Interval + ' ms - Ctrl+C ends the loop and the resident')
+  Write-Note ('watching ' + $stamps.Count + ' file(s), poll ' + $Interval + ' ms - Ctrl+C ends the loop and the resident')
   $reported = @{}
   # Did the resident ever come up? A resident that has been up and stays gone was closed
   # from outside (tray exit, `clipboard stop`), so there is nothing left to restart and dev
@@ -313,7 +315,7 @@ function Start-DevLoop {
     foreach ($m in @($set.Missing)) {
       if ($reported.ContainsKey($m)) { continue }
       $reported[$m] = $true
-      Write-Host ('  [!] missing: ' + (Format-WatchPath $m) + ' - a dot-source line points at it')
+      Write-Warn ('missing: ' + (Format-WatchPath $m) + ' - a dot-source line points at it')
     }
     $next = Get-WatchStamps $set.Files
     if (@(Compare-WatchStamps $stamps $next).Count -eq 0) { continue }
@@ -334,7 +336,7 @@ function Start-DevLoop {
     $changes = @(Compare-WatchStamps $stamps $next)
     $stamps = $next
     $reported = @{}
-    foreach ($c in $changes) { Write-Host $c }
+    foreach ($c in $changes) { Write-Note $c }
     Write-Step ((Get-Date).ToString('HH:mm:ss') + ' restarting (' + $changes.Count + ' change(s))')
     # The resident holds lib\assembly\clipboard.dll open while it runs, so it has to be gone
     # before the assembly can be rewritten: stop first, compile, then start again.
@@ -358,15 +360,15 @@ function Start-DevLoop {
     } else {
       # a restart that failed is not an outside exit: report it and retry on the next change
       $sawUp = $false
-      Write-Host '[x] the resident did not start - the next change tries again'
+      Write-Warn 'the resident did not start - the next change tries again'
     }
   }
 }
 
 # one mode only: refuse an argument instead of starting a loop the caller did not ask for
 if ($Action -and $Action.ToLower() -ne 'watch') {
-  Write-Host ('[x] unknown argument: ' + $Action)
-  Write-Host '    dev always watches - run cli dev with no argument'
+  Write-Fail ('unknown argument: ' + $Action)
+  Write-Note 'dev always watches - run cli dev with no argument'
   exit 1
 }
 # The resident belongs to the loop: when dev ends - Ctrl+C, a crash in the loop, or an error -
@@ -378,6 +380,6 @@ try {
 } finally {
   if (Test-ResidentUp) {
     Stop-Resident
-    Write-Step 'resident stopped'
+    Write-Note 'resident stopped'
   }
 }

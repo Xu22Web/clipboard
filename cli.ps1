@@ -21,14 +21,18 @@ Set-Location -LiteralPath $root
 $pkgPath = Join-Path $root 'package.ini'
 $tools = Join-Path $root 'tools'
 
+# the logger is shared with every tool script, so a command prints its steps and this file
+# prints its own lines the same way
+. (Join-Path $tools 'utils\console.ps1')
+
 if (-not (Test-Path -LiteralPath $pkgPath)) {
-  Write-Host ('[x] missing: ' + $pkgPath)
+  Write-Fail ('missing: ' + $pkgPath)
   exit 1
 }
 foreach ($tool in @('utils\ini.ps1', 'utils\schema.ps1', 'schema\package.ps1')) {
   $toolPath = Join-Path $tools $tool
   if (-not (Test-Path -LiteralPath $toolPath)) {
-    Write-Host ('[x] missing: ' + $toolPath)
+    Write-Fail ('missing: ' + $toolPath)
     exit 1
   }
 }
@@ -42,7 +46,7 @@ $pkg = $pkgDoc.Map
 # section or a command with no command line is a broken file, not "no such command"
 $pkgProblems = @(Test-ToolConfigMap (Import-ToolSchema (Join-Path $tools 'schema\package.ps1')) $pkg 'package.ini')
 if ($pkgProblems.Count -gt 0) {
-  foreach ($p in $pkgProblems) { Write-Host ('[x] ' + $p) }
+  foreach ($p in $pkgProblems) { Write-Fail $p }
   exit 1
 }
 $order = New-Object System.Collections.Generic.List[string]
@@ -61,19 +65,44 @@ $pkgVersion = PkgValue 'version'
 function Show-Commands {
   $title = $pkgName
   if ($pkgVersion) { $title = $title + '@' + $pkgVersion }
-  Write-Host $title -ForegroundColor Cyan
+  if ($title) { Write-Title $title }
   Write-Host ''
   if ($order.Count -eq 0) {
-    Write-Host 'no scripts.<name>= lines in package.ini'
+    Write-Note 'no scripts.<name>= lines in package.ini'
     return
   }
-  Write-Host 'usage: cli <command> [args]'
+  Write-Note 'usage: cli <command> [args]'
   Write-Host ''
-  # the command is typed in any case, so the list shows it in lower case
+  # one width for the whole list, so the command lines start in the same column whatever the
+  # longest name is; a name is typed in any case and shown in lower case
+  $width = 8
   foreach ($name in $order) {
-    Write-Host ('  {0,-8} ' -f $name.ToLowerInvariant()) -NoNewline -ForegroundColor Cyan
-    Write-Host ([string]$pkg['scripts.' + $name])
+    if ($name.Length -gt $width) { $width = $name.Length }
   }
+  foreach ($name in $order) {
+    Write-Pair $name.ToLowerInvariant() ([string]$pkg['scripts.' + $name]) $width
+  }
+}
+
+# A mistyped command is worth one line: the closest declared name is almost always the one that
+# was meant, and the list below is long enough that finding it by eye is not free. Two shared
+# leading characters is a typo; one is noise.
+function Get-CommandSuggestion([string]$typed) {
+  $best = ''
+  $bestScore = 0
+  foreach ($name in $order) {
+    $lower = $name.ToLowerInvariant()
+    if ($lower -eq $typed) { return $lower }
+    $score = 0
+    $n = [Math]::Min($lower.Length, $typed.Length)
+    for ($i = 0; $i -lt $n; $i++) {
+      if ($lower[$i] -ne $typed[$i]) { break }
+      $score++
+    }
+    if ($score -gt $bestScore) { $bestScore = $score; $best = $lower }
+  }
+  if ($bestScore -ge 2) { return $best }
+  return ''
 }
 
 $wanted = $Command.ToLower()
@@ -84,7 +113,9 @@ if (-not $wanted -or @('help', '-h', '--help', '-?', '/?') -contains $wanted) {
 
 $line = [string]$pkg['scripts.' + $wanted]
 if (-not $line) {
-  Write-Host ('[!] unknown command: ' + $Command)
+  Write-Fail ('unknown command: ' + $Command)
+  $suggest = Get-CommandSuggestion $wanted
+  if ($suggest) { Write-Note ('did you mean ' + $suggest + '?') }
   Write-Host ''
   Show-Commands
   exit 1
@@ -102,17 +133,13 @@ if ($pkgVersion) { $title = $title + '@' + $pkgVersion }
 $sw = [Diagnostics.Stopwatch]::StartNew()
 # The same two lines npm prints, then a blank line: the header stays quiet and the colour only
 # marks the command name, so what the script prints is what the eye lands on.
-Write-Host '> ' -NoNewline -ForegroundColor DarkGray
-Write-Host $title -NoNewline
-Write-Host (' ' + $shown) -ForegroundColor Cyan
-Write-Host ('> ' + $line) -ForegroundColor DarkGray
-Write-Host ''
+Write-Command $title $shown $line
 $global:LASTEXITCODE = 0
 Invoke-Expression $line
 $sw.Stop()
 $code = $LASTEXITCODE
 if ($null -eq $code) { $code = 0 }
 if ($code -ne 0) {
-  Write-Host ('[x] ' + $shown + ' exited with code ' + $code + ' after ' + [string][int]$sw.Elapsed.TotalSeconds + ' s') -ForegroundColor Red
+  Write-Fail ($shown + ' exited with code ' + $code + ' after ' + (Format-Duration $sw.Elapsed.TotalMilliseconds))
 }
 exit $code

@@ -43,11 +43,15 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
+. (Join-Path $root 'tools\utils\console.ps1')
 $driver = Join-Path $root 'tests\run.ps1'
 if (-not (Test-Path -LiteralPath $driver)) {
-  Write-Host ('[x] missing: ' + $driver)
+  Write-Fail ('missing: ' + $driver)
   exit 1
 }
+# the suite decides its own colour, but NO_COLOR means the same thing to every tool: a log
+# rendered somewhere else has to lose the escape sequences here too
+if ($env:NO_COLOR) { $NoColor = $true }
 
 $cli = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', $driver)
 if ($Unit) { $cli += '-Unit' }

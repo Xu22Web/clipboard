@@ -102,7 +102,7 @@ function Show-Usage {
   }
   Write-Host '  [scroll]'
   Write-Host '    PgUp / PgDn          page by one screen'
-  Write-Host '    wheel                follow the system setting or ScrollLines='
+  Write-Host '    wheel                a quarter of the rows on screen, or ScrollLines='
 
   Write-Host ''
   Write-Host 'Settings (clipboard.ini only - there are no setting switches):'

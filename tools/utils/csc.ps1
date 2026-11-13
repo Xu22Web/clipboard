@@ -3,6 +3,9 @@
 # Both build scripts compile with the compiler that ships inside the .NET Framework 4, which
 # Windows 10 and 11 already have. Nothing here writes a file: it only locates the tool and
 # filters its output, so a failure message stays a failure message.
+#
+# This file is loaded after tools\utils\console.ps1 by both callers, which is where a compiler
+# line is printed from: it belongs to the step above it, not to the run.
 
 function Find-Csc {
   # the 64-bit compiler first, then the 32-bit one: both products are AnyCPU
@@ -20,6 +23,6 @@ function Write-CscLog($output) {
     $text = ([string]$line).Trim()
     # the compiler prints a version advisory on every run; it is not a problem report
     if (-not $text -or $text -like '*provided as part of the Microsoft*') { continue }
-    Write-Host ('    ' + $text)
+    Write-Note ('  ' + $text)
   }
 }

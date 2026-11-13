@@ -22,9 +22,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
+. (Join-Path $root 'tools\utils\console.ps1')
 $source = Join-Path $root 'src'
 if (-not (Test-Path -LiteralPath (Join-Path $source 'clipboard.ps1'))) {
-  Write-Host ('[x] missing: ' + (Join-Path $source 'clipboard.ps1'))
+  Write-Fail ('missing: ' + (Join-Path $source 'clipboard.ps1'))
   exit 1
 }
 
@@ -105,7 +106,7 @@ foreach ($k in @($out.Keys)) { Write-Output ([string]$k + '=' + [string]$out[$k]
   $code = $LASTEXITCODE
   $ErrorActionPreference = 'Stop'
   if ($code -ne 0) {
-    Write-Host (($raw | Out-String).Trim())
+    Write-Text (($raw | Out-String).Trim())
     throw ('the measurement run failed (exit ' + $code + ')')
   }
   $values = [ordered]@{}
@@ -157,11 +158,11 @@ foreach ($k in @($out.Keys)) { Write-Output ([string]$k + '=' + [string]$out[$k]
   if ($Json) {
     $text = $report | ConvertTo-Json -Depth 4
   } else {
-    Write-Host ('clipboard bench   records=' + $report.records + '   media=' + $report.media + '   ' + $stamp)
+    Write-Title ('clipboard bench   records=' + $report.records + '   media=' + $report.media + '   ' + $stamp)
     Write-Host ''
-    Write-Host ('  {0,-22} {1,8}' -f 'path', 'ms')
+    Write-Text ('  {0,-22} {1,8}' -f 'path', 'ms')
     foreach ($k in @($report.milliseconds.Keys)) {
-      Write-Host ('  {0,-22} {1,8:N1}' -f $k, $report.milliseconds[$k])
+      Write-Text ('  {0,-22} {1,8:N1}' -f $k, $report.milliseconds[$k])
     }
     $text = ''
   }
@@ -169,10 +170,10 @@ foreach ($k in @($out.Keys)) { Write-Output ([string]$k + '=' + [string]$out[$k]
   if ($Out) {
     $jsonText = $report | ConvertTo-Json -Depth 4
     [IO.File]::WriteAllText($Out, $jsonText + "`r`n", (New-Object Text.UTF8Encoding $false))
-    if (-not $Json) { Write-Host ('' + '  written: ' + $Out) }
+    if (-not $Json) { Write-Note ('written: ' + $Out) }
   }
 } catch {
-  Write-Host ('[x] ' + $_.Exception.Message)
+  Write-Fail $_.Exception.Message
   $fail = $true
 } finally {
   if (Test-Path -LiteralPath $sandbox) { Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue }

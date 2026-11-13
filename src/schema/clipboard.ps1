@@ -59,7 +59,7 @@
     PreviewChars      = @{ Type = 'int'; Ref = [ref]$script:PreviewChars; Default = 6000; Minimum = 200; Maximum = 200000; Description = 'characters of an entry the card reads' }
     Undo              = @{ Type = 'bool'; Ref = [ref]$script:UndoOn; Default = 1; Description = '1 = Ctrl+Z undoes the last delete' }
     DpiAware          = @{ Type = 'bool'; Ref = [ref]$script:DpiAware; Default = 1; Description = '1 = per-monitor DPI aware rendering' }
-    ScrollLines       = @{ Type = 'int'; Ref = [ref]$script:ScrollLines; Default = 0; Minimum = -1; Maximum = 50; Description = 'wheel step in rows (0 = follow the system)' }
+    ScrollLines       = @{ Type = 'int'; Ref = [ref]$script:ScrollLines; Default = 0; Minimum = -1; Maximum = 50; Description = 'wheel step in rows (0 = a quarter of the rows on screen)' }
     Animations        = @{ Type = 'bool'; Ref = [ref]$script:Animations; Default = 1; Description = '1 = hover / selection / scrollbar transitions, 0 = instant' }
     Autostart         = @{ Type = 'bool'; Ref = [ref]$script:Autostart; Default = 1; Description = '1 = install creates the logon shortcut (serve)' }
     DesktopShortcut   = @{ Type = 'bool'; Ref = [ref]$script:DesktopShortcut; Default = 1; Description = '1 = install creates the desktop shortcut (ui)' }

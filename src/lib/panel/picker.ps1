@@ -281,10 +281,12 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     $listHost.Controls.Add($empty)
     $empty.Add_Click({ $txt.Focus() })
 
-    # A thin rounded thumb is painted instead, brightening on hover.
+    # A thin rounded thumb is painted instead, brightening on hover. The panel is wider than the
+    # bar it draws: three pixels is what the design asks for, and a mouse cannot be trusted to
+    # land on three pixels, so the hit area is twelve and the bar stays centred in it.
     $sbar = New-Object Windows.Forms.Panel
     $sbar.Dock = 'Right'
-    $sbar.Width = Px 6
+    $sbar.Width = Px 12
     $sbar.BackColor = $ui.Surface
     $script:SbTop = 0
     $script:SbLen = 0
@@ -620,11 +622,43 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       if ($w -gt 0 -and $h -gt 0) { $lst.SetBounds(0, 0, $w + (Px 40), $h) }
     }
 
-    # thumb geometry from TopIndex; the frozen block stays out of the scrollable range
+    # a page is the rows that scroll, not every row on screen: the frozen ones never move, so
+    # paging by the whole height would skip their number of rows on every press
+    function Get-PageRows {
+      $n = (Get-Rows) - $lst.PinnedCount
+      if ($n -lt 1) { $n = 1 }
+      return $n
+    }
+
+    # The list can move without the selection (wheel, page keys, the scrollbar), and a selection
+    # that has left the view makes Enter paste a row that is not on screen. Pulling it to the
+    # edge the view moved toward keeps Enter pointing at something the user can see. The first
+    # row counts as gone while part of it still sits behind the frozen block.
+    function Keep-SelectionInView {
+      $i = $lst.SelectedIndex
+      if ($i -lt 0 -or $i -lt $lst.PinnedCount) { return }
+      $vis = (Get-Rows) - $lst.PinnedCount
+      if ($vis -lt 1) { return }
+      $top = $lst.TopIndex
+      $rowH = [Math]::Max(1, $lst.ItemHeight)
+      $first = $top
+      if (($lst.ScrollY - ($top * $rowH)) -gt 0) { $first = $top + 1 }
+      $last = $top + $vis - 1
+      if ($i -lt $first) { $lst.SelectedIndex = $first }
+      elseif ($i -gt $last) { $lst.SelectedIndex = $last }
+    }
+
+    # thumb geometry from the pixel position; the frozen block stays out of the scrollable range
     function Sync-Sb {
       $n = $lst.ItemCount
       $vis = Get-Rows
       $pin = $lst.PinnedCount
+      $rowH = [Math]::Max(1, $lst.ItemHeight)
+      # one notch moves a quarter of the rows that actually scroll: a short compact panel no
+      # longer loses most of its content to one notch, and a tall one is still crossed in
+      # about four. This sits here because a filter that pins rows and a panel shortened to
+      # fit the screen both change how far a notch should go.
+      $lst.WheelRows = Get-WheelStep ([Math]::Max(1, ($vis - $pin))) ([int]$script:ScrollLines)
       $h = $sbar.ClientSize.Height
       if ($n -le $vis -or $h -le (Px 12)) { $script:SbLen = 0; $sbar.Invalidate(); return }
       $track = $h - (Px 6)
@@ -632,9 +666,11 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $scrollVis = [Math]::Max(1, $vis - $pin)
       $script:SbLen = [Math]::Max((Px 28), [int]($track * $scrollVis / $scrollRows))
       $span = $track - $script:SbLen
-      $room = $lst.MaxTop - $pin
+      # in pixels rather than rows, so a touchpad that moved less than a row still moves it
+      $base = $pin * $rowH
+      $room = $lst.ScrollMax - $base
       $t = 0
-      if ($room -gt 0 -and $span -gt 0) { $t = [int]($span * ($lst.TopIndex - $pin) / $room) }
+      if ($room -gt 0 -and $span -gt 0) { $t = [int]($span * ($lst.ScrollY - $base) / $room) }
       $script:SbTop = (Px 3) + $t
       $sbar.Invalidate()
     }
@@ -644,11 +680,13 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       if ($script:SbLen -le 0) { return }
       $span = ($sbar.ClientSize.Height - (Px 6)) - $script:SbLen
       $pin = $lst.PinnedCount
-      $room = $lst.MaxTop - $pin
+      $rowH = [Math]::Max(1, $lst.ItemHeight)
+      $base = $pin * $rowH
+      $room = $lst.ScrollMax - $base
       if ($room -le 0 -or $span -le 0) { return }
-      $i = $pin + [int][Math]::Round(($thumbTop - (Px 3)) * $room / $span)
-      # ScrollTo raises ScrollChanged, which syncs the thumb for us
-      $lst.ScrollTo($i)
+      $y = $base + [int][Math]::Round(($thumbTop - (Px 3)) * $room / $span)
+      # ScrollToPixel raises ScrollChanged, which syncs the thumb for us
+      $lst.ScrollToPixel($y)
       $lst.Invalidate()
     }
 
@@ -657,10 +695,9 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       Sync-Sb
     }
 
-    # rows per wheel notch: the ini setting wins, otherwise the system's own line count
-    $wheelLines = $(try { [Windows.Forms.SystemInformation]::MouseWheelScrollLines } catch { 3 })
-    if ($script:ScrollLines -gt 0) { $wheelLines = [int]$script:ScrollLines }
-    $lst.WheelRows = [Math]::Max(1, [int]$wheelLines)
+    # The wheel step is a property of the panel rather than of the mouse, so Sync-Sb sets it
+    # from the rows on screen; ScrollLines overrides it. The control carries the fraction of a
+    # notch between events, which is what a precision touchpad sends.
     # The rows move under a pointer that does not: after a scroll, or after the filter narrowed
     # the list, the row below the cursor is a different one. Reading it again here keeps the
     # highlight and the card on the row the user is actually pointing at, and the rest timer
@@ -687,14 +724,14 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $script:PvIdx = -1
       Hide-Preview $pv
     }
-    # every way the list can scroll (wheel, drag, keys, selection) has to move the thumb
-    $lst.Add_ScrollChanged({ Sync-Sb; Sync-HoverFromCursor })
+    # every way the list can scroll (wheel, drag, keys, selection) has to move the thumb, and
+    # none of them may leave the selection behind off screen
+    $lst.Add_ScrollChanged({ Sync-Sb; Keep-SelectionInView; Sync-HoverFromCursor })
 
     # the list scrolls itself on the wheel; with the pointer anywhere else it bubbles here
     $form.Add_MouseWheel({
         param($s, $e)
-        $step = $lst.WheelRows
-        if ($e.Delta -gt 0) { Scroll-By (-$step) } else { Scroll-By $step }
+        $lst.WheelBy($e.Delta)
       })
 
     $head.Add_MouseDown({
@@ -726,12 +763,14 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
         param($s, $e)
         if ($script:SbLen -le 0) { return }
         if ($e.Y -ge $script:SbTop -and $e.Y -le ($script:SbTop + $script:SbLen)) {
+          # pressing the thumb starts a drag at the pixel that was grabbed
           $script:SbDrag = $e.Y - $script:SbTop
+          $sbar.Capture = $true
         } else {
-          $script:SbDrag = [int]($script:SbLen / 2)
-          Sb-ScrollTo ($e.Y - $script:SbDrag)
+          # pressing the track pages toward the click, the way a fluent scrollbar does, instead
+          # of dropping the view somewhere the user did not aim at
+          if ($e.Y -lt $script:SbTop) { Scroll-By (-(Get-PageRows)) } else { Scroll-By (Get-PageRows) }
         }
-        $sbar.Capture = $true
         $sbar.Invalidate()
       })
     $sbar.Add_MouseMove({
@@ -1522,10 +1561,10 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
           if ($lst.ItemCount -gt 0) { $lst.SelectedIndex = $lst.ItemCount - 1 }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.KeyCode -eq 'PageDown') {
-          Scroll-By (Get-Rows)
+          Scroll-By (Get-PageRows)
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.KeyCode -eq 'PageUp') {
-          Scroll-By (-(Get-Rows))
+          Scroll-By (-(Get-PageRows))
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.KeyCode -eq 'Up') {
           if ($lst.SelectedIndex -gt 0) { $lst.SelectedIndex-- }

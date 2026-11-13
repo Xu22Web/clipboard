@@ -870,16 +870,28 @@ namespace Cb {
     // The label text lives with the caller and is pulled by index while painting: the
     // control only needs to know how many rows exist, so a refresh never copies strings.
     public int ItemCount = 0;
-    public int ItemHeight = 40;
+    private int itemHeight = 40;
+    // the row height as a property: a caller that changes it mid-life would otherwise leave
+    // the pixel offset pointing into a row that no longer exists
+    public int ItemHeight {
+      get { return itemHeight; }
+      set { itemHeight = value < 1 ? 1 : value; pixelOffset = 0; Invalidate(); }
+    }
     // rows at the very top that never scroll: the pinned block
     public int PinnedCount = 0;
     public System.Drawing.Color SeparatorColor = System.Drawing.Color.Empty;
-    // rows one wheel notch scrolls; 0 means the usual three
+    // rows one wheel notch scrolls; the host keeps it current, because only it knows how many
+    // rows the panel shows and how many of those are frozen at the top
     public int WheelRows = 0;
 
     private int topIndex = 0;
+    // pixels the first scrolling row is pulled up behind the frozen block: a touchpad that
+    // moved less than a whole row still moves the list, and the thumb follows it
+    private int pixelOffset = 0;
     private int selected = -1;
     private int updates = 0;
+    // wheel movement carried between events, in pixels * 120
+    private long wheelPix = 0;
 
     public event EventHandler DrawItem;
     public event EventHandler SelectedIndexChanged;
@@ -904,6 +916,11 @@ namespace Cb {
 
     // first scrollable row on screen; never points into the frozen block
     public int TopIndex { get { return topIndex; } set { SetTop(value); } }
+
+    // Distance the scrolling part has moved, in pixels: where it is and how far it can go.
+    // The host maps both onto the thumb, so a partial row shows as a partial thumb move.
+    public int ScrollY { get { return (topIndex * itemHeight) + pixelOffset; } }
+    public int ScrollMax { get { return MaxTop * itemHeight; } }
 
     public int VisibleRows {
       get { if (ItemHeight <= 0) return 0; int n = ClientSize.Height / ItemHeight; return n < 0 ? 0 : n; }
@@ -935,30 +952,66 @@ namespace Cb {
       }
     }
 
-    public void ScrollBy(int rows) { SetTop(topIndex + rows); }
+    public void ScrollBy(int rows) { SetScroll(ScrollY + (rows * itemHeight)); }
     public void ScrollTo(int index) { SetTop(index); }
+    public void ScrollByPixel(int px) { SetScroll(ScrollY + px); }
+    public void ScrollToPixel(int y) { SetScroll(y); }
+
+    // A wheel event is not always one notch: a precision touchpad sends deltas well under 120
+    // and a spun wheel sends several notches in one event. The movement is summed in pixels,
+    // so a touchpad that never reaches a whole notch still scrolls smoothly, and one event
+    // never crosses a whole screen, so a fast wheel still leaves rows to read.
+    public void WheelBy(int delta) {
+      if (itemHeight <= 0) return;
+      int step = WheelRows > 0 ? WheelRows : 1;
+      // a notch is WheelRows rows, and delta counts 1/120 of a notch
+      wheelPix += (long)delta * step * itemHeight;
+      int px = (int)(wheelPix / 120);
+      if (px == 0) return;
+      wheelPix -= (long)px * 120;
+      int room = (VisibleRows - PinnedCount - 1) * itemHeight;
+      if (room < itemHeight) room = itemHeight;
+      if (px > room) px = room;
+      if (px < -room) px = -room;
+      SetScroll(ScrollY - px);
+    }
 
     // scroll just enough to show one row; a frozen row is always visible already
     public void EnsureVisible(int index) {
       if (index < 0 || index < PinnedCount) return;
       int vis = VisibleRows - PinnedCount;
       if (vis < 1) return;
-      if (index < topIndex) SetTop(index);
+      // the first row counts as hidden while a part of it still sits behind the frozen block
+      if (index < topIndex || (index == topIndex && pixelOffset > 0)) SetTop(index);
       else if (index >= topIndex + vis) SetTop(index - vis + 1);
     }
 
     private void SetTop(int value) {
-      int max = MaxTop;
-      if (value < PinnedCount) value = PinnedCount;
-      if (value > max) value = max;
-      if (value == topIndex) return;
-      topIndex = value;
+      if (itemHeight <= 0) return;
+      SetScroll(value * itemHeight);
+    }
+
+    // The one place the scroll position changes: clamped between the frozen block and the last
+    // row, then split into a whole row and the pixels left over.
+    private void SetScroll(int y) {
+      if (itemHeight <= 0) return;
+      int min = PinnedCount * itemHeight;
+      int max = ScrollMax;
+      if (max < min) max = min;
+      if (y < min) y = min;
+      if (y > max) y = max;
+      int ti = y / itemHeight;
+      int off = y - (ti * itemHeight);
+      if (ti == topIndex && off == pixelOffset) return;
+      topIndex = ti;
+      pixelOffset = off;
       Invalidate();
       EventHandler h = ScrollChanged;
       if (h != null) h(this, EventArgs.Empty);
     }
 
-    public void BeginUpdate() { updates++; }
+    // a refresh replaces what is under the pointer, so a half notch from before it is dropped
+    public void BeginUpdate() { updates++; wheelPix = 0; }
     public void EndUpdate() {
       if (updates > 0) updates--;
       if (updates > 0) return;
@@ -970,18 +1023,23 @@ namespace Cb {
     public System.Drawing.Rectangle GetItemRectangle(int index) {
       if (index < 0) return System.Drawing.Rectangle.Empty;
       int y;
-      if (index < PinnedCount) y = index * ItemHeight;
-      else y = (PinnedCount + index - topIndex) * ItemHeight;
-      return new System.Drawing.Rectangle(0, y, ClientSize.Width, ItemHeight);
+      if (index < PinnedCount) y = index * itemHeight;
+      else y = ((PinnedCount + index - topIndex) * itemHeight) - pixelOffset;
+      return new System.Drawing.Rectangle(0, y, ClientSize.Width, itemHeight);
     }
 
     public int IndexFromPoint(System.Drawing.Point pt) {
-      if (ItemHeight <= 0 || ItemCount == 0) return -1;
-      int slot = pt.Y / ItemHeight;
-      if (slot < 0) return -1;
+      if (itemHeight <= 0 || ItemCount == 0) return -1;
+      if (pt.Y < 0) return -1;
       int i;
-      if (slot < PinnedCount) i = slot;
-      else i = topIndex + slot - PinnedCount;
+      if (pt.Y < PinnedCount * itemHeight) {
+        i = pt.Y / itemHeight;
+      } else {
+        // the scrolling part starts part way into the first row when the wheel moved less than
+        // a row, so the point is measured from where that row actually begins
+        int rel = pt.Y - (PinnedCount * itemHeight) + pixelOffset;
+        i = topIndex + (rel / itemHeight);
+      }
       return (i >= 0 && i < ItemCount) ? i : -1;
     }
 
@@ -1025,8 +1083,7 @@ namespace Cb {
     // A ListBox scrolls itself on the wheel; this one has to do it too, or the event would
     // just bubble to the parent and nothing would move.
     protected override void OnMouseWheel(System.Windows.Forms.MouseEventArgs e) {
-      int step = WheelRows > 0 ? WheelRows : 3;
-      if (e.Delta > 0) ScrollBy(-step); else ScrollBy(step);
+      WheelBy(e.Delta);
       System.Windows.Forms.HandledMouseEventArgs h = e as System.Windows.Forms.HandledMouseEventArgs;
       if (h != null) h.Handled = true;
       base.OnMouseWheel(e);
@@ -1035,20 +1092,23 @@ namespace Cb {
     protected override void OnPaint(System.Windows.Forms.PaintEventArgs e) {
       System.Drawing.Graphics g = e.Graphics;
       using (System.Drawing.SolidBrush back = new System.Drawing.SolidBrush(BackColor)) { g.FillRectangle(back, ClientRectangle); }
-      if (updates > 0 || ItemHeight <= 0) return;
+      if (updates > 0 || itemHeight <= 0) return;
+      if (pixelOffset < 0 || pixelOffset >= itemHeight) pixelOffset = 0;
       int pinned = Math.Min(PinnedCount, ItemCount);
-      for (int i = 0; i < pinned; i++) { PaintRow(g, i, i * ItemHeight); }
-      if (pinned > 0 && SeparatorColor != System.Drawing.Color.Empty) {
-        using (System.Drawing.Pen pen = new System.Drawing.Pen(SeparatorColor)) {
-          g.DrawLine(pen, 0, pinned * ItemHeight - 1, ClientSize.Width, pinned * ItemHeight - 1);
-        }
-      }
-      int y = pinned * ItemHeight;
+      // the scrolling rows are painted first and the frozen block over them: a first row that
+      // is partly scrolled belongs to the scrolling part and must not show inside the pins
+      int y = (pinned * itemHeight) - pixelOffset;
       int k = topIndex;
       while (k < ItemCount && y < ClientSize.Height) {
         PaintRow(g, k, y);
-        y += ItemHeight;
+        y += itemHeight;
         k++;
+      }
+      for (int i = 0; i < pinned; i++) { PaintRow(g, i, i * itemHeight); }
+      if (pinned > 0 && SeparatorColor != System.Drawing.Color.Empty) {
+        using (System.Drawing.Pen pen = new System.Drawing.Pen(SeparatorColor)) {
+          g.DrawLine(pen, 0, (pinned * itemHeight) - 1, ClientSize.Width, (pinned * itemHeight) - 1);
+        }
       }
     }
 

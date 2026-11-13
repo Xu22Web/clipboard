@@ -74,6 +74,21 @@ function Get-RowsForScreen([int]$rows, [int]$screenHeight, [int]$rowHeight, [int
   return $fit
 }
 
+# Rows one wheel notch moves. The system's fixed three is right for a fifteen-row panel and
+# wrong at both ends: a panel showing five rows loses most of its content on one notch, and a
+# panel showing thirty takes ten notches to cross. A quarter of the rows that scroll keeps a
+# whole screen about four notches away whatever the panel shape, and the step never reaches a
+# full screen, so the row under the pointer is never skipped over unseen. A positive
+# ScrollLines is the number instead of a computed one.
+function Get-WheelStep([int]$visibleRows, [int]$fixed) {
+  if ($fixed -gt 0) { return $fixed }
+  if ($visibleRows -lt 2) { return 1 }
+  $step = [int][Math]::Round(($visibleRows / 4.0), [MidpointRounding]::AwayFromZero)
+  if ($step -lt 1) { $step = 1 }
+  if ($step -gt ($visibleRows - 1)) { $step = $visibleRows - 1 }
+  return $step
+}
+
 # virtual index behind a Ctrl+<digit> press. Digits follow the visible window, not the
 # absolute position in the list (uTools style), so they stay stable while scrolling.
 function Get-QuickKeyIndex([int]$offset, [int]$topIndex, [int]$count, [int]$rows) {
