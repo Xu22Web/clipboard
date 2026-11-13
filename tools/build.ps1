@@ -35,7 +35,7 @@ param(
 $ErrorActionPreference = 'Stop'
 # this file lives in tools\: the repository root is one level up
 $root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
-# every tool prints a step or a failure the same way
+# every tool prints its steps, warnings and failures the same way
 . (Join-Path $root 'tools\utils\console.ps1')
 # the program lives in src\, the build tooling and the docs stay at the repo root
 $srcRoot = Join-Path $root 'src'
@@ -190,8 +190,18 @@ foreach ($p in @(Get-ProductList)) {
   if (Test-Path -LiteralPath $compiler) {
     $swProduct = Start-Step
     $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $compiler -Out $built 2>&1
-    foreach ($line in @($log)) { Write-Note (([string]$line).Trim()) }
-    Write-Done $swProduct ('compiled ' + $p.Label)
+    # The product script reports its own result, and this loop reports the step: forwarding its
+    # success line as well said the same thing twice, the first time indented as a detail. Only
+    # what it says when something went wrong is worth passing on.
+    foreach ($line in @($log)) {
+      $text = ([string]$line).Trim()
+      if (-not $text -or $text.StartsWith('[ok]')) { continue }
+      Write-Note $text
+    }
+    if (Test-Path -LiteralPath $built) {
+      $kb = [Math]::Round((Get-Item -LiteralPath $built).Length / 1KB, 1)
+      Write-Done $swProduct ('compiled ' + $p.Label + '   ' + $kb + ' KB')
+    }
   }
   if (Test-Path -LiteralPath $built) {
     $productOut[$p.Out] = $built

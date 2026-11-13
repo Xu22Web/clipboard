@@ -90,8 +90,17 @@ function Invoke-NativeBuild($products) {
     if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
     $swProduct = Start-Step
     $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $compiler -Out $out 2>&1
-    foreach ($line in @($log)) { Write-Note (([string]$line).Trim()) }
-    Write-Done $swProduct ('compiled ' + $p.Label)
+    # the product script reports its own result inside the text below; it is not repeated here,
+    # only what it says when something went wrong is passed on
+    foreach ($line in @($log)) {
+      $text = ([string]$line).Trim()
+      if (-not $text -or $text.StartsWith('[ok]')) { continue }
+      Write-Note $text
+    }
+    if (Test-Path -LiteralPath $out) {
+      $kb = [Math]::Round((Get-Item -LiteralPath $out).Length / 1KB, 1)
+      Write-Done $swProduct ('compiled ' + $p.Label + '   ' + $kb + ' KB')
+    }
   }
 }
 
