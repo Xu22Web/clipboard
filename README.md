@@ -207,7 +207,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `HotkeyFallbacks` | `Ctrl+Alt+V, Win+V, Alt+反引号, Win+Shift+V` | `Hotkey` 注册失败后按顺序尝试的链 |
 | `PasteKeys` | `^v` | 选定后用 SendKeys 发送的按键（`^+v` = Ctrl+Shift+V） |
 | `ModReleaseTimeout` | `1200` | 最多等待修饰键松开的时间（毫秒）；超时后仍按住的修饰键会被松开 |
-| `PasteSettle` | `80` | 切回原窗口后到发送 `PasteKeys` 之间的等待（毫秒） |
+| `PasteSettle` | `30` | 切回原窗口后到发送 `PasteKeys` 之间的等待（毫秒） |
 | `MaxItems` | `300` | 最多保留条数（带保护标记的行不受裁剪影响） |
 | `MaxTextBytes` | `204800` | 单条纯文本上限（字节），超出不入库 |
 | `MaxTextTotalBytes` | `4194304` | 纯文本条目总容量（字节），超出丢最旧的（带保护标记的行保留） |

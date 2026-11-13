@@ -660,7 +660,7 @@ try {
       It 'paste can type instead of injecting a paste key' {
         # PasteTyping=1 hands the text to SendInput: the paste path has to keep that branch,
         # and it must stay inside Paste-Clip so the hand-over and the settle still happen first
-        Expect ($script:StructPickerText -match '(?s)function Paste-Clip[^\r\n]*\{.{0,3000}SendUnicode\(\$TypedText\)') 'SendUnicode branch missing in Paste-Clip'
+        Expect ($script:StructPickerText -match '(?s)function Paste-Clip[^\r\n]*\{.{0,4200}SendUnicode\(\$TypedText\)') 'SendUnicode branch missing in Paste-Clip'
         Expect ($script:StructPickerText -match '\$script:PasteTyping') 'PasteTyping never read'
       }
 

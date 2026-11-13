@@ -860,17 +860,20 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       return $where
     }
 
-    function Paste-Clip([string]$TypedText = '') {
+    function Paste-Clip([string]$TypedText = '', [int]$ClipMs = 0) {
+      # every step of a paste is a wait the user can feel, and which one it is cannot be told
+      # from a screenshot: one line per paste carries the milliseconds of each stage
+      $pasteSw = [Diagnostics.Stopwatch]::StartNew()
       $target = Get-PasteTarget
       Write-Log ('paste target: ' + (Format-PasteTarget $target))
       if ($script:NoPaste) { Close-Panel; return }
       # the hotkey is usually still held when the panel opens: pasting now would send
       # Ctrl+V with Alt/Ctrl down and land as something else entirely
-      $sw = [Diagnostics.Stopwatch]::StartNew()
-      while ($sw.ElapsedMilliseconds -lt $script:ModReleaseTimeout) {
+      while ($pasteSw.ElapsedMilliseconds -lt $script:ModReleaseTimeout) {
         if (Test-Modifiers-Up) { break }
-        Start-Sleep -Milliseconds 30
+        Start-Sleep -Milliseconds 10
       }
+      $modMs = [int]$pasteSw.ElapsedMilliseconds
       # waiting only works when the key is let go of soon: a modifier that is still down when
       # the wait ends is released, so the paste cannot arrive as another shortcut
       if (-not (Test-Modifiers-Up)) { Release-HeldModifiers }
@@ -880,6 +883,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       # of the paste, which is what $script:Pasting tells the Deactivate handler.
       $hadFront = $false
       try { $hadFront = ([Cb.Win]::GetForegroundWindow() -eq $target) } catch { $hadFront = $false }
+      $frontSw = [Diagnostics.Stopwatch]::StartNew()
       $script:Pasting = $true
       try {
         if (-not $hadFront -and -not (Take-Foreground $target)) {
@@ -897,18 +901,22 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
           if (-not $hasFocus) { [void](Restore-TargetFocus $target $script:PrevFocus) }
         }
         Start-Sleep -Milliseconds $script:PasteSettle
+        $focusMs = [int]$frontSw.ElapsedMilliseconds
         # The keys go out before the panel is hidden: hiding the active window first lets Windows
         # pick the next window in the z-order, and taking the front back afterwards is exactly
         # what reads as "the window I had focused before flashes up".
         if ($TypedText -ne '') {
           # typing lands in the focused control through SendInput: no clipboard and no paste
           # key, which is what a target that ignores Ctrl+V needs
+          $keysSw = [Diagnostics.Stopwatch]::StartNew()
           $sent = 0
           try { $sent = [Cb.Win]::SendUnicode($TypedText) } catch { Write-Log ('typing failed: ' + $_.Exception.Message) }
           Write-Log ('typed ' + $sent + ' of ' + $TypedText.Length + ' characters')
         } else {
+          $keysSw = [Diagnostics.Stopwatch]::StartNew()
           try { [Windows.Forms.SendKeys]::SendWait($PasteKeys) } catch { Write-Log ('sendkeys fail: ' + $_.Exception.Message) }
         }
+        Write-Log ('paste: ' + [int]$pasteSw.ElapsedMilliseconds + ' ms (clip ' + $ClipMs + ', mod ' + $modMs + ', focus ' + $focusMs + ', settle ' + [int]$script:PasteSettle + ', keys ' + [int]$keysSw.ElapsedMilliseconds + ')')
         try {
           $after = [Cb.Win]::GetForegroundWindow()
           if ($after -ne $target) { Write-Log ('paste: the foreground changed while the keys were sent (' + (Format-WindowName $after) + ')') }
@@ -962,14 +970,17 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       # a terminal wants the text, an editor wants the layout. The window asked about is the
       # one the paste goes back to - the panel itself may be in front after a hand-over.
       if ($rich -and -not (Test-AppRuleKeepsRich $pasteTo)) { $rich = '' }
-      if (-not (Set-ClipItem $payload $rich)) { Write-Log 'set clipboard failed'; $form.Close(); return }
+      $clipSw = [Diagnostics.Stopwatch]::StartNew()
+      $okClip = Set-ClipItem $payload $rich
+      $clipMs = [int]$clipSw.ElapsedMilliseconds
+      if (-not $okClip) { Write-Log 'set clipboard failed'; $form.Close(); return }
       # our own write must not come back as a new capture
       Set-LastCapture $payload
       # PasteTyping=1 skips the paste key. Only plain text can be typed: a file list and a
       # picture still need the clipboard.
       $typed = ''
       if ($script:PasteTyping -and $rich -eq '' -and -not (Test-FilePayload $payload) -and -not (Test-ImagePayload $payload)) { $typed = $payload }
-      Paste-Clip -TypedText $typed
+      Paste-Clip -TypedText $typed -ClipMs $clipMs
     }
 
     function Del-Index([int]$idx) {

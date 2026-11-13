@@ -18,7 +18,7 @@
     HotkeyFallbacks   = @{ Type = 'string'; Ref = [ref]$script:HotkeyFallbacks; Default = 'Ctrl+Alt+V, Win+V, Alt+`, Win+Shift+V'; Description = 'comma separated chain tried in order after Hotkey' }
     PasteKeys         = @{ Type = 'string'; Ref = [ref]$script:PasteKeys; Default = '^v'; Description = 'SendKeys sent after picking' }
     ModReleaseTimeout = @{ Type = 'int'; Ref = [ref]$script:ModReleaseTimeout; Default = 1200; Minimum = 0; Maximum = 60000; Description = 'ms to wait for the modifiers; one still held afterwards is released' }
-    PasteSettle       = @{ Type = 'int'; Ref = [ref]$script:PasteSettle; Default = 80; Minimum = 0; Maximum = 10000; Description = 'ms to wait before sending PasteKeys' }
+    PasteSettle       = @{ Type = 'int'; Ref = [ref]$script:PasteSettle; Default = 30; Minimum = 0; Maximum = 10000; Description = 'ms to wait before sending PasteKeys' }
     MaxItems           = @{ Type = 'int'; Ref = [ref]$script:MaxItems; Default = 300; Minimum = 1; Maximum = 100000; Description = 'entry cap (rows a mark protects are exempt)' }
     MaxTextBytes       = @{ Type = 'int'; Ref = [ref]$script:MaxTextBytes; Default = 204800; Minimum = 1; Maximum = 104857600; Description = 'per text entry cap in bytes; a larger payload is not saved' }
     MaxTextTotalBytes  = @{ Type = 'int'; Ref = [ref]$script:MaxTextTotalBytes; Default = 4194304; Minimum = 1024; Maximum = 1073741824; Description = 'total size of the text entries in bytes' }

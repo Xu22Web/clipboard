@@ -40,12 +40,24 @@ function Release-HeldModifiers {
 # Bring a window to the front for real. SetForegroundWindow alone is refused while another
 # process owns the foreground (the foreground lock), so a refused call is repeated with the
 # input queues attached - the documented workaround - and the result is checked, never assumed.
+#
+# The check polls instead of sleeping a fixed 25 ms: the foreground changes as soon as the call
+# is processed, so a successful hand-over costs a couple of milliseconds here instead of the
+# whole wait, and a paste that used to spend 120-140 ms in this step spends a fraction of it.
+function Wait-Foreground([IntPtr]$hwnd, [int]$timeoutMs) {
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  while ($sw.ElapsedMilliseconds -lt $timeoutMs) {
+    try { if ([Cb.Win]::GetForegroundWindow() -eq $hwnd) { return $true } } catch { return $false }
+    Start-Sleep -Milliseconds 2
+  }
+  try { return ([Cb.Win]::GetForegroundWindow() -eq $hwnd) } catch { return $false }
+}
+
 function Take-Foreground([IntPtr]$hwnd) {
   if ($hwnd -eq [IntPtr]::Zero) { return $false }
   for ($try = 0; $try -lt 3; $try++) {
     try { [void][Cb.Win]::SetForegroundWindow($hwnd) } catch { }
-    Start-Sleep -Milliseconds 25
-    if ([Cb.Win]::GetForegroundWindow() -eq $hwnd) { return $true }
+    if (Wait-Foreground $hwnd 60) { return $true }
     $otid = [Cb.Win]::GetCurrentThreadId()
     $fg = [Cb.Win]::GetForegroundWindow()
     $ftid = [uint32]0
@@ -55,7 +67,7 @@ function Take-Foreground([IntPtr]$hwnd) {
       if ($ftid -ne 0 -and $ftid -ne $otid) { $attached = [Cb.Win]::AttachThreadInput($otid, $ftid, $true) }
       [void][Cb.Win]::BringWindowToTop($hwnd)
       [void][Cb.Win]::SetForegroundWindow($hwnd)
-      Start-Sleep -Milliseconds 25
+      if (Wait-Foreground $hwnd 60) { return $true }
     } finally {
       if ($attached) { [void][Cb.Win]::AttachThreadInput($otid, $ftid, $false) }
     }

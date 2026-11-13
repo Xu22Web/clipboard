@@ -134,7 +134,7 @@ $script:Hotkey = 'Ctrl+Alt+V'
 $script:PasteKeys = '^v'
 $script:HotkeyFallbacks = ''
 $script:ModReleaseTimeout = 1200
-$script:PasteSettle = 80
+$script:PasteSettle = 30
 # Size settings are named <Max|Inline> + <object> + <unit>: Text is the plain payload, Image
 # one picture, Html / Rtf one block of a formatted copy, Media the files those own. The unit is
 # in the name because two of these are counted in characters and the rest in bytes.
