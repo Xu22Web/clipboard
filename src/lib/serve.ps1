@@ -159,8 +159,8 @@ function Invoke-ServeOnce {
     if ($null -ne $trayIcon) { $script:Tray.Icon = $trayIcon } else { $script:Tray.Icon = [Drawing.SystemIcons]::Information }
     $script:Tray.Text = 'clipboard - ' + $eff
     # One left click opens the panel. Windows reports a click on a tray icon as a mouse click, and
-    # the right button opens the menu, so the button is what tells the two apart; a second click
-    # of a double click lands on the panel that the first one opened, so it changes nothing.
+    # the right button opens the menu, so the button is what tells the two apart. A habit of
+    # double-clicking is harmless: the second click lands on the panel the first one opened.
     $script:Tray.Add_MouseClick({
         param($sender, $e)
         try {
@@ -257,7 +257,7 @@ function Invoke-ServeOnce {
     $script:Tray.ContextMenuStrip = $dm
     $script:Tray.Visible = $true
     if ($script:ShowBalloon) {
-      $script:Tray.ShowBalloonTip(5000, 'clipboard is running', ('Hotkey: ' + $eff + '  |  double-click the tray icon for history'), [Windows.Forms.ToolTipIcon]::Info)
+      $script:Tray.ShowBalloonTip(5000, 'clipboard is running', ('Hotkey: ' + $eff + '  |  click the tray icon for history'), [Windows.Forms.ToolTipIcon]::Info)
     }
   } catch { Write-Log ('tray failed: ' + $_.Exception.Message) }
 
