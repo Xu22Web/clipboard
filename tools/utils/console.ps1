@@ -10,8 +10,24 @@
 # turn it off, FORCE_COLOR turns it on for a log rendered somewhere else, and an escape
 # sequence is used only when the host understands one - otherwise the same line goes out
 # through Write-Host -ForegroundColor, which every Windows console has always understood.
+#
+# Every line also has a level, and one threshold decides what reaches the console: a tool that
+# was asked to be quiet still prints the things that went wrong, and nothing else. A stamp is
+# off by default and turned on by the one tool that runs for a long time.
 
-$script:Con = @{ Ready = $false; Color = $false; Ansi = $false; Off = $false }
+# silent < error < warn < info, the same ladder a bundler's logger has: a line is printed when
+# its own level is at or below the threshold
+$script:LogLevels = @{ silent = 0; error = 1; warn = 2; info = 3 }
+
+$script:Con = @{
+  Ready     = $false
+  Color     = $false
+  Ansi      = $false
+  Off       = $false
+  Level     = 3          # info
+  Timestamp = $false
+  Warned    = @{}        # message -> $true, so a repeated warning is said once
+}
 
 # Windows 10 consoles ignore escape sequences until the mode says otherwise, and Windows
 # PowerShell 5.1 has no $PSStyle to ask: kernel32 knows. Any failure here means "no escapes",
@@ -33,6 +49,33 @@ function Test-ConsoleAnsi {
   } catch { return $false }
 }
 
+# The threshold: 'silent', 'error', 'warn' or 'info'. An unknown value is ignored, so a typo
+# in an environment variable cannot silence the tool.
+function Set-LogLevel([string]$Level) {
+  $name = ([string]$Level).Trim().ToLowerInvariant()
+  if (-not $name -or -not $script:LogLevels.ContainsKey($name)) { return }
+  $script:Con.Level = [int]$script:LogLevels[$name]
+}
+
+# What a tool starts with: CLIPBOARD_LOG_LEVEL for a whole shell, then its own switches, which
+# win. One call at the top of a tool is enough for both.
+function Set-LogLevelFrom([switch]$Silent, [switch]$Quiet) {
+  if ($env:CLIPBOARD_LOG_LEVEL) { Set-LogLevel $env:CLIPBOARD_LOG_LEVEL }
+  if ($Silent) { Set-LogLevel 'silent' }
+  elseif ($Quiet) { Set-LogLevel 'warn' }
+}
+
+function Test-LogEnabled([string]$type) {
+  if (-not $script:LogLevels.ContainsKey($type)) { return $true }
+  return ($script:Con.Level -ge [int]$script:LogLevels[$type])
+}
+
+# A stamp belongs to a tool that keeps running (dev), not to a build that takes twenty seconds.
+function Enable-LogTimestamp([switch]$On) {
+  if ($PSBoundParameters.ContainsKey('On')) { $script:Con.Timestamp = [bool]$On; return }
+  $script:Con.Timestamp = $true
+}
+
 # Once per process: the probe costs an Add-Type the first time and nothing afterwards.
 function Initialize-Console {
   if ($script:Con.Ready) { return }
@@ -50,36 +93,58 @@ function Initialize-Console {
 # The one place a line is written. $code is the ANSI colour, $fallback the ConsoleColor used
 # when the host has no escape sequences; both name the same colour, so only the mechanism
 # differs and a console that takes neither still gets the plain mark.
-function Write-Line([string]$mark, [string]$text, [int]$code, [string]$fallback) {
+function Write-Line([string]$type, [string]$mark, [string]$text, [int]$code, [string]$fallback) {
   Initialize-Console
+  if (-not (Test-LogEnabled $type)) { return }
+  $stamp = ''
+  if ($script:Con.Timestamp) { $stamp = (Get-Date).ToString('HH:mm:ss') + ' ' }
   if (-not $script:Con.Color) {
-    if ($mark) { Write-Host ($mark + ' ' + $text) } else { Write-Host $text }
+    if ($mark) { Write-Host ($stamp + $mark + ' ' + $text) } else { Write-Host ($stamp + $text) }
     return
   }
   if ($script:Con.Ansi) {
     $e = [char]27
-    if ($mark) { Write-Host ($e + '[' + $code + 'm' + $mark + $e + '[0m ' + $text) }
-    else { Write-Host ($e + '[' + $code + 'm' + $text + $e + '[0m') }
+    $head = ''
+    if ($stamp) { $head = $e + '[90m' + $stamp.TrimEnd() + $e + '[0m ' }
+    if ($mark) { Write-Host ($head + $e + '[' + $code + 'm' + $mark + $e + '[0m ' + $text) }
+    else { Write-Host ($head + $e + '[' + $code + 'm' + $text + $e + '[0m') }
     return
   }
+  if ($stamp) { Write-Host $stamp -NoNewline -ForegroundColor DarkGray }
   if ($mark) { Write-Host ($mark + ' ' + $text) -ForegroundColor $fallback }
   else { Write-Host $text -ForegroundColor $fallback }
 }
 
-function Write-Step([string]$text) { Write-Line '[..]' $text 36 'Cyan' }
-function Write-Ok([string]$text) { Write-Line '[ok]' $text 32 'Green' }
-function Write-Warn([string]$text) { Write-Line '[!]' $text 33 'Yellow' }
-function Write-Fail([string]$text) { Write-Line '[x]' $text 31 'Red' }
+function Write-Step([string]$text) { Write-Line 'info' '[..]' $text 36 'Cyan' }
+function Write-Ok([string]$text) { Write-Line 'info' '[ok]' $text 32 'Green' }
+function Write-Warn([string]$text) { Write-Line 'warn' '[!]' $text 33 'Yellow' }
+function Write-Fail([string]$text) { Write-Line 'error' '[x]' $text 31 'Red' }
+# the same warning twice is one warning: a loop that retries says it once, not once per pass
+function Write-WarnOnce([string]$text) {
+  if ($script:Con.Warned.ContainsKey($text)) { return }
+  $script:Con.Warned[$text] = $true
+  Write-Warn $text
+}
 # a note is dim and indented: it belongs to the step above it, not to the run
-function Write-Note([string]$text) { Write-Line '' ('  ' + $text) 90 'DarkGray' }
+function Write-Note([string]$text) { Write-Line 'info' '' ('  ' + $text) 90 'DarkGray' }
 # a heading: the tool name and its version, in the accent colour
-function Write-Title([string]$text) { Write-Line '' $text 36 'Cyan' }
-# plain text: a table, or a line the caller already shaped
-function Write-Text([string]$text) { Write-Host $text }
+function Write-Title([string]$text) { Write-Line 'info' '' $text 36 'Cyan' }
+# A data line: a table or a heading the tool shaped itself. It belongs to the run, so -Quiet
+# takes it away with the steps it belongs to.
+function Write-Text([string]$text) {
+  Initialize-Console
+  if (-not (Test-LogEnabled 'info')) { return }
+  Write-Host $text
+}
+
+# Raw text a tool passes on unchanged, such as the output of the program it measured: not a log
+# line of this tool, and never dropped because this tool was asked to be quiet.
+function Write-Raw([string]$text) { Write-Host $text }
 
 # A cyan key and a plain value on one line, padded to $width so a list of them lines up.
 function Write-Pair([string]$key, [string]$value, [int]$width) {
   Initialize-Console
+  if (-not (Test-LogEnabled 'info')) { return }
   if ($width -lt $key.Length) { $width = $key.Length }
   $pad = $key + (' ' * ($width - $key.Length)) + ' '
   if (-not $script:Con.Color) { Write-Host ('  ' + $pad + $value); return }
@@ -114,6 +179,7 @@ function Write-Done($sw, [string]$text) {
 # will actually be executed. The wait for a fresh PowerShell then has an explanation.
 function Write-Command([string]$title, [string]$shown, [string]$line) {
   Initialize-Console
+  if (-not (Test-LogEnabled 'info')) { return }
   if (-not $script:Con.Color) {
     Write-Host ('> ' + $title + ' ' + $shown)
     Write-Host ('> ' + $line)

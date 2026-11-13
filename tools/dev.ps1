@@ -21,7 +21,12 @@ param(
   # dev has one mode; the parameter only makes "cli dev <something>" explain itself
   [Parameter(Position = 0)][string]$Action = '',
   # how often the watcher looks at the source tree, in ms; 0 = cli.ini [dev] Interval
-  [int]$Interval = 0
+  [int]$Interval = 0,
+  # quiet keeps warnings and failures, silent keeps failures only
+  [switch]$Quiet,
+  [switch]$Silent,
+  # a loop runs for hours: a stamp on every line is what makes two restarts comparable
+  [switch]$Timestamp
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,6 +34,8 @@ $root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 # the same logger every tool prints through: [..] for a step, [ok] for a finished one, [x] for
 # a failure
 . (Join-Path $root 'tools\utils\console.ps1')
+Set-LogLevelFrom -Quiet:$Quiet -Silent:$Silent
+if ($Timestamp) { Enable-LogTimestamp }
 $srcDir = Join-Path $root 'src'
 # package.ini owns the program name, and the name owns the entry: nothing here spells it out
 . (Join-Path $root 'tools\utils\ini.ps1')
@@ -205,15 +212,16 @@ function Format-WatchPath([string]$path) {
   return $path
 }
 
-# added, removed and modified files between two snapshots
+# added, removed and modified files between two snapshots, each with what happened to it: the
+# word is what the line says, and Write-Note gives it the indent and the colour of a detail
 function Compare-WatchStamps($before, $after) {
   $out = New-Object System.Collections.Generic.List[string]
   foreach ($p in @($after.Keys | Sort-Object)) {
-    if (-not $before.ContainsKey($p)) { $out.Add('  [+] ' + (Format-WatchPath $p)) }
-    elseif ($before[$p] -ne $after[$p]) { $out.Add('  [~] ' + (Format-WatchPath $p)) }
+    if (-not $before.ContainsKey($p)) { $out.Add('added   ' + (Format-WatchPath $p)) }
+    elseif ($before[$p] -ne $after[$p]) { $out.Add('changed ' + (Format-WatchPath $p)) }
   }
   foreach ($p in @($before.Keys | Sort-Object)) {
-    if (-not $after.ContainsKey($p)) { $out.Add('  [-] ' + (Format-WatchPath $p)) }
+    if (-not $after.ContainsKey($p)) { $out.Add('removed ' + (Format-WatchPath $p)) }
   }
   return $out
 }
@@ -289,7 +297,7 @@ function Start-DevLoop {
   if (-not $started) {
     Write-Warn ('the resident did not start - run ' + (Format-WatchPath $entry) + ' serve to see the error, the next change retries')
   }
-  Write-Note ('watching ' + $stamps.Count + ' file(s), poll ' + $Interval + ' ms - Ctrl+C ends the loop and the resident')
+  Write-Step ('watching ' + $stamps.Count + ' files, poll ' + $Interval + ' ms - Ctrl+C ends the loop and the resident')
   $reported = @{}
   # Did the resident ever come up? A resident that has been up and stays gone was closed
   # from outside (tray exit, `clipboard stop`), so there is nothing left to restart and dev
@@ -345,8 +353,11 @@ function Start-DevLoop {
     $changes = @(Compare-WatchStamps $stamps $next)
     $stamps = $next
     $reported = @{}
+    $swRestart = Start-Step
+    Write-Step ('restarting (' + $changes.Count + ' change(s))')
+    # the files come under the step they explain: printed before it, they landed after the line
+    # that ended the previous restart and read as if they belonged to that one
     foreach ($c in $changes) { Write-Note $c }
-    Write-Step ((Get-Date).ToString('HH:mm:ss') + ' restarting (' + $changes.Count + ' change(s))')
     # The resident holds lib\assembly\clipboard.dll open while it runs, so it has to be gone
     # before the assembly can be rewritten: stop first, compile, then start again.
     Stop-Resident
@@ -356,8 +367,8 @@ function Start-DevLoop {
     if ($csChanges.Count -gt 0) {
       $touched = @()
       foreach ($c in $csChanges) {
-        # the line reads "  [~] src\lib\assembly\cb.native.cs"; the table speaks "lib\assembly"
-        $full = Join-Path $root (($c -replace '^\s*\[.\]\s*', ''))
+        # the line reads "changed src\lib\assembly\cb.native.cs"; the table speaks "lib\assembly"
+        $full = Join-Path $root ($c -replace '^\S+\s+', '')
         $p = Get-ProductFor (Get-SourceRel $srcDir $full)
         if ($null -ne $p -and -not ($touched -contains $p)) { $touched += $p }
       }
@@ -366,6 +377,7 @@ function Start-DevLoop {
     $goneAt = $null
     if (Start-Resident) {
       $sawUp = $true
+      Write-Done $swRestart 'the resident is up'
     } else {
       # a restart that failed is not an outside exit: report it and retry on the next change
       $sawUp = $false

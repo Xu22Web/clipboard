@@ -29,7 +29,10 @@
   carries the program, not the history, the settings or the tooling.
 #>
 param(
-  [string]$Config = ''
+  [string]$Config = '',
+  # quiet keeps warnings and failures, silent keeps failures only
+  [switch]$Quiet,
+  [switch]$Silent
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,6 +40,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 # every tool prints its steps, warnings and failures the same way
 . (Join-Path $root 'tools\utils\console.ps1')
+Set-LogLevelFrom -Quiet:$Quiet -Silent:$Silent
 # the program lives in src\, the build tooling and the docs stay at the repo root
 $srcRoot = Join-Path $root 'src'
 if (-not (Test-Path -LiteralPath $srcRoot)) { Fail ('missing: ' + $srcRoot) }
@@ -405,9 +409,9 @@ if ($wantZip) {
   Write-Done $swZip ('packed ' + $zip + '   ' + $size + ' KB')
 }
 
-Write-Host ''
+Write-Text ''
 Write-Done $swBuild ('build finished - ' + $dest)
-Write-Host ''
+Write-Text ''
 Write-Note ('install.bat                   settings template + startup / desktop shortcuts')
 Write-Note ('uninstall.bat                 stop, remove the shortcuts, delete data\ and the ini')
 Write-Note ($app + '.cmd config init      write a commented ' + $app + '.ini')

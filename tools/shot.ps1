@@ -16,7 +16,10 @@
 param(
   [ValidateSet('dark', 'light', 'both')][string]$Theme = 'both',
   [int]$Select = 7,
-  [switch]$KeepBox
+  [switch]$KeepBox,
+  # quiet keeps warnings and failures, silent keeps failures only
+  [switch]$Quiet,
+  [switch]$Silent
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,6 +44,7 @@ public static class Shot {
 
 $root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 . (Join-Path $root 'tools\utils\console.ps1')
+Set-LogLevelFrom -Quiet:$Quiet -Silent:$Silent
 $srcDir = Join-Path $root 'src'
 $docsDir = Join-Path $root 'docs'
 $rsChar = [string][char]30

@@ -131,6 +131,14 @@ if ($Rest -and $Rest.Count -gt 0) { $shown = $shown + ' ' + ($Rest -join ' ') }
 $title = $pkgName
 if ($pkgVersion) { $title = $title + '@' + $pkgVersion }
 $sw = [Diagnostics.Stopwatch]::StartNew()
+# A quiet flag belongs to the script, which receives it on its own command line; the two lines
+# below belong to the runner and follow the same flag, so a quiet run prints only what went
+# wrong - from either of them.
+foreach ($a in @($Rest)) {
+  $flag = ([string]$a).ToLowerInvariant()
+  if ($flag -eq '-q' -or $flag -eq '-quiet' -or $flag -eq '--quiet') { Set-LogLevel 'warn' }
+  elseif ($flag -eq '-silent' -or $flag -eq '--silent') { Set-LogLevel 'silent' }
+}
 # The same two lines npm prints, then a blank line: the header stays quiet and the colour only
 # marks the command name, so what the script prints is what the eye lands on.
 Write-Command $title $shown $line

@@ -393,6 +393,21 @@ try {
         Expect ((Format-Duration 1234) -eq '1.23 s') (Format-Duration 1234)
         Expect ((Format-Duration -5) -eq '0 ms') (Format-Duration -5)
       }
+
+      It 'a log level decides which lines reach the console' {
+        # -Quiet keeps what went wrong and drops the steps; -Silent keeps nothing; a level
+        # that was never set is info, and an unknown one cannot silence a tool by accident
+        Set-LogLevel 'warn'
+        Expect (-not (Test-LogEnabled 'info')) 'info printed at warn'
+        Expect (Test-LogEnabled 'warn') 'warn dropped at warn'
+        Expect (Test-LogEnabled 'error') 'error dropped at warn'
+        Set-LogLevel 'silent'
+        Expect (-not (Test-LogEnabled 'error')) 'error printed at silent'
+        Set-LogLevel 'nonsense'
+        Expect (-not (Test-LogEnabled 'error')) 'an unknown level changed the threshold'
+        Set-LogLevel 'info'
+        Expect (Test-LogEnabled 'info') 'info dropped at info'
+      }
       It 'ships with the repo' {
         $tooling = @('package.ini', 'cli.ini', 'cli.ps1', 'cli.cmd', 'cli.sh',
           'tools\build.ps1', 'tools\dev.ps1', 'tools\test.ps1', 'tools\bench.ps1', 'tools\shot.ps1',

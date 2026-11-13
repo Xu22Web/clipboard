@@ -17,12 +17,16 @@ param(
   [int]$Records = 300,
   [int]$Media = 50,
   [int]$MaxItems = 0,
-  [string]$Out = ''
+  [string]$Out = '',
+  # quiet keeps warnings and failures, silent keeps failures only
+  [switch]$Quiet,
+  [switch]$Silent
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 . (Join-Path $root 'tools\utils\console.ps1')
+Set-LogLevelFrom -Quiet:$Quiet -Silent:$Silent
 $source = Join-Path $root 'src'
 if (-not (Test-Path -LiteralPath (Join-Path $source 'clipboard.ps1'))) {
   Write-Fail ('missing: ' + (Join-Path $source 'clipboard.ps1'))
@@ -106,7 +110,7 @@ foreach ($k in @($out.Keys)) { Write-Output ([string]$k + '=' + [string]$out[$k]
   $code = $LASTEXITCODE
   $ErrorActionPreference = 'Stop'
   if ($code -ne 0) {
-    Write-Text (($raw | Out-String).Trim())
+    Write-Raw (($raw | Out-String).Trim())
     throw ('the measurement run failed (exit ' + $code + ')')
   }
   $values = [ordered]@{}
@@ -159,7 +163,7 @@ foreach ($k in @($out.Keys)) { Write-Output ([string]$k + '=' + [string]$out[$k]
     $text = $report | ConvertTo-Json -Depth 4
   } else {
     Write-Title ('clipboard bench   records=' + $report.records + '   media=' + $report.media + '   ' + $stamp)
-    Write-Host ''
+    Write-Text ''
     Write-Text ('  {0,-22} {1,8}' -f 'path', 'ms')
     foreach ($k in @($report.milliseconds.Keys)) {
       Write-Text ('  {0,-22} {1,8:N1}' -f $k, $report.milliseconds[$k])
