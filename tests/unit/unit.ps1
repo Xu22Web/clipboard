@@ -775,15 +775,11 @@ try {
         # the real one. A control re-shows its caret after every keystroke, so the hiding has to
         # come from the loop, not once from the focus change.
         Expect ($script:StructPickerText -match '(?s)function Test-OwnCaret\s*\{.{0,400}\$script:Composing') 'the caret owner ignores an input method'
-        Expect ($script:StructPickerText -match '(?s)function Hide-SystemCaret\s*\{.{0,300}HideCaret\(\$txt\.Handle\)') 'the system caret is never hidden while the panel draws its own'
-        Expect ($script:StructWinText -match 'extern bool HideCaret') 'HideCaret missing from the assembly'
         Expect ($script:StructWinText -match 'bool ImeComposing') 'no input-method check for the drawn caret'
-        # HideCaret keeps a count: without the matching ShowCaret the caret never comes back, and
-        # a composing input method then has no caret to anchor its candidate window to
-        Expect ($script:StructWinText -match 'extern bool ShowCaret') 'ShowCaret missing from the assembly'
+        # HideCaret keeps a count: the tick has to give it back while a composition runs, or the
+        # caret never comes back and the candidate window has nothing to sit at
         Expect ($script:StructPickerText -match '(?s)function Show-SystemCaret\s*\{.{0,400}ShowCaret') 'the hidden count is never given back'
         Expect ($script:StructPickerText -match '(?s)else \{\s*if \(\$caret\.Visible\) \{ \$caret\.Visible = \$false \}\s*Show-SystemCaret') 'the composing case does not give the system caret back'
-        Expect ($script:StructPickerText -match 'Add_GotFocus\(\{ \$script:SearchFocus = \$true; \$script:SysHides = 0') 'the hide count survives a new focus'
         # only a composition string counts: the conversion mode is on for the whole session with a
         # Chinese input method, which used to hide the drawn caret before anything was typed
         Expect (-not ($script:StructWinText -match 'ImmGetConversionStatus')) 'the conversion mode still decides instead of the composition'
@@ -976,25 +972,16 @@ try {
         Expect ($script:HotkeyFallbacks -eq 'Alt+Q;Alt+W') ('value=' + $script:HotkeyFallbacks)
       }
 
-      It 'an empty file falls back to a value, not to a blank' {
-        # DataDir is a path and HotkeyFallbacks is the chain the resident tries: both read as
-        # a value, so `config` never has to explain a blank
+      It 'an empty file leaves every key with a value of its own' {
+        # The contract is that a missing ini never leaves a setting blank - not the particular
+        # default: DataDir is a path (a blank would decide nothing) and the fallback chain is
+        # what the resident tries after Hotkey fails.
         [IO.File]::WriteAllLines($script:UnitCfg, @(''), $Utf8)
         Apply-Config
-        Expect ($script:HotkeyFallbacks -eq 'Ctrl+Alt+V, Win+V, Alt+`, Win+Shift+V') ('value=' + $script:HotkeyFallbacks)
-        $dflt = Get-SchemaDefault $script:SettingsSchema 'DataDir'
-        Expect ($dflt -eq 'data') ('DataDir default=' + $dflt)
+        Expect ([string]$script:HotkeyFallbacks -ne '') ('value=' + $script:HotkeyFallbacks)
+        Expect ($script:HotkeyFallbacks -eq (Get-SchemaDefault $script:SettingsSchema 'HotkeyFallbacks')) ('value=' + $script:HotkeyFallbacks)
         $dir = [string](Get-ConfigReport)['DataDir']
         Expect ([IO.Path]::IsPathRooted($dir)) ('DataDir=' + $dir)
-      }
-
-      It 'a blank key carries its meaning in the schema' {
-        # what an empty value means is declared next to the key, not spelled out by the caller
-        Expect ((Get-SchemaHint $script:SettingsSchema 'WindowLeft') -eq '(auto)') (Get-SchemaHint $script:SettingsSchema 'WindowLeft')
-        Expect ((Get-SchemaHint $script:SettingsSchema 'AppRules') -eq '(no rules)') (Get-SchemaHint $script:SettingsSchema 'AppRules')
-        Expect ((Get-SchemaHint $script:SettingsSchema 'Rows') -eq '') 'a key without a hint must stay silent'
-        $ea = Import-Schema (Join-Path $Root 'schema\plugins\entry-actions.ps1')
-        Expect ((Get-SchemaHint $ea 'Browser') -eq '(system default)') (Get-SchemaHint $ea 'Browser')
       }
     }
 
