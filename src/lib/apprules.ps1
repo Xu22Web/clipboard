@@ -74,6 +74,48 @@ function Test-UncoverableWindow($hwnd) {
   } catch { return $false }
 }
 
+# Windows the shell owns rather than the user: the taskbar, the tray, the overflow island that
+# holds the tray icons of Windows 11, and the desktop itself. They are topmost and belong to a
+# process with UIAccess, so the panel treats them as uncouverageable - which is right for a
+# hotkey, where the window in front is what the user is working in, and wrong for a click on the
+# tray icon, where it is only the window the click came from.
+function Test-ShellWindowClass([string]$cls) {
+  if (-not $cls) { return $false }
+  $c = $cls.Trim().ToLowerInvariant()
+  if ($c -eq 'shell_traywnd' -or $c -eq 'traynotifywnd' -or $c -eq 'notifyiconoverflowwindow' -or
+      $c -eq 'toplevelwindowforoverflowxamlisland' -or $c -eq 'progman' -or $c -eq 'workerw') { return $true }
+  # a taskbar moved to another monitor is still a taskbar, and its class says which one
+  return $c.StartsWith('shell_secondarytraywnd')
+}
+
+function Test-ShellOwnWindow($hwnd) {
+  try {
+    $h = [IntPtr]$hwnd
+    if ($h -eq [IntPtr]::Zero) { return $false }
+    $proc = ''
+    try { $proc = [string][IO.Path]::GetFileName([string](Get-WindowProcessName $h)) } catch { $proc = '' }
+    if ($proc.ToLowerInvariant() -ne 'explorer.exe') { return $false }
+    $cls = ''
+    try { $cls = [string][Cb.Win]::WindowClass($h) } catch { $cls = '' }
+    if (Test-ShellWindowClass $cls) { return $true }
+    return ([Cb.Win]::IsTopmost($h))
+  } catch { return $false }
+}
+
+# The window the panel should come from when the request did not come from one: the first window
+# below the given one that is neither this process's own nor the shell's. The argument is kept
+# when the chain runs out, so a caller that passes a normal window gets it back unchanged.
+function Get-UsableForeground([IntPtr]$hwnd) {
+  $h = $hwnd
+  for ($i = 0; $i -lt 16; $i++) {
+    if ($h -eq [IntPtr]::Zero) { break }
+    if ([Cb.Win]::IsOwnWindow($h)) { $h = [Cb.Win]::WindowBelow($h); continue }
+    if (Test-ShellOwnWindow $h) { $h = [Cb.Win]::WindowBelow($h); continue }
+    return $h
+  }
+  return $hwnd
+}
+
 # a window as a log line names it: its class, then the program that owns it
 function Format-ForegroundWindow($hwnd) {
   try {

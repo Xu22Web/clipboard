@@ -158,13 +158,22 @@ function Invoke-ServeOnce {
     $trayIcon = New-TrayIcon
     if ($null -ne $trayIcon) { $script:Tray.Icon = $trayIcon } else { $script:Tray.Icon = [Drawing.SystemIcons]::Information }
     $script:Tray.Text = 'clipboard - ' + $eff
-    $script:Tray.Add_DoubleClick({ try { Show-Picker } catch { } })
+    # One left click opens the panel. Windows reports a click on a tray icon as a mouse click, and
+    # the right button opens the menu, so the button is what tells the two apart; a second click
+    # of a double click lands on the panel that the first one opened, so it changes nothing.
+    $script:Tray.Add_MouseClick({
+        param($sender, $e)
+        try {
+          if ($e.Button -ne [Windows.Forms.MouseButtons]::Left) { return }
+          Show-Picker -Tray
+        } catch { Write-Log ('tray open: ' + $_.Exception.Message) }
+      })
     $dm = New-Object Windows.Forms.ContextMenuStrip
 
     # The menu is built once and read every time it opens: the count and the tick on "Pause
     # capture" come from the Opening handler, so they never go stale while the tray lives.
     $iShow = $dm.Items.Add('Show history')
-    $iShow.Add_Click({ try { Show-Picker } catch { } })
+    $iShow.Add_Click({ try { Show-Picker -Tray } catch { Write-Log ('tray open: ' + $_.Exception.Message) } })
     try { $iShow.Font = New-Object Drawing.Font($dm.Font, [Drawing.FontStyle]::Bold) } catch { }
     # The two panel shapes are a user preference, not a momentary state, so the tick writes the
     # ini key and the running copy of it: the next open is the other shape.

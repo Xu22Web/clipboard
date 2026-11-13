@@ -1322,6 +1322,18 @@ try {
         Expect (-not (Test-ShellProcessName 'notepad.exe')) 'notepad.exe is not a shell flyout'
         Expect (-not (Test-ShellProcessName '')) 'an empty name is not a shell flyout'
       }
+
+      It 'the tray a click comes from is not a window the panel gives up on' {
+        # the tray icon of Windows 11 lives in this topmost island of explorer: a click on it used
+        # to be refused as a window that cannot be covered, so the panel never opened
+        Expect (Test-ShellWindowClass 'TopLevelWindowForOverflowXamlIsland') ''
+        Expect (Test-ShellWindowClass 'Shell_TrayWnd') ''
+        Expect (Test-ShellWindowClass 'Shell_SecondaryTrayWnd_1234') ''
+        Expect (Test-ShellWindowClass 'NotifyIconOverflowWindow') ''
+        # an explorer folder window is a normal paste target, not a shell surface
+        Expect (-not (Test-ShellWindowClass 'CabinetWClass')) 'a folder window is a normal target'
+        Expect (-not (Test-ShellWindowClass '')) 'an empty class is not a shell surface'
+      }
     }
 
     # ------------------------------------------------------- editing an entry

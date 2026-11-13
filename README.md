@@ -19,7 +19,7 @@ Windows 10 / 11 的剪贴板历史工具，纯 PowerShell 5.1 实现，无第三
 - 容量分四项独立计算：条数、单条大小、文本总量、媒体预算；超出时由旧到新丢弃，受保护标记的行不参与裁剪（[配置](#配置)）
 - 面板为 Win11 Fluent 风格自绘界面：虚拟列表、置顶行冻结、长文本省略、搜索命中高亮、悬停预览卡片，深浅两套主题
 - 完整键盘操作：方向键与翻页、`Ctrl+1..0` 数字快选、`Del` 删除、`Ctrl+Z` 撤销、`F2` 就地编辑、右键菜单；面板快捷键见[面板快捷键](#面板快捷键)
-- 常驻进程带托盘菜单（显示历史、暂停捕获、清空、打开配置与数据目录、重启、退出），崩溃后自动重启；可选开机自启与桌面快捷方式
+- 常驻进程带托盘图标（单击显示历史）与右键菜单（显示历史、暂停捕获、清空、打开配置与数据目录、重启、退出），崩溃后自动重启；可选开机自启与桌面快捷方式
 - 置顶、收藏、高亮、类型分析、按类型打开、粘贴改写、过期清理由插件提供，默认全部启用（[插件](#插件)）
 - 全部设置集中在 `clipboard.ini`：`config init` 写出带注释的模板，`config set` 校验后写入（[配置](#配置)）
 - 历史文件带格式版本号，`clipboard migrate` 负责升级（[数据版本与迁移](#数据版本与迁移)）
@@ -733,6 +733,7 @@ src/                    程序本体（打包只读这个目录）
 | `picker: dismissed (Windows Start / search came up)` | 面板打开期间呼出了开始菜单或 Windows 搜索，面板已关闭 |
 | `picker: closed the flyout in front (it cannot be covered)` | 热键按下时开始菜单或 Windows 搜索在前台，已用 `Esc` 关闭它并在其后的窗口上打开面板 |
 | `picker: not opened (the window in front cannot be covered)` | 前台窗口带 UIAccess 但不是开始菜单/搜索（或 `400 ms` 内没关掉），面板不开 |
+| `picker: tray open from …` | 单击托盘图标或点「显示历史」：面板从该窗口打开，点击来源的任务栏/托盘窗口不算目标 |
 | `paste skipped` / `sendkeys fail` | 未能夺回前台因而未注入 / 注入失败 |
 | `paste: the foreground moved…` / `paste: the foreground changed…` | 面板隐藏后前台被别的窗口抢走并已取回 / 注入按键时前台已经变了 |
 | `released a held modifier` | 等待超时后仍按住的修饰键被松开 |

@@ -1,7 +1,7 @@
 # lib/panel/picker.ps1 - the history panel. One function owns the whole window lifecycle (create,
 # filter, draw, keys, paste); the standalone pieces live in picker-geom / entry / plugins.
 
-function Show-Picker([switch]$Warm) {
+function Show-Picker([switch]$Warm, [switch]$Tray) {
   if ($script:PickerOpen) {
     # a second hotkey press closes the panel; a warm run only builds and throws away, so it
     # must leave a panel the user is working in alone
@@ -34,12 +34,20 @@ function Show-Picker([switch]$Warm) {
       elseif (Test-Font 'Segoe MDL2 Assets') { $script:IconFamily = 'Segoe MDL2 Assets' }
     }
     $prev = [Cb.Win]::GetForegroundWindow()
+    # A click on the tray icon arrives from a topmost window of explorer, not from the window the
+    # user was working in: that chain is walked down to the first window that belongs to somebody
+    # else, and the "cannot be covered" check below does not apply to it - the shell's own tray
+    # is exactly the window the panel is meant to open over.
+    if ($Tray) {
+      $prev = Get-UsableForeground $prev
+      Write-Log ('picker: tray open from ' + (Format-ForegroundWindow $prev))
+    }
     # A window in the UIAccess band cannot be covered by any topmost window, so a panel opened
     # over it is invisible while its hook swallows the keys meant for it. Ditto closes that
     # window instead of giving up, and so does this: Escape it away, then open over what is
     # behind it. A window that is not the shell's own flyout is left alone - closing somebody
     # else's window is not this tool's business, so the panel stays closed.
-    if (-not $Warm -and (Test-UncoverableWindow $prev)) {
+    if (-not $Warm -and -not $Tray -and (Test-UncoverableWindow $prev)) {
       # the hotkey arrives while Ctrl and Alt are still held, and Escape with them down is a
       # different key that the flyout ignores
       try { Release-HeldModifiers } catch { }
