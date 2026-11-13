@@ -19,7 +19,7 @@
   }
   Sections    = [ordered]@{
     palette = @{ Type = 'color'; Target = 'Palette'; Description = 'colour tokens: Surface, Field, FieldBorder, Text, Dim, Faint, Accent, AccentSoft, Border, SelBg, HoverBg, BadgeBg, BadgeText, KeyCapBg, KeyCapBorder, Mark, Warn (#RRGGBB or #AARRGGBB)' }
-    fonts   = @{ Type = 'number'; Target = 'Fonts'; Description = 'point sizes: Body, Small, Tiny, Title, Icon, IconSmall, IconBig' }
+    fonts   = @{ Type = 'number'; Target = 'Fonts'; Description = 'point sizes: Body, Small, Tiny, Title, Icon, IconSmall, IconBig, IconTiny' }
     metrics = @{ Type = 'number'; Target = 'Metrics'; Description = '96 dpi design metrics, optional; a theme may override any key of the built-in table' }
   }
   ExtraSections = @{ Type = 'any'; Target = 'Plugin'; Description = 'a section named after a plugin restyles that plugin ThemeSettings for this theme' }

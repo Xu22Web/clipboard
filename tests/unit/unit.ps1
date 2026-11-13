@@ -585,6 +585,13 @@ try {
         Expect (-not ($script:StructPickerText -match 'SaveWinWidth')) 'a saved width is still read by the picker'
       }
 
+      It 'the empty-state icon is not drawn into a box that clips it' {
+        # the history glyph paints above its line box; drawn into a 34 px rectangle its top was
+        # cut off (277 ink pixels instead of 288), so it is measured and drawn from a point
+        Expect ($script:StructDrawText -match '(?s)function Draw-EmptyGlyph.{0,700}GenericTypographic') 'the empty-state icon is drawn through a clipping box'
+        Expect ($script:StructPickerText -match 'Draw-EmptyGlyph \$g \$script:EmptyGlyph') 'the empty-state icon is not drawn by that helper'
+      }
+
       It 'the caret anchors the compact panel' {
         Expect ($script:StructPickerText -match 'Get-CaretAnchor') 'the picker never asks for the caret'
         Expect ($script:StructPickerText -match '\$preset\.AnchorCaret') 'the caret anchor ignores the preset'

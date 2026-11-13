@@ -412,7 +412,7 @@ StarColor=#FFD700
 |---|---|
 | 顶层 | `Name` / `Description` / `FontFamily` / `IconFamily` |
 | `[palette]` | 颜色 token，未知 token 忽略并写日志 |
-| `[fonts]` | `Body` `Small` `Tiny` `Title` `Icon` `IconSmall` `IconBig` |
+| `[fonts]` | `Body` `Small` `Tiny` `Title` `Icon` `IconSmall` `IconBig` `IconTiny` |
 | `[metrics]` | 行几何覆盖：`RowHeight` `HeadHeight` `FootHeight` `RowGap` `RowInset` `TextInset` `IconSlot` `TimeWidth` `CapWidth` `ChipHeight` 等，取值 1–4000，未知键或越界值写日志后忽略；每次应用主题都从内置表重新叠加 |
 | `[<插件名>]` | 重写该插件的 `ThemeProperties`，只对该主题生效 |
 

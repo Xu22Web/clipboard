@@ -77,7 +77,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       # Win11 type ramp by default; a theme may override any of the sizes through Fonts.
       $tf = $script:ThemeFonts
       $szBody = 10.5; $szSmall = 9.0; $szTiny = 9.0; $szTitle = 13.0
-      $szIcon = 12.0; $szIconSmall = 10.0; $szIconBig = 24.0
+      $szIcon = 12.0; $szIconSmall = 10.0; $szIconBig = 24.0; $szIconTiny = 9.0
       if ($tf.ContainsKey('Body')) { $szBody = [double]$tf['Body'] }
       if ($tf.ContainsKey('Small')) { $szSmall = [double]$tf['Small'] }
       if ($tf.ContainsKey('Tiny')) { $szTiny = [double]$tf['Tiny'] }
@@ -85,23 +85,28 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       if ($tf.ContainsKey('Icon')) { $szIcon = [double]$tf['Icon'] }
       if ($tf.ContainsKey('IconSmall')) { $szIconSmall = [double]$tf['IconSmall'] }
       if ($tf.ContainsKey('IconBig')) { $szIconBig = [double]$tf['IconBig'] }
+      if ($tf.ContainsKey('IconTiny')) { $szIconTiny = [double]$tf['IconTiny'] }
       $script:FBody = New-Object Drawing.Font($script:UiFamily, [single]$szBody)
       $script:FSmall = New-Object Drawing.Font($script:UiFamily, [single]$szSmall)
       $script:FTiny = New-Object Drawing.Font($script:UiFamily, [single]$szTiny)
       $script:FTitle = New-Object Drawing.Font($script:UiFamily, [single]$szTitle, [Drawing.FontStyle]::Bold)
       if ($script:IconFamily) {
-        # 12 pt renders a 16 px glyph, 10 pt a 13 px one, 24 pt the empty-state art
+        # 12 pt renders a 16 px glyph, 10 pt a 13 px one, 9 pt the 12 px clear button a fluent
+        # text field carries, 24 pt the empty-state art
         $script:FIcon = New-Object Drawing.Font($script:IconFamily, [single]$szIcon)
         $script:FIconSmall = New-Object Drawing.Font($script:IconFamily, [single]$szIconSmall)
         $script:FIconBig = New-Object Drawing.Font($script:IconFamily, [single]$szIconBig)
+        $script:FIconTiny = New-Object Drawing.Font($script:IconFamily, [single]$szIconTiny)
       } else {
         $script:FIcon = $script:FBody
         $script:FIconSmall = $script:FSmall
         $script:FIconBig = $script:FTitle
+        $script:FIconTiny = $script:FSmall
       }
     }
     $fBody = $script:FBody; $fSmall = $script:FSmall; $fTiny = $script:FTiny
     $fTitle = $script:FTitle; $fIcon = $script:FIcon; $fIconSmall = $script:FIconSmall; $fIconBig = $script:FIconBig
+    $fIconTiny = $script:FIconTiny
     $script:Hover = -1
     $script:Anim = New-AnimState
     $script:Confirm = $false
@@ -255,10 +260,8 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
           $cy = [int]($empty.ClientSize.Height / 2) - (Px 56)
           if ($script:IconFamily) {
             $gb = New-Object Drawing.SolidBrush $ui.Faint
-            $gr = New-Object Drawing.RectangleF -ArgumentList @(0, [single]$cy, [single]$w, [single](Px 34))
-            $g.DrawString($script:EmptyGlyph, $fIconBig, $gb, $gr, $sfCenter)
+            $cy = $cy + (Draw-EmptyGlyph $g $script:EmptyGlyph $fIconBig $gb $w $cy (Px 4))
             $gb.Dispose()
-            $cy = $cy + (Px 36)
           }
           if ($script:EmptyTitle) {
             $tb = New-Object Drawing.SolidBrush $ui.Dim
@@ -385,7 +388,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     $clr.SetBounds(($box.Width - (Px 30)), (Px 10), (Px 20), (Px 22))
     $clr.Text = $(if ($script:IconFamily) { [string][char]0xE8BB } else { 'x' })
     # the glyph only exists in the icon font - with the text font it renders as a box
-    $clr.Font = $(if ($script:IconFamily) { $fIconSmall } else { $fSmall })
+    $clr.Font = $(if ($script:IconFamily) { $fIconTiny } else { $fSmall })
     $clr.ForeColor = $ui.Dim
     $clr.BackColor = $ui.Field
     $clr.TextAlign = 'MiddleCenter'

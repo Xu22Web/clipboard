@@ -212,6 +212,21 @@ function Draw-RowThumb($g, $bmp, [int]$x, [int]$y, [int]$side) {
   }
 }
 
+# The icon of the empty state, centred on the given width. A glyph may paint outside its line
+# box - the history arrow reaches above it - and DrawString into a rectangle clips whatever
+# leaves the rectangle, which cut the top off that icon (measured: 277 ink pixels instead of
+# 288). Measured and drawn from a point instead, so nothing is clipped. Returns the height the
+# next line starts after.
+function Draw-EmptyGlyph($g, [string]$glyph, $font, $brush, [int]$width, [int]$top, [int]$gap) {
+  if (-not $glyph) { return 0 }
+  $fmt = [Drawing.StringFormat]::GenericTypographic
+  $sz = $g.MeasureString($glyph, $font, [int]::MaxValue, $fmt)
+  $x = [int](($width - $sz.Width) / 2)
+  if ($x -lt 0) { $x = 0 }
+  $g.DrawString($glyph, $font, $brush, (New-Object Drawing.PointF -ArgumentList @([single]$x, [single]$top)), $fmt)
+  return ([int][Math]::Ceiling($sz.Height) + $gap)
+}
+
 # The words an empty list shows: why it is empty and what the user can do about it. Plain
 # text only, so the panel keeps the drawing and this stays measurable without a window.
 function Get-EmptyState($entries, $query, [string]$q, $glyphs) {
