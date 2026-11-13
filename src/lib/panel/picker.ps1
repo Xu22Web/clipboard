@@ -1550,10 +1550,13 @@ function Show-Picker([switch]$Warm) {
       })
     $form.Add_Deactivate({
         $script:CtrlHeld = $false
-        # the panel is no longer the window in front: closing it has nothing to hand back
-        $script:OwnFront = $false
         # a paste moves the foreground to its target on purpose: that is not a dismissal
         if ($script:Pasting) { return }
+        # the context menu is a window of this process, and opening it takes the activation away
+        # from the panel for as long as it is up - the panel is still the one that came forward
+        if ($cm.Visible -or [Cb.Win]::IsOwnWindow([Cb.Win]::GetForegroundWindow())) { return }
+        # the panel is no longer the window in front: closing it has nothing to hand back
+        $script:OwnFront = $false
         # an edit in progress keeps the panel open: closing would drop the text
         if ($null -ne $script:EditRow) { return }
         if (((Get-Date) - $script:ShownAt).TotalMilliseconds -gt [int]$script:Timing['CloseOnBlur']) { $form.Close() }
@@ -1604,6 +1607,9 @@ function Show-Picker([switch]$Warm) {
 
     while (-not $form.IsDisposed) {
       [Windows.Forms.Application]::DoEvents()
+      # a handler reached from DoEvents can close the panel (a paste, Enter, Esc): the rest of
+      # this tick would then run against disposed controls
+      if ($form.IsDisposed) { break }
       $am = Invoke-AnimFrame $script:Anim $(if ($script:Animations) { 0.4 } else { 1.0 })
       # repaint only the rows whose alpha moved, not the whole list on every tick
       if ($am -ne 0 -and -not $form.IsDisposed) { try { if ($am -band 1) { foreach ($i in @($script:Anim.HoverIndex, $script:Anim.PrevHoverIndex, $script:Anim.SelIndex, $script:Anim.PrevSelIndex)) { if ($i -ge 0 -and $i -lt $lst.ItemCount) { $lst.Invalidate($lst.GetItemRectangle($i)) } } }; if ($am -band 2) { $sbar.Invalidate() }; if ($am -band 8) { $box.Invalidate() }; if ($am -band 16) { if ($null -ne $script:EditRow) { $script:EditRow.Save.Invalidate(); $script:EditRow.Cancel.Invalidate() } } } catch { } }
@@ -1628,14 +1634,24 @@ function Show-Picker([switch]$Warm) {
       }
       # the input method decides whether the drawn caret is the only one there is: while it
       # composes, the real caret has to stay visible - the candidate window sits at it
-      if (((Get-Date) - $script:ImeCheckAt).TotalMilliseconds -gt 400) {
+      if (-not $form.IsDisposed -and ((Get-Date) - $script:ImeCheckAt).TotalMilliseconds -gt 400) {
         $script:ImeCheckAt = Get-Date
-        $script:ImeNative = [Cb.Win]::ImeComposing($txt.Handle)
+        try { $script:ImeNative = [Cb.Win]::ImeComposing($txt.Handle) } catch { $script:ImeNative = $false }
       }
       if (-not $form.ContainsFocus -and ((Get-Date) - $script:ShownAt).TotalMilliseconds -gt 350) {
-        # a click elsewhere dismisses the panel
+        # a click elsewhere dismisses the panel; the context menu is ours, not somewhere else
         $fg = [Cb.Win]::GetForegroundWindow()
-        if ($fg -ne $form.Handle -and $fg -ne $prev) { $form.Close(); break }
+        if ($fg -ne $form.Handle -and $fg -ne $prev -and -not $cm.Visible -and -not [Cb.Win]::IsOwnWindow($fg)) { $form.Close(); break }
+      }
+      # A click beside the open menu closes it and the panel together: the menu eats that click,
+      # so the panel would otherwise need a second one. The cursor says where it landed.
+      if (-not $cm.Visible -and $null -ne $script:MenuClosedAt) {
+        $recent = (((Get-Date) - $script:MenuClosedAt).TotalMilliseconds -lt 300)
+        $script:MenuClosedAt = $null
+        if ($recent -and -not $form.Bounds.Contains([Windows.Forms.Cursor]::Position)) {
+          Write-Log 'picker: dismissed by a click outside (menu was open)'
+          $form.Close(); break
+        }
       }
       # a card waits for the cursor to rest; a page built off-thread lands on the next tick
       if ($script:PreviewHover -and $script:Hover -ge 0 -and $script:PvIdx -ne $script:Hover -and -not $cm.Visible -and ((Get-Date) - $script:PvAt).TotalMilliseconds -gt $script:PreviewDelay) { Show-HoverPreview }

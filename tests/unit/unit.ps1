@@ -680,7 +680,12 @@ try {
         # beside it: leaving it up keeps its filter and it eats the next click
         Expect ($script:StructPickerText -match '(?s)Add_FormClosing\(\{.{0,400}\$cm\.Close\(\)') 'menu not closed in FormClosing'
         # and a click elsewhere is the form losing the activation, which is what closes it
-        Expect ($script:StructPickerText -match '(?s)Add_Deactivate\(\{.{0,700}\$form\.Close\(\)') 'the panel ignores losing the foreground'
+        Expect ($script:StructPickerText -match '(?s)Add_Deactivate\(\{.{0,900}\$form\.Close\(\)') 'the panel ignores losing the foreground'
+        # the menu itself is a window of this process: opening it must not count as leaving
+        Expect ($script:StructPickerText -match 'IsOwnWindow') 'a window of this process counts as somewhere else'
+        Expect ($script:StructPickerText -match '(?s)Add_Deactivate\(\{.{0,400}\$cm\.Visible') 'opening the menu dismisses the panel'
+        # one click beside the open menu closes the menu and the panel together
+        Expect ($script:StructPickerText -match '(?s)MenuClosedAt.{0,400}\$form\.Close\(\)') 'a click beside the menu leaves the panel open'
       }
 
       It 'releases its menu font and form region' {
@@ -751,6 +756,14 @@ try {
         # a click anywhere in the search area ends in the same place: the real focus
         Expect (([regex]::Matches($script:StructPickerText, '\.Add_Click\(\{ \$txt\.Focus\(\) \}\)')).Count -ge 5) 'search area handlers missing'
         Expect (-not ($script:StructPickerText -match 'Claim-Search')) 'the old click hand-over is still there'
+      } -Skip $script:StructMinified
+
+      It 'stops the tick when a handler closed the panel' {
+        # Enter, Esc and the paste run from DoEvents and can dispose the form: the rest of that
+        # tick would then touch disposed controls - a null handle reached the IME probe and the
+        # error ended the whole panel
+        Expect ($script:StructPickerText -match '(?s)DoEvents\(\).{0,300}if \(\$form\.IsDisposed\) \{ break \}') 'the loop keeps running after the panel was closed'
+        Expect ($script:StructPickerText -match '(?s)ImeComposing.{0,200}catch \{ \$script:ImeNative = \$false \}') 'the IME probe can throw out of the loop'
       } -Skip $script:StructMinified
 
       It 'the search field draws the caret in the theme colour' {
