@@ -10,10 +10,9 @@
 $script:ModifierKeys = @(0x11, 0x12, 0x10, 0x5B, 0x5C)
 
 # Which modifier is still physically down, or 0. GetAsyncKeyState is asked instead of
-# Control.ModifierKeys because the latter reads the calling thread's key state, and the panel is
-# a WS_EX_NOACTIVATE window that never owns the keyboard: its thread answers "nothing is down"
-# while Alt is still held, and the paste then goes in as Ctrl+Alt+V, which most programs do not
-# read as a paste at all.
+# Control.ModifierKeys because the latter reads the calling thread's key state, which only
+# holds keys that thread received: while another window has the foreground it answers
+# "nothing is down" with Alt still held, and the paste goes in as Ctrl+Alt+V.
 function Get-HeldModifier {
   foreach ($vk in @($script:ModifierKeys)) {
     $down = $false

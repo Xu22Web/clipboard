@@ -59,6 +59,19 @@ Describe 'e2e' {
     if ($script:skipAll) { Skip-Test $script:skipAll; return }
     Expect $script:up 'the resident should log serve start while it comes up'
   }
+  It 'a second resident is refused' {
+    if ($script:skipAll) { Skip-Test $script:skipAll; return }
+    # one resident per session: the named mutex keeps a second start out, and it must not
+    # leave a second daemon behind it
+    $out = ''
+    try { $out = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -File (Join-Path $e2eDir 'clipboard.ps1') serve 2>&1 | Out-String) } catch { $out = [string]$_ }
+    Expect-Match $out 'already running' (@($out -split "`n" | Select-Object -First 2) -join ' / ')
+    $kids = @()
+    try {
+      $kids = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($e2eDir) -and $_.CommandLine -like '* serve*' })
+    } catch { $kids = @() }
+    Expect ($kids.Count -le 2) ([string]$kids.Count + ' serve process(es) for this sandbox')
+  }
   It 'resident reports running' {
     if ($script:skipAll) { Skip-Test $script:skipAll; return }
     $s = Clip $e2eDir @('status')

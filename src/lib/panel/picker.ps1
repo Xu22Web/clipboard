@@ -154,6 +154,8 @@ function Show-Picker([switch]$Warm) {
     $boxTop = [int](($preset.Head - 40) / 2)
 
     $form = New-Object Cb.FluentForm
+    # the panel activates; its preview cards keep the no-activate form
+    $form.Activates = $true
     $form.FormBorderStyle = 'None'
     $form.StartPosition = 'Manual'
     # no TopMost property: assigning it makes WinForms call SetWindowPos without

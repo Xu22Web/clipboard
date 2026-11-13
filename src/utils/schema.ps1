@@ -19,6 +19,7 @@
 #   Type        required: string | int | number | bool | list | enum | regex | color |
 #               hotkey | theme | apprule | any
 #   Default     the value the file is written with; every reader falls back to it
+#   Hint        what an empty value means, shown by `config` in place of a blank
 #   Minimum     int / number lower bound
 #   Maximum     int / number upper bound
 #   Enum        for enum: the values allowed; for list: the tokens allowed
@@ -156,6 +157,14 @@ function Get-SchemaDefault($schema, [string]$key) {
   $spec = Get-SchemaProperty $schema $key
   if ($null -eq $spec -or -not $spec.Contains('Default')) { return '' }
   return [string]$spec['Default']
+}
+
+# the declared meaning of an empty value, "" when the schema does not declare one. The key
+# still falls back to its default at run time; this is the text `config` shows for the blank.
+function Get-SchemaHint($schema, [string]$key) {
+  $spec = Get-SchemaProperty $schema $key
+  if ($null -eq $spec -or -not $spec.Contains('Hint')) { return '' }
+  return [string]$spec['Hint']
 }
 
 # Validate and normalise one raw value. Never throws; the answer is

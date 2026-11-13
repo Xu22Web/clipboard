@@ -13,9 +13,9 @@
   Description = 'the program settings: capture, storage, panel and panel behaviour'
   Version     = 1
   Properties  = [ordered]@{
-    DataDir           = @{ Type = 'string'; Default = ''; Description = 'write location, empty = <script dir>\data' }
+    DataDir           = @{ Type = 'string'; Default = 'data'; Description = 'write location; a relative path is relative to the script dir, empty = data' }
     Hotkey            = @{ Type = 'hotkey'; Ref = [ref]$script:Hotkey; Default = 'Ctrl+Alt+V'; Description = 'global hotkey' }
-    HotkeyFallbacks   = @{ Type = 'string'; Ref = [ref]$script:HotkeyFallbacks; Default = ''; Description = 'comma separated fallback chain, empty = the built-in chain' }
+    HotkeyFallbacks   = @{ Type = 'string'; Ref = [ref]$script:HotkeyFallbacks; Default = 'Ctrl+Alt+V, Win+V, Alt+`, Win+Shift+V'; Description = 'comma separated chain tried in order after Hotkey' }
     PasteKeys         = @{ Type = 'string'; Ref = [ref]$script:PasteKeys; Default = '^v'; Description = 'SendKeys sent after picking' }
     ModReleaseTimeout = @{ Type = 'int'; Ref = [ref]$script:ModReleaseTimeout; Default = 1200; Minimum = 0; Maximum = 60000; Description = 'ms to wait for the modifiers; one still held afterwards is released' }
     PasteSettle       = @{ Type = 'int'; Ref = [ref]$script:PasteSettle; Default = 80; Minimum = 0; Maximum = 10000; Description = 'ms to wait before sending PasteKeys' }
@@ -33,20 +33,20 @@
     PasteRich         = @{ Type = 'bool'; Ref = [ref]$script:PasteRich; Default = 1; Description = '1 = paste the formatting back, 0 = always paste plain text' }
     PasteFilesAsText  = @{ Type = 'bool'; Ref = [ref]$script:PasteFilesAsText; Default = 1; Description = '1 = a file list also goes on the clipboard as text (paths), 0 = file list only' }
     PasteTyping       = @{ Type = 'bool'; Ref = [ref]$script:PasteTyping; Default = 0; Description = '1 = type plain text into the focused control instead of sending the paste key' }
-    AppRules          = @{ Type = 'apprule'; Ref = [ref]$script:AppRules; Default = ''; Description = 'per program paste behaviour: name:plain|rich|no-paste, separated by ; (a name is a process, * is the rest)' }
+    AppRules          = @{ Type = 'apprule'; Ref = [ref]$script:AppRules; Default = ''; Hint = '(no rules)'; Description = 'per program paste behaviour: name:plain|rich|no-paste, separated by ; (a name is a process, * is the rest)' }
     BlobChars          = @{ Type = 'int'; Ref = [ref]$script:BlobChars; Default = 32768; Minimum = 0; Maximum = 1048576; Description = 'payloads above this many chars live in data\blobs, 0 = never' }
     Interval          = @{ Type = 'int'; Ref = [ref]$script:Interval; Default = 300; Minimum = 50; Maximum = 60000; Description = 'clipboard poll interval in ms' }
     NoPaste           = @{ Type = 'bool'; Ref = [ref]$script:NoPaste; Default = 0; Description = '1 = clipboard only, never inject a paste' }
     Balloon           = @{ Type = 'bool'; Ref = [ref]$script:ShowBalloon; Default = 1; Description = '1 = tray balloon on startup' }
     Theme             = @{ Type = 'theme'; Ref = [ref]$script:Theme; Default = 'win11-dark'; Description = 'theme name = the file in themes\ (win11-dark.ini / win11-light.ini)' }
-    ExcludePattern    = @{ Type = 'regex'; Ref = [ref]$script:ExcludePattern; Default = ''; Description = 'matching text is never saved' }
+    ExcludePattern    = @{ Type = 'regex'; Ref = [ref]$script:ExcludePattern; Default = ''; Hint = '(none)'; Description = 'matching text is never saved' }
     WindowWidth       = @{ Type = 'int'; Ref = [ref]$script:WinWidth; Default = 700; Minimum = 460; Maximum = 4000; Description = 'panel width (96 dpi baseline)' }
     Rows              = @{ Type = 'int'; Ref = [ref]$script:Rows; Default = 10; Minimum = 3; Maximum = 50; Description = 'visible rows; the height follows from it (rows x 40 + 110)' }
     CompactMode       = @{ Type = 'bool'; Ref = [ref]$script:CompactMode; Default = 0; Description = '1 = open the compact panel, 0 = the full panel (the tray item writes this)' }
     CompactWidth      = @{ Type = 'int'; Ref = [ref]$script:CompactWidth; Default = 520; Minimum = 360; Maximum = 4000; Description = 'compact panel width (96 dpi baseline)' }
     CompactRows       = @{ Type = 'int'; Ref = [ref]$script:CompactRows; Default = 6; Minimum = 3; Maximum = 20; Description = 'compact panel visible rows' }
-    WindowLeft        = @{ Type = 'int'; Ref = [ref]$script:WinLeft; Default = ''; Minimum = -32768; Maximum = 32767; Description = 'panel left, empty = decided by PlaceNearForeground' }
-    WindowTop         = @{ Type = 'int'; Ref = [ref]$script:WinTop; Default = ''; Minimum = -32768; Maximum = 32767; Description = 'panel top, empty = decided by PlaceNearForeground' }
+    WindowLeft        = @{ Type = 'int'; Ref = [ref]$script:WinLeft; Default = ''; Hint = '(auto)'; Minimum = -32768; Maximum = 32767; Description = 'panel left, empty = decided by PlaceNearForeground' }
+    WindowTop         = @{ Type = 'int'; Ref = [ref]$script:WinTop; Default = ''; Hint = '(auto)'; Minimum = -32768; Maximum = 32767; Description = 'panel top, empty = decided by PlaceNearForeground' }
     SaveWindowPos     = @{ Type = 'bool'; Ref = [ref]$script:SaveWinPos; Default = 0; Description = '1 = write the moved panel back to this file (never for the compact panel)' }
     PlaceNearForeground = @{ Type = 'bool'; Ref = [ref]$script:PlaceNearForeground; Default = 0; Description = '1 = with no saved position, place the panel over the window it was opened from' }
     PlaceAtCaret      = @{ Type = 'bool'; Ref = [ref]$script:PlaceAtCaret; Default = 0; Description = '1 = place the full panel below the caret too; the compact panel always does' }
@@ -65,7 +65,7 @@
     Animations        = @{ Type = 'bool'; Ref = [ref]$script:Animations; Default = 1; Description = '1 = hover / selection / scrollbar transitions, 0 = instant' }
     Autostart         = @{ Type = 'bool'; Ref = [ref]$script:Autostart; Default = 1; Description = '1 = install creates the logon shortcut (serve)' }
     DesktopShortcut   = @{ Type = 'bool'; Ref = [ref]$script:DesktopShortcut; Default = 1; Description = '1 = install creates the desktop shortcut (ui)' }
-    Plugins           = @{ Type = 'list'; Default = ''; Description = 'comma separated names of the plugins to load, in load order (a bare Plugins= loads every file in the plugins folder)' }
+    Plugins           = @{ Type = 'list'; Default = ''; Hint = '(every plugin on disk)'; Description = 'comma separated names of the plugins to load, in load order (a bare Plugins= loads every file in the plugins folder)' }
   }
   # a plugin declares its own Settings and registers them as <plugin>.<Key> when it loads
   ExtraSections = @{ Type = 'any'; Description = 'plugin settings: <plugin>.<Key>, or [<plugin>] + <Key>' }

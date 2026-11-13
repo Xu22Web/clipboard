@@ -506,10 +506,11 @@ try {
       }
 
       It 'the panel form activates like any window' {
-        # no WS_EX_NOACTIVATE and no ShowWithoutActivation: the panel owns the foreground, so a
-        # keyboard hook would only be a second, conflicting source of keys
-        Expect (-not ($script:StructWinText -match 'ShowWithoutActivation')) 'the form still refuses to activate'
-        Expect (-not ($script:StructWinText -match '0x08000000')) 'WS_EX_NOACTIVATE is still set'
+        # the panel sets Activates; the preview cards it raises keep the no-activate form
+        Expect ($script:StructWinText -match 'public bool Activates') 'the form cannot be told whether to activate'
+        Expect ($script:StructWinText -match '(?s)ShowWithoutActivation \{ get \{ return !Activates; \} \}') 'activation is not the switch'
+        Expect ($script:StructWinText -match '(?s)if \(!Activates\) \{ cp\.ExStyle \|= 0x08000000; \}') 'WS_EX_NOACTIVATE is unconditional'
+        Expect ($script:StructPickerText -match '\$form\.Activates = \$true') 'the panel does not ask for the foreground'
         Expect (-not ($script:StructPickerText -match 'Cb\.KeyHook|Enable-KeyHook|Set-InputMode')) 'a keyboard hook is still wired into the picker'
         Expect ($script:StructPickerText -match '(?s)\$form\.Show\(\).{0,400}Take-Foreground \$form\.Handle') 'the panel never takes the foreground'
       }
@@ -961,6 +962,27 @@ try {
         Expect ($script:ModReleaseTimeout -eq 1500) ('value=' + $script:ModReleaseTimeout)
         Expect ($script:PasteSettle -eq 250) ('value=' + $script:PasteSettle)
         Expect ($script:HotkeyFallbacks -eq 'Alt+Q;Alt+W') ('value=' + $script:HotkeyFallbacks)
+      }
+
+      It 'an empty file falls back to a value, not to a blank' {
+        # DataDir is a path and HotkeyFallbacks is the chain the resident tries: both read as
+        # a value, so `config` never has to explain a blank
+        [IO.File]::WriteAllLines($script:UnitCfg, @(''), $Utf8)
+        Apply-Config
+        Expect ($script:HotkeyFallbacks -eq 'Ctrl+Alt+V, Win+V, Alt+`, Win+Shift+V') ('value=' + $script:HotkeyFallbacks)
+        $dflt = Get-SchemaDefault $script:SettingsSchema 'DataDir'
+        Expect ($dflt -eq 'data') ('DataDir default=' + $dflt)
+        $dir = [string](Get-ConfigReport)['DataDir']
+        Expect ([IO.Path]::IsPathRooted($dir)) ('DataDir=' + $dir)
+      }
+
+      It 'a blank key carries its meaning in the schema' {
+        # what an empty value means is declared next to the key, not spelled out by the caller
+        Expect ((Get-SchemaHint $script:SettingsSchema 'WindowLeft') -eq '(auto)') (Get-SchemaHint $script:SettingsSchema 'WindowLeft')
+        Expect ((Get-SchemaHint $script:SettingsSchema 'AppRules') -eq '(no rules)') (Get-SchemaHint $script:SettingsSchema 'AppRules')
+        Expect ((Get-SchemaHint $script:SettingsSchema 'Rows') -eq '') 'a key without a hint must stay silent'
+        $ea = Import-Schema (Join-Path $Root 'schema\plugins\entry-actions.ps1')
+        Expect ((Get-SchemaHint $ea 'Browser') -eq '(system default)') (Get-SchemaHint $ea 'Browser')
       }
     }
 

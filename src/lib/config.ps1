@@ -67,8 +67,10 @@ function Apply-Config {
 
 # effective values of every key, in schema order
 function Get-ConfigReport {
+  # DataDir is a location, not a number: the report carries the resolved absolute path, the
+  # one the store uses. The entry point resolved it once, before any setting was applied.
   $r = [ordered]@{
-    DataDir           = $(if ($dataRoot) { [string]$dataRoot } else { '' })
+    DataDir           = [string]$StoreDir
     Hotkey            = [string]$script:Hotkey
     HotkeyFallbacks   = [string]$script:HotkeyFallbacks
     PasteKeys         = [string]$script:PasteKeys
@@ -169,7 +171,7 @@ function Show-Config {
     foreach ($p in @($script:ConfigProblems)) { Write-Host ('    ' + $p) }
     Write-Host ''
   }
-  Write-Host ('data dir    : ' + $StoreDir + $(if ($dataRoot) { '   (from clipboard.ini)' } else { '   (default)' }))
+  Write-Host ('data dir    : ' + [string]$StoreDir + $(if ((Get-IniKey 'DataDir') -ne '') { '   (from clipboard.ini)' } else { '   (default)' }))
   Write-Host ''
   $ini = Read-Ini
   $vals = Get-ConfigReport
@@ -202,12 +204,9 @@ function Show-Config {
   foreach ($k in $baseKeys) {
     $name = $k
     while ($name.Length -lt 20) { $name = $name + ' ' }
+    # what an empty value means is declared by the schema (Hint), so no key is named here
     $show = [string]$vals[$k]
-    if ($k -eq 'DataDir' -and $show -eq '') { $show = '(script dir)\data' }
-    if ($k -eq 'HotkeyFallbacks' -and $show -eq '') { $show = '(built-in chain)' }
-    if ($k -eq 'ExcludePattern' -and $show -eq '') { $show = '(none)' }
-    if ($k -eq 'Plugins' -and $show -eq '') { $show = '(none)' }
-    if ($k -eq 'AppRules' -and $show -eq '') { $show = '(every program alike)' }
+    if ($show -eq '') { $show = Get-SchemaHint $script:SettingsSchema $k }
     Write-Host ('    ' + $name + ' = ' + $show + (& $srcOf $k))
   }
 
@@ -231,7 +230,9 @@ function Show-Config {
     foreach ($k in $keys) {
       $name = $k.Substring($pname.Length + 1)
       while ($name.Length -lt 20) { $name = $name + ' ' }
-      Write-Host ('    ' + $name + ' = ' + [string]$vals[$k] + (& $srcOf $k))
+      $show = [string]$vals[$k]
+      if ($show -eq '') { $show = Get-SchemaHint $script:SettingsSchema $k }
+      Write-Host ('    ' + $name + ' = ' + $show + (& $srcOf $k))
     }
   }
   foreach ($n in @($script:PluginList)) {
@@ -268,7 +269,9 @@ function Show-ConfigKey([string]$key) {
   }
   $vals = Get-ConfigReport
   $raw = Get-IniKey $key
-  Write-Host ($key + ' = ' + [string]$vals[$key] + $(if ($raw -ne '') { '   (ini: ' + $raw + ')' } else { '   (ini: not set)' }))
+  $show = [string]$vals[$key]
+  if ($show -eq '') { $show = Get-SchemaHint $script:SettingsSchema $key }
+  Write-Host ($key + ' = ' + $show + $(if ($raw -ne '') { '   (ini: ' + $raw + ')' } else { '   (ini: not set)' }))
   return $true
 }
 

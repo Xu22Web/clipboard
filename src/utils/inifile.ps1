@@ -52,8 +52,9 @@ function Import-IniValue([string]$path, [string]$key) {
   return (Get-IniDocValue (Import-Ini $path) $key)
 }
 
-# Where the store lives: DataDir= from clipboard.ini, else <root>\data. A relative DataDir
-# resolves against the tool root and a bare drive ("D:") is completed to "D:\".
+# Where the store lives: DataDir= from clipboard.ini (the schema default is data), else
+# <root>\data. A relative DataDir resolves against the tool root and a bare drive ("D:") is
+# completed to "D:\".
 #
 # $null means DataDir is not a usable path - the caller decides what to say about it. The
 # entry and lib/proxy.ps1 both need this exact answer (the proxy names its pipe after it), so

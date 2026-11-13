@@ -161,8 +161,8 @@ if (Test-Path -LiteralPath $pluginModule) {
 #endregion
 
 #region runtime paths
-# Write location: DataDir= in clipboard.ini, else <script dir>\data. Nothing is written
-# outside those two folders (no %LOCALAPPDATA% fallback).
+# Write location: DataDir= in clipboard.ini, default data (a relative path is relative to
+# the script dir). Nothing is written outside that folder (no %LOCALAPPDATA% fallback).
 $IniPath = Join-Path $Root 'clipboard.ini'
 $iniMap = Read-Ini
 # Resolve-StoreDir reads DataDir= out of the ini and makes sure the directory is writable.

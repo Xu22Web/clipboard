@@ -132,8 +132,9 @@ function Invoke-ServeOnce {
   }
 
   $hw = New-Object Cb.HotWindow
+  # the chain itself is the schema default of HotkeyFallbacks, so the file and `config` are
+  # where it is read from; an empty value was already replaced by that default
   $fb = @($script:HotkeyFallbacks -split '[,;]' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-  if ($fb.Count -eq 0) { $fb = @('Ctrl+Alt+V', 'Win+V', 'Alt+`', 'Win+Shift+V') }
   $cands = @(@($Hotkey) + $fb | Select-Object -Unique)
   $script:Hot = ''
   $reg = $false

@@ -95,6 +95,8 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 `clipboard help` 的分组与此对应：`[daemon]` `[history]` `[config]` `[theme]` `[setup]`，加上每个已加载插件的 `[plugin: <name>]`。
 
+每登录会话只有一个常驻进程：启动时占用命名互斥体 `Local\clipboard.daemon`。已有一个在运行时，`serve` 打印 `clipboard already running` 并请运行中的实例打开面板，随后退出，不注册热键、不开捕获循环。面板一次只开一个，已开时热键为关闭。历史文件写入由 `Local\clipboard.store` 互斥体串行，命令行进程与常驻进程不会同时写。
+
 ### 导出、导入与备份
 
 | 文件 | 带什么 | 用于 |
@@ -200,9 +202,9 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
-| `DataDir` | 空 | 写入位置；空 = 脚本旁的 `data/`。相对路径相对脚本目录 |
+| `DataDir` | `data` | 写入位置；相对路径相对脚本目录，空 = `data` |
 | `Hotkey` | `Ctrl+Alt+V` | 全局热键；`Win+V` 在多数系统上被占用，注册失败时回退 |
-| `HotkeyFallbacks` | 空 | 逗号分隔的回退链；空 = Ctrl+Alt+V / Win+V / Alt+反引号 / Win+Shift+V |
+| `HotkeyFallbacks` | `Ctrl+Alt+V, Win+V, Alt+反引号, Win+Shift+V` | `Hotkey` 注册失败后按顺序尝试的链 |
 | `PasteKeys` | `^v` | 选定后用 SendKeys 发送的按键（`^+v` = Ctrl+Shift+V） |
 | `ModReleaseTimeout` | `1200` | 最多等待修饰键松开的时间（毫秒）；超时后仍按住的修饰键会被松开 |
 | `PasteSettle` | `80` | 切回原窗口后到发送 `PasteKeys` 之间的等待（毫秒） |
@@ -713,7 +715,7 @@ src/                    程序本体（打包只读这个目录）
 
 模块按命令加载：`$baseModules` 是每条命令都需要的 18 个文件，五个可选组 `store` / `transfer` / `config` / `panel` / `panelgeom` 由 `$commandGroups` 按命令决定（`panelgeom` 只有面板尺寸的纯计算，`status` 打印面板形状时用它），因此 `version` 只解析 18 个文件，`list` 约 30 个，只有绘制命令才加载面板；`-Library`（测试用）加载全部。
 
-写入位置由 `DataDir=` 决定，留空则使用脚本旁的 `data\`；`config` 的 `data dir` 与 `status` 的 `store file` 显示实际位置。程序不写入 `%LOCALAPPDATA%` 或其它用户目录：位置不可写时报错并以退出码 1 结束。除 `install`（快捷方式）与 `restore`（注册表项）外不写注册表。
+写入位置由 `DataDir=` 决定，默认 `data`（脚本旁的 `data\`）；`config` 的 `data dir` 与 `status` 的 `store file` 显示解析后的绝对路径。程序不写入 `%LOCALAPPDATA%` 或其它用户目录：位置不可写时报错并以退出码 1 结束。除 `install`（快捷方式）与 `restore`（注册表项）外不写注册表。
 
 ### 日志
 

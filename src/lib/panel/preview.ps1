@@ -7,9 +7,9 @@
 # prepared once and kept. A payload is clamped to PreviewChars *before* it is split, so a
 # 200 KB entry costs exactly what a 200 character one costs.
 #
-# The card never activates (Cb.FluentForm is WS_EX_NOACTIVATE) and is raised with a
-# no-activate SetWindowPos, or it would steal the foreground from the window the user is
-# working in - the same rule the panel itself follows.
+# The card does not activate (Cb.FluentForm.Activates stays false) and is raised with a
+# no-activate SetWindowPos: taking the foreground would deactivate the panel, which closes
+# when it is no longer in front.
 
 # One panel's preview: the window plus what it is showing. Held by the picker, given back to
 # every call here, so no state lives in this file.

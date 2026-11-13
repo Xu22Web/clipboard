@@ -37,7 +37,6 @@ namespace Cb {
       }
     }
     [DllImport("user32.dll")] public static extern uint GetClipboardSequenceNumber();
-    [DllImport("user32.dll")] public static extern IntPtr GetKeyboardLayout(uint idThread);
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
     [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, IntPtr extra);
     [DllImport("user32.dll")] public static extern bool ReleaseCapture();
@@ -755,16 +754,19 @@ namespace Cb {
     }
   }
   public class FluentForm : System.Windows.Forms.Form {
+    // The panel activates; a preview card raised by the panel must not, or the panel would
+    // lose the foreground and close.
+    public bool Activates = false;
     public FluentForm() { DoubleBuffered = true; }
-    // The panel activates like any other window: it takes the foreground when it opens and the
-    // keyboard with it, so the controls are fed by the system instead of by a hook.
+    protected override bool ShowWithoutActivation { get { return !Activates; } }
     protected override System.Windows.Forms.CreateParams CreateParams {
       get {
         var cp = base.CreateParams;
+        if (!Activates) { cp.ExStyle |= 0x08000000; }   // WS_EX_NOACTIVATE
         // Compositing makes the DWM assemble each frame off-screen, which keeps the child
-        // controls from sitting half-painted while the panel is moved to the front. It is not
-        // what fixes the row flicker (Cb.PinList buffers its own paint, lib/panel/pinlist.ps1),
-        // but the panel needs it for its child controls.
+        // controls from sitting half-painted while the window is moved. It is not what fixes
+        // the row flicker (Cb.PinList buffers its own paint, lib/panel/pinlist.ps1), but the
+        // panel needs it for its child controls.
         cp.ExStyle |= 0x02000000;   // WS_EX_COMPOSITED
         cp.ClassStyle |= 0x00020000;
         return cp;
