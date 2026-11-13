@@ -97,7 +97,7 @@ $script:Rows = 10
 # The compact panel is the same window with fewer rows, a narrower width and less chrome. Its
 # own two numbers keep Rows / WindowWidth meaning the full panel.
 $script:CompactMode = $false
-$script:CompactRows = 5
+$script:CompactRows = 6
 $script:CompactWidth = 520
 $script:WinLeft = ''
 $script:WinTop = ''

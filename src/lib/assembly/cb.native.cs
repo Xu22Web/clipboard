@@ -73,6 +73,37 @@ namespace Cb {
       }
     }
 
+    // How wide an edit control lays out a string, measured with that control's own device
+    // context and its own font. TextRenderer measures with the process default mapping instead
+    // and comes out half again as wide on a scaled display, which is what put the self-drawn
+    // caret a few pixels past the last glyph. Returns -1 when the control is gone.
+    [StructLayout(LayoutKind.Sequential)] private struct TEXTSIZE { public int cx; public int cy; }
+    [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr h);
+    [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr h, IntPtr dc);
+    [DllImport("gdi32.dll")] private static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
+    [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool GetTextExtentPoint32(IntPtr dc, string s, int count, out TEXTSIZE size);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")]
+    private static extern IntPtr SendMessageW(IntPtr h, int msg, IntPtr w, IntPtr l);
+    public static int TextWidth(IntPtr hwnd, string s) {
+      if (hwnd == IntPtr.Zero) { return -1; }
+      if (s == null) { s = ""; }
+      IntPtr dc = GetDC(hwnd);
+      if (dc == IntPtr.Zero) { return -1; }
+      // the font handle belongs to the control: selected in, never deleted here
+      IntPtr font = SendMessageW(hwnd, 0x0031, IntPtr.Zero, IntPtr.Zero);
+      IntPtr old = IntPtr.Zero;
+      try {
+        if (font != IntPtr.Zero) { old = SelectObject(dc, font); }
+        TEXTSIZE size;
+        if (!GetTextExtentPoint32(dc, s, s.Length, out size)) { return -1; }
+        return size.cx;
+      } finally {
+        if (old != IntPtr.Zero) { SelectObject(dc, old); }
+        ReleaseDC(hwnd, dc);
+      }
+    }
+
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern uint GetDpiForSystem();
     // where a window is on screen, as a rectangle the geometry helpers can read. Empty for a

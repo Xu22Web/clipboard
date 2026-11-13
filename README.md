@@ -155,7 +155,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 ### 焦点模型
 
-面板以不激活方式显示（`WS_EX_NOACTIVATE`），按键由低级键盘钩子（`WH_KEYBOARD_LL`）截获后转发给面板自身：原窗口保持前台、焦点、光标位置与层级不变，面板中可直接输入过滤，原窗口收不到字符。关闭面板（`Esc`、回车粘贴、再按热键、点击面板外部、呼出开始菜单或 Windows 搜索）即卸载钩子。
+面板以不激活方式显示（`WS_EX_NOACTIVATE`），按键由低级键盘钩子（`WH_KEYBOARD_LL`）截获后转发给面板自身：原窗口保持前台、焦点、光标位置与层级不变，面板中可直接输入过滤，原窗口收不到字符（搜索框没有真实焦点，插入位置由一条自绘竖线指示：位置取搜索框自身的排版宽度，紧贴前后字符，随方向键、`Home` `End`、退格与点击移动，接管键盘后让位给系统光标）。关闭面板（`Esc`、回车粘贴、再按热键、点击面板外部、呼出开始菜单或 Windows 搜索）即卸载钩子。
 
 面板以置顶方式显示但不激活，因此激活着的置顶窗口始终在它上面：开始菜单与 Windows 搜索的唤出窗口就是这样压住面板的（`SetWindowPos`、先取消置顶再置顶、`BringWindowToTop`、`HWND_TOP` 都无法逆转，已逐一实测）。层级本身查不到：`GetWindowBand` 未导出，按序号调用会让调用方崩溃；`TokenUIAccess` 只能覆盖带 UIAccess 的窗口，开始菜单与搜索并不带。因此判据为：前台窗口是置顶窗口、带 UIAccess，或属于开始菜单/搜索（开始菜单为 `StartMenuExperienceHost`，搜索在 Win11 为 `SearchHost`、Win10 1903–2004 为 `SearchApp`、更早为 `SearchUI`，另认 shell 的 UX 帧类名）。这类窗口在前台时按下热键：属于开始菜单/搜索的先 `Esc` 关掉，`Esc` 无效时把其下层窗口切到前台（浮层失去前台即关闭），关掉搜索可能露出开始菜单，所以最多连关三个；仍关不掉或不是它们则不开。面板打开期间呼出开始菜单或搜索，则关闭面板。
 
@@ -231,7 +231,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `Rows` | `10` | 可见行数，面板高度的唯一来源：高度 = 行数 × 行高 + 头部 + 底栏 + 边框；受屏幕工作区限制 |
 | `CompactMode` | `0` | `1` = 打开紧凑形态，`0` = 完整形态；托盘勾选项改写该键 |
 | `CompactWidth` | `520` | 紧凑形态宽度（96 dpi 基准），最小 360 |
-| `CompactRows` | `5` | 紧凑形态可见行数 |
+| `CompactRows` | `6` | 紧凑形态可见行数 |
 | `WindowLeft` / `WindowTop` | 空 | 面板位置（96 dpi 基准）；空 = 按 `PlaceNearForeground` 放置；紧凑形态不使用 |
 | `SaveWindowPos` | `0` | `1` = 关闭面板时把位置写回 ini（紧凑形态不写） |
 | `PlaceNearForeground` | `0` | 没有保存位置时的落点：`1` = 呼出它的窗口上（水平居中、纵向三分之一处，限制在该窗口所在显示器内）；`0` = 该显示器的中上部 |

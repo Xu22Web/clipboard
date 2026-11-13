@@ -44,7 +44,7 @@
     Rows              = @{ Type = 'int'; Ref = [ref]$script:Rows; Default = 10; Minimum = 3; Maximum = 50; Description = 'visible rows; the height follows from it (rows x 40 + 110)' }
     CompactMode       = @{ Type = 'bool'; Ref = [ref]$script:CompactMode; Default = 0; Description = '1 = open the compact panel, 0 = the full panel (the tray item writes this)' }
     CompactWidth      = @{ Type = 'int'; Ref = [ref]$script:CompactWidth; Default = 520; Minimum = 360; Maximum = 4000; Description = 'compact panel width (96 dpi baseline)' }
-    CompactRows       = @{ Type = 'int'; Ref = [ref]$script:CompactRows; Default = 5; Minimum = 3; Maximum = 20; Description = 'compact panel visible rows' }
+    CompactRows       = @{ Type = 'int'; Ref = [ref]$script:CompactRows; Default = 6; Minimum = 3; Maximum = 20; Description = 'compact panel visible rows' }
     WindowLeft        = @{ Type = 'int'; Ref = [ref]$script:WinLeft; Default = ''; Minimum = -32768; Maximum = 32767; Description = 'panel left, empty = decided by PlaceNearForeground' }
     WindowTop         = @{ Type = 'int'; Ref = [ref]$script:WinTop; Default = ''; Minimum = -32768; Maximum = 32767; Description = 'panel top, empty = decided by PlaceNearForeground' }
     SaveWindowPos     = @{ Type = 'bool'; Ref = [ref]$script:SaveWinPos; Default = 0; Description = '1 = write the moved panel back to this file (never for the compact panel)' }
