@@ -168,13 +168,45 @@ function Show-Picker([switch]$Warm) {
     $form.KeyPreview = $true
     $form.Text = 'Clipboard history'
     $form.AccessibleName = 'Clipboard history'
-    $form.Width = Px $preset.Width
-    # The height comes from the row count, never from a setting of its own, so no row is ever
-    # half cut off. The screen caps it, and Min = Max keeps the window to the size it opens at.
-    $screenH = 0; try { $screenH = [Windows.Forms.Screen]::FromPoint([Windows.Forms.Cursor]::Position).WorkingArea.Height } catch { }
-    $rows = Get-RowsForScreen $preset.Rows ([int]([double]$screenH / [double]$script:UiScale)) (Get-PanelRowHeight) (Get-PresetChrome $preset) ([int]$script:IniSchema[$rowsKey].Minimum)
-    if ($rows -ne $preset.Rows) { Write-Log ('picker: rows ' + $preset.Rows + ' -> ' + $rows + ' to fit this screen') }
-    $form.Height = Px (Get-PanelHeight $rows (Get-PanelRowHeight) (Get-PresetChrome $preset))
+    # Where the panel opens is decided before any control exists, because both its size and its
+    # place come out of the same question. Two shapes ask it differently:
+    #
+    #   compact - at the caret, below the line, flipping above when the monitor ends first, with
+    #             the rows cut to the room on that side (Get-CompactPlacement)
+    #   full    - never at the caret: a remembered position, otherwise the centre of the screen
+    #             the pointer is on (Get-PickerBounds)
+    $areas = @()
+    try { foreach ($sc in [Windows.Forms.Screen]::AllScreens) { $areas += $sc.WorkingArea } } catch { }
+    $pointerArea = $null
+    try { $pointerArea = [Windows.Forms.Screen]::FromPoint([Windows.Forms.Cursor]::Position).WorkingArea } catch { }
+    if (-not $pointerArea) { try { $pointerArea = [Windows.Forms.Screen]::FromHandle($prev).WorkingArea } catch { } }
+    if (-not $pointerArea -and $areas.Count -gt 0) { $pointerArea = $areas[0] }
+    if (-not $pointerArea) { $pointerArea = New-Object Drawing.Rectangle -ArgumentList @(0, 0, (Px $preset.Width), (Px 200)) }
+    $rowH = Px (Get-PanelRowHeight)
+    $chrome = Px (Get-PresetChrome $preset)
+    $minRows = [int]$script:IniSchema[$rowsKey].Minimum
+    $caretBox = $null
+    if ($preset.AnchorCaret -and $prev -ne [IntPtr]::Zero) {
+      try {
+        $c = Get-CaretAnchor $prev
+        if ($null -ne $c -and $c.Width -gt 0 -and $c.Height -gt 0) {
+          $caretBox = $c
+          Write-Log ('picker: anchor=' + $script:CaretSource + ' at ' + $c.Left + ',' + $c.Top + ' ' + $c.Width + 'x' + $c.Height)
+        } else { Write-Log ('picker: anchor=' + $script:CaretSource) }
+      } catch { $caretBox = $null; Write-Log ('picker: anchor failed: ' + $_.Exception.Message) }
+    }
+    $place = $null
+    if ($null -ne $caretBox) {
+      $area = Get-AreaAt $areas $pointerArea ([int]$caretBox.Left) ([int]$caretBox.Top)
+      $place = Get-CompactPlacement $preset.Rows $rowH $chrome (Px $preset.Width) $area ([int]$caretBox.Left) ([int]$caretBox.Top) ([int]$caretBox.Height) $minRows
+      if ($place.Rows -ne $preset.Rows) { Write-Log ('picker: rows ' + $preset.Rows + ' -> ' + $place.Rows + ' beside the caret') }
+    } else {
+      $fitRows = Get-RowsForScreen $preset.Rows ([int]$pointerArea.Height) $rowH $chrome $minRows
+      if ($fitRows -ne $preset.Rows) { Write-Log ('picker: rows ' + $preset.Rows + ' -> ' + $fitRows + ' to fit this screen') }
+      $place = @{ Rows = $fitRows; Width = (Px $preset.Width); Height = (Get-PanelHeight $fitRows $rowH $chrome) }
+    }
+    $form.Width = [int]$place.Width
+    $form.Height = [int]$place.Height
     $form.MinimumSize = New-Object Drawing.Size -ArgumentList @($form.Width, $form.Height)
     $form.MaximumSize = New-Object Drawing.Size -ArgumentList @($form.Width, $form.Height)
     $form.BackColor = $ui.Surface
@@ -387,40 +419,19 @@ function Show-Picker([switch]$Warm) {
     $form.Controls.Add($head)
     $msWidgets = [int]$swOpen.ElapsedMilliseconds
 
-    # A remembered position wins only when the panel still lands on a screen.
-    $areas = @()
-    try { foreach ($sc in [Windows.Forms.Screen]::AllScreens) { $areas += $sc.WorkingArea } } catch { }
-    $fallback = $null
-    try { $fallback = [Windows.Forms.Screen]::FromHandle($prev).WorkingArea } catch { }
-    if (-not $fallback) { try { $fallback = [Windows.Forms.Screen]::FromPoint([Windows.Forms.Cursor]::Position).WorkingArea } catch { } }
-    if (-not $fallback) { $fallback = New-Object Drawing.Rectangle -ArgumentList @(0, 0, $form.Width, $form.Height) }
-    # PlaceNearForeground: with no saved position the panel sits on the window it came from.
-    # A window that is gone, minimised or tiny keeps the centred fallback.
-    $preferBox = $null
-    if ($script:PlaceNearForeground -and $prev -ne [IntPtr]::Zero) {
-      try {
-        $b = [Cb.Win]::WindowBounds($prev)
-        if ($null -ne $b -and $b.Width -ge 200 -and $b.Height -ge 200) { $preferBox = $b }
-      } catch { $preferBox = $null }
+    # the compact panel was placed against the caret; everything else takes the remembered
+    # position, or the centre of the screen the pointer is on
+    if ($null -ne $place -and $null -ne $place.Left) {
+      $form.Left = [int]$place.Left
+      $form.Top = [int]$place.Top
+    } else {
+      # a saved position belongs to the full panel: the compact one is placed on every open
+      $savedLeft = $(if ($preset.Mode -eq 'compact') { '' } else { [string]$script:WinLeft })
+      $savedTop = $(if ($preset.Mode -eq 'compact') { '' } else { [string]$script:WinTop })
+      $pb = Get-PickerBounds $form.Width $form.Height $savedLeft $savedTop $areas $pointerArea
+      $form.Left = [int]$pb.Left
+      $form.Top = [int]$pb.Top
     }
-    # the caret is the tightest anchor there is: it marks the line being typed at. A target
-    # that reports no caret right now falls through to the window or the centre.
-    $caretBox = $null
-    if ($preset.AnchorCaret -and $prev -ne [IntPtr]::Zero) {
-      try {
-        $c = Get-CaretAnchor $prev
-        if ($null -ne $c -and $c.Width -gt 0 -and $c.Height -gt 0) {
-          $caretBox = $c
-          Write-Log ('picker: anchor=' + $script:CaretSource + ' at ' + $c.Left + ',' + $c.Top + ' ' + $c.Width + 'x' + $c.Height)
-        } else { Write-Log 'picker: anchor=none' }
-      } catch { $caretBox = $null; Write-Log ('picker: anchor failed: ' + $_.Exception.Message) }
-    }
-    # a saved position belongs to the full panel: the compact one is placed on every open
-    $savedLeft = $(if ($preset.Mode -eq 'compact') { '' } else { [string]$script:WinLeft })
-    $savedTop = $(if ($preset.Mode -eq 'compact') { '' } else { [string]$script:WinTop })
-    $pb = Get-PickerBounds $form.Width $form.Height $savedLeft $savedTop $areas $fallback $preferBox $caretBox
-    $form.Left = [int]$pb.Left
-    $form.Top = [int]$pb.Top
 
     function Layout-Chrome {
       try {
@@ -1609,7 +1620,7 @@ function Show-Picker([switch]$Warm) {
     $shape = (' ms (records ' + $msRecords + ', widgets ' + $msWidgets + ', bind ' + ($msBuild - $msWidgets) + ', items ' + $script:Entries.Count + ')')
     # a warm run is a different event in the log: it built the panel and threw it away
     if ($Warm) { Write-Log ('picker: warm ' + $msBuild + $shape) } else { Write-Log ('picker: open ' + $msBuild + $shape) }
-    Write-Log ('picker: mode=' + $preset.Mode + ' rows=' + $rows + ' width=' + $preset.Width)
+    Write-Log ('picker: mode=' + $preset.Mode + ' rows=' + $place.Rows + ' at ' + $form.Left + ',' + $form.Top + ' ' + $form.Width + 'x' + $form.Height)
     # A warm run (see Start-Serve) builds everything and throws it away: the first hotkey then
     # pays only for Show(), which is what the resident wants to avoid after a restart.
     if ($Warm) {

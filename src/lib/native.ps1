@@ -84,7 +84,7 @@ function Initialize-Dpi {
     [void][Cb.Win]::SetProcessDPIAware()
     try {
       $d = [int][Cb.Win]::GetDpiForSystem()
-      if ($d -ge 96 -and $d -le 480) { $script:UiScale = [double]$d / 96.0 }
+      if ($d -ge 96 -and $d -le 480) { $script:SysDpi = $d; $script:UiScale = [double]$d / 96.0 }
     } catch { }
   } catch { $script:UiScale = 1.0 }
 }
@@ -230,11 +230,39 @@ function Get-CaretLineHeight {
   return $h
 }
 
+# UI Automation answers in the physical pixels of the provider's monitor, while this process
+# lays out in the system DPI space: on a screen with another scale the two do not agree, and
+# the panel lands beside the caret instead of on it. The window's DPI over the system DPI is
+# the ratio that brings the rectangle back (0 when the system does not answer - older than
+# Windows 10 1607 - and then the rectangle is kept as it is).
+function Convert-UiaRect($rect, [IntPtr]$hwnd) {
+  if ($null -eq $rect) { return $rect }
+  $rd = 0
+  try { $rd = [int][Cb.Win]::WindowDpi($hwnd) } catch { $rd = 0 }
+  if ($rd -le 0 -or $rd -eq [int]$script:SysDpi) { return $rect }
+  $k = [double]$script:SysDpi / [double]$rd
+  return New-Object Drawing.Rectangle -ArgumentList @(
+    [int][Math]::Round([double]$rect.Left * $k),
+    [int][Math]::Round([double]$rect.Top * $k),
+    [int][Math]::Max(1, [int][Math]::Round([double]$rect.Width * $k)),
+    [int][Math]::Max(1, [int][Math]::Round([double]$rect.Height * $k)))
+}
+
 # The anchor the panel is placed against, and the name of the source that answered, so the log
 # says why a position was chosen. Empty means nothing is known and the monitor decides.
+#
+# The order follows what the field reports: rcCaret is what a Win32 edit control keeps, the
+# attached caret is what the input queue knows, MSAA is what older controls expose (Ditto asks
+# it first for that reason), UI Automation is what browsers, Electron, RichEdit and UWP report,
+# and the focused control is the last thing that always exists.
 function Get-CaretAnchor([IntPtr]$hwnd) {
   $script:CaretSource = 'none'
   if ($hwnd -eq [IntPtr]::Zero) { return [Drawing.Rectangle]::Empty }
+  # a cloaked store application, a shell surface or a tool window reports itself as the window
+  # in front but types nothing; anchoring to one puts the panel on the desktop
+  try {
+    if (-not [Cb.Win]::IsUsableTarget($hwnd)) { $script:CaretSource = 'no-target'; return [Drawing.Rectangle]::Empty }
+  } catch { }
   $window = $null
   try { $window = [Cb.Win]::WindowBounds($hwnd) } catch { $window = $null }
   try {
@@ -251,11 +279,18 @@ function Get-CaretAnchor([IntPtr]$hwnd) {
     if ($r.Height -gt 0 -and (Test-AnchorRect $r $window)) { $script:CaretSource = 'caret-pos'; return $r }
   } catch { }
   try {
-    $r = Get-UiaCaretRect $hwnd
+    $r = [Cb.Win]::MsaaCaret($hwnd)
+    if ($r.Width -gt 0 -and $r.Height -le 0) {
+      $r = New-Object Drawing.Rectangle -ArgumentList @([int]$r.Left, [int]$r.Top, [int]$r.Width, (Get-CaretLineHeight))
+    }
+    if ($r.Height -gt 0 -and (Test-AnchorRect $r $window)) { $script:CaretSource = 'msaa'; return $r }
+  } catch { }
+  try {
+    $r = Convert-UiaRect (Get-UiaCaretRect $hwnd) $hwnd
     if ($r.Height -gt 0 -and (Test-AnchorRect $r $window)) { $script:CaretSource = 'uia'; return $r }
   } catch { }
   try {
-    $r = Get-UiaBoxRect $hwnd
+    $r = Convert-UiaRect (Get-UiaBoxRect $hwnd) $hwnd
     if ($r.Height -gt 0 -and (Test-AnchorRect $r $window)) { $script:CaretSource = 'uia-box'; return $r }
   } catch { }
   try {

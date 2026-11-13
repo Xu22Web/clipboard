@@ -40,6 +40,41 @@ namespace Cb {
     [DllImport("user32.dll")] public static extern bool ReleaseCapture();
     [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    // ---- is the window in front a place the panel may anchor to -------------------------
+    // CopyQ's isAltTabWindow() asks the same three questions before it treats a window as the
+    // one the user is working in, and for the same reason: a suspended store application, a
+    // shell flyout and a tool window all report themselves as visible and foreground, but
+    // none of them is typing anything, so anchoring to one puts the panel on the desktop.
+    [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int value, int size);
+    [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr h);
+
+    // DWMWA_CLOAKED: the window is on a virtual desktop, is a suspended store application, or
+    // is a shell surface that is still in the window list
+    public static bool IsCloaked(IntPtr h) {
+      if (h == IntPtr.Zero) { return false; }
+      try {
+        int v = 0;
+        if (DwmGetWindowAttribute(h, 14, out v, 4) != 0) { return false; }
+        return v != 0;
+      } catch { return false; }
+    }
+
+    // A window the panel may read a caret from. A tool window never takes the keyboard, and a
+    // cloaked one cannot be seen at all; both report themselves as foreground, so both would
+    // place the panel on a window that is typing nothing.
+    public static bool IsUsableTarget(IntPtr h) {
+      if (h == IntPtr.Zero || !IsWindow(h) || !IsWindowVisible(h)) { return false; }
+      int ex = GetWindowLong(h, -20);
+      if ((ex & 0x00000080) != 0) { return false; }
+      return !IsCloaked(h);
+    }
+
+    // The DPI of the monitor that window is on. 0 when the system does not answer (before
+    // Windows 10 1607, or after the window is gone), and the caller keeps its own scale.
+    public static int WindowDpi(IntPtr h) {
+      if (h == IntPtr.Zero) { return 0; }
+      try { return (int)GetDpiForWindow(h); } catch { return 0; }
+    }
     // ---- the focus the panel has to give back ----------------------------------------
     // While the hook feeds the panel nothing has to be restored. The panel does move the
     // foreground twice (an input method composing, and the paste that follows a pick), and
@@ -144,9 +179,11 @@ namespace Cb {
     //
     // rcCaret is documented as screen coordinates, but a Win32 edit control reports it inside
     // its own client area (measured: a text box at 308,231 with the caret after "hello" answers
-    // 104,1). Both are handled: the rect is taken as it is when it already lies inside the
-    // control that holds the keyboard, and otherwise moved there with ClientToScreen. A caret
-    // that fits neither way is returned raw, and the caller's validity test decides.
+    // 104,1). Ditto and ClipAngel both simply add the focused control's screen origin, so the
+    // client reading is tried first and the raw rectangle is kept only when the sum lands
+    // outside the control - which is what a provider that really does answer in screen
+    // coordinates produces. Reading it the other way round used to trust a client rectangle
+    // whose numbers happened to fall inside the control, and put the panel near the corner.
     [StructLayout(LayoutKind.Sequential)] private struct CARETPOINT { public int X; public int Y; }
     [DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr h, ref CARETPOINT p);
 
@@ -168,7 +205,6 @@ namespace Cb {
       System.Drawing.Rectangle bounds = WindowBounds(info.hwndFocus);
       if (bounds.IsEmpty) { return caret; }
       System.Drawing.Rectangle room = System.Drawing.Rectangle.Inflate(bounds, 4, 4);
-      if (room.Contains(caret)) { return caret; }
       CARETPOINT origin = new CARETPOINT();
       if (ClientToScreen(info.hwndFocus, ref origin)) {
         System.Drawing.Rectangle moved = new System.Drawing.Rectangle(caret.Left + origin.X, caret.Top + origin.Y, cw, ch);
@@ -231,6 +267,53 @@ namespace Cb {
         return System.Drawing.Rectangle.Empty;
       } finally {
         if (attached) { AttachThreadInput(mine, target, false); }
+      }
+    }
+
+    // ---- the caret the accessibility layer knows -----------------------------------------
+    // A control that draws its own caret answers nothing in rcCaret and nothing through
+    // GetCaretPos, but MSAA still keeps an OBJID_CARET object for it. Ditto asks this source
+    // first (ExternalWindowTracker::FocusCaret) because it is the one that also answers for
+    // older controls on Windows 10, which have no UI Automation text pattern at all. The object
+    // is called through late binding, so the assembly needs no reference to Accessibility.dll.
+    [DllImport("oleacc.dll")]
+    private static extern int AccessibleObjectFromWindow(IntPtr hwnd, uint id, ref Guid iid,
+      [MarshalAs(UnmanagedType.IUnknown)] out object acc);
+
+    public static System.Drawing.Rectangle MsaaCaret(IntPtr hwnd) {
+      if (hwnd == IntPtr.Zero) { return System.Drawing.Rectangle.Empty; }
+      uint tid = GetWindowThreadProcessId(hwnd, IntPtr.Zero);
+      if (tid == 0) { return System.Drawing.Rectangle.Empty; }
+      GUITHREADINFO info = new GUITHREADINFO();
+      info.cbSize = Marshal.SizeOf(typeof(GUITHREADINFO));
+      if (!GetGUIThreadInfo(tid, ref info)) { return System.Drawing.Rectangle.Empty; }
+      // the caret object belongs to the control that holds the keyboard, not to the frame
+      IntPtr owner = info.hwndFocus;
+      if (owner == IntPtr.Zero || !IsWindow(owner)) { owner = info.hwndCaret; }
+      if (owner == IntPtr.Zero || !IsWindow(owner)) { return System.Drawing.Rectangle.Empty; }
+      // a window that hangs turns the cross-process call into a blocking wait
+      try { if (!IsResponsive(owner, 40)) { return System.Drawing.Rectangle.Empty; } } catch { return System.Drawing.Rectangle.Empty; }
+      object acc = null;
+      try {
+        Guid iid = new Guid("618736E0-3C3D-11CF-810C-00AA00389B71");
+        if (AccessibleObjectFromWindow(owner, 0xFFFFFFF8, ref iid, out acc) != 0 || acc == null) {
+          return System.Drawing.Rectangle.Empty;
+        }
+        // accLocation(byref left, byref top, byref width, byref height, child); by-ref values
+        // are read back out of the argument array
+        object[] args = new object[] { 0, 0, 0, 0, 0 };
+        acc.GetType().InvokeMember("accLocation", System.Reflection.BindingFlags.InvokeMethod, null, acc, args);
+        int left = Convert.ToInt32(args[0]);
+        int top = Convert.ToInt32(args[1]);
+        int w = Convert.ToInt32(args[2]);
+        int h = Convert.ToInt32(args[3]);
+        if (w <= 0 && h <= 0) { return System.Drawing.Rectangle.Empty; }
+        if (w <= 0) { w = 1; }
+        return new System.Drawing.Rectangle(left, top, w, h);
+      } catch {
+        return System.Drawing.Rectangle.Empty;
+      } finally {
+        try { if (acc != null && Marshal.IsComObject(acc)) { Marshal.ReleaseComObject(acc); } } catch { }
       }
     }
 

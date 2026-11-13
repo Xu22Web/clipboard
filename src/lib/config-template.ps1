@@ -23,7 +23,7 @@ $script:IniTemplateLayout = [ordered]@{
   )
   'panel geometry (96 dpi baseline, scaled by the system DPI)' = @(
     'WindowWidth', 'Rows', 'CompactWidth', 'CompactRows',
-    'WindowLeft', 'WindowTop', 'SaveWindowPos', 'PlaceNearForeground', 'PlaceAtCaret'
+    'WindowLeft', 'WindowTop', 'SaveWindowPos'
   )
   'panel behaviour' = @(
     'CompactMode', 'ShowTime', 'ShowTypeIcon', 'ShowThumbnails', 'Highlight', 'HighlightMaxBytes',

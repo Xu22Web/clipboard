@@ -86,6 +86,9 @@ $script:Timing = @{
 }
 
 $script:UiScale = 1.0
+# The DPI this process lays out in. It stays the same for the whole run (the process is
+# system DPI aware), and it is what a rectangle from another monitor has to be brought back to.
+$script:SysDpi = 96
 
 # A missing or partial clipboard.ini is fine: these values apply until the file
 # overrides them. Nothing in this region creates or rewrites the settings file.
@@ -102,12 +105,6 @@ $script:CompactWidth = 520
 $script:WinLeft = ''
 $script:WinTop = ''
 $script:SaveWinPos = $false
-# with no saved position the panel sits on the window it was opened from instead of the
-# centre of that monitor; opt-in, because the middle of the screen is the familiar spot
-$script:PlaceNearForeground = $false
-# a caret is a tighter anchor than the window: the compact panel always uses it, the full
-# panel only when asked, because its height would cover the line being read
-$script:PlaceAtCaret = $false
 $script:ShowTime = $true
 $script:ShowTypeIcon = $true
 # a picture or formatted-text row shows a small copy of its first picture in the icon slot

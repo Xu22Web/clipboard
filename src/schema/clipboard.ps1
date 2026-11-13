@@ -45,11 +45,9 @@
     CompactMode       = @{ Type = 'bool'; Ref = [ref]$script:CompactMode; Default = 0; Description = '1 = open the compact panel, 0 = the full panel (the tray item writes this)' }
     CompactWidth      = @{ Type = 'int'; Ref = [ref]$script:CompactWidth; Default = 520; Minimum = 360; Maximum = 4000; Description = 'compact panel width (96 dpi baseline)' }
     CompactRows       = @{ Type = 'int'; Ref = [ref]$script:CompactRows; Default = 6; Minimum = 3; Maximum = 20; Description = 'compact panel visible rows' }
-    WindowLeft        = @{ Type = 'int'; Ref = [ref]$script:WinLeft; Default = ''; Hint = '(auto)'; Minimum = -32768; Maximum = 32767; Description = 'panel left, empty = decided by PlaceNearForeground' }
-    WindowTop         = @{ Type = 'int'; Ref = [ref]$script:WinTop; Default = ''; Hint = '(auto)'; Minimum = -32768; Maximum = 32767; Description = 'panel top, empty = decided by PlaceNearForeground' }
-    SaveWindowPos     = @{ Type = 'bool'; Ref = [ref]$script:SaveWinPos; Default = 0; Description = '1 = write the moved panel back to this file (never for the compact panel)' }
-    PlaceNearForeground = @{ Type = 'bool'; Ref = [ref]$script:PlaceNearForeground; Default = 0; Description = '1 = with no saved position, place the panel over the window it was opened from' }
-    PlaceAtCaret      = @{ Type = 'bool'; Ref = [ref]$script:PlaceAtCaret; Default = 0; Description = '1 = place the full panel below the caret too; the compact panel always does' }
+    WindowLeft        = @{ Type = 'int'; Ref = [ref]$script:WinLeft; Default = ''; Hint = '(auto)'; Minimum = -32768; Maximum = 32767; Description = 'full panel left, empty = centred on the screen it opens on' }
+    WindowTop         = @{ Type = 'int'; Ref = [ref]$script:WinTop; Default = ''; Hint = '(auto)'; Minimum = -32768; Maximum = 32767; Description = 'full panel top, empty = centred on the screen it opens on' }
+    SaveWindowPos     = @{ Type = 'bool'; Ref = [ref]$script:SaveWinPos; Default = 0; Description = '1 = write the moved full panel back to this file (the compact panel follows the caret)' }
     ShowTime          = @{ Type = 'bool'; Ref = [ref]$script:ShowTime; Default = 1; Description = '1 = relative time column' }
     ShowTypeIcon      = @{ Type = 'bool'; Ref = [ref]$script:ShowTypeIcon; Default = 1; Description = '1 = show the row icon a plugin provides (none without one)' }
     ShowThumbnails    = @{ Type = 'bool'; Ref = [ref]$script:ShowThumbnails; Default = 1; Description = '1 = show a small picture in the icon slot of a picture or formatted-text row' }

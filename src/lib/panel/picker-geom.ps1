@@ -29,9 +29,8 @@ function Get-PresetChrome($preset) {
 
 # The two panel shapes and what actually differs between them. This is the only place that
 # decides, so the drawing, the keys and the paste stay one code path. Full keeps every column
-# and the theme's chrome; compact drops the time column, the right-hand count and the version,
-# uses a shorter header and footer, and always follows the caret. Width and row count come from
-# the setting of each shape, so neither number means two things.
+# and the theme's chrome and stays where the user put it; compact drops the time column, the
+# right-hand count and the version, uses a shorter header and footer, and follows the caret.
 function Get-PanelPreset([string]$mode) {
   if ($mode -eq 'compact') {
     return @{
@@ -43,7 +42,7 @@ function Get-PanelPreset([string]$mode) {
   return @{
     Mode = 'full'; Width = [int]$script:WinWidth; Rows = [int]$script:Rows
     Head = [int]$script:Metric['HeadHeight']; Foot = [int]$script:Metric['FootHeight']
-    ShowTime = [bool]$script:ShowTime; ShowFootRight = $true; AnchorCaret = [bool]$script:PlaceAtCaret
+    ShowTime = [bool]$script:ShowTime; ShowFootRight = $true; AnchorCaret = $false
   }
 }
 
@@ -100,64 +99,95 @@ function Get-QuickKeyOffset([int]$digit) {
   return $digit - 1
 }
 
-# Where the panel should appear. A saved position is only honoured when the panel still
-# lands on a screen; otherwise sit on the caret the user is typing at, then on the window it
-# was opened from, and fall back to centring on the monitor of that window.
-function Get-PickerBounds([int]$w, [int]$h, [string]$rawLeft, [string]$rawTop, $areas, $fallback, $prefer = $null, $anchor = $null, [int]$gap = 4) {
+# --- where the panel goes ---------------------------------------------------------
+# The two shapes answer different questions, so they take different paths.
+#
+# The compact panel is read while typing, so it belongs at the caret - Ditto's POS_AT_CARET
+# and ClipAngel's "auto position" are the same idea. It opens below the line, flips above it
+# when the bottom of the monitor comes first, and gives up rows rather than run off the
+# screen, which is what Ditto's EnsureWindowVisible does by rewriting the rectangle from
+# rcWork and returning "moved".
+#
+# The full panel is a place the user returns to. It never follows the caret: a remembered
+# position that still lands on a screen, otherwise the centre of the screen it opens on.
+
+# The screen a point is on, or the caller's fallback. ClipAngel picks the monitor with
+# Screen.FromPoint for the same reason: the caret decides which screen, not the window.
+function Get-AreaAt($areas, $fallback, [int]$x, [int]$y) {
+  foreach ($a in @($areas)) {
+    if ($x -ge [int]$a.Left -and $x -le ([int]$a.Left + [int]$a.Width) -and
+        $y -ge [int]$a.Top -and $y -le ([int]$a.Top + [int]$a.Height)) { return $a }
+  }
+  return $fallback
+}
+
+# One rectangle pushed back inside one work area: the left edge wins over the right one and
+# the top over the bottom, so a panel wider than the screen still starts at its left edge.
+function Get-ClampedPoint($area, [int]$left, [int]$top, [int]$w, [int]$h) {
+  if ($null -eq $area) { return @{ Left = $left; Top = $top } }
+  $right = [int]$area.Left + [int]$area.Width
+  $bottom = [int]$area.Top + [int]$area.Height
+  $l = [Math]::Max([int]$area.Left, [Math]::Min($left, $right - $w))
+  $t = [Math]::Max([int]$area.Top, [Math]::Min($top, $bottom - $h))
+  return @{ Left = [int]$l; Top = [int]$t }
+}
+
+# Where the full panel goes. A remembered position is honoured while enough of the panel
+# still shows on one screen, and clamped into that screen; otherwise the panel is centred on
+# the screen it opens on, a third of the way down.
+function Get-PickerBounds([int]$w, [int]$h, [string]$rawLeft, [string]$rawTop, $areas, $fallback) {
   $l = 0
   $t = 0
-  $hasL = [int]::TryParse([string]$rawLeft, [ref]$l)
-  $hasT = [int]::TryParse([string]$rawTop, [ref]$t)
-  if ($hasL -and $hasT -and $areas) {
+  $has = ([int]::TryParse([string]$rawLeft, [ref]$l)) -and ([int]::TryParse([string]$rawTop, [ref]$t))
+  if ($has -and $areas) {
     foreach ($a in @($areas)) {
-      $iw = [Math]::Min($l + $w, $a.Left + $a.Width) - [Math]::Max($l, $a.Left)
-      $ih = [Math]::Min($t + $h, $a.Top + $a.Height) - [Math]::Max($t, $a.Top)
+      $iw = [Math]::Min($l + $w, [int]$a.Left + [int]$a.Width) - [Math]::Max($l, [int]$a.Left)
+      $ih = [Math]::Min($t + $h, [int]$a.Top + [int]$a.Height) - [Math]::Max($t, [int]$a.Top)
       if ($iw -ge 120 -and $ih -ge 60) {
-        $cl = [Math]::Max($a.Left, [Math]::Min($l, $a.Left + $a.Width - $w))
-        $ct = [Math]::Max($a.Top, [Math]::Min($t, $a.Top + $a.Height - $h))
-        return @{ Left = [int]$cl; Top = [int]$ct; Fitted = $false }
+        $p = Get-ClampedPoint $a $l $t $w $h
+        return @{ Left = [int]$p.Left; Top = [int]$p.Top; Fitted = $false }
       }
     }
   }
-  # the caret is the tightest anchor: below it, and above it when the bottom of the monitor
-  # comes first. The caret sits in a line of text, so the panel starts at its left edge and
-  # the line stays readable; the monitor it is on decides the clamping.
-  if ($null -ne $anchor -and $areas -and [int]$anchor.Width -gt 0 -and [int]$anchor.Height -gt 0) {
-    $ax = [int]$anchor.Left
-    $ay = [int]$anchor.Top
-    $area = $null
-    foreach ($a in @($areas)) {
-      if ($ax -ge $a.Left -and $ax -le ($a.Left + $a.Width) -and $ay -ge $a.Top -and $ay -le ($a.Top + $a.Height)) { $area = $a; break }
-    }
-    if ($null -eq $area) { $area = $fallback }
-    $top = $ay + [int]$anchor.Height + $gap
-    if ($top + $h -gt $area.Top + $area.Height) { $top = $ay - $gap - $h }
-    $left = [Math]::Max($area.Left, [Math]::Min($ax, $area.Left + $area.Width - $w))
-    $top = [Math]::Max($area.Top, [Math]::Min($top, $area.Top + $area.Height - $h))
-    return @{ Left = [int]$left; Top = [int]$top; Fitted = $true }
+  $area = $fallback
+  if ($null -eq $area) { $area = @{ Left = 0; Top = 0; Width = $w; Height = $h } }
+  $left = [int]$area.Left + [int](($area.Width - $w) / 2)
+  $top = [int]$area.Top + [int](($area.Height - $h) / 3)
+  $p = Get-ClampedPoint $area $left $top $w $h
+  return @{ Left = [int]$p.Left; Top = [int]$p.Top; Fitted = $true }
+}
+
+# Rows, size and place of the compact panel for one caret, in screen pixels. The row count
+# asked for is capped by the monitor, then by the room on the side the panel opens on: a caret
+# near the bottom edge gets a shorter panel instead of one pushed over the line being read.
+# A caret whose monitor is unknown keeps the requested rows and opens below it.
+function Get-CompactPlacement([int]$rows, [int]$rowHeight, [int]$chrome, [int]$width, $area, [int]$anchorLeft, [int]$anchorTop, [int]$anchorHeight, [int]$minRows, [int]$gap = 4) {
+  if ($rowHeight -lt 1) { $rowHeight = 1 }
+  if ($minRows -lt 1) { $minRows = 1 }
+  $w = [int]$width
+  if ($null -eq $area) {
+    $fit = Get-PanelHeight $rows $rowHeight $chrome
+    return @{ Rows = [int]$rows; Width = $w; Height = $fit; Left = $anchorLeft; Top = ($anchorTop + $anchorHeight + $gap) }
   }
-  # nothing remembered: put the panel on the window the user came from (its horizontal
-  # centre, a third of the way down), clamped into the monitor that window sits on
-  if ($null -ne $prefer -and $areas) {
-    $pw = [int]$prefer.Width
-    $ph = [int]$prefer.Height
-    if ($pw -ge 120 -and $ph -ge 60) {
-      $pl = [int]$prefer.Left + [int](($pw - $w) / 2)
-      $pt = [int]$prefer.Top + [int](($ph - $h) / 3)
-      foreach ($a in @($areas)) {
-        $iw = [Math]::Min([int]$prefer.Left + $pw, $a.Left + $a.Width) - [Math]::Max([int]$prefer.Left, $a.Left)
-        $ih = [Math]::Min([int]$prefer.Top + $ph, $a.Top + $a.Height) - [Math]::Max([int]$prefer.Top, $a.Top)
-        if ($iw -ge 120 -and $ih -ge 60) {
-          $cl = [Math]::Max($a.Left, [Math]::Min($pl, $a.Left + $a.Width - $w))
-          $ct = [Math]::Max($a.Top, [Math]::Min($pt, $a.Top + $a.Height - $h))
-          return @{ Left = [int]$cl; Top = [int]$ct; Fitted = $true }
-        }
-      }
-    }
+  if ([int]$area.Width -gt 0 -and $w -gt [int]$area.Width) { $w = [int]$area.Width }
+  $roomRows = Get-RowsForScreen $rows ([int]$area.Height) $rowHeight $chrome $minRows
+  $below = (([int]$area.Top + [int]$area.Height) - ($anchorTop + $anchorHeight + $gap))
+  $above = (($anchorTop - $gap) - [int]$area.Top)
+  $useRows = $roomRows
+  $h = Get-PanelHeight $useRows $rowHeight $chrome
+  if ($h -gt $below -and $h -gt $above) {
+    $room = [Math]::Max($below, $above)
+    $fit = Get-RowFit $room $rowHeight $chrome
+    if ($fit -lt $minRows) { $fit = $minRows }
+    if ($fit -lt $useRows) { $useRows = $fit }
+    $h = Get-PanelHeight $useRows $rowHeight $chrome
   }
-  $fx = [int]($fallback.Left + (($fallback.Width - $w) / 2))
-  $fy = [int]($fallback.Top + (($fallback.Height - $h) / 3))
-  return @{ Left = $fx; Top = $fy; Fitted = $true }
+  if ($h -le $below) { $top = $anchorTop + $anchorHeight + $gap }
+  elseif ($h -le $above) { $top = $anchorTop - $gap - $h }
+  elseif ($below -ge $above) { $top = $anchorTop + $anchorHeight + $gap }
+  else { $top = $anchorTop - $gap - $h }
+  $p = Get-ClampedPoint $area $anchorLeft $top $w $h
+  return @{ Rows = [int]$useRows; Width = [int]$w; Height = [int]$h; Left = [int]$p.Left; Top = [int]$p.Top }
 }
 
 # which characters of one label match the search tokens (for the highlight pass)

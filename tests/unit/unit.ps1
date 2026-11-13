@@ -566,7 +566,8 @@ try {
 
       It 'the window size comes from the preset, not from the settings directly' {
         Expect ($script:StructPickerText -match '\$preset = Get-PanelPreset') 'no preset resolved in the picker'
-        Expect ($script:StructPickerText -match '\$form\.Width = Px \$preset\.Width') 'the width is not taken from the preset'
+        # the width and the rows come from the preset, through the placement that decides them
+        Expect ($script:StructPickerText -match 'Px \$preset\.Width') 'the width is not taken from the preset'
         Expect ($script:StructPickerText -match 'Get-PresetChrome \$preset') 'the chrome is not taken from the preset'
         Expect (-not ($script:StructPickerText -match 'Get-PanelChrome\)')) 'the theme chrome is still read by the picker'
       }
@@ -594,6 +595,10 @@ try {
         Expect ($script:StructWinText -match 'IsResponsive') 'a hung window is never skipped'
         Expect ($script:StructWinText -match 'FocusControlBounds') 'the focused-control tier is missing'
         Expect ($script:StructWinText -match 'Current\.ProcessId') 'the focused element is trusted without a process check'
+        # MSAA answers for older controls on Windows 10 that expose no text pattern at all
+        Expect ($script:StructWinText -match 'MsaaCaret') 'the accessibility tier is missing'
+        # a cloaked store application or a tool window is in front but types nothing
+        Expect ($script:StructWinText -match 'IsUsableTarget') 'whatever window is in front gets anchored to'
       }
 
       It 'asks the input queue for the caret when rcCaret is empty' {
@@ -2329,14 +2334,11 @@ try {
         Expect (($full.ShowTime -eq [bool]$script:ShowTime) -and ($full.ShowFootRight -eq $true)) ([string]$full.ShowTime)
       }
 
-      It 'the compact panel always follows the caret, the full one only when asked' {
+      It 'only the compact panel follows the caret' {
+        # the full panel is the taller one and is a place the user returns to, so it never
+        # follows the caret; the compact one is read while typing and always does
         Expect ((Get-PanelPreset 'compact').AnchorCaret -eq $true) ''
-        # the full panel is the taller one: following the caret is opt-in there
-        $script:PlaceAtCaret = $false
         Expect ((Get-PanelPreset 'full').AnchorCaret -eq $false) ''
-        $script:PlaceAtCaret = $true
-        Expect ((Get-PanelPreset 'full').AnchorCaret -eq $true) ''
-        $script:PlaceAtCaret = $false
       }
     }
 
@@ -2392,62 +2394,50 @@ try {
         Expect $b.Fitted ''
       }
 
-      It 'with no saved position the panel sits on the window it came from' {
-        $prefer = [pscustomobject]@{ Left = 200; Top = 300; Width = 800; Height = 600 }
-        $b = Get-PickerBounds 660 430 '' '' $script:PickerAreas $script:PickerFallbackArea $prefer
-        # 200 + (800-660)/2 = 270 and 300 + (600-430)/3 = 356.67 rounded = 357
-        Expect (($b.Left -eq 270) -and ($b.Top -eq 357) -and $b.Fitted) (($b.Left -as [string]) + ',' + ($b.Top -as [string]))
+      It 'the screen is chosen by the point, and a panel is pushed inside it' {
+        # the second screen holds this caret; a point outside every screen keeps the fallback
+        Expect ((Get-AreaAt $script:PickerAreas $script:PickerFallbackArea 2200 300).Left -eq 1920) ([string](Get-AreaAt $script:PickerAreas $script:PickerFallbackArea 2200 300).Left)
+        Expect ((Get-AreaAt $script:PickerAreas $script:PickerFallbackArea -50 300).Left -eq 0) ([string](Get-AreaAt $script:PickerAreas $script:PickerFallbackArea -50 300).Left)
+        # 1800 + 660 runs off the right edge and 1000 + 430 off the bottom
+        $c = Get-ClampedPoint $script:PickerAreas[0] 1800 1000 660 430
+        Expect (($c.Left -eq 1260) -and ($c.Top -eq 650)) (($c.Left -as [string]) + ',' + ($c.Top -as [string]))
       }
 
-      It 'a window on the second monitor keeps the panel there' {
-        $prefer = [pscustomobject]@{ Left = 2200; Top = 100; Width = 800; Height = 600 }
-        $b = Get-PickerBounds 660 430 '' '' $script:PickerAreas $script:PickerFallbackArea $prefer
-        Expect ($b.Left -eq 2270) ($b.Left -as [string])
+      It 'the compact panel opens under the caret with the rows that fit' {
+        # six 40 px rows and 92 px of chrome are 332 px: 300 + 20 + the 4 px gap
+        $p = Get-CompactPlacement 6 40 92 520 $script:PickerFallbackArea 400 300 20 3
+        Expect (($p.Left -eq 400) -and ($p.Top -eq 324) -and ($p.Rows -eq 6) -and ($p.Height -eq 332)) (($p.Left -as [string]) + ',' + ($p.Top -as [string]) + ' ' + ($p.Rows -as [string]) + '/' + ($p.Height -as [string]))
       }
 
-      It 'a saved position still wins over the window it came from' {
-        $prefer = [pscustomobject]@{ Left = 200; Top = 300; Width = 800; Height = 600 }
-        $b = Get-PickerBounds 660 430 '100' '200' $script:PickerAreas $script:PickerFallbackArea $prefer
-        Expect (($b.Left -eq 100) -and ($b.Top -eq 200)) (($b.Left -as [string]) + ',' + ($b.Top -as [string]))
+      It 'a caret near the bottom flips the panel above and keeps every row' {
+        # 1000 + 20 + 4 + 332 runs off the bottom; 1000 - 4 - 332 = 664 fits above it
+        $p = Get-CompactPlacement 6 40 92 520 $script:PickerFallbackArea 400 1000 20 3
+        Expect (($p.Top -eq 664) -and ($p.Rows -eq 6)) (($p.Top -as [string]) + '/' + ($p.Rows -as [string]))
       }
 
-      It 'the compact panel opens right under the caret' {
-        $caret = [pscustomobject]@{ Left = 400; Top = 300; Width = 2; Height = 20 }
-        $b = Get-PickerBounds 520 290 '' '' $script:PickerAreas $script:PickerFallbackArea $null $caret
-        # the caret line starts the panel: 300 + 20 + the 4 px gap
-        Expect (($b.Left -eq 400) -and ($b.Top -eq 324) -and $b.Fitted) (($b.Left -as [string]) + ',' + ($b.Top -as [string]))
+      It 'a caret with no room on either side gives up rows instead of overlapping it' {
+        # a 400 px work area holds seven rows at most; the caret sits 60 px from its bottom,
+        # so 316 px remain above and the panel shrinks to the five rows that fits there
+        $short = [pscustomobject]@{ Left = 0; Top = 0; Width = 1920; Height = 400 }
+        $p = Get-CompactPlacement 6 40 92 520 $short 400 320 20 3
+        Expect (($p.Rows -eq 5) -and ($p.Top -eq 24) -and ($p.Height -eq 292)) (($p.Rows -as [string]) + '/' + ($p.Top -as [string]) + '/' + ($p.Height -as [string]))
       }
 
-      It 'with no room below it flips above the caret' {
-        $caret = [pscustomobject]@{ Left = 400; Top = 1000; Width = 2; Height = 20 }
-        $b = Get-PickerBounds 520 290 '' '' $script:PickerAreas $script:PickerFallbackArea $null $caret
-        # 1020 + 4 + 290 runs off the bottom, so the panel sits above: 1000 - 4 - 290
-        Expect ($b.Top -eq 706) ($b.Top -as [string])
+      It 'a screen narrower than the panel narrows it' {
+        $narrow = [pscustomobject]@{ Left = 0; Top = 0; Width = 400; Height = 1080 }
+        $p = Get-CompactPlacement 6 40 92 520 $narrow 10 300 20 3
+        Expect (($p.Width -eq 400) -and ($p.Left -eq 0)) (($p.Width -as [string]) + '/' + ($p.Left -as [string]))
       }
 
       It 'a caret at the right edge keeps the panel on that screen' {
-        $caret = [pscustomobject]@{ Left = 1900; Top = 300; Width = 2; Height = 20 }
-        $b = Get-PickerBounds 520 290 '' '' $script:PickerAreas $script:PickerFallbackArea $null $caret
-        Expect ($b.Left -eq 1400) ($b.Left -as [string])
+        $p = Get-CompactPlacement 6 40 92 520 $script:PickerFallbackArea 1900 300 20 3
+        Expect ($p.Left -eq 1400) ($p.Left -as [string])
       }
 
       It 'a caret on the second monitor decides the screen' {
-        $caret = [pscustomobject]@{ Left = 2200; Top = 300; Width = 2; Height = 20 }
-        $b = Get-PickerBounds 520 290 '' '' $script:PickerAreas $script:PickerFallbackArea $null $caret
-        Expect ($b.Left -eq 2200) ($b.Left -as [string])
-      }
-
-      It 'a saved position still wins over the caret' {
-        $caret = [pscustomobject]@{ Left = 400; Top = 300; Width = 2; Height = 20 }
-        $b = Get-PickerBounds 660 430 '100' '200' $script:PickerAreas $script:PickerFallbackArea $null $caret
-        Expect (($b.Left -eq 100) -and ($b.Top -eq 200)) (($b.Left -as [string]) + ',' + ($b.Top -as [string]))
-      }
-
-      It 'a caret with no size falls through to the window' {
-        $prefer = [pscustomobject]@{ Left = 200; Top = 300; Width = 800; Height = 600 }
-        $empty = [pscustomobject]@{ Left = 0; Top = 0; Width = 0; Height = 0 }
-        $b = Get-PickerBounds 660 430 '' '' $script:PickerAreas $script:PickerFallbackArea $prefer $empty
-        Expect (($b.Left -eq 270) -and ($b.Top -eq 357)) (($b.Left -as [string]) + ',' + ($b.Top -as [string]))
+        $area = Get-AreaAt $script:PickerAreas $script:PickerFallbackArea 2200 300
+        $p = Get-CompactPlacement 6 40 92 520 $area 2200 300 20 3
+        Expect ($p.Left -eq 2200) ($p.Left -as [string])
       }
     }
 
