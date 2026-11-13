@@ -155,7 +155,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 ### 焦点模型
 
-面板以不激活方式显示（`WS_EX_NOACTIVATE`），按键由低级键盘钩子（`WH_KEYBOARD_LL`）截获后转发给面板自身：原窗口保持前台、焦点、光标位置与层级不变，面板中可直接输入过滤，原窗口收不到字符（搜索框没有真实焦点，插入位置由一条自绘竖线指示：位置取搜索框自身的排版宽度，紧贴前后字符，随方向键、`Home` `End`、退格与点击移动，接管键盘后让位给系统光标）。关闭面板（`Esc`、回车粘贴、再按热键、点击面板外部、呼出开始菜单或 Windows 搜索）即卸载钩子。
+面板以不激活方式显示（`WS_EX_NOACTIVATE`），按键由低级键盘钩子（`WH_KEYBOARD_LL`）截获后转发给面板自身：原窗口保持前台、焦点、光标位置与层级不变，面板中可直接输入过滤，原窗口收不到字符。搜索框没有真实焦点，插入位置由一条自绘竖线指示：位置取搜索框自身的排版宽度，紧贴前后字符，随方向键、`Home` `End`、退格与点击移动；`Shift` 加方向键选中的范围以同色细条标在文字下方，`Ctrl` 加方向键、`Ctrl`+`Home` `End` 按词与行首行尾跳转，`Ctrl`+`Backspace` 或 `Ctrl`+`Delete` 删一个词。接管键盘后仍画这条竖线并隐藏系统光标（系统光标不能改颜色），输入法组字期间例外。关闭面板（`Esc`、回车粘贴、再按热键、点击面板外部、呼出开始菜单或 Windows 搜索）即卸载钩子。
 
 面板以置顶方式显示但不激活，因此激活着的置顶窗口始终在它上面：开始菜单与 Windows 搜索的唤出窗口就是这样压住面板的（`SetWindowPos`、先取消置顶再置顶、`BringWindowToTop`、`HWND_TOP` 都无法逆转，已逐一实测）。层级本身查不到：`GetWindowBand` 未导出，按序号调用会让调用方崩溃；`TokenUIAccess` 只能覆盖带 UIAccess 的窗口，开始菜单与搜索并不带。因此判据为：前台窗口是置顶窗口、带 UIAccess，或属于开始菜单/搜索（开始菜单为 `StartMenuExperienceHost`，搜索在 Win11 为 `SearchHost`、Win10 1903–2004 为 `SearchApp`、更早为 `SearchUI`，另认 shell 的 UX 帧类名）。这类窗口在前台时按下热键：属于开始菜单/搜索的先 `Esc` 关掉，`Esc` 无效时把其下层窗口切到前台（浮层失去前台即关闭），关掉搜索可能露出开始菜单，所以最多连关三个；仍关不掉或不是它们则不开。面板打开期间呼出开始菜单或搜索，则关闭面板。
 
@@ -165,7 +165,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 目标窗口是**按键那一刻**的前台窗口（钩子放行 `Alt+Tab`，面板打开后换到别的程序，文本就落在新窗口）；属于本进程的窗口（交接后的面板本身、常驻进程的控制台）不算目标，此时用打开面板前的那个窗口。
 
-钩子仅接管面板使用的键：可打印字符、方向键与 `PgUp` `PgDn` `Home` `End`、`Delete`、`F2`、`Backspace` `Tab` `Enter` `Esc`，以及面板响应的 `Ctrl` 组合（`Ctrl+A`、`Ctrl+Z`、`Ctrl+Enter`、`Ctrl+0..9` 与插件注册的键）。其余交给系统，包括所有 `Alt` / `Win` 组合、`Ctrl+Space`、`Ctrl+Shift+Esc`、未处理的 `Ctrl` 快捷键、`F1` 与 `F3`–`F12`、`Insert`。
+钩子仅接管面板使用的键：可打印字符、方向键与 `PgUp` `PgDn` `Home` `End`、`Delete`、`F2`、`Backspace` `Tab` `Enter` `Esc`，以及面板响应的 `Ctrl` 组合（`Ctrl+A`、`Ctrl+Z`、`Ctrl+Enter`、`Ctrl+0..9`、搜索框的 `Ctrl` 加方向键 / `Ctrl`+`Home` `End` / `Ctrl`+`Backspace` `Delete` 与插件注册的键）。其余交给系统，包括所有 `Alt` / `Win` 组合、`Ctrl+Space`、`Ctrl+Shift+Esc`、未处理的 `Ctrl` 快捷键、`F1` 与 `F3`–`F12`、`Insert`。
 
 插件通过 `PanelKeys` 注册面板按键：`item-marks` 提供 `Ctrl+P` / `Ctrl+S` / `Ctrl+H`，`entry-actions` 提供 `Ctrl+O`，均列在 `clipboard help` 的 Panel keys 中并标注来源插件。
 

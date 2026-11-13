@@ -106,6 +106,9 @@ namespace Cb {
 
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern uint GetDpiForSystem();
+    // the system caret cannot be given a colour, so the panel hides it and draws its own line;
+    // a control re-shows its caret after every keystroke, so the caller repeats this
+    [DllImport("user32.dll")] public static extern bool HideCaret(IntPtr h);
     // where a window is on screen, as a rectangle the geometry helpers can read. Empty for a
     // window that is gone, minimised or has no area, so the caller keeps its own fallback.
     [StructLayout(LayoutKind.Sequential)] private struct WINRECT { public int Left; public int Top; public int Right; public int Bottom; }

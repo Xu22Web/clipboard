@@ -103,6 +103,10 @@ function Show-Picker([switch]$Warm) {
     $script:CaretPulse = Get-Date
     # the selection the drawn caret currently sits at, so a key that only moves it is noticed
     $script:CaretIndex = -1
+    # a selection made with Shift: the anchor is where it started, the active end is where the
+    # drawn line goes. Both -1 means "no selection of our own", the control's selection applies.
+    $script:SelAnchor = -1
+    $script:SelActive = -1
     # no keyboard path yet; the derived flags are owned by Set-InputMode (lib\panel\keyhook.ps1)
     Set-InputMode 'none'
     $script:PrevMouseDown = $false
@@ -309,6 +313,9 @@ function Show-Picker([switch]$Warm) {
     $txt.ForeColor = $ui.Text
     $txt.Font = $fBody
     $txt.AccessibleName = 'Search clipboard history'
+    # ES_NOHIDESEL: without it the control hides its selection whenever it loses the focus, and
+    # under the hook it never has it - a Shift selection would be invisible
+    try { [void][Cb.Win]::SetWindowLong($txt.Handle, -16, ([Cb.Win]::GetWindowLong($txt.Handle, -16) -bor 0x0100)) } catch { Write-Log ('no nohidesel: ' + $_.Exception.Message) }
     # the box itself takes the click before its parent panel ever sees it; in the hook model
     # nothing else moves the selection, so the point is turned into a caret position here
     $txt.Add_MouseDown({ param($s, $e) if ($script:PickerHook) { Move-CaretTo $e.X $e.Y } })
@@ -354,6 +361,16 @@ function Show-Picker([switch]$Warm) {
     $caret.AccessibleName = 'Search caret'
     $caret.Add_Click({ Claim-Search })
 
+    # The range a Shift selection covers, as a band under the glyphs. An edit control paints its
+    # own selection only while it has the focus - which under the hook it never has - and a panel
+    # over the text would hide the characters instead. Once the field really has the keyboard the
+    # control paints the selection itself and this band is not used.
+    $selBand = New-Object Windows.Forms.Panel
+    $selBand.SetBounds((Px 38), (Px 30), 0, (Px 2))
+    $selBand.BackColor = $ui.Accent
+    $selBand.Visible = $false
+    $selBand.AccessibleName = 'Search selection'
+
     $line = New-Object Windows.Forms.Panel
     $line.Dock = 'Bottom'
     $line.Height = 1
@@ -363,8 +380,10 @@ function Show-Picker([switch]$Warm) {
     $box.Controls.Add($txt)
     $box.Controls.Add($clr)
     $box.Controls.Add($ph)
+    $box.Controls.Add($selBand)
     $box.Controls.Add($caret)
     $ph.BringToFront()
+    $selBand.BringToFront()
     $caret.BringToFront()
     $head.Controls.Add($box)
     $head.Controls.Add($line)
@@ -498,19 +517,130 @@ function Show-Picker([switch]$Warm) {
       $clr.Visible = ($txt.Text.Length -gt 0)
     }
 
-    # Where the next character lands, in the field's own coordinates. Only while the panel owns
-    # the typing without owning the focus: otherwise Windows draws the real caret and a second
-    # one would be in the way.
+    # Where the next character lands, in the field's own coordinates. The panel always draws it
+    # itself: under the hook Windows draws none, and in takeover mode the system caret cannot be
+    # given the theme colour, so it is hidden and this line stands in. An input method is the
+    # exception - its candidate window is anchored at the real caret - as is the editor, which
+    # has its own box.
+    function Test-OwnCaret {
+      if ($null -ne $script:EditRow) { return $false }
+      if (-not $script:SearchFocus) { return $false }
+      if ($script:PickerHook) { return $true }
+      if ($script:InputMode -ne 'takeover') { return $false }
+      return (-not $script:ImeNative)
+    }
+
+    # The index the drawn line sits at: the active end of a Shift selection, else the control's
+    # own insertion point.
+    function Get-CaretIndex {
+      if ($script:SelActive -ge 0 -and $txt.SelectionLength -gt 0) {
+        return [Math]::Min([Math]::Max(0, $script:SelActive), $txt.TextLength)
+      }
+      return [int]$txt.SelectionStart
+    }
+
+    # Put the insertion point down, dropping any selection this panel made itself.
+    function Set-SearchCaret([int]$i) {
+      if ($i -lt 0) { $i = 0 }
+      if ($i -gt $txt.TextLength) { $i = $txt.TextLength }
+      $script:SelAnchor = -1
+      $script:SelActive = -1
+      [void][Cb.Win]::SendMessage($txt.Handle, 0x00B1, [IntPtr]$i, [IntPtr]$i)
+      Sync-SearchCaret
+    }
+
+    # Where a word starts (dir -1) or ends (dir 1) from a place: separators are skipped first,
+    # then a run of letters, digits and underscores - what the filter treats as one word.
+    function Get-WordStop([string]$s, [int]$i, [int]$dir) {
+      if ($i -lt 0) { $i = 0 }
+      if ($i -gt $s.Length) { $i = $s.Length }
+      if ($dir -lt 0) {
+        while ($i -gt 0 -and -not ([char]::IsLetterOrDigit($s[$i - 1]) -or $s[$i - 1] -eq '_')) { $i-- }
+        while ($i -gt 0 -and ([char]::IsLetterOrDigit($s[$i - 1]) -or $s[$i - 1] -eq '_')) { $i-- }
+      } else {
+        while ($i -lt $s.Length -and -not ([char]::IsLetterOrDigit($s[$i]) -or $s[$i] -eq '_')) { $i++ }
+        while ($i -lt $s.Length -and ([char]::IsLetterOrDigit($s[$i]) -or $s[$i] -eq '_')) { $i++ }
+      }
+      return $i
+    }
+
+    # The editing keys the box cannot carry out from a posted key: the control reads the Shift
+    # and Ctrl state of its own thread, which never saw those modifiers under the hook, so a
+    # posted WM_KEYDOWN(left) arrives as a bare arrow. The selection is worked out here and
+    # handed over with EM_SETSEL. Returns $true when the key was used, so the caller does not
+    # post it as well.
+    function Step-SearchKey([int]$vk, [bool]$shift, [bool]$ctrl) {
+      $len = $txt.TextLength
+      $at = Get-CaretIndex
+      if ($shift) {
+        # the anchor is where this stretch of selection started: it has to be taken before the
+        # active end moves, or a single Shift+arrow collapses again
+        if ($script:SelAnchor -lt 0) { $script:SelAnchor = $at }
+        if (0x23 -eq $vk) { $at = $len }
+        elseif (0x24 -eq $vk) { $at = 0 }
+        elseif (0x25 -eq $vk) { if ($at -gt 0) { $at-- } }
+        elseif (0x27 -eq $vk) { if ($at -lt $len) { $at++ } }
+        else { return $false }
+        # collapse to nothing at the anchor: a selection of zero length is no selection
+        if ($script:SelAnchor -eq $at) {
+          Set-SearchCaret $at
+          return $true
+        }
+        $lo = [Math]::Min($script:SelAnchor, $at)
+        $hi = [Math]::Max($script:SelAnchor, $at)
+        [void][Cb.Win]::SendMessage($txt.Handle, 0x00B1, [IntPtr]$lo, [IntPtr]$hi)
+        $script:SelActive = $at
+        Sync-SearchCaret
+        return $true
+      }
+      if (-not $ctrl) { return $false }
+      switch ($vk) {
+        0x24 { Set-SearchCaret 0; return $true }                                  # Ctrl+Home
+        0x23 { Set-SearchCaret $len; return $true }                               # Ctrl+End
+        0x25 { Set-SearchCaret (Get-WordStop $txt.Text $at -1); return $true }    # Ctrl+Left
+        0x27 { Set-SearchCaret (Get-WordStop $txt.Text $at 1); return $true }     # Ctrl+Right
+        0x08 {                                                                    # Ctrl+Backspace
+          # a selection goes first, the way the key works everywhere else
+          if ($txt.SelectionLength -gt 0) {
+            [void][Cb.Win]::SendMessage($txt.Handle, 0x0102, [IntPtr]8, [IntPtr]1)
+            $script:SelAnchor = -1; $script:SelActive = -1
+            return $true
+          }
+          $from = Get-WordStop $txt.Text $at -1
+          if ($from -ge $at) { $from = [Math]::Max(0, $at - 1) }
+          [void][Cb.Win]::SendMessage($txt.Handle, 0x00B1, [IntPtr]$from, [IntPtr]$at)
+          [void][Cb.Win]::SendMessage($txt.Handle, 0x0102, [IntPtr]8, [IntPtr]1)
+          $script:SelAnchor = -1; $script:SelActive = -1
+          return $true
+        }
+        0x2E {                                                                    # Ctrl+Delete
+          if ($txt.SelectionLength -gt 0) {
+            [void][Cb.Win]::SendMessage($txt.Handle, 0x0102, [IntPtr]8, [IntPtr]1)
+            $script:SelAnchor = -1; $script:SelActive = -1
+            return $true
+          }
+          $to = Get-WordStop $txt.Text $at 1
+          if ($to -le $at) { $to = [Math]::Min($len, $at + 1) }
+          [void][Cb.Win]::SendMessage($txt.Handle, 0x00B1, [IntPtr]$at, [IntPtr]$to)
+          [void][Cb.Win]::SendMessage($txt.Handle, 0x0102, [IntPtr]8, [IntPtr]1)
+          $script:SelAnchor = -1; $script:SelActive = -1
+          return $true
+        }
+      }
+      return $false
+    }
+
     function Sync-SearchCaret {
       try {
-        if (-not ($script:SearchFocus -and $script:PickerHook) -or $null -ne $script:EditRow) {
+        if (-not (Test-OwnCaret)) {
           if ($caret.Visible) { $caret.Visible = $false }
+          if ($selBand.Visible) { $selBand.Visible = $false }
           return
         }
         # The edit control knows where each character sits and answers even without the focus
         # (EM_POSFROMCHAR), and that is the only width that matches what it draws: GDI measured
         # the same prefix half again too wide and left the line a few pixels past the last glyph.
-        $idx = $txt.SelectionStart
+        $idx = Get-CaretIndex
         if ($idx -lt 0) { $idx = 0 }
         if ($idx -gt $txt.TextLength) { $idx = $txt.TextLength }
         $px = -1
@@ -535,7 +665,38 @@ function Show-Picker([switch]$Warm) {
         $script:CaretIndex = $idx
         $caret.Visible = $true
         $script:CaretPulse = Get-Date
+        Sync-SearchBand
       } catch { }
+    }
+
+    # The band under a Shift selection: from the left edge of its first character to the right
+    # edge of its last, in the field's own metrics. Only while the hook owns the typing - with
+    # the real keyboard the control paints the selection itself.
+    function Sync-SearchBand {
+      try {
+        if (-not ($script:PickerHook -and $txt.SelectionLength -gt 0)) {
+          if ($selBand.Visible) { $selBand.Visible = $false }
+          return
+        }
+        $lo = [Math]::Min([int]$txt.SelectionStart, [int]$txt.SelectionStart + [int]$txt.SelectionLength)
+        $hi = [Math]::Max([int]$txt.SelectionStart, [int]$txt.SelectionStart + [int]$txt.SelectionLength)
+        if ($hi -gt $txt.TextLength) { $hi = $txt.TextLength }
+        $x1 = [Cb.Win]::TextWidth($txt.Handle, $txt.Text.Substring(0, $lo))
+        $x2 = [Cb.Win]::TextWidth($txt.Handle, $txt.Text.Substring(0, $hi))
+        $cw = $txt.ClientSize.Width
+        if ($x1 -lt 0) { $x1 = 0 }
+        if ($cw -gt 1 -and $x1 -gt $cw) { $x1 = $cw }
+        if ($cw -gt 1 -and $x2 -gt $cw) { $x2 = $cw }
+        $w = $x2 - $x1
+        if ($w -lt 1) {
+          if ($selBand.Visible) { $selBand.Visible = $false }
+          return
+        }
+        $selBand.SetBounds(([int]$txt.Left + $x1), ([int]$txt.Top + [int]$txt.Font.Height), $w, [Math]::Max(1, (Px 2)))
+        $selBand.Visible = $true
+      } catch {
+        if ($selBand.Visible) { $selBand.Visible = $false }
+      }
     }
 
     function Get-Rows {
@@ -1336,7 +1497,7 @@ function Show-Picker([switch]$Warm) {
     # F2 edits the selected entry in place; the editor lives in lib/panel/picker-edit.ps1
     Set-PickerEditHost $form $lst $txt $ui $fBody { param($q) Update-List $q } { param($m, $ms) Set-Foot $m ([int]$ms) } { Focus-Search }
     function Flush-List { if ($deb.Enabled) { $deb.Stop(); Update-List $txt.Text } }
-    $txt.Add_TextChanged({ Sync-Placeholder; Sync-SearchCaret; $deb.Stop(); $deb.Start() })
+    $txt.Add_TextChanged({ $script:SelAnchor = -1; $script:SelActive = -1; Sync-Placeholder; Sync-SearchCaret; $deb.Stop(); $deb.Start() })
     $txt.Add_GotFocus({ $script:SearchFocus = $true; Set-AnimTarget $script:Anim 'Field' 1.0; Sync-SearchCaret })
     $txt.Add_LostFocus({ $script:SearchFocus = $false; Set-AnimTarget $script:Anim 'Field' 0.0; Sync-SearchCaret })
     $clr.Add_Click({ $txt.Text = ''; Claim-Search })
@@ -1466,7 +1627,11 @@ function Show-Picker([switch]$Warm) {
         $r = [int64][Cb.Win]::SendMessage($txt.Handle, 0x00D7, [IntPtr]::Zero, $pt)
         $i = [int]($r -band 0xFFFF)
         if ($i -ge 0x8000) { $i = $i - 0x10000 }
-        if ($i -ge 0) { [void][Cb.Win]::SendMessage($txt.Handle, 0x00B1, [IntPtr]$i, [IntPtr]$i) }
+        if ($i -ge 0) {
+          $script:SelAnchor = -1
+          $script:SelActive = -1
+          [void][Cb.Win]::SendMessage($txt.Handle, 0x00B1, [IntPtr]$i, [IntPtr]$i)
+        }
       } catch { }
     }
 
@@ -1519,6 +1684,16 @@ function Show-Picker([switch]$Warm) {
         }
         # text (and Backspace, WM_CHAR 0x08) goes to the box; Esc/Enter/Tab are control chars
         $isText = $ch -ne [char]0 -and (-not [char]::IsControl($ch) -or $ch -eq [char]8)
+        # selection and word jumps for the search box: the control cannot do them from a posted
+        # key, because the modifiers were never in its own thread's key state
+        if ($tg -eq $txt -and $null -eq $script:EditRow) {
+          $shiftDown = (([Cb.Win]::GetAsyncKeyState(0x10)) -band 0x8000) -ne 0
+          $ctrlDown = (([Cb.Win]::GetAsyncKeyState(0x11)) -band 0x8000) -ne 0
+          # any key without Shift ends the selection this panel was tracking, so the next
+          # Shift+arrow starts from wherever the caret is then
+          if (-not $shiftDown) { $script:SelAnchor = -1; $script:SelActive = -1 }
+          if (($shiftDown -or $ctrlDown) -and (Step-SearchKey $vk $shiftDown $ctrlDown)) { continue }
+        }
         # Esc closes the panel, so the handle is read once and the delivery is guarded
         try {
           if ($isText -and $plain) { [void][Cb.Win]::SendMessage($tg.Handle, 0x0102, [IntPtr][int]$ch, [IntPtr]1) }
@@ -1691,16 +1866,18 @@ function Show-Picker([switch]$Warm) {
       # a card waits for the cursor to rest; a page built off-thread lands on the next tick
       if ($script:PreviewHover -and $script:Hover -ge 0 -and $script:PvIdx -ne $script:Hover -and -not $cm.Visible -and ((Get-Date) - $script:PvAt).TotalMilliseconds -gt $script:PreviewDelay) { Show-HoverPreview }
       [void](Step-PreviewCard $pv)
-      # the drawn caret blinks while the panel owns the typing without owning the focus, and it
-      # follows the selection on every tick: the arrow keys move the insertion point without
-      # changing the text, so no TextChanged ever fires for them
-      if ($script:SearchFocus -and $script:PickerHook -and $null -eq $script:EditRow) {
-        if ($txt.SelectionStart -ne $script:CaretIndex) { Sync-SearchCaret }
+      # The drawn line blinks and follows the selection on every tick: the arrow keys move the
+      # insertion point without changing the text, so no TextChanged fires for them. In takeover
+      # mode the system caret is hidden every tick instead - a control re-shows it after each
+      # keystroke, and a second white caret next to the themed one is exactly the flicker to avoid.
+      if (Test-OwnCaret) {
+        if (-not $script:PickerHook) { try { [void][Cb.Win]::HideCaret($txt.Handle) } catch { } }
+        if ((Get-CaretIndex) -ne $script:CaretIndex) { Sync-SearchCaret }
         elseif (((Get-Date) - $script:CaretPulse).TotalMilliseconds -ge 530) {
           $script:CaretPulse = Get-Date
           $caret.Visible = -not $caret.Visible
         }
-      } elseif ($caret.Visible) { $caret.Visible = $false }
+      } elseif ($caret.Visible -or $selBand.Visible) { $caret.Visible = $false; $selBand.Visible = $false }
       # Idle ticks cost real CPU: 8 ms while something moves or the menu is open, else 20 ms.
       $busy = ($am -ne 0 -or $cm.Visible -or $script:PickerClose)
       Start-Sleep -Milliseconds $(if ($busy) { 8 } else { 20 })

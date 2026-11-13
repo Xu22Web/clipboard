@@ -67,6 +67,12 @@ namespace Cb {
       set.Add(0x50); set.Add(0x53); set.Add(0x48); set.Add(0x4F);   // plugin keys
       for (uint i = 0x30; i <= 0x39; i++) { set.Add(i); }           // 0-9  pick a visible row
       for (uint i = 0x60; i <= 0x69; i++) { set.Add(i); }           // numpad 0-9
+      // the editing keys the search box needs in combination too: word jumps, word deletes and
+      // the ends of the line. The control cannot read Ctrl from a posted key, so the panel
+      // carries these out itself (lib\panel\picker.ps1, Step-SearchKey).
+      set.Add(0x25); set.Add(0x27);         // Left / Right  jump a word
+      set.Add(0x24); set.Add(0x23);         // Home / End    start / end of the text
+      set.Add(0x08); set.Add(0x2E);         // Backspace / Delete  drop a word
       return set;
     }
 

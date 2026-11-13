@@ -759,6 +759,28 @@ try {
         # take the keyboard when the text box, hidden under it, happened to be hit
         Expect (([regex]::Matches($script:StructPickerText, '\.Add_Click\(\{ Claim-Search \}\)')).Count -ge 5) 'search area handlers missing'
       } -Skip $script:StructMinified
+
+      It 'the search field draws its own caret and its own selection' {
+        # The system caret cannot be given the theme colour, so the panel draws the line itself -
+        # in takeover mode too - and hides the real one. A control re-shows its caret after every
+        # keystroke, so the hiding has to come from the loop, not once from the hand-over.
+        Expect ($script:StructPickerText -match '(?s)function Test-OwnCaret\s*\{.{0,500}ImeNative') 'the caret owner ignores an input method'
+        Expect ($script:StructPickerText -match '(?s)Test-OwnCaret.{0,400}HideCaret\(\$txt\.Handle\)') 'the system caret is never hidden while the panel draws its own'
+        Expect ($script:StructWinText -match 'extern bool HideCaret') 'HideCaret missing from the assembly'
+        Expect ($script:StructPickerText -match 'function Get-CaretIndex') 'no caret index helper'
+        # EM_POSFROMCHAR / TextWidth: the control's own metrics, never a GDI measurement of the
+        # prefix (that one came out half again as wide on a scaled display)
+        Expect ($script:StructPickerText -match '0x00D6') 'the caret position is not asked of the control'
+        Expect ($script:StructPickerText -match '\[Cb\.Win\]::TextWidth') 'the end of the text is not measured with the control font'
+        Expect (-not ($script:StructPickerText -match 'MeasureText\(\$prefix')) 'the caret is still placed from a GDI measurement'
+        # the control reads Shift out of its own thread's key state, which never saw the key
+        # under the hook, so the selection is worked out here and handed over with EM_SETSEL
+        Expect ($script:StructPickerText -match '(?s)function Step-SearchKey.{0,1500}0x00B1') 'a Shift selection never reaches the control'
+        Expect ($script:StructPickerText -match 'function Get-WordStop') 'no word boundary helper for the Ctrl jumps'
+        # it also only paints a selection while it has the focus: the band is what makes the
+        # range visible under the hook
+        Expect ($script:StructPickerText -match 'function Sync-SearchBand') 'the selection range is never drawn'
+      } -Skip $script:StructMinified
     }
   }
 
