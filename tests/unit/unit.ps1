@@ -752,6 +752,9 @@ try {
         # starts: no caret is shown until something is typed, and the list navigates meanwhile
         Expect ($script:StructPickerText -match '(?s)Add_Shown\s*\(\{(?:(?!Add_).){0,400}\$lst\.Focus\(\)') 'the list does not take the keyboard on open'
         Expect (-not ($script:StructPickerText -match '(?s)Add_Shown\s*\(\{(?:(?!Add_).){0,400}\$txt\.Focus\(\)')) 'the filter row takes the keyboard on open'
+        # Show() hands the focus to the first tabbable control, which would be the box: it would
+        # hold the keyboard - and draw its caret - for one frame before the list takes it
+        Expect ($script:StructPickerText -match '\$txt\.TabStop = \$false') 'the box is a tab stop, so Show() focuses it'
         Expect ($script:StructPickerText -match '(?s)Add_KeyPress\s*\(\{(?:(?!Add_).){0,600}Start-Search') 'a typed character never reaches the filter row'
         Expect ($script:StructPickerText -match '(?s)function Start-Search\s*\{.{0,300}\$txt\.Focus\(\)') 'Start-Search does not focus the box'
         # a click anywhere in the search area ends in the same place: the real focus
@@ -764,17 +767,26 @@ try {
         # tick would then touch disposed controls - a null handle reached the IME probe and the
         # error ended the whole panel
         Expect ($script:StructPickerText -match '(?s)DoEvents\(\).{0,300}if \(\$form\.IsDisposed\) \{ break \}') 'the loop keeps running after the panel was closed'
-        Expect ($script:StructPickerText -match '(?s)ImeComposing.{0,200}catch \{ \$script:ImeNative = \$false \}') 'the IME probe can throw out of the loop'
+        Expect ($script:StructPickerText -match '(?s)ImeComposing.{0,200}catch \{ \$script:Composing = \$false \}') 'the IME probe can throw out of the loop'
       } -Skip $script:StructMinified
 
       It 'the search field draws the caret in the theme colour' {
         # The system caret cannot be given a colour, so the panel draws the line itself and hides
         # the real one. A control re-shows its caret after every keystroke, so the hiding has to
         # come from the loop, not once from the focus change.
-        Expect ($script:StructPickerText -match '(?s)function Test-OwnCaret\s*\{.{0,400}ImeComposing|ImeNative') 'the caret owner ignores an input method'
-        Expect ($script:StructPickerText -match '(?s)Test-OwnCaret.{0,400}HideCaret\(\$txt\.Handle\)') 'the system caret is never hidden while the panel draws its own'
+        Expect ($script:StructPickerText -match '(?s)function Test-OwnCaret\s*\{.{0,400}\$script:Composing') 'the caret owner ignores an input method'
+        Expect ($script:StructPickerText -match '(?s)function Hide-SystemCaret\s*\{.{0,300}HideCaret\(\$txt\.Handle\)') 'the system caret is never hidden while the panel draws its own'
         Expect ($script:StructWinText -match 'extern bool HideCaret') 'HideCaret missing from the assembly'
         Expect ($script:StructWinText -match 'bool ImeComposing') 'no input-method check for the drawn caret'
+        # HideCaret keeps a count: without the matching ShowCaret the caret never comes back, and
+        # a composing input method then has no caret to anchor its candidate window to
+        Expect ($script:StructWinText -match 'extern bool ShowCaret') 'ShowCaret missing from the assembly'
+        Expect ($script:StructPickerText -match '(?s)function Show-SystemCaret\s*\{.{0,400}ShowCaret') 'the hidden count is never given back'
+        Expect ($script:StructPickerText -match '(?s)else \{\s*if \(\$caret\.Visible\) \{ \$caret\.Visible = \$false \}\s*Show-SystemCaret') 'the composing case does not give the system caret back'
+        Expect ($script:StructPickerText -match 'Add_GotFocus\(\{ \$script:SearchFocus = \$true; \$script:SysHides = 0') 'the hide count survives a new focus'
+        # only a composition string counts: the conversion mode is on for the whole session with a
+        # Chinese input method, which used to hide the drawn caret before anything was typed
+        Expect (-not ($script:StructWinText -match 'ImmGetConversionStatus')) 'the conversion mode still decides instead of the composition'
         Expect ($script:StructPickerText -match 'function Get-CaretIndex') 'no caret index helper'
         # EM_POSFROMCHAR / TextWidth: the control's own metrics, never a GDI measurement of the
         # prefix (that one came out half again as wide on a scaled display)
@@ -3678,6 +3690,24 @@ try {
       Add-PinList
 
       Describe 'the self-painted list' {
+        It 'claims the keys it is navigated with' {
+          # A plain Control reports the arrow keys as dialog keys, so the container answers them
+          # to move the focus and the panel's key handler never sees them: the selection could
+          # not be walked with them at all. They have to arrive as input keys.
+          $pl = New-Object Cb.PinList
+          try {
+            $m = [Cb.PinList].GetMethod('IsInputKey', [Reflection.BindingFlags]'NonPublic,Instance')
+            Expect ($null -ne $m) 'IsInputKey is not overridden'
+            foreach ($k in @('Up', 'Down', 'Left', 'Right', 'Home', 'End', 'PageUp', 'PageDown')) {
+              $arg = [Windows.Forms.Keys]::$k
+              Expect ([bool]$m.Invoke($pl, @($arg))) ('the list gives ' + $k + ' away')
+            }
+            # everything else stays what it was: a letter is a key press, Enter is a dialog key
+            Expect (-not [bool]$m.Invoke($pl, @([Windows.Forms.Keys]::A))) 'a letter must stay a key press'
+            Expect (-not [bool]$m.Invoke($pl, @([Windows.Forms.Keys]::Enter))) 'Enter must stay a dialog key'
+          } finally { $pl.Dispose() }
+        }
+
         It 'freezes the leading rows' {
           $pl = New-Object Cb.PinList
           try {

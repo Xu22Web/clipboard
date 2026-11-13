@@ -103,6 +103,10 @@ function Show-Picker([switch]$Warm) {
     $script:CaretPulse = Get-Date
     # the selection the drawn caret currently sits at, so a key that only moves it is noticed
     $script:CaretIndex = -1
+    # how many times the system caret was hidden and not given back yet. HideCaret counts, and
+    # a caret that stays hidden is what an input method needs to see: the candidate window is
+    # placed at it, and nothing in the control brings it back.
+    $script:SysHides = 0
     # which end of a selection the caret is at: -1 the start, +1 the end, 0 no selection of its
     # own. The control keeps start and length but not the end the keyboard moved last.
     $script:CaretEnd = 0
@@ -318,6 +322,10 @@ function Show-Picker([switch]$Warm) {
     $txt.ForeColor = $ui.Text
     $txt.Font = $fBody
     $txt.AccessibleName = 'Search clipboard history'
+    # Not a tab stop: a form gives the focus to its first tabbable control when it is shown,
+    # and that would put the keyboard - and a caret - in the filter row for one frame before
+    # the list takes it. The list is where the panel starts; the box is reached by typing.
+    $txt.TabStop = $false
 
     $ph = New-Object Windows.Forms.Label
     # the same left edge as the text the box will hold, so the caret of an empty field and the
@@ -503,13 +511,32 @@ function Show-Picker([switch]$Warm) {
     }
 
     # The field draws the caret itself, in the theme colour: the system caret cannot be tinted,
-    # so it is hidden and this line stands in for it while the field has the keyboard. An input
-    # method is the exception - its candidate window is anchored at the real caret - and so is
-    # the row editor, which has a box of its own.
+    # so it is hidden and this line stands in for it while the field has the keyboard. Composing
+    # with an input method is the exception - its candidate window is anchored at the real caret
+    # - and so is the row editor, which has a box of its own.
     function Test-OwnCaret {
       if ($null -ne $script:EditRow) { return $false }
       if (-not $txt.Focused) { return $false }
-      return (-not $script:ImeNative)
+      return (-not $script:Composing)
+    }
+
+    # HideCaret is counted by USER32: the caret comes back only after as many ShowCaret calls.
+    # The count is capped, because a control undoes one hide per keystroke, so a handful is
+    # enough to keep the white caret off the screen - and giving the rest back stays cheap.
+    function Hide-SystemCaret {
+      if ($script:SysHides -ge 8) { return }
+      try { if ([Cb.Win]::HideCaret($txt.Handle)) { $script:SysHides++ } } catch { }
+    }
+
+    function Show-SystemCaret {
+      while ($script:SysHides -gt 0) {
+        $shown = $false
+        try { $shown = [Cb.Win]::ShowCaret($txt.Handle) } catch { $shown = $false }
+        if (-not $shown) { break }
+        $script:SysHides--
+      }
+      # a control that lost the focus destroyed the caret and reset the count with it
+      $script:SysHides = 0
     }
 
     # The index the drawn line sits at. With a selection the control knows where it starts and
@@ -1373,7 +1400,7 @@ function Show-Picker([switch]$Warm) {
     Set-PickerEditHost $form $lst $txt $ui $fBody { param($q) Update-List $q } { param($m, $ms) Set-Foot $m ([int]$ms) } { param($t) $t.Focus() }
     function Flush-List { if ($deb.Enabled) { $deb.Stop(); Update-List $txt.Text } }
     $txt.Add_TextChanged({ $script:CaretEnd = 0; Sync-Placeholder; Sync-SearchCaret; $deb.Stop(); $deb.Start() })
-    $txt.Add_GotFocus({ $script:SearchFocus = $true; Set-AnimTarget $script:Anim 'Field' 1.0; $box.Invalidate(); Sync-SearchCaret })
+    $txt.Add_GotFocus({ $script:SearchFocus = $true; $script:SysHides = 0; Set-AnimTarget $script:Anim 'Field' 1.0; $box.Invalidate(); Sync-SearchCaret })
     $txt.Add_LostFocus({ $script:SearchFocus = $false; $script:CaretEnd = 0; Set-AnimTarget $script:Anim 'Field' 0.0; $box.Invalidate(); Sync-SearchCaret })
     # The filter row is not where the panel starts, so the first character typed while the list
     # has the keyboard opens it: the focus moves to the box, and the character it was going to
@@ -1566,7 +1593,7 @@ function Show-Picker([switch]$Warm) {
 
     # The panel owns the foreground from Show() on (lib\panel\focus.ps1), so the box is not
     # focused until the user types into it.
-    $script:ImeCheckAt = Get-Date; $script:ImeNative = $false
+    $script:ImeCheckAt = Get-Date; $script:Composing = $false
     $script:ShellCheckAt = Get-Date
     $script:MenuClosedAt = $null
     # Non-modal on purpose: ShowDialog would block this message pump. Layout, list and the
@@ -1634,11 +1661,12 @@ function Show-Picker([switch]$Warm) {
           $form.Close(); break
         }
       }
-      # the input method decides whether the drawn caret is the only one there is: while it
-      # composes, the real caret has to stay visible - the candidate window sits at it
-      if (-not $form.IsDisposed -and ((Get-Date) - $script:ImeCheckAt).TotalMilliseconds -gt 400) {
+      # Whether the drawn caret is the only one there is: while an input method composes, the
+      # real caret has to be shown - the candidate window sits at it, and only the system can
+      # draw it. The answer is asked of the control often enough that the switch is not seen.
+      if (-not $form.IsDisposed -and ((Get-Date) - $script:ImeCheckAt).TotalMilliseconds -gt 120) {
         $script:ImeCheckAt = Get-Date
-        try { $script:ImeNative = [Cb.Win]::ImeComposing($txt.Handle) } catch { $script:ImeNative = $false }
+        try { $script:Composing = [Cb.Win]::ImeComposing($txt.Handle) } catch { $script:Composing = $false }
       }
       if (-not $form.ContainsFocus -and ((Get-Date) - $script:ShownAt).TotalMilliseconds -gt 350) {
         # a click elsewhere dismisses the panel; the context menu is ours, not somewhere else
@@ -1660,16 +1688,20 @@ function Show-Picker([switch]$Warm) {
       [void](Step-PreviewCard $pv)
       # The drawn line blinks and follows the selection on every tick: the arrow keys move the
       # insertion point without changing the text, so no TextChanged fires for them. The system
-      # caret is hidden every tick - a control re-shows it after each keystroke, and a second
-      # white caret next to the themed one is exactly the flicker to avoid.
+      # caret is hidden while the drawn one stands in for it - a control re-shows it after each
+      # keystroke, and a second white caret next to the themed one is exactly the flicker to
+      # avoid. While an input method composes the pair swaps: the system caret is given back.
       if (Test-OwnCaret) {
-        try { [void][Cb.Win]::HideCaret($txt.Handle) } catch { }
+        Hide-SystemCaret
         if ((Get-CaretIndex) -ne $script:CaretIndex) { Sync-SearchCaret }
         elseif (((Get-Date) - $script:CaretPulse).TotalMilliseconds -ge 530) {
           $script:CaretPulse = Get-Date
           $caret.Visible = -not $caret.Visible
         }
-      } elseif ($caret.Visible) { $caret.Visible = $false }
+      } else {
+        if ($caret.Visible) { $caret.Visible = $false }
+        Show-SystemCaret
+      }
       # Idle ticks cost real CPU: 8 ms while something moves or the menu is open, else 20 ms.
       $busy = ($am -ne 0 -or $cm.Visible -or $script:PickerClose)
       Start-Sleep -Milliseconds $(if ($busy) { 8 } else { 20 })

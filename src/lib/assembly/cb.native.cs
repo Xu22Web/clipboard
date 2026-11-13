@@ -15,23 +15,21 @@ namespace Cb {
     [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
     [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int index);
     [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr h, int index, int value);
-    // Is the input method composing in that control right now? The panel draws its own caret in
-    // the theme colour and hides the system one, except while a composition is running: the
-    // candidate window is placed at the real caret, so that one has to stay.
     [DllImport("imm32.dll")] private static extern IntPtr ImmGetContext(IntPtr h);
     [DllImport("imm32.dll")] private static extern bool ImmReleaseContext(IntPtr h, IntPtr ctx);
-    [DllImport("imm32.dll")] private static extern bool ImmGetConversionStatus(IntPtr ctx, out int conv, out int sent);
     [DllImport("imm32.dll")] private static extern int ImmGetCompositionString(IntPtr ctx, int index, byte[] buf, int len);
+    // Is the input method composing in that control right now? The panel draws its own caret in
+    // the theme colour and hides the system one, except while a composition is running: the
+    // candidate window is placed at the real caret, so that one has to stay. Only a composition
+    // string counts - the conversion mode reports "Chinese or Japanese mode is on", which stays
+    // true for the whole session, while the drawn caret is wanted whenever nothing is composed.
     public static bool ImeComposing(IntPtr h) {
       if (h == IntPtr.Zero) { return false; }
       IntPtr ctx = ImmGetContext(h);
       if (ctx == IntPtr.Zero) { return false; }
       try {
         // GCS_COMPSTR with no buffer answers the length of the string being composed
-        if (ImmGetCompositionString(ctx, 0x0008, null, 0) > 0) { return true; }
-        int conv, sent;
-        if (ImmGetConversionStatus(ctx, out conv, out sent)) { return (conv & 0x0001) != 0; }   // IME_CMODE_NATIVE
-        return false;
+        return (ImmGetCompositionString(ctx, 0x0008, null, 0) > 0);
       } finally {
         ImmReleaseContext(h, ctx);
       }
@@ -123,6 +121,9 @@ namespace Cb {
     // the system caret cannot be given a colour, so the panel hides it and draws its own line;
     // a control re-shows its caret after every keystroke, so the caller repeats this
     [DllImport("user32.dll")] public static extern bool HideCaret(IntPtr h);
+    // HideCaret counts: a caret that was hidden twice needs two ShowCaret calls before a
+    // control can show it again. lib/panel/picker.ps1 keeps the count.
+    [DllImport("user32.dll")] public static extern bool ShowCaret(IntPtr h);
     // where a window is on screen, as a rectangle the geometry helpers can read. Empty for a
     // window that is gone, minimised or has no area, so the caller keeps its own fallback.
     [StructLayout(LayoutKind.Sequential)] private struct WINRECT { public int Left; public int Top; public int Right; public int Bottom; }
@@ -902,6 +903,26 @@ namespace Cb {
     }
 
     public bool IsMulti(int index) { return MultiSelect.Contains(index); }
+
+    // A plain Control treats the arrow keys as dialog keys: the container answers them to move
+    // the focus, so the panel's key handler never sees them and the selection cannot be walked
+    // with them. This control is navigated by those keys - the host owns what one does - so it
+    // reports them as input keys. Home/End/PageUp/PageDown are listed for the same reason: the
+    // host decides whether they belong to the list or to the search field.
+    protected override bool IsInputKey(System.Windows.Forms.Keys keyData) {
+      switch (keyData & System.Windows.Forms.Keys.KeyCode) {
+        case System.Windows.Forms.Keys.Up:
+        case System.Windows.Forms.Keys.Down:
+        case System.Windows.Forms.Keys.Left:
+        case System.Windows.Forms.Keys.Right:
+        case System.Windows.Forms.Keys.Home:
+        case System.Windows.Forms.Keys.End:
+        case System.Windows.Forms.Keys.PageUp:
+        case System.Windows.Forms.Keys.PageDown:
+          return true;
+      }
+      return base.IsInputKey(keyData);
+    }
 
     // Clicking a row selects it. A plain Control has no built-in hit testing the way a
     // ListBox does, so the host would otherwise have to wire this per panel.
