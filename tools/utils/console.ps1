@@ -26,7 +26,6 @@ $script:Con = @{
   Off       = $false
   Level     = 3          # info
   Timestamp = $false
-  Warned    = @{}        # message -> $true, so a repeated warning is said once
 }
 
 # Windows 10 consoles ignore escape sequences until the mode says otherwise, and Windows
@@ -119,12 +118,6 @@ function Write-Step([string]$text) { Write-Line 'info' '[..]' $text 36 'Cyan' }
 function Write-Ok([string]$text) { Write-Line 'info' '[ok]' $text 32 'Green' }
 function Write-Warn([string]$text) { Write-Line 'warn' '[!]' $text 33 'Yellow' }
 function Write-Fail([string]$text) { Write-Line 'error' '[x]' $text 31 'Red' }
-# the same warning twice is one warning: a loop that retries says it once, not once per pass
-function Write-WarnOnce([string]$text) {
-  if ($script:Con.Warned.ContainsKey($text)) { return }
-  $script:Con.Warned[$text] = $true
-  Write-Warn $text
-}
 # a note is dim and indented: it belongs to the step above it, not to the run
 function Write-Note([string]$text) { Write-Line 'info' '' ('  ' + $text) 90 'DarkGray' }
 # a heading: the tool name and its version, in the accent colour

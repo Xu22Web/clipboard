@@ -3765,7 +3765,7 @@ try {
             $pl.ScrollBy(2)
             Expect ($pl.GetItemRectangle(3).Y -eq ($before - 20)) ([string]$pl.GetItemRectangle(3).Y)
             Expect ($pl.GetItemRectangle(0).Y -eq 0) ([string]$pl.GetItemRectangle(0).Y)
-            $pl.ScrollTo(999)
+            $pl.TopIndex = 999
             Expect (($pl.MaxTop -eq 23) -and ($pl.TopIndex -eq 23)) ([string]$pl.TopIndex + '/' + [string]$pl.MaxTop)
             # the control keeps a row count only: the labels stay with the caller
             Expect (-not ($pl.PSObject.Properties.Name -contains 'Items')) ''
@@ -3782,7 +3782,7 @@ try {
             $pl.ItemCount = 30
             $pl.PinnedCount = 3
             $pl.WheelRows = 2
-            $pl.ScrollTo(3)
+            $pl.TopIndex = 3
             $script:plScrolls = 0
             $pl.Add_ScrollChanged({ $script:plScrolls = $script:plScrolls + 1 })
             $wheelM = $pl.GetType().GetMethod('OnMouseWheel', [System.Reflection.BindingFlags]'Instance,NonPublic')
@@ -3791,7 +3791,7 @@ try {
             [void]$wheelM.Invoke($pl, $wheelArg)
             Expect ($pl.TopIndex -eq 5) ([string]$pl.TopIndex)
             Expect ($script:plScrolls -gt 0) ([string]$script:plScrolls)
-            $pl.ScrollTo(999)
+            $pl.TopIndex = 999
             [void]$wheelM.Invoke($pl, $wheelArg)
             Expect (($pl.TopIndex -eq $pl.MaxTop) -and ($pl.TopIndex + $pl.VisibleRows - $pl.PinnedCount - 1 -eq ($pl.ItemCount - 1))) ([string]$pl.TopIndex + '/' + [string]$pl.MaxTop)
           } finally { $pl.Dispose() }

@@ -632,23 +632,20 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
 
     # The list can move without the selection (wheel, page keys, the scrollbar), and a selection
     # that has left the view makes Enter paste a row that is not on screen. Pulling it to the
-    # edge the view moved toward keeps Enter pointing at something the user can see. The first
-    # row counts as gone while part of it still sits behind the frozen block.
+    # edge the view moved toward keeps Enter pointing at something the user can see.
     function Keep-SelectionInView {
       $i = $lst.SelectedIndex
       if ($i -lt 0 -or $i -lt $lst.PinnedCount) { return }
       $vis = (Get-Rows) - $lst.PinnedCount
       if ($vis -lt 1) { return }
       $top = $lst.TopIndex
-      $rowH = [Math]::Max(1, $lst.ItemHeight)
-      $first = $top
-      if (($lst.ScrollY - ($top * $rowH)) -gt 0) { $first = $top + 1 }
       $last = $top + $vis - 1
-      if ($i -lt $first) { $lst.SelectedIndex = $first }
+      if ($i -lt $top) { $lst.SelectedIndex = $top }
       elseif ($i -gt $last) { $lst.SelectedIndex = $last }
     }
 
-    # thumb geometry from the pixel position; the frozen block stays out of the scrollable range
+    # thumb geometry from the scroll position in rows; the frozen block stays out of the
+    # scrollable range
     function Sync-Sb {
       $n = $lst.ItemCount
       $vis = Get-Rows
@@ -666,7 +663,8 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $scrollVis = [Math]::Max(1, $vis - $pin)
       $script:SbLen = [Math]::Max((Px 28), [int]($track * $scrollVis / $scrollRows))
       $span = $track - $script:SbLen
-      # in pixels rather than rows, so a touchpad that moved less than a row still moves it
+      # the scroll position is a row count, so it is scaled in row heights and the thumb lands
+      # on the row the list would show
       $base = $pin * $rowH
       $room = $lst.ScrollMax - $base
       $t = 0
@@ -685,14 +683,14 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $room = $lst.ScrollMax - $base
       if ($room -le 0 -or $span -le 0) { return }
       $y = $base + [int][Math]::Round(($thumbTop - (Px 3)) * $room / $span)
-      # ScrollToPixel raises ScrollChanged, which syncs the thumb for us
+      # the control lands on whole rows whatever position is asked for, so a dragged thumb
+      # steps row by row; ScrollToPixel raises ScrollChanged, which syncs the thumb for us
       $lst.ScrollToPixel($y)
-      $lst.Invalidate()
     }
 
     function Scroll-By([int]$rows) {
+      # ScrollBy raises ScrollChanged, which moves the thumb
       $lst.ScrollBy($rows)
-      Sync-Sb
     }
 
     # The wheel step is a property of the panel rather than of the mouse, so Sync-Sb sets it
@@ -1692,6 +1690,9 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       try { $pvCfg.InkBrush.Dispose(); $pvCfg.DimBrush.Dispose() } catch { }
       try { $cm.Dispose() } catch { }
       try { if ($null -ne $groupFont) { $groupFont.Dispose() } } catch { }
+      # the row background brush is built per panel; without this it waited for the finalizer,
+      # which is what made the GDI count climb by one on every open until a collection
+      try { $bgBrush.Dispose() } catch { }
       try { $rg = $form.Region; $form.Dispose(); if ($null -ne $rg) { $rg.Dispose() } } catch { }
       return
     }
@@ -1811,8 +1812,10 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     Close-Preview $pv
     try { $pvCfg.InkBrush.Dispose(); $pvCfg.DimBrush.Dispose() } catch { }
     $cm.Dispose()
-    # GDI handles this panel owns: the group heading font, and the region the form paints with
+    # GDI handles this panel owns: the row background brush, the group heading font, and the
+    # region the form paints with
     try { if ($null -ne $groupFont) { $groupFont.Dispose() } } catch { }
+    try { $bgBrush.Dispose() } catch { }
     try { $rgn = $form.Region; $form.Dispose(); if ($null -ne $rgn) { $rgn.Dispose() } } catch { }
   } catch {
     Write-Log ('picker error: ' + $_.Exception.Message)
