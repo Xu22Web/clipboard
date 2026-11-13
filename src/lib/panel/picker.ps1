@@ -103,13 +103,16 @@ function Show-Picker([switch]$Warm) {
     $script:CaretPulse = Get-Date
     # the selection the drawn caret currently sits at, so a key that only moves it is noticed
     $script:CaretIndex = -1
-    # a selection made with Shift: the anchor is where it started, the active end is where the
-    # drawn line goes. Both -1 means "no selection of our own", the control's selection applies.
-    $script:SelAnchor = -1
-    $script:SelActive = -1
-    # no keyboard path yet; the derived flags are owned by Set-InputMode (lib\panel\keyhook.ps1)
-    Set-InputMode 'none'
-    $script:PrevMouseDown = $false
+    # which end of a selection the caret is at: -1 the start, +1 the end, 0 no selection of its
+    # own. The control keeps start and length but not the end the keyboard moved last.
+    $script:CaretEnd = 0
+    # the panel holds the foreground from Show() until something else takes it. Closing it has
+    # to give the foreground back only in the first case - a panel dismissed by a click has
+    # already handed it over.
+    $script:OwnFront = $false
+    # set while a paste moves the foreground to its target: losing the activation there is part
+    # of the paste, not a dismissal
+    $script:Pasting = $false
     $script:FootMode = 'hints'
     $script:FootMsg = ''
     $script:CapturePaused = (Test-Path -LiteralPath $Paused)
@@ -227,7 +230,7 @@ function Show-Picker([switch]$Warm) {
         } catch { }
       })
     $listHost.Controls.Add($empty)
-    $empty.Add_Click({ Focus-Search })
+    $empty.Add_Click({ $txt.Focus() })
 
     # A thin rounded thumb is painted instead, brightening on hover.
     $sbar = New-Object Windows.Forms.Panel
@@ -267,14 +270,14 @@ function Show-Picker([switch]$Warm) {
     $head.Dock = 'Top'
     $head.Height = Px $preset.Head
     $head.BackColor = $ui.Surface
-    # an empty piece of the header is still "the search area": clicking it asks for the
-    # keyboard, so the panel takes it over (see Claim-Search)
-    $head.Add_Click({ Claim-Search })
+    # an empty piece of the header is still "the search area": clicking it puts the keyboard
+    # into the filter
+    $head.Add_Click({ $txt.Focus() })
 
     $box = New-Object Windows.Forms.Panel
     $box.SetBounds((Px 14), (Px $boxTop), ($form.ClientSize.Width - (Px 30)), (Px 40))
     $box.BackColor = $ui.Field
-    $box.Add_Click({ Claim-Search })
+    $box.Add_Click({ $txt.Focus() })
     $box.Add_Paint({
         param($s, $e)
         try {
@@ -304,7 +307,7 @@ function Show-Picker([switch]$Warm) {
     $icon.BackColor = $ui.Field
     $icon.TextAlign = 'MiddleCenter'
     $icon.Cursor = 'IBeam'
-    $icon.Add_Click({ Claim-Search })
+    $icon.Add_Click({ $txt.Focus() })
 
     $txt = New-Object Windows.Forms.TextBox
     $txt.BorderStyle = 'None'
@@ -313,13 +316,6 @@ function Show-Picker([switch]$Warm) {
     $txt.ForeColor = $ui.Text
     $txt.Font = $fBody
     $txt.AccessibleName = 'Search clipboard history'
-    # ES_NOHIDESEL: without it the control hides its selection whenever it loses the focus, and
-    # under the hook it never has it - a Shift selection would be invisible
-    try { [void][Cb.Win]::SetWindowLong($txt.Handle, -16, ([Cb.Win]::GetWindowLong($txt.Handle, -16) -bor 0x0100)) } catch { Write-Log ('no nohidesel: ' + $_.Exception.Message) }
-    # the box itself takes the click before its parent panel ever sees it; in the hook model
-    # nothing else moves the selection, so the point is turned into a caret position here
-    $txt.Add_MouseDown({ param($s, $e) if ($script:PickerHook) { Move-CaretTo $e.X $e.Y } })
-    $txt.Add_Click({ Claim-Search })
 
     $ph = New-Object Windows.Forms.Label
     # the same left edge as the text the box will hold, so the caret of an empty field and the
@@ -332,8 +328,8 @@ function Show-Picker([switch]$Warm) {
     $ph.TextAlign = 'MiddleLeft'
     $ph.Cursor = 'IBeam'
     # the placeholder covers the empty box, so this is what a click on an empty search field
-    # actually hits
-    $ph.Add_Click({ Claim-Search })
+    # actually hits - and a label never takes the keyboard itself
+    $ph.Add_Click({ $txt.Focus() })
 
     $clr = New-Object Windows.Forms.Label
     $clr.SetBounds(($box.Width - (Px 30)), (Px 10), (Px 20), (Px 22))
@@ -349,27 +345,16 @@ function Show-Picker([switch]$Warm) {
     $clr.Add_MouseEnter({ $clr.ForeColor = $ui.Text })
     $clr.Add_MouseLeave({ $clr.ForeColor = $ui.Dim })
 
-    # Under the hook the field never holds the real focus, so Windows draws no caret and there
-    # is no way to see where the next character lands. This one pixel panel stands in for it:
-    # it follows the selection on every change and blinks from the panel loop. As soon as the
-    # field really has the keyboard (an input-method hand-over) it steps aside for the real one.
+    # The field draws its own caret in the theme colour: the system one cannot be tinted, so it
+    # is hidden and this one pixel panel stands in for it, following the selection and blinking
+    # from the panel loop. The selection itself is the control's own - it has the real focus.
     $caret = New-Object Windows.Forms.Panel
     $caret.SetBounds((Px 38), (Px 14), (Px 1), (Px 16))
     $caret.BackColor = $ui.Accent
     $caret.Cursor = 'IBeam'
     $caret.Visible = $false
     $caret.AccessibleName = 'Search caret'
-    $caret.Add_Click({ Claim-Search })
-
-    # The range a Shift selection covers, as a band under the glyphs. An edit control paints its
-    # own selection only while it has the focus - which under the hook it never has - and a panel
-    # over the text would hide the characters instead. Once the field really has the keyboard the
-    # control paints the selection itself and this band is not used.
-    $selBand = New-Object Windows.Forms.Panel
-    $selBand.SetBounds((Px 38), (Px 30), 0, (Px 2))
-    $selBand.BackColor = $ui.Accent
-    $selBand.Visible = $false
-    $selBand.AccessibleName = 'Search selection'
+    $caret.Add_Click({ $txt.Focus() })
 
     $line = New-Object Windows.Forms.Panel
     $line.Dock = 'Bottom'
@@ -380,10 +365,8 @@ function Show-Picker([switch]$Warm) {
     $box.Controls.Add($txt)
     $box.Controls.Add($clr)
     $box.Controls.Add($ph)
-    $box.Controls.Add($selBand)
     $box.Controls.Add($caret)
     $ph.BringToFront()
-    $selBand.BringToFront()
     $caret.BringToFront()
     $head.Controls.Add($box)
     $head.Controls.Add($line)
@@ -517,129 +500,36 @@ function Show-Picker([switch]$Warm) {
       $clr.Visible = ($txt.Text.Length -gt 0)
     }
 
-    # Where the next character lands, in the field's own coordinates. The panel always draws it
-    # itself: under the hook Windows draws none, and in takeover mode the system caret cannot be
-    # given the theme colour, so it is hidden and this line stands in. An input method is the
-    # exception - its candidate window is anchored at the real caret - as is the editor, which
-    # has its own box.
+    # The field draws the caret itself, in the theme colour: the system caret cannot be tinted,
+    # so it is hidden and this line stands in for it while the field has the keyboard. An input
+    # method is the exception - its candidate window is anchored at the real caret - and so is
+    # the row editor, which has a box of its own.
     function Test-OwnCaret {
       if ($null -ne $script:EditRow) { return $false }
-      if (-not $script:SearchFocus) { return $false }
-      if ($script:PickerHook) { return $true }
-      if ($script:InputMode -ne 'takeover') { return $false }
+      if (-not $txt.Focused) { return $false }
       return (-not $script:ImeNative)
     }
 
-    # The index the drawn line sits at: the active end of a Shift selection, else the control's
-    # own insertion point.
+    # The index the drawn line sits at. With a selection the control knows where it starts and
+    # how long it is, but not which end the keyboard moved last, so that end is tracked here:
+    # without it a Shift+Left would draw the line at the wrong edge.
     function Get-CaretIndex {
-      if ($script:SelActive -ge 0 -and $txt.SelectionLength -gt 0) {
-        return [Math]::Min([Math]::Max(0, $script:SelActive), $txt.TextLength)
+      if ($txt.SelectionLength -gt 0 -and $script:CaretEnd -ne 0) {
+        $i = $(if ($script:CaretEnd -gt 0) { $txt.SelectionStart + $txt.SelectionLength } else { $txt.SelectionStart })
+        return [Math]::Min([Math]::Max(0, $i), $txt.TextLength)
       }
       return [int]$txt.SelectionStart
-    }
-
-    # Put the insertion point down, dropping any selection this panel made itself.
-    function Set-SearchCaret([int]$i) {
-      if ($i -lt 0) { $i = 0 }
-      if ($i -gt $txt.TextLength) { $i = $txt.TextLength }
-      $script:SelAnchor = -1
-      $script:SelActive = -1
-      [void][Cb.Win]::SendMessage($txt.Handle, 0x00B1, [IntPtr]$i, [IntPtr]$i)
-      Sync-SearchCaret
-    }
-
-    # Where a word starts (dir -1) or ends (dir 1) from a place: separators are skipped first,
-    # then a run of letters, digits and underscores - what the filter treats as one word.
-    function Get-WordStop([string]$s, [int]$i, [int]$dir) {
-      if ($i -lt 0) { $i = 0 }
-      if ($i -gt $s.Length) { $i = $s.Length }
-      if ($dir -lt 0) {
-        while ($i -gt 0 -and -not ([char]::IsLetterOrDigit($s[$i - 1]) -or $s[$i - 1] -eq '_')) { $i-- }
-        while ($i -gt 0 -and ([char]::IsLetterOrDigit($s[$i - 1]) -or $s[$i - 1] -eq '_')) { $i-- }
-      } else {
-        while ($i -lt $s.Length -and -not ([char]::IsLetterOrDigit($s[$i]) -or $s[$i] -eq '_')) { $i++ }
-        while ($i -lt $s.Length -and ([char]::IsLetterOrDigit($s[$i]) -or $s[$i] -eq '_')) { $i++ }
-      }
-      return $i
-    }
-
-    # The editing keys the box cannot carry out from a posted key: the control reads the Shift
-    # and Ctrl state of its own thread, which never saw those modifiers under the hook, so a
-    # posted WM_KEYDOWN(left) arrives as a bare arrow. The selection is worked out here and
-    # handed over with EM_SETSEL. Returns $true when the key was used, so the caller does not
-    # post it as well.
-    function Step-SearchKey([int]$vk, [bool]$shift, [bool]$ctrl) {
-      $len = $txt.TextLength
-      $at = Get-CaretIndex
-      if ($shift) {
-        # the anchor is where this stretch of selection started: it has to be taken before the
-        # active end moves, or a single Shift+arrow collapses again
-        if ($script:SelAnchor -lt 0) { $script:SelAnchor = $at }
-        if (0x23 -eq $vk) { $at = $len }
-        elseif (0x24 -eq $vk) { $at = 0 }
-        elseif (0x25 -eq $vk) { if ($at -gt 0) { $at-- } }
-        elseif (0x27 -eq $vk) { if ($at -lt $len) { $at++ } }
-        else { return $false }
-        # collapse to nothing at the anchor: a selection of zero length is no selection
-        if ($script:SelAnchor -eq $at) {
-          Set-SearchCaret $at
-          return $true
-        }
-        $lo = [Math]::Min($script:SelAnchor, $at)
-        $hi = [Math]::Max($script:SelAnchor, $at)
-        [void][Cb.Win]::SendMessage($txt.Handle, 0x00B1, [IntPtr]$lo, [IntPtr]$hi)
-        $script:SelActive = $at
-        Sync-SearchCaret
-        return $true
-      }
-      if (-not $ctrl) { return $false }
-      switch ($vk) {
-        0x24 { Set-SearchCaret 0; return $true }                                  # Ctrl+Home
-        0x23 { Set-SearchCaret $len; return $true }                               # Ctrl+End
-        0x25 { Set-SearchCaret (Get-WordStop $txt.Text $at -1); return $true }    # Ctrl+Left
-        0x27 { Set-SearchCaret (Get-WordStop $txt.Text $at 1); return $true }     # Ctrl+Right
-        0x08 {                                                                    # Ctrl+Backspace
-          # a selection goes first, the way the key works everywhere else
-          if ($txt.SelectionLength -gt 0) {
-            [void][Cb.Win]::SendMessage($txt.Handle, 0x0102, [IntPtr]8, [IntPtr]1)
-            $script:SelAnchor = -1; $script:SelActive = -1
-            return $true
-          }
-          $from = Get-WordStop $txt.Text $at -1
-          if ($from -ge $at) { $from = [Math]::Max(0, $at - 1) }
-          [void][Cb.Win]::SendMessage($txt.Handle, 0x00B1, [IntPtr]$from, [IntPtr]$at)
-          [void][Cb.Win]::SendMessage($txt.Handle, 0x0102, [IntPtr]8, [IntPtr]1)
-          $script:SelAnchor = -1; $script:SelActive = -1
-          return $true
-        }
-        0x2E {                                                                    # Ctrl+Delete
-          if ($txt.SelectionLength -gt 0) {
-            [void][Cb.Win]::SendMessage($txt.Handle, 0x0102, [IntPtr]8, [IntPtr]1)
-            $script:SelAnchor = -1; $script:SelActive = -1
-            return $true
-          }
-          $to = Get-WordStop $txt.Text $at 1
-          if ($to -le $at) { $to = [Math]::Min($len, $at + 1) }
-          [void][Cb.Win]::SendMessage($txt.Handle, 0x00B1, [IntPtr]$at, [IntPtr]$to)
-          [void][Cb.Win]::SendMessage($txt.Handle, 0x0102, [IntPtr]8, [IntPtr]1)
-          $script:SelAnchor = -1; $script:SelActive = -1
-          return $true
-        }
-      }
-      return $false
     }
 
     function Sync-SearchCaret {
       try {
         if (-not (Test-OwnCaret)) {
           if ($caret.Visible) { $caret.Visible = $false }
-          if ($selBand.Visible) { $selBand.Visible = $false }
           return
         }
-        # The edit control knows where each character sits and answers even without the focus
-        # (EM_POSFROMCHAR), and that is the only width that matches what it draws: GDI measured
-        # the same prefix half again too wide and left the line a few pixels past the last glyph.
+        # The edit control knows where each character sits and answers even without being
+        # asked to lay anything out (EM_POSFROMCHAR), and that is the only width that matches
+        # what it draws: GDI measured the same prefix half again too wide on a scaled display.
         $idx = Get-CaretIndex
         if ($idx -lt 0) { $idx = 0 }
         if ($idx -gt $txt.TextLength) { $idx = $txt.TextLength }
@@ -665,38 +555,7 @@ function Show-Picker([switch]$Warm) {
         $script:CaretIndex = $idx
         $caret.Visible = $true
         $script:CaretPulse = Get-Date
-        Sync-SearchBand
       } catch { }
-    }
-
-    # The band under a Shift selection: from the left edge of its first character to the right
-    # edge of its last, in the field's own metrics. Only while the hook owns the typing - with
-    # the real keyboard the control paints the selection itself.
-    function Sync-SearchBand {
-      try {
-        if (-not ($script:PickerHook -and $txt.SelectionLength -gt 0)) {
-          if ($selBand.Visible) { $selBand.Visible = $false }
-          return
-        }
-        $lo = [Math]::Min([int]$txt.SelectionStart, [int]$txt.SelectionStart + [int]$txt.SelectionLength)
-        $hi = [Math]::Max([int]$txt.SelectionStart, [int]$txt.SelectionStart + [int]$txt.SelectionLength)
-        if ($hi -gt $txt.TextLength) { $hi = $txt.TextLength }
-        $x1 = [Cb.Win]::TextWidth($txt.Handle, $txt.Text.Substring(0, $lo))
-        $x2 = [Cb.Win]::TextWidth($txt.Handle, $txt.Text.Substring(0, $hi))
-        $cw = $txt.ClientSize.Width
-        if ($x1 -lt 0) { $x1 = 0 }
-        if ($cw -gt 1 -and $x1 -gt $cw) { $x1 = $cw }
-        if ($cw -gt 1 -and $x2 -gt $cw) { $x2 = $cw }
-        $w = $x2 - $x1
-        if ($w -lt 1) {
-          if ($selBand.Visible) { $selBand.Visible = $false }
-          return
-        }
-        $selBand.SetBounds(([int]$txt.Left + $x1), ([int]$txt.Top + [int]$txt.Font.Height), $w, [Math]::Max(1, (Px 2)))
-        $selBand.Visible = $true
-      } catch {
-        if ($selBand.Visible) { $selBand.Visible = $false }
-      }
     }
 
     function Get-Rows {
@@ -953,9 +812,7 @@ function Show-Picker([switch]$Warm) {
     function Paste-Clip([string]$TypedText = '') {
       $target = Get-PasteTarget
       Write-Log ('paste target: ' + (Format-PasteTarget $target))
-      # the hook would eat the injected Ctrl+V, so it goes first in every path
-      Disable-KeyHook
-      if ($script:NoPaste) { $form.Hide(); $form.Close(); return }
+      if ($script:NoPaste) { Close-Panel; return }
       # the hotkey is usually still held when the panel opens: pasting now would send
       # Ctrl+V with Alt/Ctrl down and land as something else entirely
       $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -967,50 +824,66 @@ function Show-Picker([switch]$Warm) {
       # the wait ends is released, so the paste cannot arrive as another shortcut
       if (-not (Test-Modifiers-Up)) { Release-HeldModifiers }
       # SetForegroundWindow can be refused by the foreground lock and SendKeys types into
-      # whatever is in front, so the target has to have the front - but only when it does not
-      # already: the panel never activates, so the target normally holds it, and asking again
-      # reorders the windows for nothing (which is how a window behind the target surfaces).
+      # whatever is in front, so the target has to have the front. The panel holds it while it
+      # is open, so this is the step that moves it back - and losing the activation here is part
+      # of the paste, which is what $script:Pasting tells the Deactivate handler.
       $hadFront = $false
       try { $hadFront = ([Cb.Win]::GetForegroundWindow() -eq $target) } catch { $hadFront = $false }
-      if (-not $hadFront -and -not (Take-Foreground $target)) {
-        Write-Log 'paste skipped: the target window did not take the foreground'
-        Set-Foot 'Copied to the clipboard. The window did not come back to the front - press Ctrl+V there' ([int]$script:Timing['FootMessage'])
-        return
-      }
-      # the window is back but its caret may not be: give the control the keyboard again, and
-      # only when it lost it - AttachThreadInput plus SetFocus is another way to raise a window.
-      # Only the window the panel came from has a remembered control; after a switch the caret
-      # already sits where the user left it.
-      if ($target -eq $prev -and $script:PrevFocus -ne [IntPtr]::Zero) {
-        $hasFocus = $false
-        try { $hasFocus = ([Cb.Win]::FocusOfWindow($target) -eq $script:PrevFocus) } catch { $hasFocus = $false }
-        if (-not $hasFocus) { [void](Restore-TargetFocus $target $script:PrevFocus) }
-      }
-      Start-Sleep -Milliseconds $script:PasteSettle
-      # The keys go out while the panel is still up. Hiding it first let Windows hand the
-      # foreground to another window for a moment, and taking it back afterwards is exactly
-      # what reads as "the window I had focused before flashes up" (the panel never needed to
-      # be gone: it does not own the keyboard).
-      if ($TypedText -ne '') {
-        # typing lands in the focused control through SendInput: no clipboard and no paste
-        # key, which is what a target that ignores Ctrl+V needs
-        $sent = 0
-        try { $sent = [Cb.Win]::SendUnicode($TypedText) } catch { Write-Log ('typing failed: ' + $_.Exception.Message) }
-        Write-Log ('typed ' + $sent + ' of ' + $TypedText.Length + ' characters')
-      } else {
-        try { [Windows.Forms.SendKeys]::SendWait($PasteKeys) } catch { Write-Log ('sendkeys fail: ' + $_.Exception.Message) }
-      }
+      $script:Pasting = $true
       try {
-        $after = [Cb.Win]::GetForegroundWindow()
-        if ($after -ne $target) { Write-Log ('paste: the foreground changed while the keys were sent (' + (Format-WindowName $after) + ')') }
-      } catch { }
-      $form.Hide()
-      # the panel leaving can still move the foreground; the paste is already done, so this
-      # only puts the user back where they were
-      if ([Cb.Win]::GetForegroundWindow() -ne $target) {
-        $moved = [Cb.Win]::GetForegroundWindow()
-        Write-Log ('paste: the foreground moved after the panel hid (' + (Format-WindowName $moved) + '), taking it back')
-        [void](Take-Foreground $target)
+        if (-not $hadFront -and -not (Take-Foreground $target)) {
+          Write-Log 'paste skipped: the target window did not take the foreground'
+          Set-Foot 'Copied to the clipboard. The window did not come back to the front - press Ctrl+V there' ([int]$script:Timing['FootMessage'])
+          return
+        }
+        # the window is back but its caret may not be: give the control the keyboard again, and
+        # only when it lost it - AttachThreadInput plus SetFocus is another way to raise a window.
+        # Only the window the panel came from has a remembered control; after a switch the caret
+        # already sits where the user left it.
+        if ($target -eq $prev -and $script:PrevFocus -ne [IntPtr]::Zero) {
+          $hasFocus = $false
+          try { $hasFocus = ([Cb.Win]::FocusOfWindow($target) -eq $script:PrevFocus) } catch { $hasFocus = $false }
+          if (-not $hasFocus) { [void](Restore-TargetFocus $target $script:PrevFocus) }
+        }
+        Start-Sleep -Milliseconds $script:PasteSettle
+        # The keys go out before the panel is hidden: hiding the active window first lets Windows
+        # pick the next window in the z-order, and taking the front back afterwards is exactly
+        # what reads as "the window I had focused before flashes up".
+        if ($TypedText -ne '') {
+          # typing lands in the focused control through SendInput: no clipboard and no paste
+          # key, which is what a target that ignores Ctrl+V needs
+          $sent = 0
+          try { $sent = [Cb.Win]::SendUnicode($TypedText) } catch { Write-Log ('typing failed: ' + $_.Exception.Message) }
+          Write-Log ('typed ' + $sent + ' of ' + $TypedText.Length + ' characters')
+        } else {
+          try { [Windows.Forms.SendKeys]::SendWait($PasteKeys) } catch { Write-Log ('sendkeys fail: ' + $_.Exception.Message) }
+        }
+        try {
+          $after = [Cb.Win]::GetForegroundWindow()
+          if ($after -ne $target) { Write-Log ('paste: the foreground changed while the keys were sent (' + (Format-WindowName $after) + ')') }
+        } catch { }
+        $form.Hide()
+        # the panel leaving can still move the foreground; the paste is already done, so this
+        # only puts the user back where they were
+        if ([Cb.Win]::GetForegroundWindow() -ne $target) {
+          $moved = [Cb.Win]::GetForegroundWindow()
+          Write-Log ('paste: the foreground moved after the panel hid (' + (Format-WindowName $moved) + '), taking it back')
+          [void](Take-Foreground $target)
+        }
+      } finally {
+        $script:Pasting = $false
+      }
+      $form.Close()
+    }
+
+    # Closing from inside the panel. The panel holds the foreground, so hiding it hands the front
+    # to whatever is next in the z-order: the window it came from has to be asked for by name,
+    # together with the control that owned the caret there.
+    function Close-Panel {
+      try { $form.Hide() } catch { }
+      if ($script:OwnFront -and $prev -ne [IntPtr]::Zero) {
+        [void][Cb.Win]::SetForegroundWindow($prev)
+        [void](Restore-TargetFocus $prev $script:PrevFocus)
       }
       $form.Close()
     }
@@ -1033,7 +906,7 @@ function Show-Picker([switch]$Warm) {
         } catch { Write-Log ('transform skipped: ' + $_.Exception.Message) }
       }
       $pasteTo = Get-PasteTarget
-      if ($script:NoPaste -or $NoInject.IsPresent -or (Test-AppRuleNoPaste $pasteTo)) { $form.Hide(); [void](Set-ClipItem $payload $rich); Set-LastCapture $payload; $form.Close(); return }
+      if ($script:NoPaste -or $NoInject.IsPresent -or (Test-AppRuleNoPaste $pasteTo)) { [void](Set-ClipItem $payload $rich); Set-LastCapture $payload; Close-Panel; return }
       # the program in front decides whether the formatting travels with the paste:
       # a terminal wants the text, an editor wants the layout. The window asked about is the
       # one the paste goes back to - the panel itself may be in front after a hand-over.
@@ -1481,7 +1354,7 @@ function Show-Picker([switch]$Warm) {
     # path that changes the selection has to repaint it: the list redraws itself, the footer is
     # its own control and would otherwise keep the hints of the row selected before
     $lst.Add_RowClicked({ param($sn, $ev) Update-Selection $script:Sel $lst ([int]$lst.ClickRow) ([bool]$lst.ClickHadControl) ([bool]$lst.ClickHadShift); $footL.Invalidate() })
-    $lst.Add_MouseUp({ param($s, $e) if ($e.Button -eq 'Left') { Sync-Sb; Focus-Search } })
+    $lst.Add_MouseUp({ param($s, $e) if ($e.Button -eq 'Left') { Sync-Sb } })
 
     $footTimer = New-Object Windows.Forms.Timer
     $footTimer.Interval = [int]$script:Timing['FootMessage']
@@ -1495,12 +1368,34 @@ function Show-Picker([switch]$Warm) {
     $deb.Interval = [int]$script:Timing['Debounce']
     $deb.Add_Tick({ $deb.Stop(); Update-List $txt.Text })
     # F2 edits the selected entry in place; the editor lives in lib/panel/picker-edit.ps1
-    Set-PickerEditHost $form $lst $txt $ui $fBody { param($q) Update-List $q } { param($m, $ms) Set-Foot $m ([int]$ms) } { Focus-Search }
+    Set-PickerEditHost $form $lst $txt $ui $fBody { param($q) Update-List $q } { param($m, $ms) Set-Foot $m ([int]$ms) } { param($t) $t.Focus() }
     function Flush-List { if ($deb.Enabled) { $deb.Stop(); Update-List $txt.Text } }
-    $txt.Add_TextChanged({ $script:SelAnchor = -1; $script:SelActive = -1; Sync-Placeholder; Sync-SearchCaret; $deb.Stop(); $deb.Start() })
-    $txt.Add_GotFocus({ $script:SearchFocus = $true; Set-AnimTarget $script:Anim 'Field' 1.0; Sync-SearchCaret })
-    $txt.Add_LostFocus({ $script:SearchFocus = $false; Set-AnimTarget $script:Anim 'Field' 0.0; Sync-SearchCaret })
-    $clr.Add_Click({ $txt.Text = ''; Claim-Search })
+    $txt.Add_TextChanged({ $script:CaretEnd = 0; Sync-Placeholder; Sync-SearchCaret; $deb.Stop(); $deb.Start() })
+    $txt.Add_GotFocus({ $script:SearchFocus = $true; Set-AnimTarget $script:Anim 'Field' 1.0; $box.Invalidate(); Sync-SearchCaret })
+    $txt.Add_LostFocus({ $script:SearchFocus = $false; $script:CaretEnd = 0; Set-AnimTarget $script:Anim 'Field' 0.0; $box.Invalidate(); Sync-SearchCaret })
+    # The filter row is not where the panel starts, so the first character typed while the list
+    # has the keyboard opens it: the focus moves to the box, and the character it was going to
+    # receive is put in at the end.
+    $form.Add_KeyPress({
+        param($s, $e)
+        if ($null -ne $script:EditRow -or $txt.Focused) { return }
+        $ch = $e.KeyChar
+        if ([char]0 -eq $ch -or [char]::IsControl($ch)) { return }
+        Start-Search
+        $txt.SelectedText = [string]$ch
+        $e.Handled = $true
+      })
+    # Which end of a selection the keyboard is moving: the control keeps start and length but
+    # not the end, and the drawn caret has to follow the end that moved.
+    $form.Add_KeyDown({
+        param($s, $e)
+        if (-not $txt.Focused) { return }
+        if ($e.Shift) {
+          if ($e.KeyCode -eq 'Left' -or $e.KeyCode -eq 'Home') { $script:CaretEnd = -1 }
+          elseif ($e.KeyCode -eq 'Right' -or $e.KeyCode -eq 'End') { $script:CaretEnd = 1 }
+        } else { $script:CaretEnd = 0 }
+      })
+    $clr.Add_Click({ $txt.Text = ''; $txt.Focus() })
     $form.Add_KeyDown({
         param($s, $e)
         # The editor owns the keyboard while it is open. KeyPreview runs this handler before
@@ -1508,6 +1403,9 @@ function Show-Picker([switch]$Warm) {
         # history instead of the text being edited.
         if ($null -ne $script:EditRow) { return }
         $code = [int]$e.KeyCode
+        # Home and End belong to the text once the filter has the keyboard: they move the caret
+        # there, and the list keeps them only while it is the one being navigated
+        if ($txt.Focused -and ($e.KeyCode -eq 'Home' -or $e.KeyCode -eq 'End')) { return }
         if ($e.Control -and -not $script:CtrlHeld) {
           $script:CtrlHeld = $true
           $lst.Invalidate()
@@ -1607,102 +1505,17 @@ function Show-Picker([switch]$Warm) {
           $footL.Invalidate()
         }
       })
-    # ---- input plumbing for the hook model ------------------------------------
-    # Under the hook the panel never activates, so the box must not take the real focus
-    # either: keys are posted to the controls, keeping every handler working. While the
-    # editor is open the search field must not take the focus back - that is what sent
-    # keystrokes typed into the editor to the filter box.
-    function Focus-Search {
+    # ---- the keyboard the panel holds -----------------------------------------
+    # The panel activates like any other window, so nothing has to be posted into its controls:
+    # the list starts with the keyboard (no caret in the filter row until the user types), the
+    # first printable character moves the focus to the search field, and a click anywhere in the
+    # search area moves it there too.
+    function Start-Search {
       if ($null -ne $script:EditRow) { return }
-      if (-not $script:PickerHook) { $txt.Focus() }
-    }
-
-    # Which character is under a point of the box, as the box itself lays the text out
-    # (EM_CHARFROMPOS). Only the hook model needs it: with the real keyboard the control
-    # places the caret from the mouse on its own, and a drag-selection has to stay untouched.
-    function Move-CaretTo([int]$x, [int]$y) {
-      try {
-        if ($txt.TextLength -eq 0) { return }
-        $pt = [IntPtr]((($y -band 0xFFFF) -shl 16) -bor ($x -band 0xFFFF))
-        $r = [int64][Cb.Win]::SendMessage($txt.Handle, 0x00D7, [IntPtr]::Zero, $pt)
-        $i = [int]($r -band 0xFFFF)
-        if ($i -ge 0x8000) { $i = $i - 0x10000 }
-        if ($i -ge 0) {
-          $script:SelAnchor = -1
-          $script:SelActive = -1
-          [void][Cb.Win]::SendMessage($txt.Handle, 0x00B1, [IntPtr]$i, [IntPtr]$i)
-        }
-      } catch { }
-    }
-
-    # Opening the panel only paints the field as active (see Add_Shown): the window in front
-    # keeps the keyboard and the hook feeds the panel. A click is a different statement - the
-    # user is aiming at the field - so the keyboard is handed over for real (the same
-    # hand-over an input method asks for). From then on the panel owns the foreground, which
-    # is why the restore after the loop puts it back where it came from.
-    function Claim-Search {
-      # 'off' means the panel never takes the foreground, not even for a click on the field
-      if ($null -eq $script:EditRow -and $script:PickerHook -and $script:ImeTakeover -ne 'off') {
-        if (Switch-ToTakeover $form.Handle $txt) {
-          Set-InputMode 'takeover'
-          Write-Log 'picker: the search area was clicked, the panel took the keyboard'
-        } else {
-          # the hook is armed again when the hand-over fails, so the flag has to follow it or
-          # the keys it takes are swallowed and read by nobody
-          Set-InputMode $(if (Restore-KeyHook $form.Handle) { 'hook' } else { 'none' })
-        }
-      }
-      Focus-Search
+      if (-not $txt.Focused) { $txt.Focus() }
+      $txt.SelectionStart = $txt.TextLength
+      $script:CaretEnd = 0
       Sync-SearchCaret
-    }
-
-    function Invoke-HookedKey {
-      $keys = @(Get-HookedKeys)
-      if ($keys.Count -eq 0) { return }
-      $claimed = Test-KeyHookEscalate   # true when the input method claimed a key
-      for ($i = 0; $i -lt $keys.Count; $i++) {
-        $vk = $keys[$i]
-        $ch = Get-HookedChar $vk
-        $mod = [Windows.Forms.Control]::ModifierKeys
-        $plain = ($mod -band ([Windows.Forms.Keys]::Control -bor [Windows.Forms.Keys]::Alt)) -eq 0
-        # where this key belongs: the editor while it is open, the search field otherwise. The
-        # input-method hand-over has to use the same target, or the hand-over would move the
-        # keyboard to the filter box and everything typed next would land there.
-        $tg = $(if ($null -ne $script:HookTargetBox) { $script:HookTargetBox } else { $txt })
-        # an input method needs a real focus: hand over and replay the key so it composes there
-        if ($plain -and (Test-ImeTakeover $script:ImeTakeover $vk ([bool]$script:ImeNative) $claimed)) {
-          if (Switch-ToTakeover $form.Handle $tg) {
-            Set-InputMode 'takeover'
-            Write-Log 'picker: handing the keyboard over for the input method'
-            Send-HookedKeys $keys $i
-          } else {
-            # a refused hand-over re-arms the hook: the flag has to follow it, or the keys it
-            # takes are swallowed and never read
-            Set-InputMode $(if (Restore-KeyHook $form.Handle) { 'hook' } else { 'none' })
-          }
-          return
-        }
-        # text (and Backspace, WM_CHAR 0x08) goes to the box; Esc/Enter/Tab are control chars
-        $isText = $ch -ne [char]0 -and (-not [char]::IsControl($ch) -or $ch -eq [char]8)
-        # selection and word jumps for the search box: the control cannot do them from a posted
-        # key, because the modifiers were never in its own thread's key state
-        if ($tg -eq $txt -and $null -eq $script:EditRow) {
-          $shiftDown = (([Cb.Win]::GetAsyncKeyState(0x10)) -band 0x8000) -ne 0
-          $ctrlDown = (([Cb.Win]::GetAsyncKeyState(0x11)) -band 0x8000) -ne 0
-          # any key without Shift ends the selection this panel was tracking, so the next
-          # Shift+arrow starts from wherever the caret is then
-          if (-not $shiftDown) { $script:SelAnchor = -1; $script:SelActive = -1 }
-          if (($shiftDown -or $ctrlDown) -and (Step-SearchKey $vk $shiftDown $ctrlDown)) { continue }
-        }
-        # Esc closes the panel, so the handle is read once and the delivery is guarded
-        try {
-          if ($isText -and $plain) { [void][Cb.Win]::SendMessage($tg.Handle, 0x0102, [IntPtr][int]$ch, [IntPtr]1) }
-          else {
-            $wh = $tg.Handle
-            [void][Cb.Win]::SendMessage($wh, 0x0100, [IntPtr]$vk, [IntPtr]1); [void][Cb.Win]::SendMessage($wh, 0x0101, [IntPtr]$vk, [IntPtr]1)
-          }
-        } catch { return }
-      }
     }
 
     $form.Add_Paint({
@@ -1710,14 +1523,13 @@ function Show-Picker([switch]$Warm) {
         Draw-PanelFrame $e.Graphics $form.ClientSize.Width $form.ClientSize.Height $ui.Border (Get-WindowRadius)
       })
     $form.Add_Shown({
-        # the layout and the list were built before Show() (see below), so this only takes
-        # the keyboard back and paints the search field as focused
-        Focus-Search
-        $script:SearchFocus = $true
-        Set-AnimTarget $script:Anim 'Field' 1.0
-        $box.Invalidate()
+        # the layout and the list were built before Show() (see below), so the frame is already
+        # complete: the keyboard goes to the list, not to the filter row, so no caret shows until
+        # the user actually types
+        $script:SearchFocus = $false
+        try { $lst.Focus() } catch { }
         Sync-SearchCaret
-        Write-Log ('picker: shown ' + $script:Theme + '/' + $script:UiFamily + ' items=' + $script:Entries.Count + ' scale=' + $script:UiScale + ' size=' + $form.Width + 'x' + $form.Height + ' at ' + $form.Left + ',' + $form.Top + ' hook=' + $script:PickerHook)
+        Write-Log ('picker: shown ' + $script:Theme + '/' + $script:UiFamily + ' items=' + $script:Entries.Count + ' scale=' + $script:UiScale + ' size=' + $form.Width + 'x' + $form.Height + ' at ' + $form.Left + ',' + $form.Top)
       })
 
     $script:ShownAt = Get-Date
@@ -1732,28 +1544,26 @@ function Show-Picker([switch]$Warm) {
         $script:PickerGeo = @{ W = $form.Width; H = $form.Height; L = $form.Left; T = $form.Top }
       })
     $form.Add_Activated({
-        # only reached in takeover mode; in hook mode the panel never activates
-        if (-not $txt.Focused) { Focus-Search }
+        # the panel came back to the front: the keyboard goes to the list, which is where it
+        # starts, unless the editor is open
+        if (-not $form.ContainsFocus) { try { $lst.Focus() } catch { } }
       })
     $form.Add_Deactivate({
         $script:CtrlHeld = $false
+        # the panel is no longer the window in front: closing it has nothing to hand back
+        $script:OwnFront = $false
+        # a paste moves the foreground to its target on purpose: that is not a dismissal
+        if ($script:Pasting) { return }
         # an edit in progress keeps the panel open: closing would drop the text
         if ($null -ne $script:EditRow) { return }
         if (((Get-Date) - $script:ShownAt).TotalMilliseconds -gt [int]$script:Timing['CloseOnBlur']) { $form.Close() }
       })
 
-    # Two input models: hook - the form never activates and a low-level hook feeds the
-    # controls, so the window the user typed in keeps the focus; takeover - no hook or an
-    # IME asked for a real focus, the panel activates and hands the foreground back on close.
-    # Every switch goes through Set-InputMode (lib\panel\keyhook.ps1), which owns the two
-    # derived flags the loop and the tests read.
-    Set-InputMode 'none'
+    # The panel owns the foreground from Show() on (lib\panel\focus.ps1), so the box is not
+    # focused until the user types into it.
     $script:ImeCheckAt = Get-Date; $script:ImeNative = $false
     $script:ShellCheckAt = Get-Date
-    # seed from the real button state: starting at $false would read a button the user is
-    # already holding as a fresh click and close the panel on its first frame
     $script:MenuClosedAt = $null
-    $script:PrevMouseDown = ([Cb.Win]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
     # Non-modal on purpose: ShowDialog would block this message pump. Layout, list and the
     # rounded region all happen before the window appears, so the first frame is the whole
     # panel instead of an empty list that fills in a beat later (measured at ~60 ms).
@@ -1782,21 +1592,14 @@ function Show-Picker([switch]$Warm) {
       return
     }
     $form.Show()
-    # The hook keeps the foreground window untouched. An input method can only be driven
-    # through a real focus, so the panel hands itself the keyboard as soon as one is active
-    # (see the loop) - without that, Chinese/Japanese/Korean could never be typed in.
-    Disable-KeyHook   # never inherit a hook from a panel that closed badly
-    # the Ctrl combinations this panel answers, plugin keys included; the rest of the
-    # keyboard still reaches the window behind
-    Set-KeyHookCtrlKeys ([int[]]@($ctrlHints | ForEach-Object { [int][char]([string]$_.Key).ToUpperInvariant() }))
-    Set-InputMode $(if (Enable-KeyHook) { 'hook' } else { 'none' })
-    if (-not $script:PickerHook) {
-      # no hook: the panel has to own the foreground, so record it as the takeover it is
-      if (Switch-ToTakeover $form.Handle $txt) { Set-InputMode 'takeover' }
-    }
-    # the input mode decides whether the drawn caret is the only one there is
-    Sync-SearchCaret
-    Write-Log ('picker: input=' + (Get-InputMode))
+    # The panel takes the foreground like any other window, so keys reach it without a hook.
+    # Take-Foreground repeats the call with the input queues attached when another process
+    # holds the foreground lock.
+    $front = Take-Foreground $form.Handle
+    $script:OwnFront = $front
+    if (-not $front) { Write-Log 'picker: the foreground was refused' }
+    try { $lst.Focus() } catch { }
+    Write-Log ('picker: input=real foreground=' + $front)
     [void][Cb.Win]::SetWindowPos($form.Handle, [IntPtr](-1), 0, 0, 0, 0, 0x13)
 
     while (-not $form.IsDisposed) {
@@ -1805,10 +1608,9 @@ function Show-Picker([switch]$Warm) {
       # repaint only the rows whose alpha moved, not the whole list on every tick
       if ($am -ne 0 -and -not $form.IsDisposed) { try { if ($am -band 1) { foreach ($i in @($script:Anim.HoverIndex, $script:Anim.PrevHoverIndex, $script:Anim.SelIndex, $script:Anim.PrevSelIndex)) { if ($i -ge 0 -and $i -lt $lst.ItemCount) { $lst.Invalidate($lst.GetItemRectangle($i)) } } }; if ($am -band 2) { $sbar.Invalidate() }; if ($am -band 8) { $box.Invalidate() }; if ($am -band 16) { if ($null -ne $script:EditRow) { $script:EditRow.Save.Invalidate(); $script:EditRow.Cancel.Invalidate() } } } catch { } }
       if ($script:PickerClose) { $form.Close(); break }
-      # Ctrl is a modifier, not a key the hook answers: it stays with the window behind, so a
-      # KeyDown for it never reaches the panel while the hook owns the keyboard, and the key
-      # caps kept their neutral colour while Ctrl was held. Polling the key state is what makes
-      # the accents (and the Ctrl group in the footer) follow the modifier in both modes.
+      # Ctrl is a modifier, not a key the panel sees: a KeyDown for it never arrives on its own,
+      # so the key caps kept their neutral colour while Ctrl was held. Polling the key state is
+      # what makes the accents (and the Ctrl group in the footer) follow the modifier.
       $ctrlNow = ([Cb.Win]::GetAsyncKeyState(0x11) -band 0x8000) -ne 0
       if ($ctrlNow -ne $script:CtrlHeld) {
         $script:CtrlHeld = $ctrlNow
@@ -1824,42 +1626,14 @@ function Show-Picker([switch]$Warm) {
           $form.Close(); break
         }
       }
-      if ($script:PickerHook) {
-        # cache the IME state instead of asking per keystroke (a cross-process call); the
-        # box the user is working in may have changed, so ask about the foreground window
-        if (((Get-Date) - $script:ImeCheckAt).TotalMilliseconds -gt 400) {
-          $script:ImeCheckAt = Get-Date
-          $fgNow = [Cb.Win]::GetForegroundWindow()
-          if ($fgNow -eq [IntPtr]::Zero -or $fgNow -eq $form.Handle) { $fgNow = $prev }
-          $script:ImeNative = Test-ImeOpen $fgNow
-        }
-        if ($form.IsHandleCreated) { Invoke-HookedKey }
-        if (-not $script:PickerHook) { continue }   # handed over above
-        # a click outside dismisses it (Add_Deactivate never fires under the hook). A menu
-        # that is up owns its own clicks - one of those is never a click outside the panel,
-        # or picking an item (the popup reaches past the panel) would close the panel too.
-        $mouseDown = ([Cb.Win]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
-        $justPicked = $script:MenuClosedAt -and (((Get-Date) - $script:MenuClosedAt).TotalMilliseconds -lt 400)
-        $clicked = ($mouseDown -and -not $script:PrevMouseDown)
-        # One click outside ends both. The menu is shown without activation, so it does not
-        # always see the click that lands beside it, and the check below deliberately skips
-        # while it is up (a click on an item reaches past the panel). Doing it here means the
-        # click that dismisses the menu also dismisses the panel, instead of needing two.
-        if ($clicked -and $cm.Visible -and -not $justPicked) {
-          $pos = [Windows.Forms.Cursor]::Position
-          if (-not $cm.Bounds.Contains($pos) -and -not $form.Bounds.Contains($pos)) {
-            try { $cm.Close() } catch { }
-            Write-Log 'picker: dismissed by a click outside (menu was open)'
-            $form.Close(); break
-          }
-        }
-        if ($clicked -and -not $justPicked -and -not $cm.Visible -and -not $form.Bounds.Contains([Windows.Forms.Cursor]::Position)) {
-          Write-Log 'picker: dismissed by a click outside'
-          $form.Close(); break
-        }
-        $script:PrevMouseDown = $mouseDown
-      } elseif (-not $form.ContainsFocus -and ((Get-Date) - $script:ShownAt).TotalMilliseconds -gt 350) {
-        # safety net for the takeover model: a click elsewhere dismisses the panel
+      # the input method decides whether the drawn caret is the only one there is: while it
+      # composes, the real caret has to stay visible - the candidate window sits at it
+      if (((Get-Date) - $script:ImeCheckAt).TotalMilliseconds -gt 400) {
+        $script:ImeCheckAt = Get-Date
+        $script:ImeNative = [Cb.Win]::ImeComposing($txt.Handle)
+      }
+      if (-not $form.ContainsFocus -and ((Get-Date) - $script:ShownAt).TotalMilliseconds -gt 350) {
+        # a click elsewhere dismisses the panel
         $fg = [Cb.Win]::GetForegroundWindow()
         if ($fg -ne $form.Handle -and $fg -ne $prev) { $form.Close(); break }
       }
@@ -1867,27 +1641,32 @@ function Show-Picker([switch]$Warm) {
       if ($script:PreviewHover -and $script:Hover -ge 0 -and $script:PvIdx -ne $script:Hover -and -not $cm.Visible -and ((Get-Date) - $script:PvAt).TotalMilliseconds -gt $script:PreviewDelay) { Show-HoverPreview }
       [void](Step-PreviewCard $pv)
       # The drawn line blinks and follows the selection on every tick: the arrow keys move the
-      # insertion point without changing the text, so no TextChanged fires for them. In takeover
-      # mode the system caret is hidden every tick instead - a control re-shows it after each
-      # keystroke, and a second white caret next to the themed one is exactly the flicker to avoid.
+      # insertion point without changing the text, so no TextChanged fires for them. The system
+      # caret is hidden every tick - a control re-shows it after each keystroke, and a second
+      # white caret next to the themed one is exactly the flicker to avoid.
       if (Test-OwnCaret) {
-        if (-not $script:PickerHook) { try { [void][Cb.Win]::HideCaret($txt.Handle) } catch { } }
+        try { [void][Cb.Win]::HideCaret($txt.Handle) } catch { }
         if ((Get-CaretIndex) -ne $script:CaretIndex) { Sync-SearchCaret }
         elseif (((Get-Date) - $script:CaretPulse).TotalMilliseconds -ge 530) {
           $script:CaretPulse = Get-Date
           $caret.Visible = -not $caret.Visible
         }
-      } elseif ($caret.Visible -or $selBand.Visible) { $caret.Visible = $false; $selBand.Visible = $false }
+      } elseif ($caret.Visible) { $caret.Visible = $false }
       # Idle ticks cost real CPU: 8 ms while something moves or the menu is open, else 20 ms.
       $busy = ($am -ne 0 -or $cm.Visible -or $script:PickerClose)
       Start-Sleep -Milliseconds $(if ($busy) { 8 } else { 20 })
     }
 
-    # only takeover mode moved the foreground, which is also the only mode that restores it
-    if ($script:PickerEscalated -or (-not $script:PickerHook)) {
-      if ($prev -ne [IntPtr]::Zero) { [void][Cb.Win]::SetForegroundWindow($prev) }
-      [void](Restore-TargetFocus $prev $script:PrevFocus)
-    }
+    # The panel took the foreground, so closing puts it back where it came from - but only while
+    # it still holds it: a panel dismissed by a click has already handed it over, and taking it
+    # back would pull the previous window over the one just clicked. The paste path has already
+    # aimed the foreground at its target by then, which is the same window in the usual case.
+    try {
+      if ($script:OwnFront -and $prev -ne [IntPtr]::Zero) {
+        [void][Cb.Win]::SetForegroundWindow($prev)
+        [void](Restore-TargetFocus $prev $script:PrevFocus)
+      }
+    } catch { }
 
     # the compact panel is placed on every open, so there is no position of its own to keep
     if ($script:SaveWinPos -and $preset.Mode -ne 'compact') {
@@ -1922,8 +1701,6 @@ function Show-Picker([switch]$Warm) {
       Write-Log ('picker at: ' + $pos)
     } catch { }
   } finally {
-    # process-wide: a hook that outlives the panel swallows every key, so release it here
-    Disable-KeyHook
     # an error can leave the window on screen with no loop left to serve it
     try { if ($form -and -not $form.IsDisposed) { $form.Close() } } catch { }
     $script:PickerOpen = $false

@@ -15,11 +15,26 @@ namespace Cb {
     [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
     [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int index);
     [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr h, int index, int value);
-    // an input method needs an ordinary, focusable window: while it composes the panel hands
-    // its WS_EX_NOACTIVATE back, and takes it again if the hand-over is refused
-    public static void SetNoActivate(IntPtr h, bool on) {
-      int ex = GetWindowLong(h, -20);
-      SetWindowLong(h, -20, on ? (ex | 0x08000000) : (ex & ~0x08000000));
+    // Is the input method composing in that control right now? The panel draws its own caret in
+    // the theme colour and hides the system one, except while a composition is running: the
+    // candidate window is placed at the real caret, so that one has to stay.
+    [DllImport("imm32.dll")] private static extern IntPtr ImmGetContext(IntPtr h);
+    [DllImport("imm32.dll")] private static extern bool ImmReleaseContext(IntPtr h, IntPtr ctx);
+    [DllImport("imm32.dll")] private static extern bool ImmGetConversionStatus(IntPtr ctx, out int conv, out int sent);
+    [DllImport("imm32.dll")] private static extern int ImmGetCompositionString(IntPtr ctx, int index, byte[] buf, int len);
+    public static bool ImeComposing(IntPtr h) {
+      if (h == IntPtr.Zero) { return false; }
+      IntPtr ctx = ImmGetContext(h);
+      if (ctx == IntPtr.Zero) { return false; }
+      try {
+        // GCS_COMPSTR with no buffer answers the length of the string being composed
+        if (ImmGetCompositionString(ctx, 0x0008, null, 0) > 0) { return true; }
+        int conv, sent;
+        if (ImmGetConversionStatus(ctx, out conv, out sent)) { return (conv & 0x0001) != 0; }   // IME_CMODE_NATIVE
+        return false;
+      } finally {
+        ImmReleaseContext(h, ctx);
+      }
     }
     [DllImport("user32.dll")] public static extern uint GetClipboardSequenceNumber();
     [DllImport("user32.dll")] public static extern IntPtr GetKeyboardLayout(uint idThread);
@@ -741,20 +756,15 @@ namespace Cb {
   }
   public class FluentForm : System.Windows.Forms.Form {
     public FluentForm() { DoubleBuffered = true; }
-    // The panel never activates on its own: a low-level keyboard hook (lib/panel/keyhook.ps1) feeds
-    // the controls instead, so the window the user was typing in keeps the foreground, the
-    // focus and the caret. When the hook is unavailable, or an IME needs a real focus, the
-    // picker escalates to a normal activating panel.
-    protected override bool ShowWithoutActivation { get { return true; } }
+    // The panel activates like any other window: it takes the foreground when it opens and the
+    // keyboard with it, so the controls are fed by the system instead of by a hook.
     protected override System.Windows.Forms.CreateParams CreateParams {
       get {
         var cp = base.CreateParams;
-        cp.ExStyle |= 0x08000000;   // WS_EX_NOACTIVATE
-        // A panel that never activates is also never asked to redraw by the shell, so its
-        // controls can sit half-painted until something else forces a frame. Compositing
-        // makes the DWM assemble each frame off-screen. It is not what fixes the row
-        // flicker (Cb.PinList buffers its own paint, lib/panel/pinlist.ps1), but the panel needs
-        // it for its child controls.
+        // Compositing makes the DWM assemble each frame off-screen, which keeps the child
+        // controls from sitting half-painted while the panel is moved to the front. It is not
+        // what fixes the row flicker (Cb.PinList buffers its own paint, lib/panel/pinlist.ps1),
+        // but the panel needs it for its child controls.
         cp.ExStyle |= 0x02000000;   // WS_EX_COMPOSITED
         cp.ClassStyle |= 0x00020000;
         return cp;

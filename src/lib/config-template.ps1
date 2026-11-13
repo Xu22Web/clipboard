@@ -28,7 +28,7 @@ $script:IniTemplateLayout = [ordered]@{
   'panel behaviour' = @(
     'CompactMode', 'ShowTime', 'ShowTypeIcon', 'ShowThumbnails', 'Highlight', 'HighlightMaxBytes',
     'ShowNewlineMarker', 'PreviewHover', 'PreviewDelay', 'PreviewChars', 'ScrollLines',
-    'Animations', 'DpiAware', 'ImeTakeover'
+    'Animations', 'DpiAware'
   )
   'history' = @('MaxItems', 'Undo')
   'install' = @('Autostart', 'DesktopShortcut')

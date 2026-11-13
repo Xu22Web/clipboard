@@ -166,11 +166,6 @@ $script:PasteFilesAsText = $true
 # type plain text into the focused control instead of sending the paste key: kept off by
 # default, because it is slower on long text and cannot carry formatting
 $script:PasteTyping = $false
-# when the panel hands the foreground over so an input method can compose:
-#   auto   - the first letter typed into the filter hands over
-#   manual - only a click on the search area hands over (default)
-#   off    - never; the hook keeps feeding the filter and no input method can compose
-$script:ImeTakeover = 'manual'
 # per program paste behaviour, empty = every program behaves the same (see utils/apprules.ps1)
 $script:AppRules = ''
 $script:Interval = 300

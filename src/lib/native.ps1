@@ -6,11 +6,10 @@
 # No clipboard, no settings and no panel state beyond the DPI factor, so a command, the
 # picker and the resident loop can all call into this file.
 
-# The C# lives in lib\assembly - cb.native.cs here, cb.keyhook.cs for lib\panel\keyhook.ps1 -
-# and can be compiled ahead of time into lib\assembly\clipboard.dll by tools\build-assembly.ps1:
-# a cold panel open takes 850 ms with the assembly against 1050 ms compiling the source
-# (measured, three runs each). A development copy that never ran the build keeps the source
-# path: no assembly, compile the .cs.
+# The C# lives in lib\assembly (cb.native.cs) and can be compiled ahead of time into
+# lib\assembly\clipboard.dll by tools\build-assembly.ps1: a cold panel open takes 850 ms with
+# the assembly against 1050 ms compiling the source (measured, three runs each). A development
+# copy that never ran the build keeps the source path: no assembly, compile the .cs.
 function Test-NativeAssembly {
   if ($script:NativeAssemblyChecked) { return $script:NativeAssemblyOk }
   $script:NativeAssemblyChecked = $true

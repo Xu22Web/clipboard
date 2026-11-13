@@ -76,7 +76,7 @@ $groupModules = @{
   store    = @('utils\hash', 'utils\image', 'utils\cfhtml', 'lib\store', 'lib\entry', 'lib\query', 'lib\select', 'lib\clip', 'lib\media', 'lib\blobs', 'lib\cfhtml', 'lib\modifiers', 'lib\apprules', 'utils\query-words')
   transfer = @('lib\transfer', 'utils\transfer', 'lib\migrate')
   config   = @('lib\config', 'lib\config-template', 'lib\shortcut', 'utils\dpi')
-  panel    = @('utils\image', 'lib\panel\media-render', 'lib\panel\anim', 'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\keyhook', 'lib\panel\picker', 'lib\panel\picker-geom', 'lib\serve')
+  panel    = @('utils\image', 'lib\panel\media-render', 'lib\panel\anim', 'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\focus', 'lib\panel\picker', 'lib\panel\picker-geom', 'lib\serve')
   # the panel size and shape are arithmetic over the metric table: `status` prints them, and no
   # window, palette or renderer is involved
   panelgeom = @('lib\panel\picker-geom')

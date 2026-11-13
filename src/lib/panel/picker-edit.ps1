@@ -1,9 +1,7 @@
 # lib/panel/picker-edit.ps1 - fix an entry without pasting it first.
 #
-# The panel never takes the foreground, so the editor is a TextBox laid over the list inside
-# the panel itself. Two input models, two ways in: under the hook every keystroke is posted
-# to $script:HookTargetBox instead of the search field (see Invoke-HookedKey), and without a
-# hook the box simply takes the real focus.
+# The editor is a TextBox laid over the list inside the panel itself, and it takes the real
+# focus while it is open: the panel already owns the keyboard, so the keys arrive there.
 #
 # Enter saves, Shift+Enter adds a line, Esc walks away. The save is one store write and the
 # row keeps its time and its marks - see Update-RecordText in lib/store.ps1.
@@ -16,8 +14,6 @@
 $script:EditorCtx = $null
 # @{ Rec; Box } while the overlay is open, $null the rest of the time
 $script:EditRow = $null
-# non-null = the low-level hook feeds this box instead of the search field
-$script:HookTargetBox = $null
 # what a posted Complete-RowEdit should do, read from the lambda below
 $script:EditSave = $false
 # '' | 'cancel' | 'save': the first press of Esc or Enter only asks, the second one acts
@@ -28,7 +24,6 @@ $script:EditArm = ''
 # keyboard back where the panel expects it (the search field) once the card is gone.
 function Set-PickerEditHost($form, $lst, $txt, $ui, $font, $refresh, $note, $focus) {
   $script:EditRow = $null
-  $script:HookTargetBox = $null
   $script:EditArm = ''
   $script:EditorCtx = @{ Form = $form; List = $lst; Box = $txt; Ui = $ui; Font = $font; Refresh = $refresh; Note = $note; Focus = $focus }
   $form.Add_KeyDown({ param($s, $e) Invoke-PickerEditKey $e })
@@ -138,7 +133,6 @@ function Close-RowEdit {
   $ctx = $script:EditorCtx
   $st = $script:EditRow
   $script:EditRow = $null
-  $script:HookTargetBox = $null
   $script:EditArm = ''
   # the buttons are gone, so the hover ramp has to land at 0 or the next card would open lit
   if ($script:Anim) { Set-AnimTarget $script:Anim 'EditBtn' 0.0 }
@@ -282,7 +276,6 @@ function Begin-RowEdit {
   $card.BringToFront()
   try { $card.Region = New-RoundRegion $card.Width $card.Height (Get-WindowRadius) } catch { }
   $script:EditRow = @{ Rec = $rec; Box = $box; Card = $card; Stat = $stat; Err = $err; Payload = $payload; Save = $save; Cancel = $cancel }
-  $script:HookTargetBox = $box
   $box.Add_TextChanged({
       $script:EditArm = ''
       if ($null -ne $script:EditRow) { $script:EditRow.Err.Text = '' }
@@ -291,8 +284,7 @@ function Begin-RowEdit {
   $box.Add_KeyUp({ Update-EditStatus })
   $box.Add_Click({ Update-EditStatus })
   Update-EditStatus
-  # without a hook the box can take the real focus; under the hook it cannot, and the caret
-  # stays invisible exactly like the search field's
+  # the box takes the real focus, so the caret is the system one while editing
   try { $box.Focus(); $box.SelectionStart = $box.TextLength; $box.ScrollToCaret() } catch { }
   # the card keeps the keyboard from now on; the footer is covered, so nothing is reported
   # there while the editor is open

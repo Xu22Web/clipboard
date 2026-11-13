@@ -14,7 +14,7 @@ Windows 10 / 11 的剪贴板历史工具，纯 PowerShell 5.1 实现，无第三
 
 ## 功能
 
-- 全局热键呼出历史面板（默认 `Ctrl+Alt+V`），输入即过滤，回车粘回原窗口；打开面板时原窗口的前台、焦点与光标位置保持不变（[焦点模型](#焦点模型)）
+- 全局热键呼出历史面板（默认 `Ctrl+Alt+V`），输入即过滤，回车粘回原窗口（[焦点模型](#焦点模型)）
 - 后台轮询捕获并去重，支持文本、文件列表、图片与带格式文本（含图文混排）；超出限制的内容按配置跳过（[图片与带格式文本](#图片与带格式文本)）
 - 容量分四项独立计算：条数、单条大小、文本总量、媒体预算；超出时由旧到新丢弃，受保护标记的行不参与裁剪（[配置](#配置)）
 - 面板为 Win11 Fluent 风格自绘界面：虚拟列表、置顶行冻结、长文本省略、搜索命中高亮、悬停预览卡片，深浅两套主题
@@ -155,17 +155,17 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 ### 焦点模型
 
-面板以不激活方式显示（`WS_EX_NOACTIVATE`），按键由低级键盘钩子（`WH_KEYBOARD_LL`）截获后转发给面板自身：原窗口保持前台、焦点、光标位置与层级不变，面板中可直接输入过滤，原窗口收不到字符。搜索框没有真实焦点，插入位置由一条自绘竖线指示：位置取搜索框自身的排版宽度，紧贴前后字符，随方向键、`Home` `End`、退格与点击移动；`Shift` 加方向键选中的范围以同色细条标在文字下方，`Ctrl` 加方向键、`Ctrl`+`Home` `End` 按词与行首行尾跳转，`Ctrl`+`Backspace` 或 `Ctrl`+`Delete` 删一个词。接管键盘后仍画这条竖线并隐藏系统光标（系统光标不能改颜色），输入法组字期间例外。关闭面板（`Esc`、回车粘贴、再按热键、点击面板外部、呼出开始菜单或 Windows 搜索）即卸载钩子。
+面板打开时取前台（普通激活窗口，无键盘钩子），键盘因此落在面板上。初始焦点在列表上，所以筛选行没有光标；敲下任意可见字符即把焦点移到搜索框并写入该字符，之后它就是普通输入框：方向键、`Home` `End`、`Shift` 选区、`Ctrl` 加方向键按词跳转与 `Ctrl`+`Backspace` `Delete` 删词、输入法组字全部由系统提供。搜索框内画的是一条主题色竖线并隐藏系统光标（系统光标无法改色），输入法组字期间恢复系统光标。关闭面板（`Esc`、回车粘贴、再按热键、点击面板外部、呼出开始菜单或 Windows 搜索）时，若面板仍在前台则把前台与焦点还给打开它之前的窗口。
 
-面板以置顶方式显示但不激活，因此激活着的置顶窗口始终在它上面：开始菜单与 Windows 搜索的唤出窗口就是这样压住面板的（`SetWindowPos`、先取消置顶再置顶、`BringWindowToTop`、`HWND_TOP` 都无法逆转，已逐一实测）。层级本身查不到：`GetWindowBand` 未导出，按序号调用会让调用方崩溃；`TokenUIAccess` 只能覆盖带 UIAccess 的窗口，开始菜单与搜索并不带。因此判据为：前台窗口是置顶窗口、带 UIAccess，或属于开始菜单/搜索（开始菜单为 `StartMenuExperienceHost`，搜索在 Win11 为 `SearchHost`、Win10 1903–2004 为 `SearchApp`、更早为 `SearchUI`，另认 shell 的 UX 帧类名）。这类窗口在前台时按下热键：属于开始菜单/搜索的先 `Esc` 关掉，`Esc` 无效时把其下层窗口切到前台（浮层失去前台即关闭），关掉搜索可能露出开始菜单，所以最多连关三个；仍关不掉或不是它们则不开。面板打开期间呼出开始菜单或搜索，则关闭面板。
+面板以置顶方式显示，因此激活着的置顶窗口仍会压在它上面：开始菜单与 Windows 搜索的唤出窗口就是这样压住面板的（`SetWindowPos`、先取消置顶再置顶、`BringWindowToTop`、`HWND_TOP` 都无法逆转，已逐一实测）。层级本身查不到：`GetWindowBand` 未导出，按序号调用会让调用方崩溃；`TokenUIAccess` 只能覆盖带 UIAccess 的窗口，开始菜单与搜索并不带。因此判据为：前台窗口是置顶窗口、带 UIAccess，或属于开始菜单/搜索（开始菜单为 `StartMenuExperienceHost`，搜索在 Win11 为 `SearchHost`、Win10 1903–2004 为 `SearchApp`、更早为 `SearchUI`，另认 shell 的 UX 帧类名）。这类窗口在前台时按下热键：属于开始菜单/搜索的先 `Esc` 关掉，`Esc` 无效时把其下层窗口切到前台（浮层失去前台即关闭），关掉搜索可能露出开始菜单，所以最多连关三个；仍关不掉或不是它们则不开。面板打开期间呼出开始菜单或搜索，则关闭面板。
 
-输入法需要真实键盘焦点，因此面板按 `ImeTakeover` 决定何时交接：`manual`（默认）在点击搜索区（占位文字、图标、清空按钮与头部区域）时，`auto` 在输入法处于中文组字模式（`IME_CMODE_NATIVE`）时按下第一个可打印键，`off` 则从不。交接过程为卸载钩子、临时去掉 `WS_EX_NOACTIVATE`、用 `AttachThreadInput` 附加前台线程后调用 `SetForegroundWindow`，成为前台后重放该键与本批剩余按键；失败则不重放并重装钩子。`Ctrl+Space` 等输入法切换键一律放行。取不到键盘钩子时，面板从打开起即为接管模式。编辑窗口打开时，按键与交接都以编辑框为目标。关闭面板时前台还给打开它之前的窗口。
+取前台靠 `SetForegroundWindow`；前台被别的进程占住时（前台锁）先用 `AttachThreadInput` 附加那个线程再取一次，最多三次，并读取实际结果而不是假定成功。编辑窗口打开时，回车与 `Esc` 都由它先拿到。
 
 粘贴前把目标窗口切回前台并确认，再把键盘焦点还给该窗口原先的控件；前台被别的进程占住时用 `AttachThreadInput` 附加后再取一次，仍失败则不注入按键，保留面板并提示按 `Ctrl+V`。面板隐藏后重新确认前台，被别的窗口抢走时再取回。注入前按 `ModReleaseTimeout` 等待修饰键松开，超时后仍按住的修饰键会被松开，避免 `Ctrl+V` 变成 `Ctrl+Alt+V` 之类的别的快捷键。
 
-目标窗口是**按键那一刻**的前台窗口（钩子放行 `Alt+Tab`，面板打开后换到别的程序，文本就落在新窗口）；属于本进程的窗口（交接后的面板本身、常驻进程的控制台）不算目标，此时用打开面板前的那个窗口。
+目标窗口是**按键那一刻**的前台窗口（`Alt+Tab` 之后换到别的程序，文本就落在新窗口）；属于本进程的窗口（面板本身、常驻进程的控制台）不算目标，此时用打开面板前的那个窗口。
 
-钩子仅接管面板使用的键：可打印字符、方向键与 `PgUp` `PgDn` `Home` `End`、`Delete`、`F2`、`Backspace` `Tab` `Enter` `Esc`，以及面板响应的 `Ctrl` 组合（`Ctrl+A`、`Ctrl+Z`、`Ctrl+Enter`、`Ctrl+0..9`、搜索框的 `Ctrl` 加方向键 / `Ctrl`+`Home` `End` / `Ctrl`+`Backspace` `Delete` 与插件注册的键）。其余交给系统，包括所有 `Alt` / `Win` 组合、`Ctrl+Space`、`Ctrl+Shift+Esc`、未处理的 `Ctrl` 快捷键、`F1` 与 `F3`–`F12`、`Insert`。
+面板自己处理这些键：可打印字符、方向键与 `PgUp` `PgDn` `Home` `End`、`Delete`、`F2`、`Backspace` `Tab` `Enter` `Esc`，以及 `Ctrl` 组合（`Ctrl+A`、`Ctrl+Z`、`Ctrl+Enter`、`Ctrl+0..9` 与插件注册的键）。`Home` `End` 在搜索框有焦点时归文本、否则归列表；其余组合不是面板的（如 `Ctrl+Space`、`Ctrl+Shift+Esc`、`Alt` / `Win` 组合、`F1` 与 `F3`–`F12`、`Insert`）面板不响应，但面板持有键盘时它们不再回到原窗口。
 
 插件通过 `PanelKeys` 注册面板按键：`item-marks` 提供 `Ctrl+P` / `Ctrl+S` / `Ctrl+H`，`entry-actions` 提供 `Ctrl+O`，均列在 `clipboard help` 的 Panel keys 中并标注来源插件。
 
@@ -236,7 +236,6 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `SaveWindowPos` | `0` | `1` = 关闭面板时把位置写回 ini（紧凑形态不写） |
 | `PlaceNearForeground` | `0` | 没有保存位置时的落点：`1` = 呼出它的窗口上（水平居中、纵向三分之一处，限制在该窗口所在显示器内）；`0` = 该显示器的中上部 |
 | `PlaceAtCaret` | `0` | `1` = 完整形态也贴在插入符下方；紧凑形态始终如此 |
-| `ImeTakeover` | `manual` | 面板何时为了输入法而接管前台：`auto` = 输入法处于中文组字模式时按下第一个可打印键；`manual` = 点搜索区时；`off` = 从不，连点搜索区也不接管（面板只能靠钩子收键，输入法无法组字） |
 | `ShowTime` | `1` | `1` = 显示相对时间列 |
 | `ShowTypeIcon` | `1` | `1` = 显示插件提供的行图标 |
 | `ShowThumbnails` | `1` | `1` = 图片条目在图标槽内绘制缩略图 |
@@ -575,7 +574,7 @@ clipboard config set entry-actions.Reveal 0
 | 编码 | 进程之间使用 UTF-8 的 JSON 帧；`put` 无文本时从 stdin 读 |
 | 生成 | `cli client` 写入 `src\client.exe`（不入库）；`cli build` 在清单含 `src/lib/client/*.cs` 时先编到同一路径，再以 `client.exe` 入包；`cli dev` 同样由清单决定启动前是否编译 |
 
-`clipboard.dll` 由 `Add-Native`（`lib\native.ps1`）与 `Add-KeyHookType`（`lib\panel\keyhook.ps1`）通过 `Assembly.LoadFrom` 载入，载入成功即不再编译源码：
+`clipboard.dll` 由 `Add-Native`（`lib\native.ps1`）通过 `Assembly.LoadFrom` 载入，载入成功即不再编译源码：
 
 | 项 | 说明 |
 |---|---|
@@ -666,7 +665,7 @@ src/                    程序本体（打包只读这个目录）
   lib/dispatch.ps1        Invoke-Main：Initialize-Main（Apply-Config + 装配插件）→ Invoke-Dispatch
   lib/proxy.ps1           命令代理
   lib/client/client.cs    编译版客户端源码
-  lib/assembly/*.cs       类型库源码（cb.native.cs / cb.keyhook.cs）
+  lib/assembly/*.cs       类型库源码（cb.native.cs）
   lib/assembly/clipboard.dll 类型库产物（不入库；cli assembly 生成）
 
   lib/panel/              面板栈：只在绘制命令中加载
@@ -677,7 +676,7 @@ src/                    程序本体（打包只读这个目录）
   lib/panel/pinlist.ps1     自绘列表控件 Cb.PinList
   lib/panel/preview.ps1     悬停预览卡片
   lib/panel/anim.ps1        过渡动画的数值层
-  lib/panel/keyhook.ps1     低级键盘钩子、取前台、松开仍按住的修饰键
+  lib/panel/focus.ps1      取前台与交还前台、松开仍按住的修饰键
   lib/panel/media-render.ps1 图片与富文本的位图与缓存
 
   lib/plugin/             插件层：三个文件要么全有要么全无

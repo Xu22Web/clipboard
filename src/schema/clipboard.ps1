@@ -50,7 +50,6 @@
     SaveWindowPos     = @{ Type = 'bool'; Ref = [ref]$script:SaveWinPos; Default = 0; Description = '1 = write the moved panel back to this file (never for the compact panel)' }
     PlaceNearForeground = @{ Type = 'bool'; Ref = [ref]$script:PlaceNearForeground; Default = 0; Description = '1 = with no saved position, place the panel over the window it was opened from' }
     PlaceAtCaret      = @{ Type = 'bool'; Ref = [ref]$script:PlaceAtCaret; Default = 0; Description = '1 = place the full panel below the caret too; the compact panel always does' }
-    ImeTakeover       = @{ Type = 'enum'; Ref = [ref]$script:ImeTakeover; Default = 'manual'; Enum = @('auto', 'manual', 'off'); Description = 'when the panel takes the foreground so an input method can compose: auto (first letter) / manual (a click on the search area) / off (never)' }
     ShowTime          = @{ Type = 'bool'; Ref = [ref]$script:ShowTime; Default = 1; Description = '1 = relative time column' }
     ShowTypeIcon      = @{ Type = 'bool'; Ref = [ref]$script:ShowTypeIcon; Default = 1; Description = '1 = show the row icon a plugin provides (none without one)' }
     ShowThumbnails    = @{ Type = 'bool'; Ref = [ref]$script:ShowThumbnails; Default = 1; Description = '1 = show a small picture in the icon slot of a picture or formatted-text row' }

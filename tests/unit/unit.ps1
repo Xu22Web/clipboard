@@ -223,7 +223,7 @@ try {
     Describe 'module set' {
       It 'every required module exists' {
         # the entry file names these by relative path; a package must carry all of them
-        $requiredLib = @('lib\base', 'lib\native', 'lib\panel\keyhook', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
+        $requiredLib = @('lib\base', 'lib\native', 'lib\panel\focus', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
           'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\panel\anim',
           'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\serve', 'lib\shortcut',
           'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch',
@@ -387,7 +387,7 @@ try {
           'tools\build-client.ps1', 'tools\build-assembly.ps1',
           'tools\utils\minify.ps1', 'tools\utils\ini.ps1', 'tools\utils\globs.ps1', 'tools\utils\csc.ps1',
           'tools\utils\console.ps1', 'tools\utils\pipeline.ps1',
-          'src\lib\client\client.cs', 'src\lib\assembly\cb.native.cs', 'src\lib\assembly\cb.keyhook.cs')
+          'src\lib\client\client.cs', 'src\lib\assembly\cb.native.cs')
         $missingTool = @()
         foreach ($tool in $tooling) {
           if (-not (Test-Path -LiteralPath (Join-Path $repoRoot $tool))) { $missingTool += $tool }
@@ -476,9 +476,9 @@ try {
       } -Skip $script:StructMinified
     }
 
-    # The panel must never take the foreground: a low-level keyboard hook feeds its controls
-    # instead (lib/panel/keyhook.ps1), so the user's window keeps the focus and the caret. The
-    # takeover fallback (no hook, or an IME) still hands the foreground back on close.
+    # The panel takes the foreground when it opens (lib/panel/focus.ps1), so the keyboard and the
+    # focus are real: the list starts with them and the filter row gets them as soon as the user
+    # types. Closing hands the foreground back where it came from.
     Describe 'panel' {
       BeforeAll {
         $script:StructPickerText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\picker.ps1'))
@@ -493,8 +493,8 @@ try {
       }
 
       It 'is shown without a dialog and without TopMost' {
-        # a modal dialog would block the hook that feeds the panel, and TopMost would raise the
-        # panel over the window the user is working in
+        # a modal dialog would block the message loop the panel animates on, and TopMost would
+        # raise the panel over windows that were opened after it
         Expect (-not ($script:StructPickerText -match '\$form\.ShowDialog\(')) 'form.ShowDialog found'
         $topHits = ([regex]::Matches($script:StructPickerText, '(?m)^\s*\$form\.TopMost\s*=')).Count
         Expect ($topHits -eq 0) ([string]$topHits + ' assignment(s)')
@@ -505,30 +505,21 @@ try {
         Expect ($showHits -eq 1) ([string]$showHits + ' call(s)')
       }
 
-      It 'the panel form never activates' {
-        Expect (($script:StructWinText -match 'ShowWithoutActivation') -and ($script:StructWinText -match '0x08000000')) 'no-activate override missing'
+      It 'the panel form activates like any window' {
+        # no WS_EX_NOACTIVATE and no ShowWithoutActivation: the panel owns the foreground, so a
+        # keyboard hook would only be a second, conflicting source of keys
+        Expect (-not ($script:StructWinText -match 'ShowWithoutActivation')) 'the form still refuses to activate'
+        Expect (-not ($script:StructWinText -match '0x08000000')) 'WS_EX_NOACTIVATE is still set'
+        Expect (-not ($script:StructPickerText -match 'Cb\.KeyHook|Enable-KeyHook|Set-InputMode')) 'a keyboard hook is still wired into the picker'
+        Expect ($script:StructPickerText -match '(?s)\$form\.Show\(\).{0,400}Take-Foreground \$form\.Handle') 'the panel never takes the foreground'
       }
 
       It 'hands the foreground back when it closes' {
         Expect ($script:StructPickerText -match 'SetForegroundWindow\(\$prev\)') 'restore call missing'
-      }
-
-      It 'installs and removes the key hook' {
-        Expect (($script:StructPickerText -match 'Enable-KeyHook') -and ($script:StructPickerText -match 'Disable-KeyHook')) 'hook calls missing'
-      }
-
-      It 'the key hook is released in a finally' {
-        # A WH_KEYBOARD_LL hook outlives the panel's own teardown and swallows every key in the
-        # system, so it has to be released from a finally block: releasing it after the message
-        # loop means one exception on the way out leaves the keyboard dead.
-        $pickerAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $script:StructLibPath 'panel\picker.ps1'), [ref]$null, [ref]$null)
-        $finallyText = (@($pickerAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.TryStatementAst] }, $true) |
-            ForEach-Object { $_.Finally.Extent.Text }) -join "`n")
-        Expect ($finallyText -match 'Disable-KeyHook') ''
-      } -Skip $script:StructMinified
-
-      It 'paste releases the key hook before injecting' {
-        Expect ($script:StructPickerText -match '(?s)function Paste-Clip[^\r\n]*\{.{0,600}Disable-KeyHook') 'Disable-KeyHook missing before SendKeys'
+        # only while the panel still holds it: a dismissal by a click elsewhere has already
+        # handed the foreground over, and taking it back would pull the previous window up
+        Expect ($script:StructPickerText -match '\$script:OwnFront') 'the panel does not track whether it still holds the foreground'
+        Expect ($script:StructPickerText -match '(?s)\$script:OwnFront -and \$prev') 'the restore ignores who holds the foreground'
       }
 
       It 'the paste target is the window in front, and never one of ours' {
@@ -539,14 +530,13 @@ try {
         Expect ($script:StructPickerText -match 'Format-PasteTarget') 'the paste target is not written to the log'
       }
 
-      It 'the foreground is taken by one helper, shared with the hand-over' {
+      It 'the foreground is taken by one helper' {
         # the panel is refused the foreground while another process owns it, and the documented
         # workaround (AttachThreadInput) is worth writing once, not twice
         Expect ($script:StructPickerText -match 'Take-Foreground') 'the paste does not use Take-Foreground'
-        $khText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\keyhook.ps1'))
+        $khText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\focus.ps1'))
         Expect ($khText -match '(?s)function Take-Foreground') 'Take-Foreground missing'
-        Expect ($khText -match '(?s)function Switch-ToTakeover[^\r\n]*\{(?:(?!function ).){0,600}Take-Foreground') 'the hand-over does not use Take-Foreground'
-        Expect (-not ($khText -match '(?s)function Switch-ToTakeover[^\r\n]*\{(?:(?!function ).){0,600}AttachThreadInput')) 'the attach is still written in Switch-ToTakeover as well'
+        Expect ($khText -match '(?s)function Take-Foreground[^\r\n]*\{(?:(?!function ).){0,1600}AttachThreadInput') 'Take-Foreground never attaches the queues'
       }
 
       It 'the foreground is checked again after the panel hides' {
@@ -556,10 +546,10 @@ try {
       }
 
       It 'a modifier still held at the timeout is released' {
-        # Control.ModifierKeys reads the calling thread's key state, and the panel never owns the
-        # keyboard: waiting on it alone would send Ctrl+V with Alt still down
+        # Control.ModifierKeys reads the calling thread's key state, so waiting on it alone would
+        # send Ctrl+V with Alt still down
         $modText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'modifiers.ps1'))
-        $khText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\keyhook.ps1'))
+        $khText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\focus.ps1'))
         Expect ($modText -match '(?s)function Get-HeldModifier\s*\{.{0,400}GetAsyncKeyState') 'the modifier wait does not read the real key state'
         Expect ($modText -match 'function Test-Modifiers-Up\s*\{\s*return \(\(Get-HeldModifier\)') 'Test-Modifiers-Up still reads the thread key state'
         Expect ($khText -match '(?s)function Release-HeldModifiers') 'no Release-HeldModifiers'
@@ -685,8 +675,12 @@ try {
         Expect ($script:StructPickerText -match '(?s)Add_FormClosing\(\{.{0,600}\$cm\.Close\(\)') 'menu not closed in FormClosing'
       }
 
-      It 'an open menu never counts as a click outside' {
-        Expect ($script:StructPickerText -match '\$cm\.Visible[^\r\n]*-and -not \$form\.Bounds') 'outside-click check ignores the menu'
+      It 'a dismissed panel closes its menu first' {
+        # the menu is shown without activation, so it does not always see the click that lands
+        # beside it: leaving it up keeps its filter and it eats the next click
+        Expect ($script:StructPickerText -match '(?s)Add_FormClosing\(\{.{0,400}\$cm\.Close\(\)') 'menu not closed in FormClosing'
+        # and a click elsewhere is the form losing the activation, which is what closes it
+        Expect ($script:StructPickerText -match '(?s)Add_Deactivate\(\{.{0,700}\$form\.Close\(\)') 'the panel ignores losing the foreground'
       }
 
       It 'releases its menu font and form region' {
@@ -723,9 +717,9 @@ try {
         Expect ($timingRefs -ge 8) ([string]$timingRefs + ' timing refs')
       } -Skip $script:StructMinified
 
-      It 'the Shown handler paints the search box active' {
-        # the handler must go through Focus-Search: taking the real focus there would activate
-        # the panel and defeat the hook model
+      It 'the Shown handler leaves the search box unlit' {
+        # the panel already owns the foreground, so the only thing the handler must not do is
+        # paint the field as focused: the caret there would be a caret nobody is using
         $pickerAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $script:StructLibPath 'panel\picker.ps1'), [ref]$null, [ref]$null)
         $shownBlocks = @($pickerAst.FindAll({
               param($node)
@@ -737,49 +731,46 @@ try {
         $shownHelper = 0
         foreach ($b in $shownBlocks) {
           $text = $b.Arguments[0].Extent.Text
-          if ($text -match '\.Focus\(') { $shownFocus++ }
+          if ($text -match '\$txt\.Focus\(') { $shownFocus++ }
           if ($text -match 'SearchFocus\s*=\s*\$true') { $shownPaint++ }
-          if ($text -match 'Focus-Search') { $shownHelper++ }
+          if ($text -match 'function Start-Search|Start-Search$') { $shownHelper++ }
         }
-        Expect ($shownBlocks.Count -eq 1 -and $shownFocus -eq 0) ([string]$shownBlocks.Count + ' handler(s), ' + [string]$shownFocus + ' Focus call(s)')
-        Expect ($shownHelper -eq 1) ([string]$shownHelper + ' Focus-Search call(s)')
-        Expect ($shownPaint -eq 1) ([string]$shownPaint + ' search box mark(s)')
+        Expect ($shownBlocks.Count -eq 1) ([string]$shownBlocks.Count + ' handler(s)')
+        Expect ($shownFocus -eq 0) ([string]$shownFocus + ' filter focus call(s)')
+        Expect ($shownHelper -eq 0) ([string]$shownHelper + ' Start-Search call(s)')
+        Expect ($shownPaint -eq 0) ([string]$shownPaint + ' search box mark(s)')
       } -Skip $script:StructMinified
 
-      It 'a click in the search area takes the keyboard for real' {
-        # opening only paints the field (the hook keeps the window in front untouched); a click
-        # on the field is a request for the keyboard, and the hook cannot deliver that without
-        # the panel owning the foreground - so the search area hands over instead
-        Expect ($script:StructPickerText -match '(?s)function Claim-Search\s*\{.{0,400}Switch-ToTakeover') 'Claim-Search does not hand the keyboard over'
-        foreach ($handler in @('\$head', '\$box', '\$txt', '\$ph', '\$icon')) {
-          $hit = ($script:StructPickerText -match ($handler + '\.Add_Click\(\{ Claim-Search \}\)'))
-          Expect $hit ($handler + ' still focuses without claiming')
-        }
-        # the placeholder covers the empty field: without its own claim an empty box would only
-        # take the keyboard when the text box, hidden under it, happened to be hit
-        Expect (([regex]::Matches($script:StructPickerText, '\.Add_Click\(\{ Claim-Search \}\)')).Count -ge 5) 'search area handlers missing'
+      It 'starts on the list and moves the keyboard to the filter on the first character' {
+        # the panel owns the foreground from Show() on, but the filter row is not where the user
+        # starts: no caret is shown until something is typed, and the list navigates meanwhile
+        Expect ($script:StructPickerText -match '(?s)Add_Shown\s*\(\{(?:(?!Add_).){0,400}\$lst\.Focus\(\)') 'the list does not take the keyboard on open'
+        Expect (-not ($script:StructPickerText -match '(?s)Add_Shown\s*\(\{(?:(?!Add_).){0,400}\$txt\.Focus\(\)')) 'the filter row takes the keyboard on open'
+        Expect ($script:StructPickerText -match '(?s)Add_KeyPress\s*\(\{(?:(?!Add_).){0,600}Start-Search') 'a typed character never reaches the filter row'
+        Expect ($script:StructPickerText -match '(?s)function Start-Search\s*\{.{0,300}\$txt\.Focus\(\)') 'Start-Search does not focus the box'
+        # a click anywhere in the search area ends in the same place: the real focus
+        Expect (([regex]::Matches($script:StructPickerText, '\.Add_Click\(\{ \$txt\.Focus\(\) \}\)')).Count -ge 5) 'search area handlers missing'
+        Expect (-not ($script:StructPickerText -match 'Claim-Search')) 'the old click hand-over is still there'
       } -Skip $script:StructMinified
 
-      It 'the search field draws its own caret and its own selection' {
-        # The system caret cannot be given the theme colour, so the panel draws the line itself -
-        # in takeover mode too - and hides the real one. A control re-shows its caret after every
-        # keystroke, so the hiding has to come from the loop, not once from the hand-over.
-        Expect ($script:StructPickerText -match '(?s)function Test-OwnCaret\s*\{.{0,500}ImeNative') 'the caret owner ignores an input method'
+      It 'the search field draws the caret in the theme colour' {
+        # The system caret cannot be given a colour, so the panel draws the line itself and hides
+        # the real one. A control re-shows its caret after every keystroke, so the hiding has to
+        # come from the loop, not once from the focus change.
+        Expect ($script:StructPickerText -match '(?s)function Test-OwnCaret\s*\{.{0,400}ImeComposing|ImeNative') 'the caret owner ignores an input method'
         Expect ($script:StructPickerText -match '(?s)Test-OwnCaret.{0,400}HideCaret\(\$txt\.Handle\)') 'the system caret is never hidden while the panel draws its own'
         Expect ($script:StructWinText -match 'extern bool HideCaret') 'HideCaret missing from the assembly'
+        Expect ($script:StructWinText -match 'bool ImeComposing') 'no input-method check for the drawn caret'
         Expect ($script:StructPickerText -match 'function Get-CaretIndex') 'no caret index helper'
         # EM_POSFROMCHAR / TextWidth: the control's own metrics, never a GDI measurement of the
         # prefix (that one came out half again as wide on a scaled display)
         Expect ($script:StructPickerText -match '0x00D6') 'the caret position is not asked of the control'
         Expect ($script:StructPickerText -match '\[Cb\.Win\]::TextWidth') 'the end of the text is not measured with the control font'
         Expect (-not ($script:StructPickerText -match 'MeasureText\(\$prefix')) 'the caret is still placed from a GDI measurement'
-        # the control reads Shift out of its own thread's key state, which never saw the key
-        # under the hook, so the selection is worked out here and handed over with EM_SETSEL
-        Expect ($script:StructPickerText -match '(?s)function Step-SearchKey.{0,1500}0x00B1') 'a Shift selection never reaches the control'
-        Expect ($script:StructPickerText -match 'function Get-WordStop') 'no word boundary helper for the Ctrl jumps'
-        # it also only paints a selection while it has the focus: the band is what makes the
-        # range visible under the hook
-        Expect ($script:StructPickerText -match 'function Sync-SearchBand') 'the selection range is never drawn'
+        # the selection is the control's own now that it has the focus; only the end the keyboard
+        # moved last has to be tracked, because the control does not report it
+        Expect ($script:StructPickerText -match 'CaretEnd') 'the active end of a selection is not tracked'
+        Expect (-not ($script:StructPickerText -match 'Step-SearchKey|Sync-SearchBand')) 'the emulated selection is still there'
       } -Skip $script:StructMinified
     }
   }
@@ -3647,46 +3638,9 @@ try {
         }
       }
 
-      # The self-painted list freezes its first rows. 10 visible rows of 10px, 3 frozen, so
-      # the scrollable window is 7 rows tall and TopIndex can never drop below 3.
+      # The panel takes the foreground when it opens, so the keyboard arrives through the
+      # system and there is no input mode to switch between.
       Add-PinList
-
-      # One setter decides how typing reaches the panel; the two flags the loop and the
-      # restore path read are derived from it, so they can no longer drift apart.
-      Describe 'the input mode' {
-        It 'derives the panel flags from the mode' {
-          foreach ($case in @(
-              @{ Mode = 'hook'; Hook = $true; Escalated = $false },
-              @{ Mode = 'takeover'; Hook = $false; Escalated = $true },
-              @{ Mode = 'none'; Hook = $false; Escalated = $false })) {
-            [void](Set-InputMode $case.Mode)
-            Expect ((Get-InputMode) -ceq $case.Mode) (Get-InputMode)
-            Expect ($script:PickerHook -eq $case.Hook) ([string]$script:PickerHook)
-            Expect ($script:PickerEscalated -eq $case.Escalated) ([string]$script:PickerEscalated)
-          }
-        }
-
-        It 'refuses a mode it does not know' {
-          $threw = $false
-          try { [void](Set-InputMode 'bogus') } catch { $threw = $true }
-          Expect $threw ''
-        }
-      }
-      [void](Set-InputMode 'none')
-
-      Describe 'the input-method hand-over' {
-        It 'follows the ImeTakeover setting' {
-          # auto: only an input method that is already composing, or a key it claimed, hands over
-          Expect (-not (Test-ImeTakeover 'auto' 0x41 $false $false)) 'auto handed over without an input method'
-          Expect (Test-ImeTakeover 'auto' 0x41 $true $false) 'auto refused a letter while an input method is on'
-          Expect (Test-ImeTakeover 'auto' 0x41 $false $true) 'auto refused a claimed key'
-          Expect (-not (Test-ImeTakeover 'auto' 0x20 $true $false)) 'auto handed over for a key the filter cannot take'
-          # manual and off never hand over from a key: a click (or nothing) is the only way
-          Expect (-not (Test-ImeTakeover 'manual' 0x41 $true $true)) 'manual handed over on a key'
-          Expect (-not (Test-ImeTakeover 'off' 0x41 $true $true)) 'off handed over on a key'
-        }
-      }
-      [void](Set-InputMode 'none')
 
       Describe 'the self-painted list' {
         It 'freezes the leading rows' {

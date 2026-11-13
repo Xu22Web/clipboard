@@ -104,7 +104,6 @@ function Get-ConfigReport {
     SaveWindowPos     = [string][int][bool]$script:SaveWinPos
     PlaceNearForeground = [string][int][bool]$script:PlaceNearForeground
     PlaceAtCaret      = [string][int][bool]$script:PlaceAtCaret
-    ImeTakeover       = [string]$script:ImeTakeover
     ShowTime          = [string][int][bool]$script:ShowTime
     ShowTypeIcon      = [string][int][bool]$script:ShowTypeIcon
     ShowThumbnails    = [string][int][bool]$script:ShowThumbnails
