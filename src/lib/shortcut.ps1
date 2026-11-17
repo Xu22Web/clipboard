@@ -90,9 +90,9 @@ function Remove-Autostart([switch]$Purge) {
 
   $alive = $false
   try {
-    $m = New-Object System.Threading.Mutex($false, $MutexName)
-    if ($m.WaitOne(0)) { $m.ReleaseMutex() } else { $alive = $true }
-    $m.Dispose()
+    $probe = New-Object System.Threading.Mutex($false, $MutexName)
+    if ($probe.WaitOne(0)) { $probe.ReleaseMutex() } else { $alive = $true }
+    $probe.Dispose()
   } catch { }
   if ($alive) { Write-Host 'note: the resident is still running - clipboard stop' }
 }

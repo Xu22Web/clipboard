@@ -27,6 +27,10 @@ function Write-Log([string]$msg) {
         if ($nl -ge 0) { $tail = $tail.Substring($nl + 1) }
       } catch { $tail = '' }
       [IO.File]::WriteAllText($LogFile, $tail, $Utf8)
+      # the truncation itself is an event: without a line for it the reader cannot tell a log
+      # that starts here from one whose older half was thrown away. Only what this file already
+      # has is used - log.ps1 loads before the formatters do.
+      [IO.File]::AppendAllText($LogFile, ((Get-Date -Format 'MM-dd HH:mm:ss') + ' log rotated (kept the last ' + [string]$keep + ' bytes)' + [Environment]::NewLine), $Utf8)
     }
     [IO.File]::AppendAllText($LogFile, ((Get-Date -Format 'MM-dd HH:mm:ss') + ' ' + $msg + [Environment]::NewLine), $Utf8)
   } catch { }

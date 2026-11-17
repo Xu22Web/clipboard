@@ -37,10 +37,10 @@ function Get-ClearPrompt($records) {
   $stay = 0
   $words = [ordered]@{}
   foreach ($r in $recs) {
-    $m = [string]$r.Marks
-    if (-not $m) { continue }
+    $marks = [string]$r.Marks
+    if (-not $marks) { continue }
     $hit = ''
-    foreach ($k in $keeps) { if ($m.Contains([string]$k)) { $hit = [string]$k; break } }
+    foreach ($k in $keeps) { if ($marks.Contains([string]$k)) { $hit = [string]$k; break } }
     if (-not $hit) { continue }
     $stay++
     $w = Get-MarkWord $hit
@@ -112,7 +112,12 @@ function Start-Serve {
 
 function Invoke-ServeOnce {
   $script:PickerOpen = $false
-  $evt = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, $EventName)
+  # The show event is pinned on the script scope for the same reason as the stop event: the
+  # tick below runs as an event handler, where an unqualified name is resolved through whatever
+  # scope happens to be on the stack - the panel's own frame is on that stack while it pumps
+  # messages, and a number it holds under the same name used to be found instead (reported as
+  # "[System.Double] does not contain a method named 'WaitOne'").
+  $script:ShowEvt = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, $EventName)
   # Clients that hand their command to this process instead of starting their own: the
   # listener exists for the whole scene, and every request runs on this thread, so it walks
   # the same state the capture loop and the panel use.
@@ -292,7 +297,7 @@ function Invoke-ServeOnce {
   $timer = New-Object Windows.Forms.Timer
   $timer.Interval = $Interval
   $timer.Add_Tick({      if ($script:StopEvt.WaitOne(0)) { $script:ExitKind = 'stop'; [Windows.Forms.Application]::ExitThread(); return }
-      if ($evt.WaitOne(0)) { Show-Picker; return }
+      if ($script:ShowEvt.WaitOne(0)) { Show-Picker; return }
 
       # plugin background work (expiry sweeps and the like); throttled inside
       if ($hasTicks) {
@@ -312,6 +317,13 @@ function Invoke-ServeOnce {
       $t0 = Get-Date
       $cap = Get-ClipCapture
       if ($null -eq $cap) { return }
+      if ($cap.ContainsKey('Skipped')) {
+        # one line per change, and the sequence number moves on so the same snapshot does not
+        # log again on every tick
+        Write-Log ('capture skipped: ' + [string]$cap.Skipped)
+        $script:LastSeq = $seq
+        return
+      }
       # an image payload is its descriptor, so the comparison stays a short string compare
       $t = [string]$cap.Text
       if ($null -ne $cap.Image) { $t = New-ImagePayload $cap.Image.Png $cap.Image.W $cap.Image.H $cap.Image.Fmt }
@@ -339,7 +351,7 @@ function Invoke-ServeOnce {
 
   $shown = if ($reg) { $script:Hot } else { '(not registered, polling ' + $Hotkey + ')' }
   Write-Host ('clipboard resident   hotkey=' + $shown + '   store=' + $StoreFile)
-  Write-Log ('serve start hotkey=' + $script:Hot + ' reg=' + $reg)
+  Write-Log ('serve start hotkey=' + $script:Hot + ' reg=' + $reg + ' store=' + $StoreDir)
   try { [Windows.Forms.Application]::Run() }
   catch { Write-Log ('run error: ' + $_.Exception.Message) }
   finally {
@@ -354,6 +366,6 @@ function Invoke-ServeOnce {
     $script:Tray = $null
     try { if ($reg) { [void][Cb.Win]::UnregisterHotKey($hw.Handle, 1) } } catch { }
     try { $hw.DestroyHandle() } catch { }
-    try { $evt.Dispose() } catch { }
+    try { $script:ShowEvt.Dispose() } catch { }
   }
 }

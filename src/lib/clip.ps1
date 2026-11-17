@@ -53,6 +53,12 @@ function Get-ClipCapture {
   Load-Forms
   for ($i = 0; $i -lt 10; $i++) {
     try {
+      # The source can say "do not record this", and the applications that publish passwords
+      # do. The snapshot comes back empty with the reason in Skipped, so the caller logs it
+      # once instead of storing the secret.
+      $why = ''
+      try { Add-Native; $why = [Cb.Win]::ClipboardExclusion() } catch { $why = '' }
+      if ($why) { return @{ Text = ''; Rich = $null; Image = $null; Skipped = $why } }
       if ([Windows.Forms.Clipboard]::ContainsFileDropList()) {
         $col = [Windows.Forms.Clipboard]::GetFileDropList()
         if ($null -ne $col -and $col.Count -gt 0) {

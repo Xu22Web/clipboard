@@ -110,6 +110,7 @@ function Invoke-SelectionDelete($sel, $rows) {
   $payloads = @()
   foreach ($rec in $records) { $payloads += [string]$rec.Payload }
   $r = Remove-Records $payloads
+  if ([int]$r.Removed -gt 0) { Write-Log ('deleted ' + $r.Removed + ' row(s) from a selection') }
   Clear-Selection $sel
   if ([int]$r.Removed -le 0) {
     $words = @()

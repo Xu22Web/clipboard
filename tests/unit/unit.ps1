@@ -654,6 +654,71 @@ try {
         Expect ($iCaret -ge 0 -and $iPos -gt $iCaret -and $iUia -gt $iPos) ('order ' + $iCaret + '/' + $iPos + '/' + $iUia)
       }
 
+      It 'reads the accessibility rectangle through a declared interface' {
+        # accLocation hands back four numbers by reference, and a late-bound call cannot write
+        # them: InvokeMember answered 0,0 0x0 for every object measured on this machine, so the
+        # caret object of Chromium 76 (really at 160,61 1x18) produced no anchor at all. The
+        # interface is declared and called directly instead.
+        Expect ($script:StructWinText -match '(?s)interface IAccessible') 'the accessibility interface is not declared'
+        Expect ($script:StructWinText -match 'accLocation\(out int left') 'the rectangle is not read through the interface'
+        Expect (-not ($script:StructWinText -match 'GetType\(\)\.InvokeMember')) 'the accessibility rectangle is read by late binding'
+        # a provider that keeps no caret object still says which element holds the keyboard and
+        # where it is, which is the only thing left for a browser rendering its own caret
+        Expect ($script:StructWinText -match 'MsaaFocusRect') 'the accessibility box tier is missing'
+        Expect ($script:StructWinText -match 'get_accFocus') 'the focused element is never asked for'
+        $iBox = $script:StructWinText.IndexOf('[Cb.Win]::MsaaFocusRect($hwnd)')
+        $iUiaBox = $script:StructWinText.IndexOf('Convert-UiaRect (Get-UiaBoxRect $hwnd)')
+        $iCtl = $script:StructWinText.IndexOf('[Cb.Win]::FocusControlBounds($hwnd)')
+        # the exact caret and the UI Automation rectangle both win over a box that only says
+        # where the typing goes; the focused control is still the last resort
+        Expect ($iBox -gt $iUiaBox -and $iCtl -gt $iBox) ('order ' + $iUiaBox + '/' + $iBox + '/' + $iCtl)
+      }
+
+      It 'puts the caret back before the paste keys go out' {
+        # The panel has to take the foreground, and some editors answer that by dropping their
+        # selection: the paste then landed at the start of the field while the caret was at the
+        # end (measured on a page that resets its selection on blur). The selection is cloned
+        # when the panel opens and put back just before the keys.
+        Expect ($script:StructWinText -match 'function Save-UiaSelection') 'the selection is never saved'
+        Expect ($script:StructWinText -match 'function Restore-UiaSelection') 'the selection is never restored'
+        Expect ($script:StructPickerText -match 'Save-UiaSelection \$prev') 'the picker never saves the selection'
+        $iBack = $script:StructPickerText.IndexOf('Restore-UiaSelection $script:SavedSel')
+        $iKeys = $script:StructPickerText.IndexOf('SendWait($PasteKeys)')
+        Expect ($iBack -ge 0 -and $iKeys -gt $iBack) ('order ' + $iBack + '/' + $iKeys)
+      }
+
+      It 'decides to hand the foreground back before the panel hides' {
+        # Hiding the panel is what takes its activation away, and the Deactivate handler reads
+        # that as a dismissal and clears the flag: asking after Hide() always answered no, so
+        # Esc and a repeat of the hotkey left the caret at the start of the field (measured).
+        $m = [regex]::Match($script:StructPickerText, '(?s)function Close-Panel \{(.*?)\n    \}')
+        Expect $m.Success 'the close helper is gone'
+        $iDecide = $m.Groups[1].Value.IndexOf('$handBack = ')
+        $iHide = $m.Groups[1].Value.IndexOf('$form.Hide()')
+        Expect ($iDecide -ge 0 -and $iHide -gt $iDecide) ('order ' + $iDecide + '/' + $iHide)
+      }
+
+      It 'records nothing the source asked to keep out of a history' {
+        # ExcludeClipboardContentFromMonitorProcessing and CanIncludeInClipboardHistory=0 are
+        # what password managers publish, and what Windows' own history honours. A tool that
+        # stores them anyway is the one that shows the password later.
+        $clipText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'clip.ps1'))
+        $serveText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'serve.ps1'))
+        Expect ($script:StructWinText -match '(?s)ClipboardExclusion.{0,1200}CanIncludeInClipboardHistory') 'the exclusion formats are never read'
+        Expect ($clipText -match 'ClipboardExclusion') 'the capture never asks whether it may record'
+        Expect ($serveText -match 'capture skipped') 'a skipped capture is not written to the log'
+      }
+
+      It 'does not inject keys into an elevated window' {
+        # an elevated window ignores injected keys and reports nothing back, which reads as a
+        # broken panel: the footer says why instead
+        $rules = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'apprules.ps1'))
+        Expect ($script:StructWinText -match 'public static bool IsElevated') 'elevation is never asked about'
+        Expect ($rules -match 'function Test-ElevatedTarget') 'elevation is never compared with our own token'
+        Expect ($script:StructPickerText -match 'Test-ElevatedTarget \$target') 'the paste path never asks whether the target is elevated'
+        Expect ($script:StructPickerText -match 'runs as administrator') 'a blocked paste says nothing to the user'
+      }
+
       It 'the caret is read in screen pixels' {
         # a Win32 edit control answers rcCaret inside its own client area - measured: a text box
         # at 308,231 with the caret after "hello" answers 104,1 - so the rect has to be moved to
@@ -686,8 +751,12 @@ try {
 
       It 'paste can type instead of injecting a paste key' {
         # PasteTyping=1 hands the text to SendInput: the paste path has to keep that branch,
-        # and it must stay inside Paste-Clip so the hand-over and the settle still happen first
-        Expect ($script:StructPickerText -match '(?s)function Paste-Clip[^\r\n]*\{.{0,4200}SendUnicode\(\$TypedText\)') 'SendUnicode branch missing in Paste-Clip'
+        # and it must stay inside Paste-Clip so the hand-over and the settle still happen first.
+        # The body is taken whole: a character window around it moved the answer every time a
+        # comment was added above the branch.
+        $m = [regex]::Match($script:StructPickerText, '(?s)function Paste-Clip[^\r\n]*\{(.*?)\n    \}')
+        Expect $m.Success 'Paste-Clip is gone'
+        Expect ($m.Groups[1].Value -match 'SendUnicode\(\$TypedText\)') 'SendUnicode branch missing in Paste-Clip'
         Expect ($script:StructPickerText -match '\$script:PasteTyping') 'PasteTyping never read'
       }
 

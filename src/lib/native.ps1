@@ -92,14 +92,19 @@ function Initialize-Dpi {
 # ---- where the keyboard is ---------------------------------------------------------
 # The panel wants the spot the user is typing at, and no single API covers the field:
 #
-#   caret   - GUITHREADINFO.rcCaret, filled only by controls that use the old Win32 caret
-#   uia     - UI Automation's TextPattern selection, which is what Electron, browsers,
-#             RichEdit and UWP report instead of a caret
-#   control - the focused control's own rectangle, the last thing that always exists
+#   caret     - GUITHREADINFO.rcCaret, filled only by controls that use the old Win32 caret
+#   msaa      - the OBJID_CARET object, for a control that draws its own caret
+#   uia       - UI Automation's TextPattern selection, which is what Electron, browsers,
+#               RichEdit and UWP report instead of a caret
+#   msaa-box  - the rectangle accessibility reports for the focused element, for a provider
+#               that keeps no caret object but still knows what is being typed in
+#   control   - the focused control's own rectangle, the last thing that always exists
 #
-# The first two answer for most applications; the third keeps a meaningless rectangle from
-# being used as if it were a caret. UI Automation is loaded once (~150 ms) and answers in
-# single-digit milliseconds afterwards, which is why the panel's warm-up runs this path too.
+# The exact sources answer for most applications; the box sources keep a meaningless
+# rectangle from being used as if it were a caret. UI Automation is loaded once (~150 ms) and
+# answers in single-digit milliseconds afterwards, which is why the panel's warm-up runs this
+# path too. Both accessibility tiers call accLocation through a declared interface: the
+# late-bound call reads back zeros and never produced a rectangle at all.
 function Initialize-CaretLookup {
   if ($null -ne $script:CaretUiaReady) { return $script:CaretUiaReady }
   $script:CaretUiaReady = $false
@@ -179,6 +184,47 @@ function Get-UiaCaretRect([IntPtr]$hwnd) {
   }
 }
 
+# The caret of a text element as UI Automation reports it, cloned so it can be put back later.
+# The panel has to take the foreground to be used, and some editors answer that by dropping
+# their selection: the paste then lands at the start of the field while the caret was at the
+# end (measured on a page that resets its selection on blur). Windows that keep their own
+# caret need none of this, and a provider without a text pattern returns nothing at all.
+function Save-UiaSelection([IntPtr]$hwnd) {
+  if ($hwnd -eq [IntPtr]::Zero) { return @() }
+  if (-not (Initialize-CaretLookup)) { return @() }
+  try { if (-not [Cb.Win]::IsResponsive($hwnd, 40)) { return @() } } catch { return @() }
+  $el = $null
+  try { $el = [Windows.Automation.AutomationElement]::FocusedElement } catch { return @() }
+  if ($null -eq $el) { return @() }
+  $targetPid = [uint32]0
+  try { [void][Cb.Win]::GetWindowOwnerProcessId($hwnd, [ref]$targetPid) } catch { return @() }
+  if ([int]$targetPid -le 0 -or [int]$el.Current.ProcessId -ne [int]$targetPid) { return @() }
+  $pattern = $null
+  try {
+    foreach ($p in @($el.GetSupportedPatterns())) {
+      if ($p.ProgrammaticName -eq 'TextPatternIdentifiers.Pattern') { $pattern = $p; break }
+    }
+  } catch { return @() }
+  if ($null -eq $pattern) { return @() }
+  $saved = New-Object System.Collections.Generic.List[object]
+  try {
+    $tp = $el.GetCurrentPattern($pattern)
+    foreach ($rg in @($tp.GetSelection())) { if ($null -ne $rg) { $saved.Add($rg.Clone()) } }
+  } catch { return @() }
+  return , $saved.ToArray()
+}
+
+# Put those selections back, which is also what places the caret again. Returns how many were
+# restored; a range whose element is gone throws and is skipped.
+function Restore-UiaSelection($ranges) {
+  $done = 0
+  foreach ($rg in @($ranges)) {
+    if ($null -eq $rg) { continue }
+    try { $rg.Select(); $done++ } catch { }
+  }
+  return $done
+}
+
 # A rectangle the panel may be anchored to. Two kinds are refused: the one a provider reports
 # when it knows nothing (0,0 and no size), and the one that covers the whole window - an editor
 # filling its client area says no more than the window does, and anchoring to it puts the panel
@@ -254,7 +300,8 @@ function Convert-UiaRect($rect, [IntPtr]$hwnd) {
 # The order follows what the field reports: rcCaret is what a Win32 edit control keeps, the
 # attached caret is what the input queue knows, MSAA is what older controls expose (Ditto asks
 # it first for that reason), UI Automation is what browsers, Electron, RichEdit and UWP report,
-# and the focused control is the last thing that always exists.
+# the accessibility box is what an application without a caret object still knows, and the
+# focused control is the last thing that always exists.
 function Get-CaretAnchor([IntPtr]$hwnd) {
   $script:CaretSource = 'none'
   if ($hwnd -eq [IntPtr]::Zero) { return [Drawing.Rectangle]::Empty }
@@ -293,6 +340,13 @@ function Get-CaretAnchor([IntPtr]$hwnd) {
     $r = Convert-UiaRect (Get-UiaBoxRect $hwnd) $hwnd
     if ($r.Height -gt 0 -and (Test-AnchorRect $r $window)) { $script:CaretSource = 'uia-box'; return $r }
   } catch { }
+  # The field being typed in, for a provider whose caret object is empty: Chromium answers no
+  # rcCaret, no GetCaretPos and no OBJID_CARET for a page, but its accessibility object still
+  # says which element holds the keyboard and where that element is.
+  try {
+    $r = [Cb.Win]::MsaaFocusRect($hwnd)
+    if ($r.Height -gt 0 -and (Test-AnchorRect $r $window)) { $script:CaretSource = 'msaa-box'; return $r }
+  } catch { }
   try {
     $r = [Cb.Win]::FocusControlBounds($hwnd)
     if ($r.Height -gt 0 -and (Test-AnchorRect $r $window)) { $script:CaretSource = 'control'; return $r }
@@ -317,6 +371,69 @@ function Get-WinVState {
   return ''
 }
 
+# The paste chord read as a SendKeys string: modifiers plus one key. SendKeys builds its
+# modifier from a virtual key with no scan code, and an input method can answer that with
+# VK_PROCESSKEY: the target then sees a bare letter and nothing is pasted (measured on
+# Chromium 76, once in about ten opens). A chord that goes out through SendInput with the
+# scan code avoids that, so one is recognised here; anything else - a key sequence, a repeat,
+# a name this does not know - answers $null and stays with SendKeys.
+$script:SendKeysVk = @{
+  '{ENTER}' = 0x0D; '{TAB}' = 0x09; '{ESC}' = 0x1B; '{BACKSPACE}' = 0x08; '{DELETE}' = 0x2E
+  '{INSERT}' = 0x2D; '{HOME}' = 0x24; '{END}' = 0x23; '{PGUP}' = 0x21; '{PGDN}' = 0x22
+  '{LEFT}' = 0x25; '{UP}' = 0x26; '{RIGHT}' = 0x27; '{DOWN}' = 0x28; '{SPACE}' = 0x20
+}
+
+function ConvertFrom-SendKeysChord([string]$keys) {
+  if ([string]::IsNullOrEmpty($keys)) { return $null }
+  $ctrl = $false
+  $alt = $false
+  $shift = $false
+  $at = 0
+  while ($at -lt $keys.Length) {
+    $c = $keys[$at]
+    if ($c -eq '^') { $ctrl = $true; $at++; continue }
+    if ($c -eq '%') { $alt = $true; $at++; continue }
+    if ($c -eq '+') { $shift = $true; $at++; continue }
+    break
+  }
+  $rest = $keys.Substring($at)
+  if ($rest.Length -eq 0) { return $null }
+  $vk = 0
+  $upper = $rest.ToUpperInvariant()
+  if ($rest.Length -eq 1) {
+    # a letter or a digit: its upper case code is the virtual key
+    $ch = [char]::ToUpperInvariant($rest[0])
+    if (($ch -ge 'A' -and $ch -le 'Z') -or ($ch -ge '0' -and $ch -le '9')) { $vk = [int]$ch }
+  } elseif ($script:SendKeysVk.ContainsKey($upper)) {
+    $vk = [int]$script:SendKeysVk[$upper]
+  } elseif ($upper -match '^\{F([1-9]|1[0-9]|2[0-4])\}$') {
+    $vk = 0x70 + [int]$Matches[1] - 1
+  }
+  if ($vk -le 0) { return $null }
+  return @{ Vk = [uint16]$vk; Ctrl = $ctrl; Alt = $alt; Shift = $shift }
+}
+
+# The first key a window receives after it comes up is handed to the input method and answered
+# with VK_PROCESSKEY, so the chord behind it lands as a bare letter (measured on Chromium 76:
+# one open in three while the browser was starting, never once it had been up for a while).
+# The modifier is pressed and released on its own first, so the key that gets spent is that one.
+$script:PasteWarmMs = 60
+
+# $false means "not one chord" - the caller keeps SendKeys for the rest
+function Send-PasteChord([string]$keys) {
+  $chord = ConvertFrom-SendKeysChord $keys
+  if ($null -eq $chord) { return $false }
+  try {
+    Add-Native
+    # only Ctrl: a bare Alt opens the menu bar and a bare Shift switches the input method
+    if ($chord.Ctrl) {
+      [void][Cb.Win]::SendChord(0x11, $false, $false, $false)
+      Start-Sleep -Milliseconds $script:PasteWarmMs
+    }
+    return [Cb.Win]::SendChord([uint16]$chord.Vk, [bool]$chord.Ctrl, [bool]$chord.Alt, [bool]$chord.Shift)
+  } catch { return $false }
+}
+
 # Is the resident that holds the machine-wide mutex serving *this* store? A second copy of the
 # tool - another install, a test sandbox - keeps its own data folder, so the mutex alone says
 # nothing: the hotkey file the resident writes into its own data\ is what tells them apart,
@@ -324,9 +441,9 @@ function Get-WinVState {
 function Test-ResidentOwnsStore {
   $alive = $false
   try {
-    $m = New-Object System.Threading.Mutex($false, $MutexName)
-    if ($m.WaitOne(0)) { $m.ReleaseMutex() } else { $alive = $true }
-    $m.Dispose()
+    $probe = New-Object System.Threading.Mutex($false, $MutexName)
+    if ($probe.WaitOne(0)) { $probe.ReleaseMutex() } else { $alive = $true }
+    $probe.Dispose()
   } catch { }
   if (-not $alive) { return $false }
   $marker = Join-Path $StoreDir 'hotkey.txt'

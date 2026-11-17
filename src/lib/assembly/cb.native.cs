@@ -1,6 +1,41 @@
 using System;
 using System.Runtime.InteropServices;
 namespace Cb {
+  // IAccessible declared here instead of being reached through late binding, because
+  // accLocation answers its four numbers by reference: InvokeMember cannot write them back and
+  // read 0,0 0x0 for every object on this machine (measured on Chromium 76, where the same call
+  // through this interface answers 160,61 1x18). The vtable order is IDispatch first, then the
+  // IAccessible members in the order oleacc declares them, because IAccessible is a dual
+  // interface and the runtime sees one flat pointer.
+  [ComImport, Guid("618736E0-3C3D-11CF-810C-00AA00389B71"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  internal interface IAccessible {
+    [PreserveSig] int GetTypeInfoCount(out int count);
+    [PreserveSig] int GetTypeInfo(int index, int lcid, out IntPtr info);
+    [PreserveSig] int GetIDsOfNames(ref Guid iid, [MarshalAs(UnmanagedType.LPArray)] string[] names, int count, int lcid, [MarshalAs(UnmanagedType.LPArray)] int[] ids);
+    [PreserveSig] int Invoke(int id, ref Guid iid, int lcid, int flags, IntPtr args, IntPtr result, IntPtr except, IntPtr argErr);
+    [PreserveSig] int get_accParent(out object parent);
+    [PreserveSig] int get_accChildCount(out int count);
+    [PreserveSig] int get_accChild([In, MarshalAs(UnmanagedType.Struct)] object child, out object result);
+    [PreserveSig] int get_accName([In, MarshalAs(UnmanagedType.Struct)] object child, [MarshalAs(UnmanagedType.BStr)] out string name);
+    [PreserveSig] int get_accValue([In, MarshalAs(UnmanagedType.Struct)] object child, [MarshalAs(UnmanagedType.BStr)] out string value);
+    [PreserveSig] int get_accDescription([In, MarshalAs(UnmanagedType.Struct)] object child, [MarshalAs(UnmanagedType.BStr)] out string description);
+    [PreserveSig] int get_accRole([In, MarshalAs(UnmanagedType.Struct)] object child, out object role);
+    [PreserveSig] int get_accState([In, MarshalAs(UnmanagedType.Struct)] object child, out object state);
+    [PreserveSig] int get_accHelp([In, MarshalAs(UnmanagedType.Struct)] object child, [MarshalAs(UnmanagedType.BStr)] out string help);
+    [PreserveSig] int get_accHelpTopic([MarshalAs(UnmanagedType.BStr)] out string file, [In, MarshalAs(UnmanagedType.Struct)] object child, out int topic);
+    [PreserveSig] int get_accKeyboardShortcut([In, MarshalAs(UnmanagedType.Struct)] object child, [MarshalAs(UnmanagedType.BStr)] out string shortcut);
+    [PreserveSig] int get_accFocus(out object child);
+    [PreserveSig] int get_accSelection(out object child);
+    [PreserveSig] int get_accDefaultAction([In, MarshalAs(UnmanagedType.Struct)] object child, [MarshalAs(UnmanagedType.BStr)] out string action);
+    [PreserveSig] int accSelect(int flags, [In, MarshalAs(UnmanagedType.Struct)] object child);
+    [PreserveSig] int accLocation(out int left, out int top, out int width, out int height, [In, MarshalAs(UnmanagedType.Struct)] object child);
+    [PreserveSig] int accNavigate(int direction, [In, MarshalAs(UnmanagedType.Struct)] object start, out object destination);
+    [PreserveSig] int accHitTest(int x, int y, out object child);
+    [PreserveSig] int accDoDefaultAction([In, MarshalAs(UnmanagedType.Struct)] object child);
+    [PreserveSig] int put_accName([In, MarshalAs(UnmanagedType.Struct)] object child, [MarshalAs(UnmanagedType.BStr)] string name);
+    [PreserveSig] int put_accValue([In, MarshalAs(UnmanagedType.Struct)] object child, [MarshalAs(UnmanagedType.BStr)] string value);
+  }
+
   public static class Win {
     [DllImport("user32.dll", SetLastError=true)] public static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
     [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr h, int id);
@@ -274,11 +309,34 @@ namespace Cb {
     // A control that draws its own caret answers nothing in rcCaret and nothing through
     // GetCaretPos, but MSAA still keeps an OBJID_CARET object for it. Ditto asks this source
     // first (ExternalWindowTracker::FocusCaret) because it is the one that also answers for
-    // older controls on Windows 10, which have no UI Automation text pattern at all. The object
-    // is called through late binding, so the assembly needs no reference to Accessibility.dll.
+    // older controls on Windows 10, which have no UI Automation text pattern at all.
     [DllImport("oleacc.dll")]
     private static extern int AccessibleObjectFromWindow(IntPtr hwnd, uint id, ref Guid iid,
       [MarshalAs(UnmanagedType.IUnknown)] out object acc);
+
+    // the object a window exposes to accessibility, or null when it exposes none
+    private static object AccessibleRoot(IntPtr owner) {
+      object acc = null;
+      Guid iid = new Guid("618736E0-3C3D-11CF-810C-00AA00389B71");
+      if (AccessibleObjectFromWindow(owner, 0xFFFFFFFC, ref iid, out acc) != 0) { return null; }
+      return acc;
+    }
+
+    // the rectangle of an accessible object, or of one of its simple children
+    private static System.Drawing.Rectangle AccessibleRect(object acc, int child) {
+      IAccessible a = acc as IAccessible;
+      if (a == null) { return System.Drawing.Rectangle.Empty; }
+      int left, top, w, h;
+      try {
+        if (a.accLocation(out left, out top, out w, out h, child) != 0) { return System.Drawing.Rectangle.Empty; }
+      } catch {
+        return System.Drawing.Rectangle.Empty;
+      }
+      if (w <= 0 && h <= 0) { return System.Drawing.Rectangle.Empty; }
+      if (w <= 0) { w = 1; }
+      if (h < 0) { h = 0; }
+      return new System.Drawing.Rectangle(left, top, w, h);
+    }
 
     public static System.Drawing.Rectangle MsaaCaret(IntPtr hwnd) {
       if (hwnd == IntPtr.Zero) { return System.Drawing.Rectangle.Empty; }
@@ -287,33 +345,78 @@ namespace Cb {
       GUITHREADINFO info = new GUITHREADINFO();
       info.cbSize = Marshal.SizeOf(typeof(GUITHREADINFO));
       if (!GetGUIThreadInfo(tid, ref info)) { return System.Drawing.Rectangle.Empty; }
-      // the caret object belongs to the control that holds the keyboard, not to the frame
-      IntPtr owner = info.hwndFocus;
-      if (owner == IntPtr.Zero || !IsWindow(owner)) { owner = info.hwndCaret; }
-      if (owner == IntPtr.Zero || !IsWindow(owner)) { return System.Drawing.Rectangle.Empty; }
-      // a window that hangs turns the cross-process call into a blocking wait
-      try { if (!IsResponsive(owner, 40)) { return System.Drawing.Rectangle.Empty; } } catch { return System.Drawing.Rectangle.Empty; }
-      object acc = null;
-      try {
-        Guid iid = new Guid("618736E0-3C3D-11CF-810C-00AA00389B71");
-        if (AccessibleObjectFromWindow(owner, 0xFFFFFFF8, ref iid, out acc) != 0 || acc == null) {
-          return System.Drawing.Rectangle.Empty;
+      // The caret object belongs to the control that holds the keyboard rather than to the
+      // frame, so the two handles the thread reports are asked first. A frame that keeps the
+      // caret itself answers only for its own handle - Ditto queries the active window for
+      // that reason - and asking it costs one call that usually fails at once.
+      IntPtr[] owners = new IntPtr[] { info.hwndFocus, info.hwndCaret, hwnd };
+      for (int i = 0; i < owners.Length; i++) {
+        IntPtr owner = owners[i];
+        if (owner == IntPtr.Zero || !IsWindow(owner)) { continue; }
+        bool seen = false;
+        for (int k = 0; k < i; k++) { if (owners[k] == owner) { seen = true; break; } }
+        if (seen) { continue; }
+        // a window that hangs turns the cross-process call into a blocking wait
+        try { if (!IsResponsive(owner, 40)) { continue; } } catch { continue; }
+        object acc = null;
+        try {
+          Guid iid = new Guid("618736E0-3C3D-11CF-810C-00AA00389B71");
+          if (AccessibleObjectFromWindow(owner, 0xFFFFFFF8, ref iid, out acc) != 0 || acc == null) { continue; }
+          System.Drawing.Rectangle caret = AccessibleRect(acc, 0);
+          if (!caret.IsEmpty) { return caret; }
+        } catch {
+        } finally {
+          try { if (acc != null && Marshal.IsComObject(acc)) { Marshal.ReleaseComObject(acc); } } catch { }
         }
-        // accLocation(byref left, byref top, byref width, byref height, child); by-ref values
-        // are read back out of the argument array
-        object[] args = new object[] { 0, 0, 0, 0, 0 };
-        acc.GetType().InvokeMember("accLocation", System.Reflection.BindingFlags.InvokeMethod, null, acc, args);
-        int left = Convert.ToInt32(args[0]);
-        int top = Convert.ToInt32(args[1]);
-        int w = Convert.ToInt32(args[2]);
-        int h = Convert.ToInt32(args[3]);
-        if (w <= 0 && h <= 0) { return System.Drawing.Rectangle.Empty; }
-        if (w <= 0) { w = 1; }
-        return new System.Drawing.Rectangle(left, top, w, h);
+      }
+      return System.Drawing.Rectangle.Empty;
+    }
+
+    // The box of whatever holds the keyboard in that window, for a provider that keeps no caret
+    // object: the frame reports its document, the document reports the field being typed in, and
+    // the innermost object that answers with a rectangle is the one the user is working in. A
+    // window with no focus at all answers Empty, so the caller keeps its own fallback.
+    public static System.Drawing.Rectangle MsaaFocusRect(IntPtr hwnd) {
+      if (hwnd == IntPtr.Zero) { return System.Drawing.Rectangle.Empty; }
+      uint tid = GetWindowThreadProcessId(hwnd, IntPtr.Zero);
+      if (tid == 0) { return System.Drawing.Rectangle.Empty; }
+      GUITHREADINFO info = new GUITHREADINFO();
+      info.cbSize = Marshal.SizeOf(typeof(GUITHREADINFO));
+      if (!GetGUIThreadInfo(tid, ref info)) { return System.Drawing.Rectangle.Empty; }
+      IntPtr owner = info.hwndFocus;
+      if (owner == IntPtr.Zero || !IsWindow(owner)) { owner = hwnd; }
+      try { if (!IsResponsive(owner, 40)) { return System.Drawing.Rectangle.Empty; } } catch { return System.Drawing.Rectangle.Empty; }
+      object root = null;
+      try {
+        root = AccessibleRoot(owner);
+        if (root == null) { return System.Drawing.Rectangle.Empty; }
+        System.Drawing.Rectangle best = System.Drawing.Rectangle.Empty;
+        object current = root;
+        for (int step = 0; step < 4; step++) {
+          IAccessible a = current as IAccessible;
+          if (a == null) { break; }
+          object child = null;
+          try { if (a.get_accFocus(out child) != 0 || child == null) { break; } } catch { break; }
+          // a simple child: its rectangle is the answer, and there is nothing deeper to ask
+          int id = -1;
+          if (child is int) { id = (int)child; }
+          if (id == 0) { break; }
+          if (id > 0) {
+            System.Drawing.Rectangle box = AccessibleRect(current, id);
+            if (!box.IsEmpty) { return box; }
+            break;
+          }
+          // a focused object of its own: keep its box, then ask it for the focus inside it
+          current = child;
+          System.Drawing.Rectangle own = AccessibleRect(current, 0);
+          if (own.IsEmpty) { break; }
+          best = own;
+        }
+        return best;
       } catch {
         return System.Drawing.Rectangle.Empty;
       } finally {
-        try { if (acc != null && Marshal.IsComObject(acc)) { Marshal.ReleaseComObject(acc); } } catch { }
+        try { if (root != null && Marshal.IsComObject(root)) { Marshal.ReleaseComObject(root); } } catch { }
       }
     }
 
@@ -453,6 +556,41 @@ namespace Cb {
       return sent;
     }
 
+    // ---- a shortcut on the physical keys ---------------------------------------------
+    // SendKeys builds its modifier from a virtual key with no scan code, and an input method
+    // can answer that with VK_PROCESSKEY: the chord then arrives as a bare letter and the paste
+    // never happens (measured on Chromium 76, once in about ten opens, right after the browser
+    // came up). The same keys through SendInput carry the scan code the keyboard reports, so
+    // the target reads them as the key it knows.
+    [DllImport("user32.dll")] private static extern uint MapVirtualKey(uint code, uint mapType);
+
+    // false when the input queue did not take the whole chord
+    public static bool SendChord(ushort vk, bool ctrl, bool alt, bool shift) {
+      if (vk == 0) { return false; }
+      int size = Marshal.SizeOf(typeof(INPUT));
+      System.Collections.Generic.List<INPUT> seq = new System.Collections.Generic.List<INPUT>(8);
+      if (ctrl) { seq.Add(KeyInput(0x11, false)); }
+      if (alt) { seq.Add(KeyInput(0x12, false)); }
+      if (shift) { seq.Add(KeyInput(0x10, false)); }
+      seq.Add(KeyInput(vk, false));
+      seq.Add(KeyInput(vk, true));
+      // released in the reverse order: no modifier is left down when the key goes back up
+      if (shift) { seq.Add(KeyInput(0x10, true)); }
+      if (alt) { seq.Add(KeyInput(0x12, true)); }
+      if (ctrl) { seq.Add(KeyInput(0x11, true)); }
+      INPUT[] inputs = seq.ToArray();
+      return SendInput((uint)inputs.Length, inputs, size) == inputs.Length;
+    }
+
+    private static INPUT KeyInput(ushort vk, bool up) {
+      INPUT i = new INPUT();
+      i.type = INPUT_KEYBOARD;
+      i.u.ki.wVk = vk;
+      i.u.ki.wScan = (ushort)MapVirtualKey(vk, 0);
+      i.u.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
+      return i;
+    }
+
     // ---- formatted text, straight out of the clipboard ----
     // CF_HTML carries byte offsets into its own buffer, and both blocks are 8-bit buffers:
     // they must never travel through a .NET string. The default DATAOBJECT converter decodes
@@ -535,6 +673,76 @@ namespace Cb {
     private static byte[] ReadBlock(uint format, bool html) {
       if (format == 0) { return null; }
       return ReadHandle(GetClipboardData(format), html);
+    }
+
+    // ---- what the source says about being recorded ------------------------------------
+    // Two documented formats tell a clipboard tool to keep its hands off, and the applications
+    // that publish passwords set them: ExcludeClipboardContentFromMonitorProcessing (the format
+    // is the message, its data is nothing) and CanIncludeInClipboardHistory = 0, which is what
+    // Windows' own history honours. A tool that records them anyway is the one that shows the
+    // password in a list the user scrolls through an hour later. Ditto asks the same question
+    // (CClipboardViewer::GetIgnoreClipboardChange) and so does the shell's own history.
+    //
+    // '' means the snapshot may be recorded; the reason otherwise is what the log writes.
+    [DllImport("user32.dll")] private static extern bool IsClipboardFormatAvailable(uint format);
+
+    private static bool FormatPresent(string name) {
+      uint cf = RegisterClipboardFormat(name);
+      return cf != 0 && IsClipboardFormatAvailable(cf);
+    }
+
+    // a DWORD format, read through one open; false when the format is absent or not a DWORD
+    private static bool TryFormatDword(string name, out int value) {
+      value = 0;
+      uint cf = RegisterClipboardFormat(name);
+      if (cf == 0) { return false; }
+      if (!OpenClipboard(IntPtr.Zero)) { return false; }
+      try {
+        IntPtr handle = GetClipboardData(cf);
+        if (handle == IntPtr.Zero) { return false; }
+        IntPtr block = GlobalLock(handle);
+        if (block == IntPtr.Zero) { return false; }
+        try { value = Marshal.ReadInt32(block); return true; } catch { return false; }
+        finally { GlobalUnlock(handle); }
+      } catch {
+        return false;
+      } finally { CloseClipboard(); }
+    }
+
+    public static string ClipboardExclusion() {
+      if (FormatPresent("ExcludeClipboardContentFromMonitorProcessing")) { return "the source excludes itself from clipboard tools"; }
+      if (FormatPresent("Clipboard Viewer Ignore")) { return "the source asked clipboard viewers to ignore it"; }
+      int include;
+      if (TryFormatDword("CanIncludeInClipboardHistory", out include) && include == 0) {
+        return "the source is not meant for the clipboard history";
+      }
+      return "";
+    }
+
+    // ---- an elevated window cannot be pasted into -------------------------------------
+    // A window whose process holds the administrator token ignores injected keys from a process
+    // that does not: nothing arrives and nothing fails, which reads as "the panel is broken".
+    // ClipAngel answers this case with a message of its own; here the caller does the same. The
+    // token calls above are reused - TokenElevation is another single DWORD out of the same
+    // question, and false for a process that cannot be opened (protected, or already gone).
+    public static bool IsElevated(uint pid) {
+      if (pid == 0) { return false; }
+      IntPtr process = IntPtr.Zero;
+      IntPtr token = IntPtr.Zero;
+      try {
+        process = OpenProcess(0x1000, false, pid);                                  // PROCESS_QUERY_LIMITED_INFORMATION
+        if (process == IntPtr.Zero) { return false; }
+        if (!OpenProcessToken(process, 0x0008, out token)) { return false; }        // TOKEN_QUERY
+        int value;
+        int needed;
+        if (!GetTokenInformation(token, 20, out value, 4, out needed)) { return false; }   // TokenElevation
+        return value != 0;
+      } catch {
+        return false;
+      } finally {
+        if (token != IntPtr.Zero) { CloseHandle(token); }
+        if (process != IntPtr.Zero) { CloseHandle(process); }
+      }
     }
 
     // CF_DIB is a global memory block too, but it is allocated in whole pages: the block is cut

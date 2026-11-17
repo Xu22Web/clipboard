@@ -343,9 +343,9 @@ function Restart-ResidentIfRunning {
     Start-Sleep -Milliseconds 150
     $free = $true
     try {
-      $m = New-Object System.Threading.Mutex($false, $MutexName)
-      if ($m.WaitOne(0)) { $m.ReleaseMutex() } else { $free = $false }
-      $m.Dispose()
+      $probe = New-Object System.Threading.Mutex($false, $MutexName)
+      if ($probe.WaitOne(0)) { $probe.ReleaseMutex() } else { $free = $false }
+      $probe.Dispose()
     } catch { }
     if ($free) { break }
   }

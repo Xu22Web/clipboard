@@ -15,7 +15,7 @@ Windows 10 / 11 的剪贴板历史工具，纯 PowerShell 5.1 实现，无第三
 ## 功能
 
 - 全局热键呼出历史面板（默认 `Ctrl+Alt+V`），输入即过滤，回车粘回原窗口（[焦点模型](#焦点模型)）
-- 后台轮询捕获并去重，支持文本、文件列表、图片与带格式文本（含图文混排）；超出限制的内容按配置跳过（[图片与带格式文本](#图片与带格式文本)）
+- 后台轮询捕获并去重，支持文本、文件列表、图片与带格式文本（含图文混排）；超出限制的内容按配置跳过；源程序声明不要记录的剪贴板内容不入库（[图片与带格式文本](#图片与带格式文本)）
 - 容量分四项独立计算：条数、单条大小、文本总量、媒体预算；超出时由旧到新丢弃，受保护标记的行不参与裁剪（[配置](#配置)）
 - 面板为 Win11 Fluent 风格自绘界面：虚拟列表、置顶行冻结、长文本省略、搜索命中高亮、悬停预览卡片，深浅两套主题
 - 完整键盘操作：方向键与翻页、`Ctrl+1..0` 数字快选、`Del` 删除、`Ctrl+Z` 撤销、`F2` 就地编辑、右键菜单；面板快捷键见[面板快捷键](#面板快捷键)
@@ -166,6 +166,10 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 粘贴前把目标窗口切回前台并确认，再把键盘焦点还给该窗口原先的控件；前台被别的进程占住时用 `AttachThreadInput` 附加后再取一次，仍失败则不注入按键，保留面板并提示按 `Ctrl+V`。面板隐藏后重新确认前台，被别的窗口抢走时再取回。注入前按 `ModReleaseTimeout` 等待修饰键松开，超时后仍按住的修饰键会被松开，避免 `Ctrl+V` 变成 `Ctrl+Alt+V` 之类的别的快捷键。
 
+目标窗口以管理员权限运行而本进程不是时，Windows 会丢弃注入的按键且不报错，因此粘贴前判断目标进程的提升状态：命中时只写入剪贴板，面板保留并提示在该窗口按 `Ctrl+V`（日志 `paste skipped: the target window runs elevated`）。
+
+打开面板时还会记下目标窗口里焦点元素的 UI Automation 文本选区，注入按键前（以及关闭面板交还前台后）用这些选区把插入点放回去。部分编辑器在失去前台时会把选区重置到开头，不做这一步则文本会粘到输入框开头而不是光标处，取消面板也会把插入点留在开头；没有文本接口的窗口不受影响。只在面板仍持有前台时关闭才做这一步（回车粘贴、`Esc`、再按热键、`Ctrl+Enter` 只复制）；点击面板外部或呼出开始菜单时前台已交给别的窗口，此时不动对方的插入点。日志 `selection saved:` / `selection restored=` 记录这一步是否发生。
+
 目标窗口是**按键那一刻**的前台窗口（`Alt+Tab` 之后换到别的程序，文本就落在新窗口）；属于本进程的窗口（面板本身、常驻进程的控制台）不算目标，此时用打开面板前的那个窗口。
 
 面板自己处理这些键：可打印字符、方向键与 `PgUp` `PgDn` `Home` `End`、`Delete`、`F2`、`Backspace` `Tab` `Enter` `Esc`，以及 `Ctrl` 组合（`Ctrl+A`、`Ctrl+Z`、`Ctrl+Enter`、`Ctrl+0..9` 与插件注册的键）。`Home` `End` 在搜索框有焦点时归文本、否则归列表；其余组合不是面板的（如 `Ctrl+Space`、`Ctrl+Shift+Esc`、`Alt` / `Win` 组合、`F1` 与 `F3`–`F12`、`Insert`）面板不响应，但面板持有键盘时它们不再回到原窗口。
@@ -187,7 +191,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 窗口宽度固定，高度由行数得出，两者都在开窗时定下，面板不能拖动改变尺寸。形态由 `CompactMode` 选择，托盘菜单的 `Compact mode` 勾选项直接改写该键，下一次打开生效。
 
-插入符锚点只用于紧凑形态，依次取：控件自己的 `rcCaret`（Win32 编辑控件，先按控件客户区换算到屏幕，换算后仍在控件内才采用）；附加目标线程后读到的 `GetCaretPos`（仅当该线程报告了光标窗口时读，只给点不给高度，按一行文本补高）；MSAA 的 `OBJID_CARET` 对象（Win10 上不提供 UI Automation 文本模式的老控件）；UI Automation 的文本选区矩形（Electron、浏览器、RichEdit），按目标窗口 DPI 与系统 DPI 的比值换算；焦点元素的矩形（命令面板的一行、一个输入框）；焦点控件的窗口矩形。宽高为 0 或覆盖整个窗口的矩形判为无效；cloaked 的挂起应用、工具窗口不当锚点。都取不到时紧凑形态退到光标所在显示器居中，完整形态不读插入符。面板左边缘对齐锚点，与文本行留 4 px 间距；所在显示器的可用高度放不下时按较少的一行数重新定高，宽度超过该显示器时按显示器宽。
+插入符锚点只用于紧凑形态，依次取：控件自己的 `rcCaret`（Win32 编辑控件，先按控件客户区换算到屏幕，换算后仍在控件内才采用）；附加目标线程后读到的 `GetCaretPos`（仅当该线程报告了光标窗口时读，只给点不给高度，按一行文本补高）；MSAA 的 `OBJID_CARET` 对象（Win10 上不提供 UI Automation 文本模式的老控件）；UI Automation 的文本选区矩形（Electron、浏览器、RichEdit），按目标窗口 DPI 与系统 DPI 的比值换算；焦点元素的矩形（命令面板的一行、一个输入框）；MSAA 焦点元素的矩形（没有光标对象、只报焦点元素的程序，取窗口 → 文档 → 输入框中最内层有矩形的一个）；焦点控件的窗口矩形。宽高为 0 或覆盖整个窗口的矩形判为无效；cloaked 的挂起应用、工具窗口不当锚点。都取不到时紧凑形态退到光标所在显示器居中，完整形态不读插入符。面板左边缘对齐锚点，与文本行留 4 px 间距；所在显示器的可用高度放不下时按较少的一行数重新定高，宽度超过该显示器时按显示器宽。
 
 悬停预览卡放在面板两侧：放不下整张卡时先收窄，换到另一侧，两侧都不够时放在面板下方，不覆盖行。
 
@@ -206,9 +210,9 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `DataDir` | `data` | 写入位置；相对路径相对脚本目录，空 = `data` |
 | `Hotkey` | `Ctrl+Alt+V` | 全局热键；`Win+V` 在多数系统上被占用，注册失败时回退 |
 | `HotkeyFallbacks` | `Ctrl+Alt+V, Win+V, Alt+反引号, Win+Shift+V` | `Hotkey` 注册失败后按顺序尝试的链 |
-| `PasteKeys` | `^v` | 选定后用 SendKeys 发送的按键（`^+v` = Ctrl+Shift+V） |
+| `PasteKeys` | `^v` | 选定后发送的按键：`^` = Ctrl、`%` = Alt、`+` = Shift，可组合（`^+v` = Ctrl+Shift+V），也接受 SendKeys 写法 |
 | `ModReleaseTimeout` | `1200` | 最多等待修饰键松开的时间（毫秒）；超时后仍按住的修饰键会被松开 |
-| `PasteSettle` | `30` | 切回原窗口后到发送 `PasteKeys` 之间的等待（毫秒） |
+| `PasteSettle` | `80` | 切回原窗口后到发送 `PasteKeys` 之间的等待（毫秒） |
 | `MaxItems` | `300` | 最多保留条数（带保护标记的行不受裁剪影响） |
 | `MaxTextBytes` | `204800` | 单条纯文本上限（字节），超出不入库 |
 | `MaxTextTotalBytes` | `4194304` | 纯文本条目总容量（字节），超出丢最旧的（带保护标记的行保留） |
@@ -318,6 +322,8 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 - 媒体有独立预算 `MaxMediaTotalBytes`：超出时由旧到新丢弃带媒体的行，受保护标记的行不动。
 
 `pick N` 与面板中回车会把捕获到的块全部写回剪贴板：纯文本、`HTML Format`、`Rich Text Format`，以及源应用同时提供的 `PNG` / 设备无关位图 / 图元文件，因此粘回 Word / Excel / PowerPoint / WordPad / 邮件客户端可保留排版与图片。
+
+源程序声明不要记录时整次捕获跳过（日志 `capture skipped:`），三种格式任一存在即可：`ExcludeClipboardContentFromMonitorProcessing`、`Clipboard Viewer Ignore` 为出现即生效，`CanIncludeInClipboardHistory=0` 按其取值判断。只读格式标记，不读内容，Windows 自己的剪贴板历史遵守同一约定。
 
 图文混排依赖三条处理：
 
@@ -728,6 +734,13 @@ src/                    程序本体（打包只读这个目录）
 | `card:` | 预览卡片渲染完成：模式、尺寸与耗时 |
 | `clipboard:` | 一次粘贴实际写回的内容：正文字符数与各块大小 |
 | `store: folded` | 历史折叠：折叠后行数与耗时 |
+| `serve start hotkey=… reg=… store=…` | 常驻进程启动：生效热键、注册结果与数据目录 |
+| `deleted entry …` / `deleted N row(s) from a selection` | 删除：单条（字符数与剩余条数）或多选批量（条数） |
+| `edited entry (N -> M chars)` | 就地编辑保存成功：新旧字符数 |
+| `undo restored (N chars) at K` | 撤销删除：恢复的字符数与原始位置 |
+| `mark +X on N chars` / `mark -X on N chars` | 单条标记的增删（面板 `Ctrl+P` / `Ctrl+S` / `Ctrl+H`，以及 `unpin` / `star` / `highlight`） |
+| `history cleared from the panel, left N rows` | 面板内清空历史：剩下的行数（带标记的行保留） |
+| `log rotated (kept the last N bytes)` | 日志超过 64 KB 截断时的分界行 |
 | `formatted text rtf skipped` / `html image not inlined` | 命中尺寸限制而被丢弃的块 / 未内联的图 |
 | `html fallback dropped` | 剪贴板被其他程序占用时只能按字符串读回，读到的字节有丢失即丢弃该 html（文本与 RTF 照常保存） |
 | `paste target:` | 每次粘贴的目标窗口：句柄、进程名与标题；`(switched, was …)` 表示按键那一刻前台已不是打开面板时的窗口 |
@@ -736,6 +749,8 @@ src/                    程序本体（打包只读这个目录）
 | `picker: not opened (the window in front cannot be covered)` | 前台窗口带 UIAccess 但不是开始菜单/搜索（或 `400 ms` 内没关掉），面板不开 |
 | `picker: tray open from …` | 单击托盘图标或点「显示历史」：面板从该窗口打开，点击来源的任务栏/托盘窗口不算目标 |
 | `paste skipped` / `sendkeys fail` | 未能夺回前台因而未注入 / 注入失败 |
+| `paste keys: SendKeys` | `PasteKeys` 不是单个组合键（序列、重复等 SendKeys 专有写法），该次用 SendKeys 发送 |
+| `picker: no handle` / `picker: topmost skipped` | 面板窗口未建立句柄，本次打开放弃 / 置顶失败，面板照常显示 |
 | `paste: the foreground moved…` / `paste: the foreground changed…` | 面板隐藏后前台被别的窗口抢走并已取回 / 注入按键时前台已经变了 |
 | `released a held modifier` | 等待超时后仍按住的修饰键被松开 |
 

@@ -68,6 +68,12 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     # the control that owns the keyboard there: restored when the panel hands the foreground
     # over (an input method) and after the paste that follows a pick
     $script:PrevFocus = Save-TargetFocus $prev
+    # the caret that control was showing: taking the foreground makes some editors drop their
+    # selection, and then the paste would land at the start of the field instead of where the
+    # user was typing. Cloned ranges are put back just before the keys go out.
+    $script:SavedSel = @()
+    try { $script:SavedSel = @(Save-UiaSelection $prev) } catch { $script:SavedSel = @() }
+    if ($script:SavedSel.Count -gt 0) { Write-Log ('selection saved: ' + $script:SavedSel.Count + ' range(s)') }
     $script:Entries = @(Get-Records)
     if ($script:Entries.Count -eq 0) { Write-Log 'picker: empty (showing hint)' }
     $msRecords = [int]$swOpen.ElapsedMilliseconds
@@ -693,6 +699,21 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $lst.ScrollBy($rows)
     }
 
+    # A page key moves the view and the selection by the same number of rows, so PgDown then
+    # PgUp comes back to the row it left. Scrolling alone left the landing spot to the edge pull
+    # in Keep-SelectionInView - down went to the first row of the next page, up to the last row
+    # of the previous one, so alternating the two keys drifted one row further down each time.
+    function Page-Selection([int]$rows) {
+      $i = $lst.SelectedIndex
+      Scroll-By $rows
+      if ($lst.ItemCount -le 0) { return }
+      if ($i -lt 0) { $i = 0 }
+      $k = $i + $rows
+      if ($k -lt 0) { $k = 0 }
+      if ($k -gt ($lst.ItemCount - 1)) { $k = $lst.ItemCount - 1 }
+      $lst.SelectedIndex = $k
+    }
+
     # The wheel step is a property of the panel rather than of the mouse, so Sync-Sb sets it
     # from the rows on screen; ScrollLines overrides it. The control carries the fraction of a
     # notch between events, which is what a precision touchpad sends.
@@ -897,6 +918,15 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       return $where
     }
 
+    # Put the cloned selection back, once. Editors that reset their selection when they lose the
+    # foreground get the caret back this way, both before a paste and when the panel closes.
+    function Put-BackSelection([string]$why = '') {
+      if (@($script:SavedSel).Count -le 0) { return }
+      $back = 0
+      try { $back = Restore-UiaSelection $script:SavedSel } catch { $back = 0 }
+      Write-Log ('selection restored=' + $back + $why)
+    }
+
     function Paste-Clip([string]$TypedText = '', [int]$ClipMs = 0) {
       # every step of a paste is a wait the user can feel, and which one it is cannot be told
       # from a screenshot: one line per paste carries the milliseconds of each stage
@@ -904,6 +934,14 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $target = Get-PasteTarget
       Write-Log ('paste target: ' + (Format-PasteTarget $target))
       if ($script:NoPaste) { Close-Panel; return }
+      # An elevated window ignores keys sent by a process that is not, and the failure says
+      # nothing: nothing arrives and nothing throws. Say so instead of reporting a paste that
+      # never happened.
+      if (Test-ElevatedTarget $target) {
+        Write-Log 'paste skipped: the target window runs elevated'
+        Set-Foot 'Copied to the clipboard. That window runs as administrator - press Ctrl+V there' ([int]$script:Timing['FootMessage'])
+        return
+      }
       # the hotkey is usually still held when the panel opens: pasting now would send
       # Ctrl+V with Alt/Ctrl down and land as something else entirely
       while ($pasteSw.ElapsedMilliseconds -lt $script:ModReleaseTimeout) {
@@ -937,8 +975,27 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
           try { $hasFocus = ([Cb.Win]::FocusOfWindow($target) -eq $script:PrevFocus) } catch { $hasFocus = $false }
           if (-not $hasFocus) { [void](Restore-TargetFocus $target $script:PrevFocus) }
         }
+        # the window needs a moment before it takes the keyboard again: a chord sent inside that
+        # gap is dropped without an error. After a page key moved the list the gap is longer, and
+        # 30 ms lost one pick in three on Chromium 76 while 80 ms lost none.
         Start-Sleep -Milliseconds $script:PasteSettle
         $focusMs = [int]$frontSw.ElapsedMilliseconds
+        # The foreground can move again while the panel settles (another window, a shell flyout),
+        # and the keys would go into whatever is in front by then: Ditto re-checks the target at
+        # this point too, and its log marks the case "paste timing around activate target".
+        try {
+          if ([Cb.Win]::GetForegroundWindow() -ne $target) {
+            Write-Log 'paste: the foreground moved before the keys, taking it back'
+            [void](Take-Foreground $target)
+          }
+        } catch { }
+        # an editor that dropped its selection when the panel took the foreground gets the caret
+        # back here, before the keys: only for the window the panel came from, because after an
+        # Alt+Tab the caret already sits where the user left it in the other window
+        if ($target -eq $prev) { Put-BackSelection }
+        # the target moves the caret itself once the text is in, so the close that follows must
+        # not select the old range again - that put the caret back in front of what was pasted
+        $script:SavedSel = @()
         # The keys go out before the panel is hidden: hiding the active window first lets Windows
         # pick the next window in the z-order, and taking the front back afterwards is exactly
         # what reads as "the window I had focused before flashes up".
@@ -951,7 +1008,16 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
           Write-Log ('typed ' + $sent + ' of ' + $TypedText.Length + ' characters')
         } else {
           $keysSw = [Diagnostics.Stopwatch]::StartNew()
-          try { [Windows.Forms.SendKeys]::SendWait($PasteKeys) } catch { Write-Log ('sendkeys fail: ' + $_.Exception.Message) }
+          # SendKeys builds its modifier from a virtual key with no scan code, and an input
+          # method can answer that with VK_PROCESSKEY: the chord then lands as a bare letter
+          # and nothing is pasted (measured on Chromium 76, once in about ten opens). One chord
+          # is sent as the physical key instead; a sequence or a repeat still needs SendKeys.
+          $chord = $false
+          try { $chord = Send-PasteChord $PasteKeys } catch { $chord = $false }
+          if (-not $chord) {
+            Write-Log 'paste keys: SendKeys (not a single chord)'
+            try { [Windows.Forms.SendKeys]::SendWait($PasteKeys) } catch { Write-Log ('sendkeys fail: ' + $_.Exception.Message) }
+          }
         }
         Write-Log ('paste: ' + [int]$pasteSw.ElapsedMilliseconds + ' ms (clip ' + $ClipMs + ', mod ' + $modMs + ', focus ' + $focusMs + ', settle ' + [int]$script:PasteSettle + ', keys ' + [int]$keysSw.ElapsedMilliseconds + ')')
         try {
@@ -976,12 +1042,20 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     # to whatever is next in the z-order: the window it came from has to be asked for by name,
     # together with the control that owned the caret there.
     function Close-Panel {
+      # Hiding the panel is what takes the activation away, and the Deactivate handler reads that
+      # as a dismissal and clears the flag - so whether the foreground has to be handed back is
+      # decided before the window goes, not after it.
+      $handBack = ($script:OwnFront -and $prev -ne [IntPtr]::Zero)
       try { $form.Hide() } catch { }
-      if ($script:OwnFront -and $prev -ne [IntPtr]::Zero) {
-        [void][Cb.Win]::SetForegroundWindow($prev)
-        [void](Restore-TargetFocus $prev $script:PrevFocus)
+      if ($handBack) {
+        try { [void][Cb.Win]::SetForegroundWindow($prev) } catch { }
+        try { [void](Restore-TargetFocus $prev $script:PrevFocus) } catch { }
+        # the window that was typing gets its caret back too: some editors drop the selection
+        # when they lose the foreground, and a closed panel must not move the caret either
+        Put-BackSelection ' (panel closed)'
+        $script:SavedSel = @()
       }
-      $form.Close()
+      try { $form.Close() } catch { }
     }
 
     function Use-Index([int]$idx, [switch]$NoInject) {
@@ -1010,7 +1084,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $clipSw = [Diagnostics.Stopwatch]::StartNew()
       $okClip = Set-ClipItem $payload $rich
       $clipMs = [int]$clipSw.ElapsedMilliseconds
-      if (-not $okClip) { Write-Log 'set clipboard failed'; $form.Close(); return }
+      if (-not $okClip) { Write-Log 'set clipboard failed'; Close-Panel; return }
       # our own write must not come back as a new capture
       Set-LastCapture $payload
       # PasteTyping=1 skips the paste key. Only plain text can be typed: a file list and a
@@ -1055,6 +1129,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $at = $script:UndoIdx
       $script:UndoRec = $null
       [void](Restore-Record $rec $at)
+      Write-Log ('undo restored (' + $rec.Payload.Length + ' chars) at ' + $at)
       $script:Entries = @(Get-Records)
       Update-List $txt.Text
       Set-Foot 'Restored to its original position' ([int]$script:Timing['FootInfo'])
@@ -1084,6 +1159,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $confirmTimer.Stop()
       Clear-Store (Get-ClearKeepMarks)
       $script:Entries = @(Get-Records)
+      Write-Log ('history cleared from the panel, left ' + $script:Entries.Count + ' rows')
       Update-List $txt.Text
       $kept = @(Get-MarkCountWords $script:Entries)
       if ($kept.Count -gt 0) { Set-Foot ('History cleared, ' + ($kept -join ', ') + ' kept') ([int]$script:Timing['FootWarn']) }
@@ -1559,10 +1635,10 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
           if ($lst.ItemCount -gt 0) { $lst.SelectedIndex = $lst.ItemCount - 1 }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.KeyCode -eq 'PageDown') {
-          Scroll-By (Get-PageRows)
+          Page-Selection (Get-PageRows)
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.KeyCode -eq 'PageUp') {
-          Scroll-By (-(Get-PageRows))
+          Page-Selection (-(Get-PageRows))
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.KeyCode -eq 'Up') {
           if ($lst.SelectedIndex -gt 0) { $lst.SelectedIndex-- }
@@ -1579,7 +1655,9 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
             $txt.Text = ''
             Flush-List
           } else {
-            $form.Close()
+            # the panel still has the foreground, so closing it this way has to hand both the
+            # window and the caret back - a plain Close() skipped both
+            Close-Panel
           }
         } elseif ($e.KeyCode -eq 'Delete') {
           Flush-List
@@ -1654,6 +1732,13 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
         # the context menu is a window of this process, and opening it takes the activation away
         # from the panel for as long as it is up - the panel is still the one that came forward
         if ($cm.Visible -or [Cb.Win]::IsOwnWindow([Cb.Win]::GetForegroundWindow())) { return }
+        # A panel that never got the foreground gets this the moment it appears - closing on it
+        # is what made the first open of a session flash and vanish. Ask again, then close.
+        if (-not $script:OwnFront) {
+          $script:OwnFront = Take-Foreground $form.Handle
+          if (-not $script:OwnFront) { $form.Close() }
+          return
+        }
         # the panel is no longer the window in front: closing it has nothing to hand back
         $script:OwnFront = $false
         # an edit in progress keeps the panel open: closing would drop the text
@@ -1697,15 +1782,18 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       return
     }
     $form.Show()
-    # The panel takes the foreground like any other window, so keys reach it without a hook.
-    # Take-Foreground repeats the call with the input queues attached when another process
-    # holds the foreground lock.
+    # Show() creates the handle; without one there is nothing to position (Chromium 76 did that)
+    if (-not $form.IsHandleCreated) { try { $form.CreateControl() } catch { } }
+    if ([IntPtr]$form.Handle -eq [IntPtr]::Zero) { Write-Log 'picker: no handle'; try { $form.Dispose() } catch { }; return }
+    # Take-Foreground repeats the call with the queues attached
     $front = Take-Foreground $form.Handle
     $script:OwnFront = $front
     if (-not $front) { Write-Log 'picker: the foreground was refused' }
     try { $lst.Focus() } catch { }
     Write-Log ('picker: input=real foreground=' + $front)
-    [void][Cb.Win]::SetWindowPos($form.Handle, [IntPtr](-1), 0, 0, 0, 0, 0x13)
+    # the handle can be gone by now (a handler reached from the focus call closed the panel):
+    # asking for topmost then throws and the exception ends the open with the panel half up
+    try { [void][Cb.Win]::SetWindowPos($form.Handle, [IntPtr](-1), 0, 0, 0, 0, 0x13) } catch { Write-Log ('picker: topmost skipped: ' + $_.Exception.Message) }
 
     while (-not $form.IsDisposed) {
       [Windows.Forms.Application]::DoEvents()
@@ -1715,7 +1803,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $am = Invoke-AnimFrame $script:Anim $(if ($script:Animations) { 0.4 } else { 1.0 })
       # repaint only the rows whose alpha moved, not the whole list on every tick
       if ($am -ne 0 -and -not $form.IsDisposed) { try { if ($am -band 1) { foreach ($i in @($script:Anim.HoverIndex, $script:Anim.PrevHoverIndex, $script:Anim.SelIndex, $script:Anim.PrevSelIndex)) { if ($i -ge 0 -and $i -lt $lst.ItemCount) { $lst.Invalidate($lst.GetItemRectangle($i)) } } }; if ($am -band 2) { $sbar.Invalidate() }; if ($am -band 8) { $box.Invalidate() }; if ($am -band 16) { if ($null -ne $script:EditRow) { $script:EditRow.Save.Invalidate(); $script:EditRow.Cancel.Invalidate() } } } catch { } }
-      if ($script:PickerClose) { $form.Close(); break }
+      if ($script:PickerClose) { Close-Panel; break }
       # Ctrl is a modifier, not a key the panel sees: a KeyDown for it never arrives on its own,
       # so the key caps kept their neutral colour while Ctrl was held. Polling the key state is
       # what makes the accents (and the Ctrl group in the footer) follow the modifier.
@@ -1788,6 +1876,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       if ($script:OwnFront -and $prev -ne [IntPtr]::Zero) {
         [void][Cb.Win]::SetForegroundWindow($prev)
         [void](Restore-TargetFocus $prev $script:PrevFocus)
+        Put-BackSelection ' (panel closed)'
       }
     } catch { }
 

@@ -29,6 +29,23 @@ function Get-ForegroundProcessName {
   try { return (Get-WindowProcessName ([Cb.Win]::GetForegroundWindow())) } catch { return '' }
 }
 
+# An elevated window ignores keys injected by a process that is not elevated: nothing arrives
+# and nothing fails, which reads as a broken panel. ClipAngel answers this case with a message
+# of its own; the paste path does the same. False whenever the answer cannot be had - a
+# protected process, one that already exited, or our own copy running elevated.
+function Test-ElevatedTarget($hwnd) {
+  try {
+    if ($null -eq $hwnd) { return $false }
+    $h = [IntPtr]$hwnd
+    if ($h -eq [IntPtr]::Zero) { return $false }
+    $ownerPid = [uint32]0
+    [void][Cb.Win]::GetWindowOwnerProcessId($h, [ref]$ownerPid)
+    if ([int]$ownerPid -le 0) { return $false }
+    if (-not [Cb.Win]::IsElevated($ownerPid)) { return $false }
+    return (-not [Cb.Win]::IsElevated([uint32]$PID))
+  } catch { return $false }
+}
+
 # Windows Start and the search flyout are topmost windows of the shell, and they take the
 # keyboard with them. The panel gets out of the way for them: while it is open its hook swallows
 # the printable keys, so the box the user is typing into would never see them - and the flyout

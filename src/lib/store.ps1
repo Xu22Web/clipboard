@@ -413,14 +413,16 @@ function Save-Records($records, [switch]$SkipReclaim) {
 }
 
 function Use-StoreLock([scriptblock]$body) {
-  $m = New-Object System.Threading.Mutex($false, $StoreLock)
+  # Not named $m: a plugin scriptblock runs in a child scope of this frame, so a plain name
+  # that a plugin also uses reads as whatever this frame happens to hold.
+  $lock = New-Object System.Threading.Mutex($false, $StoreLock)
   $held = $false
   try {
-    try { $held = $m.WaitOne(3000) } catch { $held = $true }
+    try { $held = $lock.WaitOne(3000) } catch { $held = $true }
     & $body
   } finally {
-    if ($held) { try { $m.ReleaseMutex() } catch { } }
-    $m.Dispose()
+    if ($held) { try { $lock.ReleaseMutex() } catch { } }
+    $lock.Dispose()
   }
 }
 
@@ -698,6 +700,9 @@ function Set-Mark([string]$payload, [string]$mark, [bool]$on) {
     Save-Records $list.ToArray()
     return $true
   }
+  # one line per toggle: "why is this row pinned / why did the pin go" is answered here, and
+  # the panel and `pin` / `star` / `highlight` share this call
+  if ($r) { Write-Log ('mark ' + $(if ($on) { '+' } else { '-' }) + $mark + ' on ' + $payload.Length + ' chars') }
   return [bool]$r
 }
 
@@ -749,6 +754,9 @@ function Update-RecordText([string]$payload, [string]$text) {
   }
   if ($verdict) { $res.Error = [string]$verdict; return $res }
   $res.Ok = $true
+  # an edit rewrites the text of a row without adding one: the log is the only trace that it
+  # was this and not a capture
+  Write-Log ('edited entry (' + $payload.Length + ' -> ' + $text.Length + ' chars)')
   return $res
 }
 
