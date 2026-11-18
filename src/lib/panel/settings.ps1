@@ -406,6 +406,14 @@ function Show-Settings {
     }
     $box = New-SettingEditor $form $pal ([int]$rect.Left + (Px 4)) ([int]$rect.Top + (Px 4)) $boxW ([int]$rect.Height - (Px 8)) $isNumber
     $box.Text = Get-SettingEditSeed $schema ([string]$row.Key) ([string]$row.Raw)
+    if ($isNumber) {
+      # the value hugs the right edge of the field's text area and grows to the left as it is
+      # typed, which is what a number field does without ES_RIGHT's caret sitting on the digit
+      $rightEdge = [int]$rect.Left + [int](Px 4) + $boxW
+      $minW = [int](Px 30)
+      Fit-EditorBox $box $rightEdge $minW $boxW
+      $box.Add_TextChanged({ Fit-EditorBox $box $rightEdge $minW $boxW }.GetNewClosure())
+    }
     $script:SetEditBox = $box
     $box.Add_LostFocus({ End-Edit $true })
     # the keyboard has to land in the field, not on the row it covers: assigning ActiveControl is

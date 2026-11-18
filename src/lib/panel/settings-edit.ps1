@@ -104,7 +104,9 @@ function Test-ChordWinHeld {
 }
 
 # The editor itself: a TextBox that covers the row's value area, styled from the theme so it
-# reads as part of the surface rather than as a system control dropped on top.
+# reads as part of the surface rather than as a system control dropped on top. A number's editor
+# is placed by Fit-EditorBox once it holds the value, so $alignRight only reserves the room it
+# needs; the text itself is never right-aligned by the control.
 function New-SettingEditor($form, $pal, [int]$x, [int]$y, [int]$w, [int]$h, [bool]$alignRight = $false) {
   $box = New-Object Windows.Forms.TextBox
   $box.BorderStyle = 'None'
@@ -115,11 +117,30 @@ function New-SettingEditor($form, $pal, [int]$x, [int]$y, [int]$w, [int]$h, [boo
   $box.Top = $y
   $box.Width = $w
   $box.Height = $h
-  # a number reads from the right in its field, so its editor does too
-  if ($alignRight) { $box.TextAlign = 'Right' }
+  # The number field right-aligns by geometry rather than by ES_RIGHT: see Fit-EditorBox.
   $form.Controls.Add($box)
   $box.BringToFront()
   return $box
+}
+
+# A number reads from the right in its field, and the field does that by geometry: the box is as
+# wide as the text and its right edge stays where the field's text area ends. ES_RIGHT was the
+# obvious way and the wrong one - an edit control that right-aligns its text puts the caret in
+# the same column as the last digit (measured: "321" laid out 68..92 in an 89 px client, so the
+# 1 was clipped and the bar sat on it). Sized to the text, the caret has the box's own padding
+# to sit in and the value still hugs the right edge as it is typed.
+function Fit-EditorBox($box, [int]$right, [int]$minW, [int]$maxW) {
+  if ($null -eq $box -or $box.IsDisposed) { return }
+  $tw = 0
+  try {
+    $g = $box.CreateGraphics()
+    try { $tw = [int][Math]::Ceiling($g.MeasureString([string]$box.Text, $box.Font).Width) } finally { $g.Dispose() }
+  } catch { $tw = 0 }
+  $w = $tw + [int](Px 10)
+  if ($w -gt $maxW) { $w = $maxW }
+  if ($w -lt $minW) { $w = $minW }
+  $box.Width = $w
+  $box.Left = $right - $w
 }
 
 # Where the choice list opens: under the control it belongs to, in the control column, and above
