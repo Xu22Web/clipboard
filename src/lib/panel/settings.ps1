@@ -83,9 +83,9 @@ function Show-Settings {
   $script:SetSbDrag = -1
 
   $w = [int](Px 780)
-  # the footer holds a 26 px button now, so the window is taller by the height it gained: the
-  # list still shows the same number of rows
-  $h = [int](Px 640)
+  # the footer holds a 26 px button and every row holds two lines of help, so the window is
+  # taller than the rows alone would suggest
+  $h = [int](Px 700)
   $layout = Get-SettingsLayout $w $h
 
   function Refresh-Settings {
@@ -395,6 +395,7 @@ function Show-Settings {
         $sf = New-PickerStringFormats
         $list = @($s.Tag.Choices)
         $itemH = Px 30
+        $bandH = [int]($itemH - (Px 2))
         $multi = [bool]$script:SetDropMulti
         $raw = Get-DropRaw
         for ($i = 0; $i -lt $list.Count; $i++) {
@@ -406,20 +407,24 @@ function Show-Settings {
             $tint = $p['HoverBg']
             if ($shown) { $tint = $p['SelBg'] }
             $b = New-Object Drawing.SolidBrush $tint
-            $path = New-RoundPath (Px 4) $top ($cw - (2 * (Px 4))) ($itemH - (Px 2)) (Px 4)
+            $path = New-RoundPath (Px 4) $top ($cw - (2 * (Px 4))) $bandH (Px 4)
             try { $g.FillPath($b, $path) } finally { $path.Dispose(); $b.Dispose() }
           }
           $ink = $p['Dim']
           if ($shown -or $isHot) { $ink = $p['Text'] }
           $textLeft = Px 12
-          if ($multi) {
-            $textLeft = Px 34
-            $ticked = Get-SettingListOn $raw ([string]$list[$i])
-            Draw-SettingsTick $g $p (Px 12) ($top + [int](($itemH - (Px 16)) / 2)) (Px 16) $ticked
-          }
+          if ($multi) { $textLeft = Px 34 }
+          $text = [string]$list[$i]
           $tb = New-Object Drawing.RectangleF -ArgumentList @(
-            [single]$textLeft, [single]$top, [single]($cw - $textLeft - (Px 12)), [single]($itemH - (Px 2)))
-          $g.DrawString([string]$list[$i], $script:FBody, (Get-Brush $ink), $tb, $sf.Ellipsis)
+            [single]$textLeft, [single]$top, [single]($cw - $textLeft - (Px 12)), [single]$bandH)
+          if ($multi) {
+            # The tick is centred on the band the name is centred in, one pixel up: a 16 px box
+            # on the band's centre leaves its bottom edge below the text baseline (measured on
+            # the rendered pixels), which is what made it read as sitting low.
+            $tick = Px 16
+            Draw-SettingsTick $g $p (Px 12) ($top + [int](($bandH - $tick) / 2) - [int](Px 1)) $tick (Get-SettingListOn $raw $text)
+          }
+          $g.DrawString($text, $script:FBody, (Get-Brush $ink), $tb, $sf.Ellipsis)
         }
       } catch { Write-Log ('settings drop paint: ' + $_.Exception.Message) }
     })
@@ -578,6 +583,14 @@ function Show-Settings {
   $form.KeyPreview = $true
   $form.Text = 'Settings'
   $form.AccessibleName = 'Settings'
+  # The taskbar and Alt-Tab read the window icon, and a script window otherwise carries the
+  # PowerShell mark: build the tool's own clipboard drawing, the one the tray uses, at the size
+  # the bar asks for.
+  $script:SetHicon = [IntPtr]::Zero
+  try {
+    $script:SetHicon = [Cb.Tray]::Build([int](Px 32), ([Drawing.Color]::FromArgb(255, 0, 120, 212)).ToArgb())
+    if ($script:SetHicon -ne [IntPtr]::Zero) { $form.Icon = [Drawing.Icon]::FromHandle($script:SetHicon) }
+  } catch { $script:SetHicon = [IntPtr]::Zero }
   $form.ClientSize = New-Object Drawing.Size -ArgumentList @($w, $h)
   $areas = @()
   try { foreach ($sc in [Windows.Forms.Screen]::AllScreens) { $areas += $sc.WorkingArea } } catch { }
@@ -638,14 +651,10 @@ function Show-Settings {
       }
       # the close button, top right, where every window puts one
       Draw-SettingsClose $g $pal $layout $script:SetCloseHot
-      # the footer is the window's bar: the last change on the left, the count and the version in
-      # the quiet ink, and the three actions on the right. There is no key to describe - this
-      # window is driven by the pointer.
-      $count = @($rows).Count
-      $right = ([string]$count) + ' item'
-      if ($count -ne 1) { $right = ([string]$count) + ' items' }
-      $right = $right + '   v' + [string]$script:Version
-      Draw-SettingsFooter $g $pal $layout $script:SetMsg $script:SetMsgErr $right $script:SetActions ($script:SetPending.Count -gt 0) $script:SetHotAction
+      # the footer is the window's own bar: the last change on the left, the three actions on the
+      # right. There is no key to describe - this window is driven by the pointer - and the
+      # version belongs on the About page, where it can be read in full.
+      Draw-SettingsFooter $g $pal $layout $script:SetMsg $script:SetMsgErr $script:SetActions ($script:SetPending.Count -gt 0) $script:SetHotAction
     } catch {
       Write-Log ('settings paint: ' + $_.Exception.Message + ' @ ' + $_.ScriptStackTrace)
     }
@@ -803,6 +812,8 @@ function Show-Settings {
     $idx = Get-SettingsRowAt $script:SetLayout @($script:SetRows).Count $script:SetScroll $e.X $e.Y
     if ($idx -lt 0) { return }
     $row = $script:SetRows[$idx]
+    # a page that states facts rather than settings has nothing to click
+    if ($row.Kind -eq 'info') { return }
     if ($row.ContainsKey('Pick') -and $row.Pick) {
       Pick-Folder $row
       return
@@ -917,6 +928,11 @@ function Show-Settings {
     Close-Choices
     End-Edit $true
     try { $form.Dispose() } catch { }
+    # the window icon is an HICON built for this window: with the form gone, so is the handle
+    if ($script:SetHicon -ne [IntPtr]::Zero) {
+      try { [Cb.Tray]::Free($script:SetHicon) } catch { }
+      $script:SetHicon = [IntPtr]::Zero
+    }
     # one reload for the whole session, and only when something was actually written
     if ($script:SetDirty) {
       try { Restart-ResidentIfRunning } catch { }

@@ -16,9 +16,10 @@ function Get-SettingsLayout([int]$w, [int]$h) {
   $pad = Px 14
   $sideW = Px 196
   $headH = Px 62
-  # the footer carries the message on the left and the three actions on the right, so it is tall
-  # enough for a button rather than only for a line of text
-  $footH = Px 44
+  # The footer carries the message on the left and the three actions on the right. Its height is
+  # the button plus the same air above and below it: 32 + 12 + 12, the command bar a Fluent dialog
+  # uses, so the buttons are not a strip squeezed against the window edge.
+  $footH = Px 56
   return @{
     Width     = $w
     Height    = $h
@@ -26,12 +27,14 @@ function Get-SettingsLayout([int]$w, [int]$h) {
     SideWidth = $sideW
     HeadHeight = $headH
     FootHeight = $footH
-    # a footer button: the height the edit card's Save / Cancel pair uses, so the two windows
-    # offer the same target with the same look
-    ActionHeight = Px 26
+    # a footer button: the height Windows gives a dialog button, so the target is the same size
+    # here as in the edit card and in every other dialog on the system
+    ActionHeight = Px 32
     ActionGap = Px 8
-    ActionPad = Px 12
-    RowHeight = Px 58
+    ActionPad = Px 14
+    ActionMin = Px 88
+    # two lines of help need the room for them
+    RowHeight = Px 72
     GroupHeight = Px 34
     CloseSize = Px 32
     ListLeft  = $sideW + $pad
@@ -169,15 +172,22 @@ function Draw-SettingsToggle($g, $pal, [int]$x, [int]$y, [int]$w, [int]$h, [doub
   try { $g.FillEllipse($kb, $kx, $ky, $d, $d) } finally { $kb.Dispose() }
 }
 
+# Where a control sits vertically: on the label's line, not in the middle of the card. With two
+# lines of help under the label, a control centred on the whole card floats between them and
+# reads as belonging to nothing; beside the name it belongs to the name.
+function Get-SettingsControlTop($layout, [int]$rowTop, [int]$h) {
+  $bandH = Px 26
+  return $rowTop + [int](Px 6) + [int](($bandH - $h) / 2)
+}
+
 # One switch, calculated once: the paint, the hit test and the click all ask here, so a click
 # always lands on the rectangle that was drawn.
 function Get-SettingsToggleRect($layout, [int]$rowTop) {
   $w = [int]$layout.ToggleWidth
   $h = [int]$layout.ToggleHeight
-  $rowH = [int]$layout.RowHeight - (Px 4)
   return @{
     Left   = [int]$layout.ListRight - (Px 12) - $w
-    Top    = $rowTop + [int](($rowH - $h) / 2)
+    Top    = (Get-SettingsControlTop $layout $rowTop $h)
     Width  = $w
     Height = $h
   }
@@ -188,10 +198,9 @@ function Get-SettingsToggleRect($layout, [int]$rowTop) {
 function Get-SettingsNumberRect($layout, [int]$rowTop) {
   $w = Px 132
   $h = Px 28
-  $rowH = [int]$layout.RowHeight - (Px 4)
   return @{
     Left   = [int]$layout.ListRight - (Px 12) - $w
-    Top    = $rowTop + [int](($rowH - $h) / 2)
+    Top    = (Get-SettingsControlTop $layout $rowTop $h)
     Width  = $w
     Height = $h
   }
@@ -226,6 +235,75 @@ function Get-SettingsUnitWidth([string]$unit) {
 # with no value in it and puts its text box inside.
 function Draw-SettingsValueField($g, $pal, $rect, [string]$value, [string]$unit, [bool]$enabled, [string]$mode = 'rest') {
   if ($null -eq $g -or $null -eq $pal -or $null -eq $rect) { return }
+  Draw-SettingsFieldBox $g $pal $rect $mode
+  $x = [int]$rect.Left
+  $y = [int]$rect.Top
+  $w = [int]$rect.Width
+  $h = [int]$rect.Height
+  $sf = New-PickerStringFormats
+  $uw = Get-SettingsUnitWidth $unit
+  if ($uw -gt 0) {
+    $ub = New-Object Drawing.RectangleF -ArgumentList @(
+      [single]($x + $w - $uw), [single]$y, [single]($uw - (Px 8)), [single]$h)
+    $g.DrawString($unit, $script:FSmall, (Get-Brush $pal['Faint']), $ub, $sf.Right)
+  }
+  if (-not $value) { return }
+  $ink = $pal['Text']
+  if (-not $enabled) { $ink = $pal['Faint'] }
+  $nb = New-Object Drawing.RectangleF -ArgumentList @(
+    [single]($x + (Px 8)), [single]$y, [single]($w - $uw - (Px 12)), [single]$h)
+  $g.DrawString($value, $script:FBody, (Get-Brush $ink), $nb, $sf.Right)
+}
+
+# The help of a row, broken into the lines the column can hold. Broken here rather than by the
+# drawing call: GDI+ wraps by its own measure and clips a line that overflows, which loses the
+# middle of a sentence. Words are packed until the next one does not fit; when the text does not
+# end in the last line it gets an ellipsis and words come off its end until that fits too.
+# Cached per width, because a paint happens on every pointer move.
+$script:HelpLineCache = @{}
+$script:HelpLineWidth = 0
+function Get-SettingsHelpLines($g, [string]$text, [int]$maxWidth, [int]$maxLines) {
+  if (-not $text -or $maxWidth -le 0 -or $maxLines -lt 1) { return @() }
+  if ($script:HelpLineWidth -ne $maxWidth) { $script:HelpLineCache = @{}; $script:HelpLineWidth = $maxWidth }
+  if ($script:HelpLineCache.ContainsKey($text)) { return @($script:HelpLineCache[$text]) }
+  $fmt = New-PickerStringFormats
+  $measure = {
+    param([string]$s)
+    if (-not $s) { return 0 }
+    return [double]$g.MeasureString($s, $script:FSmall, 10000, $fmt.Seg).Width
+  }
+  $words = @(($text -split '\s+') | Where-Object { $_ })
+  $lines = New-Object System.Collections.Generic.List[string]
+  $cur = ''
+  $rest = $false
+  foreach ($w in $words) {
+    $try = $w
+    if ($cur) { $try = $cur + ' ' + $w }
+    if ((-not $cur) -or ((& $measure $try) -le $maxWidth)) { $cur = $try; continue }
+    $lines.Add($cur)
+    $cur = $w
+    if ($lines.Count -ge $maxLines) { $rest = $true; break }
+  }
+  if (-not $rest -and $cur) { $lines.Add($cur); $cur = '' }
+  if ($rest -and $lines.Count -gt 0) {
+    $ell = [string][char]0x2026
+    $last = [string]$lines[$lines.Count - 1]
+    while ($last -and ((& $measure ($last + $ell)) -gt $maxWidth)) {
+      $cut = $last.LastIndexOf(' ')
+      if ($cut -lt 1) { break }
+      $last = $last.Substring(0, $cut)
+    }
+    $lines[$lines.Count - 1] = $last + $ell
+  }
+  $script:HelpLineCache[$text] = $lines.ToArray()
+  return $lines.ToArray()
+}
+
+# The box every value sits in: the field colour, a hairline, and an accent or warn edge for an
+# open editor or a refused value. One function, so a number, a path and an editor cannot drift
+# into three slightly different rectangles.
+function Draw-SettingsFieldBox($g, $pal, $rect, [string]$mode = 'rest') {
+  if ($null -eq $g -or $null -eq $pal -or $null -eq $rect) { return }
   $x = [int]$rect.Left
   $y = [int]$rect.Top
   $w = [int]$rect.Width
@@ -240,19 +318,66 @@ function Draw-SettingsValueField($g, $pal, $rect, [string]$value, [string]$unit,
   $pen = New-Object Drawing.Pen $edge
   $stroke = New-RoundPath $x $y $w $h $radius
   try { $g.DrawPath($pen, $stroke) } finally { $stroke.Dispose(); $pen.Dispose() }
-  $sf = New-PickerStringFormats
-  $uw = Get-SettingsUnitWidth $unit
-  if ($uw -gt 0) {
-    $ub = New-Object Drawing.RectangleF -ArgumentList @(
-      [single]($x + $w - $uw), [single]$y, [single]($uw - (Px 8)), [single]$h)
-    $g.DrawString($unit, $script:FSmall, (Get-Brush $pal['Faint']), $ub, $sf.Right)
+}
+
+# A path is read from its end: the folder that matters is the last one, and the drive letter is
+# the part that never changes. The tail is kept and the head is replaced by an ellipsis, measured
+# from the right so the text always fills the field instead of leaving a gap.
+function Format-SettingsPathTail([string]$path, $font, [int]$maxWidth) {
+  $text = [string]$path
+  if (-not $text -or $maxWidth -le 0) { return $text }
+  if ((Get-SettingsTextWidth $text $font) -le $maxWidth) { return $text }
+  $lead = [string][char]0x2026
+  $lo = 1
+  $hi = $text.Length
+  $best = $lead
+  while ($lo -le $hi) {
+    $mid = [int][Math]::Floor(($lo + $hi) / 2)
+    $cand = $lead + $text.Substring($text.Length - $mid)
+    if ((Get-SettingsTextWidth $cand $font) -le $maxWidth) { $best = $cand; $lo = $mid + 1 } else { $hi = $mid - 1 }
   }
-  if (-not $value) { return }
-  $ink = $pal['Text']
+  return $best
+}
+
+# A path row reads as a picker: a folder glyph, then the tail of the path in a field, the same
+# rectangle a number lives in. The full path stays in the help line, so nothing is lost by
+# shortening the value.
+function Draw-SettingsPathField($g, $pal, $rect, [string]$path, [bool]$enabled) {
+  if ($null -eq $g -or $null -eq $pal -or $null -eq $rect) { return }
+  Draw-SettingsFieldBox $g $pal $rect 'rest'
+  $x = [int]$rect.Left
+  $y = [int]$rect.Top
+  $w = [int]$rect.Width
+  $h = [int]$rect.Height
+  $ink = $pal['Dim']
   if (-not $enabled) { $ink = $pal['Faint'] }
-  $nb = New-Object Drawing.RectangleF -ArgumentList @(
-    [single]($x + (Px 8)), [single]$y, [single]($w - $uw - (Px 12)), [single]$h)
-  $g.DrawString($value, $script:FBody, (Get-Brush $ink), $nb, $sf.Right)
+  $glyphLeft = $x + (Px 8)
+  $glyphW = (Px 16)
+  $font = $script:FIconSmall
+  if ($null -ne $font) {
+    $sf = New-PickerStringFormats
+    $gb = New-Object Drawing.RectangleF -ArgumentList @([single]$glyphLeft, [single]$y, [single]$glyphW, [single]$h)
+    $g.DrawString([string][char]0xE8B7, $font, (Get-Brush $ink), $gb, $sf.Center)
+  } else { $glyphW = 0 }
+  $textLeft = $glyphLeft + $glyphW + (Px 6)
+  $room = $x + $w - (Px 8) - $textLeft
+  $tail = Format-SettingsPathTail $path $script:FSmall $room
+  $sf2 = New-PickerStringFormats
+  $tb = New-Object Drawing.RectangleF -ArgumentList @([single]$textLeft, [single]$y, [single][Math]::Max(0, $room), [single]$h)
+  $g.DrawString($tail, $script:FSmall, (Get-Brush $ink), $tb, $sf2.Right)
+}
+
+# Where a path sits: wider than a number, because a folder name is longer than a byte count and
+# the field is the affordance that says "this opens a dialog".
+function Get-SettingsPathRect($layout, [int]$rowTop) {
+  $w = Px 240
+  $h = Px 28
+  return @{
+    Left   = [int]$layout.ListRight - (Px 12) - $w
+    Top    = (Get-SettingsControlTop $layout $rowTop $h)
+    Width  = $w
+    Height = $h
+  }
 }
 
 # One setting: the label and its help on the left, the control on the right, centred on the row.
@@ -281,9 +406,13 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
   }
   $sf = New-PickerStringFormats
   $valueRight = $w - (Px 12)
-  # the control column: wide enough for a byte budget, and the text stops before it so a long
-  # description never runs under the value
+  # the control column sets how much room the label and the help have: a switch is narrow, a
+  # number field wider, a path field wider still. The text stops before it, so a description
+  # never runs under the value.
   $controlW = Px 170
+  if ($row.Kind -eq 'bool') { $controlW = Px 74 }
+  elseif ($row.Kind -eq 'number') { $controlW = Px 148 }
+  elseif ($pick) { $controlW = Px 254 }
   $textW = $valueRight - $controlW - (Px 12)
   if ($textW -lt (Px 120)) { $textW = [int](Px 120) }
   $labelInk = $pal['Text']
@@ -293,7 +422,7 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
     if ($row.ContainsKey('Why') -and $row.Why) { $helpText = 'Off because ' + [string]$row.Why }
   }
   $labelBox = New-Object Drawing.RectangleF -ArgumentList @(
-    [single]($x + (Px 12)), [single]($y + (Px 7)), [single]$textW, [single](Px 22))
+    [single]($x + (Px 12)), [single]($y + (Px 8)), [single]$textW, [single](Px 22))
   $g.DrawString([string]$row.Label, $script:FBody, (Get-Brush $labelInk), $labelBox, $sf.Ellipsis)
   # a staged row carries a dot in the row's left padding: nothing is written yet, and a page with
   # one changed value among thirty has to say which one. It sits outside the label so no text
@@ -301,12 +430,18 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
   if ($row.ContainsKey('Pending') -and $row.Pending) {
     $dot = [Math]::Max(3, (Px 4))
     $db = New-Object Drawing.SolidBrush $pal['Accent']
-    try { $g.FillEllipse($db, ($x + (Px 5)), ($y + (Px 15)), $dot, $dot) } finally { $db.Dispose() }
+    try { $g.FillEllipse($db, ($x + (Px 5)), ($y + (Px 17)), $dot, $dot) } finally { $db.Dispose() }
   }
+  # the help is drawn as the lines the column can hold: breaking it here is what keeps a
+  # sentence whole instead of losing its middle to a clip
   if ($helpText) {
-    $helpBox = New-Object Drawing.RectangleF -ArgumentList @(
-      [single]($x + (Px 12)), [single]($y + (Px 28)), [single]$textW, [single](Px 18))
-    $g.DrawString($helpText, $script:FSmall, (Get-Brush $pal['Faint']), $helpBox, $sf.Ellipsis)
+    $lineH = [int](Px 17)
+    $lines = @(Get-SettingsHelpLines $g $helpText $textW 2)
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+      $hb = New-Object Drawing.RectangleF -ArgumentList @(
+        [single]($x + (Px 12)), [single]($y + (Px 30) + ($i * $lineH)), [single]$textW, [single]$lineH)
+      $g.DrawString([string]$lines[$i], $script:FSmall, (Get-Brush $pal['Faint']), $hb, $sf.None)
+    }
   }
   if ($row.Kind -eq 'bool') {
     $t = Get-SettingsToggleRect $layout $y
@@ -320,6 +455,13 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
     Draw-SettingsValueField $g $pal $f ([string]$row.Number) ([string]$row.Unit) $enabled
     return
   }
+  # a path is a picker, not a value: the field says "this opens a dialog" and the folder that
+  # matters - the last one - is what it shows
+  if ($pick) {
+    $f = Get-SettingsPathRect $layout $y
+    Draw-SettingsPathField $g $pal $f ([string]$row.Raw) $enabled
+    return
+  }
   # the value holds the vertical middle of the whole row, the same line the switch sits on
   $choices = @()
   if ($row.ContainsKey('Choices') -and $null -ne $row.Choices) { $choices = @($row.Choices) }
@@ -331,7 +473,7 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
   $chords = @()
   if ($row.ContainsKey('Chords') -and $null -ne $row.Chords) { $chords = @($row.Chords) }
   if ($armed -or $chords.Count -gt 0) {
-    $cy = $y + [int]($h / 2)
+    $cy = $y + [int](Px 19)
     $xr = $x + $valueRight - $dropW
     if ($armed) {
       # the row is waiting for a chord: what is held so far, then one accent cap for the key
@@ -355,14 +497,14 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
     return
   }
   $valueBox = New-Object Drawing.RectangleF -ArgumentList @(
-    [single]($x + $valueRight - $controlW), [single]($y + (Px 4)), [single]($controlW - $dropW), [single]($h - (Px 8)))
+    [single]($x + $valueRight - $controlW), [single]($y + (Px 4)), [single]($controlW - $dropW), [single](Px 26))
   $ink = $pal['Dim']
   if (-not $enabled) { $ink = $pal['Faint'] }
   $g.DrawString([string]$row.Text, $script:FBody, (Get-Brush $ink), $valueBox, $sf.Right)
   if ($dropW -gt 0) {
     # a chevron, the same affordance a Fluent combo box carries
     $cx = $x + $valueRight - (Px 7)
-    $cy = $y + [int]($h / 2)
+    $cy = $y + [int](Px 19)
     $pen = New-Object Drawing.Pen $pal['Dim'], (Px 1)
     try {
       $g.DrawLine($pen, ($cx - (Px 3)), ($cy - (Px 2)), $cx, ($cy + (Px 2)))
@@ -458,11 +600,16 @@ function Get-SettingsActionRects($layout, $labels) {
   $h = [int]$layout.ActionHeight
   $gap = [int]$layout.ActionGap
   $pad = [int]$layout.ActionPad
+  $minW = Px 88
+  if ($layout.ContainsKey('ActionMin')) { $minW = [int]$layout.ActionMin }
+  # the button is centred in the bar, so the air above it and below it is the same
   $top = [int]$layout.ListBottom + [int](([int]$layout.FootHeight - $h) / 2)
   $right = [int]$layout.Width - [int]$layout.Pad
   $out = New-Object System.Collections.Generic.List[object]
+  # laid out from the right edge inwards, so the primary action always ends at the padding
   for ($i = $list.Count - 1; $i -ge 0; $i--) {
-    $w = (Get-SettingsTextWidth ([string]$list[$i]) $script:FSmall) + (2 * $pad)
+    $w = (Get-SettingsTextWidth ([string]$list[$i]) $script:FBody) + (2 * $pad)
+    if ($w -lt $minW) { $w = $minW }
     $right = $right - $w
     $out.Insert(0, @{ Left = [int]$right; Top = [int]$top; Width = [int]$w; Height = $h })
     $right = $right - $gap
@@ -505,15 +652,17 @@ function Draw-SettingsAction($g, $pal, $rect, [string]$label, [bool]$primary, [b
   try { $g.DrawPath($pen, $stroke) } finally { $stroke.Dispose(); $pen.Dispose() }
   $sf = New-PickerStringFormats
   $box = New-Object Drawing.RectangleF -ArgumentList @([single]$x, [single]$y, [single]$w, [single]$h)
-  $g.DrawString($label, $script:FSmall, (Get-Brush $ink), $box, $sf.Center)
+  # the body face, not the small one: a dialog button is a label, not a caption
+  $g.DrawString($label, $script:FBody, (Get-Brush $ink), $box, $sf.Center)
 }
 
-# The footer is the window's own bar: what the last change did on the left, the count with the
-# version in the quiet ink, and the three actions on the right. There is no key to describe here -
-# the window is driven by the pointer - and a refusal is drawn in Warn, the token the panel uses
-# for the same thing. $actions is the fixed set of labels; $enabled says whether anything is
-# staged, which is what lights the whole group.
-function Draw-SettingsFooter($g, $pal, $layout, [string]$msg, [bool]$isError, [string]$rightText, $actions, [bool]$enabled, [int]$hot = -1) {
+# The footer is the window's own bar: what the last change did on the left and the three actions
+# on the right. There is no key to describe here - the window is driven by the pointer - and a
+# refusal is drawn in Warn, the token the panel uses for the same thing. $actions is the fixed set
+# of labels; $enabled says whether anything is staged, which is what lights the whole group.
+# The version and the item count are not here: they describe the program, not the page, and they
+# live on the About page where they can be read in full.
+function Draw-SettingsFooter($g, $pal, $layout, [string]$msg, [bool]$isError, $actions, [bool]$enabled, [int]$hot = -1) {
   if ($null -eq $g -or $null -eq $pal) { return }
   $sf = New-PickerStringFormats
   $left = [int]$layout.Pad
@@ -530,16 +679,7 @@ function Draw-SettingsFooter($g, $pal, $layout, [string]$msg, [bool]$isError, [s
     if ($specs[$i].ContainsKey('Primary')) { $primary = [bool]$specs[$i].Primary }
     Draw-SettingsAction $g $pal $rects[$i] ([string]$specs[$i].Label) $primary $enabled ($i -eq $hot)
   }
-  if ($rects.Count -gt 0) { $limit = [int]$rects[0].Left - (Px 12) }
-  if ($rightText) {
-    $rightW = Get-SettingsTextWidth $rightText $script:FSmall
-    if ($rightW -gt 0) {
-      $box = New-Object Drawing.RectangleF -ArgumentList @(
-        [single]($limit - $rightW), [single]$top, [single]$rightW, [single]([int]$layout.FootHeight))
-      $g.DrawString($rightText, $script:FSmall, (Get-Brush $pal['Faint']), $box, $sf.Right)
-      $limit = $limit - $rightW - (Px 12)
-    }
-  }
+  if ($rects.Count -gt 0) { $limit = [int]$rects[0].Left - (Px 16) }
   if (-not $msg) { return }
   $ink = $pal['Dim']
   if ($isError) { $ink = $pal['Warn'] }

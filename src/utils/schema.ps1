@@ -32,6 +32,9 @@
 #   Pick        the dialog the settings window opens instead of typing: 'folder'
 #   InstallOnly only `install` acts on the value (creating or removing a shortcut): writing
 #               it is fine, but no reload can make it take effect, so the window says so
+#   Required    true: an empty value is refused instead of falling back to the default. For a
+#               value whose empty spelling means something else (an empty DataDir would leave
+#               the store location undecided), what is written has to be a real value
 #   Ref         the variable the value drives ([ref]$script:X); Apply-Config writes through
 #               it, which is why it is a reference and not a name - the minifier renames
 #               script variables, a name string would survive and address nothing
@@ -183,6 +186,15 @@ function Test-SchemaInstallOnly($schema, [string]$key) {
   return [bool]$spec['InstallOnly']
 }
 
+# Whether the key has to hold a value. An empty one means "not set" for most keys and is answered
+# with the default; the few keys where the empty spelling would decide something of its own say
+# so, and an empty value is then a refusal rather than a shortcut.
+function Test-SchemaRequired($schema, [string]$key) {
+  $spec = Get-SchemaProperty $schema $key
+  if ($null -eq $spec -or -not $spec.Contains('Required')) { return $false }
+  return [bool]$spec['Required']
+}
+
 # Validate and normalise one raw value. Never throws; the answer is
 # @{ Ok = <bool>; Value = <normalised value>; Error = <reason when not Ok> }.
 # The value comes back in its file spelling ('1' / '0', plain numbers), because that is what
@@ -197,6 +209,10 @@ function Convert-SchemaValue($schema, [string]$key, [string]$raw) {
   # check rejected the one value the schema itself declares as the default.
   if ($v -eq '' -and $type -ne 'bool' -and $spec.Contains('Default') -and [string]$spec['Default'] -eq '') {
     return @{ Ok = $true; Value = ''; Error = '' }
+  }
+  # a key that has to hold something refuses the empty spelling before any type check
+  if ($v -eq '' -and (Test-SchemaRequired $schema $key)) {
+    return @{ Ok = $false; Value = ''; Error = 'a value is required' }
   }
   if ($type -eq 'bool') {
     $l = $v.ToLowerInvariant()
@@ -293,7 +309,11 @@ function Test-SchemaDoc($schema, $doc) {
     $key = [string]$k
     $raw = [string]$doc.Map[$k]
     if ($null -eq (Get-SchemaProperty $schema $key)) { $out.Add('unknown key: ' + $key); continue }
-    if ($raw -eq '') { continue }
+    if ($raw -eq '') {
+      # an empty value is "not set" everywhere else, but a required key is missing something
+      if (Test-SchemaRequired $schema $key) { $out.Add($key + '=  (a value is required)') }
+      continue
+    }
     $r = Convert-SchemaValue $schema $key $raw
     if (-not $r.Ok) { $out.Add($key + '=' + $raw + '  (' + $r.Error + ')') }
   }

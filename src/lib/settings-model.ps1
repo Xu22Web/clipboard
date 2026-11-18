@@ -151,9 +151,10 @@ function Get-SettingHelp($schema, [string]$key) {
   if ($null -eq $spec) { return '' }
   # a read-only value is never typed here, so the line that would have described it says why
   if ($spec.Contains('ReadOnly')) {
-    $why = 'Read-only - ' + [string]$spec['ReadOnly']
-    if ($spec.Contains('Pick')) { $why = 'Click to choose the folder. ' + $why }
-    return $why
+    # a row that opens a dialog is not read-only in the same sense: it is changed by picking, so
+    # the line says what picking does instead of forbidding it
+    if ($spec.Contains('Pick')) { return ('Click to choose the folder; ' + [string]$spec['ReadOnly']) }
+    return ('Read-only - ' + [string]$spec['ReadOnly'])
   }
   $d = ''
   if ($spec.Contains('Description')) { $d = [string]$spec['Description'] }
@@ -227,6 +228,8 @@ function Get-SettingEnabledBy {
 # from the same overlay, which is why unticking Capture pictures greys MaxImageBytes before
 # anything reaches the file.
 function Get-SettingsRows($schema, [string]$group, $pending = $null) {
+  # About is not built from keys: it states what the program is, so it has rows of its own
+  if ($group -ceq 'About') { return (Get-SettingAboutRows) }
   $rows = New-Object System.Collections.Generic.List[object]
   $table = Get-SettingGroupTable
   $keys = @()
@@ -318,5 +321,90 @@ function Get-SettingGroups($schema) {
     foreach ($key in @($props.Keys)) { if (-not $named.ContainsKey([string]$key)) { $loose++ } }
   }
   if ($loose -gt 0) { $out.Add('Other') }
+  # About is always there: it is not a page of settings, it is where the version, the store and
+  # the loaded plugins are stated, and a window with no such page has nowhere to put them
+  $out.Add('About')
   return $out.ToArray()
+}
+
+# One row that states something instead of setting it: no editor, no staged value, no switch.
+# It is marked locked so the row never lights up under the pointer - there is nothing to click.
+function New-SettingInfoRow([string]$key, [string]$label, [string]$text, [string]$help) {
+  return @{
+    Key = $key; Group = 'About'; Label = $label; Kind = 'info'
+    Multi = $false; Locked = $true; Record = $false; Pick = ''
+    Raw = ''; Pending = $false; Number = ''; Unit = ''; Scale = 1
+    Text = $text; Help = $help; Choices = @(); Chords = @()
+    Enabled = $true; Why = ''
+  }
+}
+
+# The facts the About page states, read from the same variables and the same reader the rest of
+# the tool uses, so the page cannot claim a version the program does not have. Anything whose
+# module is not loaded in this command is left out instead of guessed.
+function Get-SettingAboutFacts {
+  $f = [ordered]@{}
+  $f['Version'] = [string]$script:Version
+  if (Get-Command Get-StoreVersion -ErrorAction SilentlyContinue) {
+    try {
+      $sv = Get-StoreVersion
+      $label = [string]$sv.Label
+      if ([string]$sv.Kind -eq 'current') { $label = 'data v' + [string]$sv.Version + ' (' + $label + ')' }
+      $f['Data format'] = $label
+    } catch { }
+    if (Get-Command Get-Records -ErrorAction SilentlyContinue) {
+      try { $f['Entries'] = ([string]@(Get-Records).Count) + ' kept' } catch { }
+    }
+  }
+  $f['Store folder'] = [string]$script:StoreDir
+  $f['Settings file'] = [string]$script:IniPath
+  return $f
+}
+
+# The last segment of a path, which is the part a row can show: the rest is in the help line.
+function Get-SettingLeaf([string]$path) {
+  $t = ([string]$path).TrimEnd('\', '/')
+  if (-not $t) { return [string]$path }
+  $i = $t.LastIndexOfAny([char[]]@('\', '/'))
+  if ($i -lt 0) { return $t }
+  if ($i -eq 0) { return $t }
+  return $t.Substring($i + 1)
+}
+
+# The About page: one row per fact, in a fixed order, each with the sentence that says what it
+# is. A path is shown by its last segment and stated in full in the help line, the same way the
+# Storage page shows the store folder.
+function Get-SettingAboutRows {
+  $facts = Get-SettingAboutFacts
+  $rows = New-Object System.Collections.Generic.List[object]
+  $help = @{
+    'Version'       = 'clipboard, the clipboard history for Windows'
+    'Data format'   = 'the header history.dat is written with; clipboard migrate upgrades an older file'
+    'Entries'       = 'rows in history.dat; Max items caps them, a mark can protect a row'
+    'Store folder'  = 'history.dat, the media files and the log live here'
+    'Settings file' = 'every value in this window is written here'
+    'Plugins'       = 'loaded in this order; Plugins= picks them, an empty value means all of them'
+  }
+  foreach ($k in @($facts.Keys)) {
+    $label = [string]$k
+    $text = [string]$facts[$k]
+    $why = ''
+    if ($help.ContainsKey($label)) { $why = [string]$help[$label] }
+    if ($label -eq 'Version') { $text = 'version ' + $text }
+    if ($label -ceq 'Store folder' -or $label -ceq 'Settings file') {
+      # the full path is the fact; the row shows the segment that names it
+      if ($why) { $why = $text + '  -  ' + $why } else { $why = $text }
+      $text = Get-SettingLeaf $text
+    }
+    $rows.Add((New-SettingInfoRow ('About.' + $label) $label $text $why))
+  }
+  # the plugins are a list, and a list in the value column is cut at its head: the count is what
+  # fits there, the names go in the sentence under it
+  $names = @($script:PluginList)
+  $pText = 'none'
+  $pWhy = [string]$help['Plugins']
+  if ($names.Count -eq 1) { $pText = '1 loaded' } elseif ($names.Count -gt 1) { $pText = ([string]$names.Count) + ' loaded' }
+  if ($names.Count -gt 0) { $pWhy = ($names -join ', ') + '  -  ' + $pWhy }
+  $rows.Add((New-SettingInfoRow 'About.Plugins' 'Plugins' $pText $pWhy))
+  return $rows.ToArray()
 }

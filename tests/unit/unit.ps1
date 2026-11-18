@@ -2622,6 +2622,7 @@ try {
         $seen = @{}
         $twice = @()
         foreach ($g in @(Get-SettingGroups $script:SettingsSchema)) {
+          if ($g -ceq 'About') { continue }
           foreach ($row in @(Get-SettingsRows $script:SettingsSchema $g)) {
             if ($seen.ContainsKey($row.Key)) { $twice += $row.Key }
             $seen[$row.Key] = $true
@@ -2753,8 +2754,31 @@ try {
         Expect ([string]$help -match 'next install') ([string]$help)
       }
 
-      It 'a staged value is what the page shows, before anything is written' {
-        # the window writes nothing until Save, so the row has to draw the staged value and mark
+      It 'the store location is a value the file has to hold' {
+        # an empty DataDir would leave the write location undecided, so the schema refuses it
+        # instead of quietly meaning the default
+        $bad = Convert-SettingInput $script:SettingsSchema 'DataDir' ''
+        Expect (-not $bad.Ok) 'an empty DataDir was accepted'
+        Expect (Test-SchemaRequired $script:SettingsSchema 'DataDir') 'DataDir is not required'
+        $good = Convert-SettingInput $script:SettingsSchema 'DataDir' (Get-SchemaDefault $script:SettingsSchema 'DataDir')
+        Expect ($good.Ok) ([string]$good.Error)
+        # the empty spelling is still fine where it means "not set"
+        Expect (-not (Test-SchemaRequired $script:SettingsSchema 'ExcludePattern')) 'ExcludePattern'
+      }
+
+      It 'the last page states the version and the store' {
+        # About is not built from schema keys, so it is the one group that exists whatever the
+        # schema says, and every one of its rows is a statement rather than a control
+        $groups = @(Get-SettingGroups $script:SettingsSchema)
+        Expect ($groups.Count -gt 0 -and $groups[$groups.Count - 1] -eq 'About') ($groups -join ',')
+        $rows = @(Get-SettingsRows $script:SettingsSchema 'About')
+        $version = @($rows | Where-Object { $_.Label -eq 'Version' })
+        Expect (($version.Count -eq 1) -and ([string]$version[0].Text -match [regex]::Escape([string]$script:Version))) ([string]$version[0].Text)
+        $clickable = @($rows | Where-Object { $_.Record -or $_.Pick -or (-not $_.Locked) })
+        Expect ($clickable.Count -eq 0) (@($clickable | ForEach-Object { $_.Label }) -join ', ')
+      }
+
+      It 'a staged value is what the page shows, before anything is written' {        # the window writes nothing until Save, so the row has to draw the staged value and mark
         # itself, and a row a staged switch owns has to grey out before the file changes
         $pending = @{ 'MaxImageBytes' = '4194304'; 'CaptureImages' = '0' }
         $rows = @(Get-SettingsRows $script:SettingsSchema 'Clipboard' $pending)

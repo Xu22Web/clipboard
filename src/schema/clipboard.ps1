@@ -13,7 +13,7 @@
   Description = 'the program settings: capture, storage, panel and panel behaviour'
   Version     = 1
   Properties  = [ordered]@{
-    DataDir           = @{ Type = 'string'; ReadOnly = 'the store location: `clipboard config set DataDir` moves it while nothing is running'; Pick = 'folder'; Default = 'data'; Description = 'write location; a relative path is relative to the script dir, empty = data' }
+    DataDir           = @{ Type = 'string'; Required = $true; ReadOnly = 'the history is not moved: the chosen folder starts empty'; Pick = 'folder'; Default = 'data'; Description = 'write location; a relative path is relative to the script dir' }
     Hotkey            = @{ Type = 'hotkey'; Ref = [ref]$script:Hotkey; Default = 'Ctrl+Alt+V'; Description = 'global hotkey' }
     HotkeyFallbacks   = @{ Type = 'hotkeys'; Ref = [ref]$script:HotkeyFallbacks; Default = 'Ctrl+Alt+V, Win+V, Alt+`, Win+Shift+V'; Description = 'comma separated chain tried in order after Hotkey' }
     PasteKeys         = @{ Type = 'string'; Suggest = @('^v', '^+{INSERT}', '^{INSERT}'); Ref = [ref]$script:PasteKeys; Default = '^v'; Description = 'SendKeys sent after picking' }
@@ -28,7 +28,7 @@
     CaptureRich        = @{ Type = 'bool'; Ref = [ref]$script:CaptureRich; Default = 1; Description = '1 = remember the html / rtf of formatted text' }
     MaxHtmlBytes       = @{ Type = 'int'; Unit = 'size'; Ref = [ref]$script:MaxHtmlBytes; Default = 20971520; Minimum = 1024; Maximum = 67108864; Description = 'cap for the html block in bytes; over it the html is dropped on its own' }
     MaxRtfBytes        = @{ Type = 'int'; Unit = 'size'; Ref = [ref]$script:MaxRtfBytes; Default = 20971520; Minimum = 1024; Maximum = 67108864; Description = 'cap for the rtf block in bytes; over it the rtf is dropped and the entry pastes as text' }
-    RtfImagesUpToBytes = @{ Type = 'int'; Unit = 'size'; Ref = [ref]$script:RtfImagesUpToBytes; Default = 8388608; Minimum = 0; Maximum = 67108864; Description = 'an rtf above this size is laid out on the card with a marker where each picture was; the entry and the paste keep the pictures, 0 = never' }
+    RtfImagesUpToBytes = @{ Type = 'int'; Unit = 'size'; Ref = [ref]$script:RtfImagesUpToBytes; Default = 8388608; Minimum = 0; Maximum = 67108864; Description = 'an rtf above this size is laid out with a marker where each picture was; the paste keeps the pictures, 0 = never' }
     InlineImageUpToBytes = @{ Type = 'int'; Unit = 'size'; Ref = [ref]$script:InlineImageUpToBytes; Default = 4194304; Minimum = 0; Maximum = 10485760; Description = 'inline a temp-file picture the html points at when it is at most this large, 0 = never' }
     PasteRich         = @{ Type = 'bool'; Ref = [ref]$script:PasteRich; Default = 1; Description = '1 = paste the formatting back, 0 = always paste plain text' }
     PasteFilesAsText  = @{ Type = 'bool'; Ref = [ref]$script:PasteFilesAsText; Default = 1; Description = '1 = a file list also goes on the clipboard as text (paths), 0 = file list only' }
