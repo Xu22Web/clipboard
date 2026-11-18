@@ -2642,20 +2642,31 @@ try {
           $kinds[$kind] = $true
         }
         # four behaviours, not eight types: the window would have to draw eight otherwise
-        $allowed = @('bool', 'number', 'text', 'hotkey', 'theme', 'regex', 'list', 'rules')
+        $allowed = @('bool', 'number', 'text', 'hotkey', 'theme', 'choice', 'regex', 'list', 'rules')
         $unknown = @()
         foreach ($k in @($kinds.Keys)) { if ($allowed -notcontains $k) { $unknown += $k } }
         Expect ($unknown.Count -eq 0) ($unknown -join ', ')
         Expect ($kinds.ContainsKey('bool') -and $kinds.ContainsKey('number') -and $kinds.ContainsKey('theme')) ($kinds.Keys -join ',')
       }
 
-      It 'a step grows with the range it walks' {
-        $ms = Get-SettingStep (Get-SchemaProperty $script:SettingsSchema 'PasteSettle')
-        $rows = Get-SettingStep (Get-SchemaProperty $script:SettingsSchema 'CompactRows')
-        $bytes = Get-SettingStep (Get-SchemaProperty $script:SettingsSchema 'MaxTextBytes')
-        # a millisecond delay and a byte budget must not move by the same amount per press
-        Expect ($ms -gt $rows) ([string]$ms + ' vs ' + [string]$rows)
-        Expect ($bytes -gt $ms) ([string]$bytes + ' vs ' + [string]$ms)
+      It 'a shortcut is drawn in the order Windows prints it' {
+        # the file may spell the modifiers in any order; the caps have to read Win, Ctrl, Alt,
+        # Shift, key, which is one order whatever the ini says
+        $keys = (@(Get-SettingChordKeys 'Alt+Ctrl+V') -join ' ')
+        Expect ($keys -eq 'Ctrl Alt V') $keys
+        $again = (@(Get-SettingChordKeys 'Shift+Win+V') -join ' ')
+        Expect ($again -eq 'Win Shift V') $again
+      }
+
+      It 'a recorded chord is written in the spelling the parser reads' {
+        $a = Format-ChordValue $false $true $true $false 'J'
+        Expect ($a -eq 'Ctrl+Alt+J') $a
+        $b = Format-ChordValue $true $false $false $true 'V'
+        Expect ($b -eq 'Win+Shift+V') $b
+        # a bare key would take that key away from every program, so only F1-F24 pass alone
+        Expect (-not (Test-ChordUsable 'J')) 'J'
+        Expect (Test-ChordUsable 'F9') 'F9'
+        Expect (Test-ChordUsable 'Ctrl+J') 'Ctrl+J'
       }
 
       It 'a value the schema refuses never reaches the writer' {

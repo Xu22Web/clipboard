@@ -7,8 +7,8 @@
 # Nothing here draws. Every answer is a value, a normalised file spelling, or a sentence the
 # footer can show, which is what makes these testable without a window.
 
-# The value one Enter or one Space produces. A boolean flips; everything else keeps its value
-# and is left to the text editor.
+# The value a switch click produces: a boolean flips, everything else keeps its value and is
+# typed or picked.
 function Get-SettingToggle($schema, [string]$key) {
   $spec = Get-SchemaProperty $schema $key
   if ($null -eq $spec) { return $null }
@@ -18,38 +18,49 @@ function Get-SettingToggle($schema, [string]$key) {
   return '1'
 }
 
-# One step of a number, sized to the range it lives in: one thousandth of the span, rounded down
-# to a power of ten. A millisecond delay over 0-10000 moves by 10, a byte budget by 100000, and
-# a row count by 1 - so one arrow key is one sensible notch whatever the key measures.
-function Get-SettingStep($spec, [string]$raw = '') {
-  if ($null -eq $spec) { return 1 }
-  $lo = 0
-  $hi = 0
-  if ($spec.Contains('Minimum')) { $lo = [int]$spec['Minimum'] }
-  if ($spec.Contains('Maximum')) { $hi = [int]$spec['Maximum'] }
-  $span = [Math]::Abs($hi - $lo)
-  if ($span -lt 1) { return 1 }
-  $unit = [Math]::Max(1, $span / 1000)
-  $step = [int][Math]::Pow(10, [Math]::Floor([Math]::Log10($unit)))
-  if ($step -lt 1) { return 1 }
-  return $step
+# The chords a row shows as key caps: one for a hotkey, one per comma separated entry for the
+# chain, none for anything else. A shortcut is read key by key, so the row needs the parts and
+# not one string.
+function Get-SettingChordList($schema, [string]$key, [string]$raw) {
+  $spec = Get-SchemaProperty $schema $key
+  if ($null -eq $spec) { return @() }
+  if ((Get-SettingKind $spec) -ne 'hotkey' -and $key -cne 'HotkeyFallbacks') { return @() }
+  $out = @()
+  foreach ($c in @(([string]$raw) -split ',')) {
+    $t = ([string]$c).Trim()
+    if ($t) { $out += $t }
+  }
+  return $out
 }
 
-# A number moved by one step, kept inside the schema range. Returns the file spelling the
-# writer expects, or $null when the value already sits on the end it was pushed against.
-function Get-SettingStepped($schema, [string]$key, [int]$dir) {
-  $spec = Get-SchemaProperty $schema $key
-  if ($null -eq $spec) { return $null }
-  if ((Get-SettingKind $spec) -ne 'number') { return $null }
-  $raw = Get-SettingRaw $schema $key
-  $n = 0
-  if (-not [int]::TryParse([string]$raw, [ref]$n)) { $n = 0 }
-  $step = Get-SettingStep $spec $raw
-  $next = $n + ($step * $dir)
-  if ($spec.Contains('Minimum') -and $next -lt [int]$spec['Minimum']) { $next = [int]$spec['Minimum'] }
-  if ($spec.Contains('Maximum') -and $next -gt [int]$spec['Maximum']) { $next = [int]$spec['Maximum'] }
-  if ([string]$next -eq [string]$n) { return $null }
-  return [string]$next
+# The keys of one chord, in the order Windows prints them - Win, Ctrl, Alt, Shift, then the key -
+# whatever order the file spells them in. "+" as the key itself is the one case the split cannot
+# see, so a trailing plus is taken before the parts are split.
+function Get-SettingChordKeys([string]$chord) {
+  $t = ([string]$chord).Trim()
+  if (-not $t) { return @() }
+  $key = ''
+  $head = $t
+  if ($t.EndsWith('+')) {
+    $key = '+'
+    $head = $t.Substring(0, $t.Length - 1)
+  }
+  $mods = @()
+  foreach ($p in @($head -split '\+')) {
+    $m = ([string]$p).Trim()
+    if ($m) { $mods += $m }
+  }
+  if ($key -eq '') {
+    if ($mods.Count -eq 0) { return @() }
+    $key = [string]$mods[$mods.Count - 1]
+    if ($mods.Count -gt 1) { $mods = @($mods[0..($mods.Count - 2)]) } else { $mods = @() }
+  }
+  $out = @()
+  foreach ($want in @('Win', 'Ctrl', 'Alt', 'Shift')) {
+    foreach ($m in $mods) { if ($m -ieq $want) { $out += $want } }
+  }
+  $out += $key
+  return $out
 }
 
 # The values a setting offers as a list, or an empty array when it is typed. A list is only
@@ -59,6 +70,11 @@ function Get-SettingStepped($schema, [string]$key, [int]$dir) {
 function Get-SettingChoices($schema, [string]$key) {
   $spec = Get-SchemaProperty $schema $key
   if ($null -eq $spec) { return @() }
+  # the schema's own list of acceptable values comes first: a key that declares Enum needs no
+  # second copy of that list in the window
+  if ($spec.Contains('Enum')) { return @($spec['Enum']) }
+  # Suggest is the free-form case: the window offers these, the reader accepts anything
+  if ($spec.Contains('Suggest')) { return @($spec['Suggest']) }
   $kind = Get-SettingKind $spec
   if ($kind -eq 'theme') {
     $names = @()
@@ -68,11 +84,6 @@ function Get-SettingChoices($schema, [string]$key) {
     return $names
   }
   if ($kind -eq 'list' -and $key -ceq 'Plugins') { return @(Get-SettingPluginNames) }
-  if ($kind -eq 'text' -and $key -ceq 'PasteKeys') {
-    # the three chords that between them cover every target: the default, the terminal-style
-    # shift-insert, and the same without shift for programs that map Ctrl+Insert
-    return @('^v', '^+{INSERT}', '^{INSERT}')
-  }
   return @()
 }
 
@@ -118,28 +129,6 @@ function Get-SettingListToggled([string]$raw, [string]$name) {
   if (-not $was) { $out.Add($name) }
   if ($out.Count -eq 0) { return $null }
   return ($out -join ',')
-}
-
-# The value a list-type setting moves to: the next or previous name on disk, wrapping at the
-# ends. The list is read from disk, so a theme dropped into themes\ is selectable without the
-# window knowing anything about it.
-function Get-SettingCycled($schema, [string]$key, [int]$dir) {
-  $spec = Get-SchemaProperty $schema $key
-  if ($null -eq $spec) { return $null }
-  if ((Get-SettingKind $spec) -ne 'theme') { return $null }
-  $names = @()
-  if (Get-Command Get-ThemeNames -ErrorAction SilentlyContinue) {
-    try { $names = @(Get-ThemeNames) } catch { $names = @() }
-  }
-  if ($names.Count -eq 0) { return $null }
-  $cur = Get-SettingRaw $schema $key
-  $at = -1
-  for ($i = 0; $i -lt $names.Count; $i++) { if ([string]$names[$i] -ieq [string]$cur) { $at = $i } }
-  if ($at -lt 0) { return [string]$names[0] }
-  $n = $names.Count
-  $to = (($at + $dir) % $n + $n) % $n
-  if ($to -eq $at) { return $null }
-  return [string]$names[$to]
 }
 
 # One text answer from the editor, validated by the schema itself: the window never restates

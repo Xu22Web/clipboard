@@ -23,8 +23,12 @@
 #   Minimum     int / number lower bound
 #   Maximum     int / number upper bound
 #   Enum        for enum: the values allowed; for list: the tokens allowed
+#   Suggest     values the settings window offers for a free-form key, as a shortcut; unlike
+#               Enum they do not restrict what may be typed (PasteKeys takes any SendKeys)
 #   Pattern     for list: the shape of one item (default: letters, digits, _ . -)
 #   Description one line, written as the comment above the key in the ini template
+#   ReadOnly    a reason: the value is shown in the window but not edited there (the store
+#               location, which a running resident would split in two)
 #   Ref         the variable the value drives ([ref]$script:X); Apply-Config writes through
 #               it, which is why it is a reference and not a name - the minifier renames
 #               script variables, a name string would survive and address nothing
@@ -176,6 +180,12 @@ function Convert-SchemaValue($schema, [string]$key, [string]$raw) {
   if ($null -eq $spec) { return @{ Ok = $false; Value = ''; Error = 'unknown key' } }
   $type = [string]$spec['Type']
   $v = ([string]$raw).Trim()
+  # An empty value is a state of its own for a key whose default is empty: WindowLeft /
+  # WindowTop mean "centre it", ExcludePattern means "match nothing". Without this the type
+  # check rejected the one value the schema itself declares as the default.
+  if ($v -eq '' -and $type -ne 'bool' -and $spec.Contains('Default') -and [string]$spec['Default'] -eq '') {
+    return @{ Ok = $true; Value = ''; Error = '' }
+  }
   if ($type -eq 'bool') {
     $l = $v.ToLowerInvariant()
     if (@('1', 'true', 'on', 'yes') -contains $l) { return @{ Ok = $true; Value = '1'; Error = '' } }

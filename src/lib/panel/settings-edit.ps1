@@ -30,6 +30,61 @@ function Get-SettingEditSeed($schema, [string]$key) {
   return [string](Get-SchemaDefault $schema $key)
 }
 
+# The key part of a chord, from a key that was pressed. Only the names the tool's own parser
+# understands are accepted, so a recorded chord is one the resident can actually register; $null
+# means this key cannot be part of a hotkey.
+function Get-ChordKeyName($keyCode) {
+  $k = [Windows.Forms.Keys]$keyCode
+  if (($k -ge [Windows.Forms.Keys]::A) -and ($k -le [Windows.Forms.Keys]::Z)) { return [string][char][int]$k }
+  if (($k -ge [Windows.Forms.Keys]::D0) -and ($k -le [Windows.Forms.Keys]::D9)) { return [string][char][int]$k }
+  if (($k -ge [Windows.Forms.Keys]::F1) -and ($k -le [Windows.Forms.Keys]::F24)) {
+    return 'F' + [string]([int]$k - [int][Windows.Forms.Keys]::F1 + 1)
+  }
+  switch ($k) {
+    ([Windows.Forms.Keys]::Space) { return 'SPACE' }
+    ([Windows.Forms.Keys]::Insert) { return 'INSERT' }
+    ([Windows.Forms.Keys]::Delete) { return 'DELETE' }
+    ([Windows.Forms.Keys]::Home) { return 'HOME' }
+    ([Windows.Forms.Keys]::End) { return 'END' }
+    ([Windows.Forms.Keys]::PageUp) { return 'PGUP' }
+    ([Windows.Forms.Keys]::PageDown) { return 'PGDN' }
+  }
+  return $null
+}
+
+# The Win key is not part of WinForms' ModifierKeys and never arrives as a key of its own, so the
+# only way to see it held while a chord is being recorded is the real keyboard state.
+function Test-ChordWinHeld {
+  try {
+    if ((([Cb.Win]::GetAsyncKeyState(0x5B) -band 0x8000) -ne 0) -or (([Cb.Win]::GetAsyncKeyState(0x5C) -band 0x8000) -ne 0)) { return $true }
+  } catch { }
+  return $false
+}
+
+# The chord a pressed key makes, in the spelling the file uses: modifiers in the order the parser
+# reads them, then the key. An empty answer means there is nothing to write yet.
+function Format-ChordValue([bool]$win, [bool]$ctrl, [bool]$alt, [bool]$shift, [string]$keyName) {
+  if (-not $keyName) { return '' }
+  $parts = @()
+  if ($win) { $parts += 'Win' }
+  if ($ctrl) { $parts += 'Ctrl' }
+  if ($alt) { $parts += 'Alt' }
+  if ($shift) { $parts += 'Shift' }
+  $parts += $keyName
+  return ($parts -join '+')
+}
+
+# Whether a recorded chord is usable as a hotkey: a global key with no modifier would swallow
+# that key everywhere in every program, so a bare key is only accepted as one of F1-F24.
+function Test-ChordUsable([string]$chord) {
+  $keys = @(Get-SettingChordKeys $chord)
+  if ($keys.Count -lt 2) {
+    if ($keys.Count -eq 1 -and ([string]$keys[0]) -match '^F([1-9]|1[0-9]|2[0-4])$') { return $true }
+    return $false
+  }
+  return $true
+}
+
 # The editor itself: a TextBox that covers the row's value area, styled from the theme so it
 # reads as part of the surface rather than as a system control dropped on top.
 function New-SettingEditor($form, $pal, [int]$x, [int]$y, [int]$w, [int]$h) {

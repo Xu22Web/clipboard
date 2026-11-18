@@ -13,10 +13,10 @@
   Description = 'the program settings: capture, storage, panel and panel behaviour'
   Version     = 1
   Properties  = [ordered]@{
-    DataDir           = @{ Type = 'string'; Default = 'data'; Description = 'write location; a relative path is relative to the script dir, empty = data' }
+    DataDir           = @{ Type = 'string'; ReadOnly = 'the store location: `clipboard config set DataDir` moves it while nothing is running'; Default = 'data'; Description = 'write location; a relative path is relative to the script dir, empty = data' }
     Hotkey            = @{ Type = 'hotkey'; Ref = [ref]$script:Hotkey; Default = 'Ctrl+Alt+V'; Description = 'global hotkey' }
     HotkeyFallbacks   = @{ Type = 'string'; Ref = [ref]$script:HotkeyFallbacks; Default = 'Ctrl+Alt+V, Win+V, Alt+`, Win+Shift+V'; Description = 'comma separated chain tried in order after Hotkey' }
-    PasteKeys         = @{ Type = 'string'; Ref = [ref]$script:PasteKeys; Default = '^v'; Description = 'SendKeys sent after picking' }
+    PasteKeys         = @{ Type = 'string'; Suggest = @('^v', '^+{INSERT}', '^{INSERT}'); Ref = [ref]$script:PasteKeys; Default = '^v'; Description = 'SendKeys sent after picking' }
     ModReleaseTimeout = @{ Type = 'int'; Ref = [ref]$script:ModReleaseTimeout; Default = 1200; Minimum = 0; Maximum = 60000; Description = 'ms to wait for the modifiers; one still held afterwards is released' }
     PasteSettle       = @{ Type = 'int'; Ref = [ref]$script:PasteSettle; Default = 80; Minimum = 0; Maximum = 10000; Description = 'ms to wait before sending PasteKeys' }
     MaxItems           = @{ Type = 'int'; Ref = [ref]$script:MaxItems; Default = 300; Minimum = 1; Maximum = 100000; Description = 'entry cap (rows a mark protects are exempt)' }

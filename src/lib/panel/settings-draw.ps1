@@ -16,9 +16,9 @@ function Get-SettingsLayout([int]$w, [int]$h) {
   $pad = Px 14
   $sideW = Px 196
   $headH = Px 62
-  # the panel's own footer height: the settings window puts the same key chips on the same line,
-  # so the two windows cannot end up with two different footer weights
-  $footH = Px 40
+  # a status line, not a row of key chips: this window answers no shortcut, so the footer only
+  # has a message to show and the count to keep in the corner
+  $footH = Px 30
   return @{
     Width     = $w
     Height    = $h
@@ -28,6 +28,7 @@ function Get-SettingsLayout([int]$w, [int]$h) {
     FootHeight = $footH
     RowHeight = Px 58
     GroupHeight = Px 34
+    CloseSize = Px 32
     ListLeft  = $sideW + $pad
     # the lane on the right belongs to the scrollbar: a Fluent list never draws its rows to the
     # very edge and then has nowhere to put the thumb
@@ -152,12 +153,15 @@ function Draw-SettingsToggle($g, $pal, [int]$x, [int]$y, [int]$w, [int]$h, [doub
       try { $g.DrawPath($pen, $edge) } finally { $edge.Dispose(); $pen.Dispose() }
     }
   }
-  $d = $h - (Px 4)
-  $from = $x + (Px 2)
-  $to = $x + $w - $d - (Px 2)
+  # Win11 measures the thumb at 12 px inside a 20 px track, 4 px in from either end: a thumb that
+  # almost fills the track reads as a different control.
+  $d = [Math]::Min((Px 12), ($h - (Px 4)))
+  $from = $x + (Px 4)
+  $to = $x + $w - $d - (Px 4)
   $kx = [int][Math]::Round($from + (($to - $from) * $k))
+  $ky = $y + [int](($h - $d) / 2)
   $kb = New-Object Drawing.SolidBrush $knob
-  try { $g.FillEllipse($kb, $kx, ($y + (Px 2)), $d, $d) } finally { $kb.Dispose() }
+  try { $g.FillEllipse($kb, $kx, $ky, $d, $d) } finally { $kb.Dispose() }
 }
 
 # One switch, calculated once: the paint, the hit test and the click all ask here, so a click
@@ -181,13 +185,16 @@ function Get-SettingsToggleRect($layout, [int]$rowTop) {
 # This column is not a list: nothing marks a row as current, because every row is its own control
 # and a filled or outlined row reads as "these are selected items". Hovering is the only fill. A
 # row that cannot take effect is greyed and says which setting owns it.
-function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [bool]$hover, [double]$toggleK) {
+function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [bool]$hover, [double]$toggleK, [bool]$armed = $false, $preview = @()) {
   if ($null -eq $g -or $null -eq $row) { return }
   $enabled = $true
   if ($row.ContainsKey('Enabled')) { $enabled = [bool]$row.Enabled }
+  $locked = $false
+  if ($row.ContainsKey('Locked')) { $locked = [bool]$row.Locked }
   $h = [int]$layout.RowHeight - (Px 4)
   $radius = [int]$layout.Radius
-  if ($hover -and $enabled) {
+  # a read-only row never lights up: it is not a control, and a hover fill would promise one
+  if ($hover -and $enabled -and (-not $locked)) {
     $brush = New-Object Drawing.SolidBrush $pal['HoverBg']
     $path = New-RoundPath $x $y $w $h $radius
     try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
@@ -223,6 +230,35 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
   if ($row.ContainsKey('Choices') -and $null -ne $row.Choices) { $choices = @($row.Choices) }
   $dropW = 0
   if ($choices.Count -gt 0 -and $enabled) { $dropW = Px 16 }
+  # A shortcut is a chord, not a string: its keys are drawn as the panel's key caps, right
+  # aligned so the chord ends where the value text did. While the row is being recorded the caps
+  # show what is held so far, followed by a dim placeholder.
+  $chords = @()
+  if ($row.ContainsKey('Chords') -and $null -ne $row.Chords) { $chords = @($row.Chords) }
+  if ($armed -or $chords.Count -gt 0) {
+    $cy = $y + [int]($h / 2)
+    $xr = $x + $valueRight - $dropW
+    if ($armed) {
+      # the row is waiting for a chord: what is held so far, then one accent cap for the key
+      $keys = @($preview)
+      $keys += [string][char]0x2026
+      [void](Draw-SettingChord $g $pal $xr $cy $keys $enabled $true)
+      return
+    }
+    # A chain of chords is longer than the value column, so the first chord is drawn and the
+    # count of the rest follows it as plain text: a second row of caps would be a lie about how
+    # many keys the chain holds.
+    if ($chords.Count -gt 1) {
+      $more = '+' + [string]($chords.Count - 1)
+      $mw = [int][Math]::Ceiling($g.MeasureString($more, $script:FSmall, 1000, $sf.None).Width) + (Px 2)
+      $box = New-Object Drawing.RectangleF -ArgumentList @(
+        [single]($xr - $mw), [single]($cy - (Px 9)), [single]$mw, [single](Px 18))
+      $g.DrawString($more, $script:FSmall, (Get-Brush $pal['Faint']), $box, $sf.Center)
+      $xr = $xr - $mw - (Px 6)
+    }
+    [void](Draw-SettingChord $g $pal $xr $cy (Get-SettingChordKeys ([string]$chords[0])) $enabled)
+    return
+  }
   $valueBox = New-Object Drawing.RectangleF -ArgumentList @(
     [single]($x + $valueRight - $controlW), [single]($y + (Px 4)), [single]($controlW - $dropW), [single]($h - (Px 8)))
   $ink = $pal['Dim']
@@ -238,6 +274,53 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
       $g.DrawLine($pen, $cx, ($cy + (Px 2)), ($cx + (Px 3)), ($cy - (Px 2)))
     } finally { $pen.Dispose() }
   }
+}
+
+# The keys of one chord as the caps the footer and the panel's hints draw: filled, stroked and
+# rounded, so a shortcut reads key by key. Returns the width it took, which is what lets a chain
+# of them be laid out from the right edge.
+function Draw-SettingChord($g, $pal, [int]$right, [int]$cy, $keys, [bool]$enabled, [bool]$accentLast = $false) {
+  if ($null -eq $g -or $null -eq $pal) { return 0 }
+  $list = @($keys)
+  if ($list.Count -eq 0) { return 0 }
+  $font = $script:FSmall
+  if (-not $font) { return 0 }
+  $fmt = New-PickerStringFormats
+  $chipH = Px $script:Metric['ChipHeight']
+  $gap = Px 4
+  $padX = Px 10
+  $big = New-Object Drawing.SizeF -ArgumentList @(1000, 100)
+  $widths = @()
+  $total = 0
+  foreach ($k in $list) {
+    $w = [int]([Math]::Ceiling($g.MeasureString([string]$k, $font, $big, $fmt.None).Width) + $padX)
+    $widths += $w
+    $total += $w + $gap
+  }
+  if ($total -gt 0) { $total -= $gap }
+  $x = $right - $total
+  $top = $cy - [int]($chipH / 2)
+  $radius = Px $script:Metric['CapRadius']
+  $ink = $pal['Text']
+  if (-not $enabled) { $ink = $pal['Faint'] }
+  for ($i = 0; $i -lt $list.Count; $i++) {
+    $w = [int]$widths[$i]
+    $capInk = $ink
+    $capEdge = $pal['KeyCapBorder']
+    if ($accentLast -and ($i -eq ($list.Count - 1))) {
+      # the one cap still waiting for its key
+      $capInk = $pal['Accent']
+      $capEdge = $pal['Accent']
+    }
+    $path = New-RoundPath $x $top $w $chipH $radius
+    $fill = New-Object Drawing.SolidBrush $pal['KeyCapBg']
+    $edge = New-Object Drawing.Pen $capEdge, 1
+    try { $g.FillPath($fill, $path); $g.DrawPath($edge, $path) } finally { $path.Dispose(); $fill.Dispose(); $edge.Dispose() }
+    $box = New-Object Drawing.RectangleF -ArgumentList @([single]$x, [single]$top, [single]$w, [single]$chipH)
+    $g.DrawString([string]$list[$i], $font, (Get-Brush $capInk), $box, $fmt.Center)
+    $x += $w + $gap
+  }
+  return $total
 }
 
 # The tick of a multi-select list: a rounded square, filled with the accent and carrying a tick
@@ -271,34 +354,65 @@ function Draw-SettingsTick($g, $pal, [int]$x, [int]$y, [int]$size, [bool]$on) {
   } finally { $pen.Dispose() }
 }
 
-# The footer is the panel's footer: key chips on the left saying what the keys do, one quiet
-# label at the right end, and a message in place of the chips while there is one. There is no
-# selected row to describe here - every row is its own control - so the left half answers the
-# only question a footer can answer in this window, which is what the keyboard is for.
-function Draw-SettingsFooter($g, $pal, $layout, $hints, [string]$rightText, [string]$msg, [bool]$isError) {
+# The footer is a status line: what the last write did, and the count with the version in the
+# corner. There is no key to describe here - the window is driven by the pointer - and a message
+# is drawn in Warn when it is a refusal, which is the token the panel uses for the same thing.
+function Draw-SettingsFooter($g, $pal, $layout, [string]$rightText, [string]$msg, [bool]$isError) {
   if ($null -eq $g -or $null -eq $pal) { return }
   $sf = New-PickerStringFormats
   $left = [int]$layout.Pad
   $top = [int]$layout.ListBottom
   $limit = [int]$layout.Width - [int]$layout.Pad
   if ($rightText) {
-    $rightW = Px 150
+    $rightW = Px 128
     $box = New-Object Drawing.RectangleF -ArgumentList @(
       [single]($limit - $rightW), [single]$top, [single]$rightW, [single]([int]$layout.FootHeight))
     $g.DrawString($rightText, $script:FSmall, (Get-Brush $pal['Faint']), $box, $sf.Right)
     $limit = $limit - $rightW - (Px 8)
   }
-  if ($msg) {
-    # a refusal is drawn in Warn, the token the panel already uses for something to read
-    $ink = $pal['Dim']
-    if ($isError) { $ink = $pal['Warn'] }
-    $box = New-Object Drawing.RectangleF -ArgumentList @(
-      [single]$left, [single]$top, [single]($limit - $left), [single]([int]$layout.FootHeight))
-    $g.DrawString($msg, $script:FSmall, (Get-Brush $ink), $box, $sf.Ellipsis)
-    return
+  if (-not $msg) { return }
+  $ink = $pal['Dim']
+  if ($isError) { $ink = $pal['Warn'] }
+  $box = New-Object Drawing.RectangleF -ArgumentList @(
+    [single]$left, [single]$top, [single]($limit - $left), [single]([int]$layout.FootHeight))
+  $g.DrawString($msg, $script:FSmall, (Get-Brush $ink), $box, $sf.Ellipsis)
+}
+
+# Where the close button sits, as one rectangle for the paint and the hit test. A window with no
+# title bar and no chrome has to put its way out somewhere, and the top right corner is where
+# every Windows app puts it.
+function Get-SettingsCloseRect($layout) {
+  $size = [int]$layout.CloseSize
+  return @{
+    Left = ([int]$layout.Width - (Px 8) - $size)
+    Top = (Px 8)
+    Width = $size
+    Height = $size
   }
-  $cy = $top + [int]([int]$layout.FootHeight / 2)
-  Draw-KeyChips $g $left $cy $hints $pal['Dim'] $pal['Faint'] $limit
+}
+
+# A caption button: a faint cross that gains a hover fill, the way the panel's own buttons do.
+function Draw-SettingsClose($g, $pal, $layout, [bool]$hot) {
+  if ($null -eq $g -or $null -eq $pal) { return }
+  $r = Get-SettingsCloseRect $layout
+  $radius = [int][Math]::Max(2, (Px 4))
+  if ($hot) {
+    $brush = New-Object Drawing.SolidBrush $pal['HoverBg']
+    $path = New-RoundPath ([int]$r.Left) ([int]$r.Top) ([int]$r.Width) ([int]$r.Height) $radius
+    try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
+  }
+  $ink = $pal['Dim']
+  if ($hot) { $ink = $pal['Text'] }
+  $pen = New-Object Drawing.Pen $ink
+  $pen.StartCap = [Drawing.Drawing2D.LineCap]::Round
+  $pen.EndCap = [Drawing.Drawing2D.LineCap]::Round
+  try {
+    $cx = [int]$r.Left + [int]($r.Width / 2)
+    $cy = [int]$r.Top + [int]($r.Height / 2)
+    $d = [int](Px 4)
+    $g.DrawLine($pen, ($cx - $d), ($cy - $d), ($cx + $d), ($cy + $d))
+    $g.DrawLine($pen, ($cx + $d), ($cy - $d), ($cx - $d), ($cy + $d))
+  } finally { $pen.Dispose() }
 }
 
 # Where the thumb sits, as one calculation shared by the paint, the hit test and the drag: a

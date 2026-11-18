@@ -99,23 +99,22 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 ### 设置窗口
 
-`clipboard settings` 打开设置窗口（托盘右键菜单的 `Settings...` 在常驻进程内直接打开，省一次进程启动）：左侧是可切换的分组，右侧是该组设置项。页脚与应用主面板一致：左侧是当前项的键位提示，右侧是该组项数与版本号；写入后提示语接管左侧，约 2 秒（错误约 2.6 秒）后退回键位提示。
+`clipboard settings` 打开设置窗口（托盘右键菜单的 `Settings...` 在常驻进程内直接打开，省一次进程启动）。窗口只用指针操作，不设快捷键：左侧点选分组，右侧每行就是一个控件；右上角 `✕` 关闭，`Esc` 同样关闭。页脚是状态行：最后一次写入的结果，右侧是该组项数与版本号，约 2 秒（错误约 2.6 秒）后自动清空。
 
-| 键 | 作用 |
+| 行 | 点击后 |
 |---|---|
-| `↑` `↓` / `PgUp` `PgDn` | 移动当前项 |
-| 滚轮 | 滚动列表，不改变当前项，也不改任何值 |
-| 右侧滚动条 | 指针靠近时加宽加深；拖动滑块定位，点击滑块以外的轨道翻页 |
-| `←` `→` / `Space` | 调整：开关翻转（带过渡动画，受 `Animations` 控制），数值按其范围的千分之一量级步进，主题在 `themes\` 内循环 |
-| `Enter` | 布尔项翻转；有下拉的值（`Theme`、`PasteKeys`、`Plugins`）展开列表；其余进入就地编辑（`Enter` 提交、`Esc` 取消、校验失败时保持打开并显示原因） |
-| `F4` | 展开有下拉的值的列表 |
-| 点击输入框以外的地方 / 切到别的窗口 | 提交当前编辑；校验失败则保持打开 |
-| `Tab` / `Shift+Tab` | 下一个 / 上一个分组 |
-| `Esc` | 关闭 |
+| 开关行 | 就地翻转，带过渡动画（受 `Animations` 控制） |
+| 数值 / 文本行 | 控件列出现输入框；`Enter` 或点窗口别处提交，校验失败保持打开并说明原因 |
+| `Theme` / `PasteKeys` | 展开列表，点一项即写入 |
+| `Plugins` | 展开多选列表，勾选即写入并保持打开，值为 `All` 或 `n of m`；全不选会被拒绝，因为空的 `Plugins=` 表示加载全部插件 |
+| `Hotkey` | 进入录制：按下想要的组合键即写入，`Esc` 取消，再点该行也取消 |
+| `DataDir` | 只读：显示当前数据目录，点击只给出原因（改它要 `clipboard config set DataDir`，否则会把历史拆成两份） |
 
-`Plugins` 是多选下拉框：值是 `plugins\` 目录里的插件名，打开后每行一个勾选框，勾选即写入并保持列表打开（`Space` 在键盘上勾选并下移），值为 `All` 或 `n of m`。全不选会被拒绝，因为空的 `Plugins=` 表示加载全部插件。
+快捷键按 Win11 键帽显示（`Ctrl` `Alt` `V` 各一枚），修饰键顺序统一为 Win、Ctrl、Alt、Shift。录制中显示已按住的修饰键和一个强调色待定键帽；没有修饰键的裸键只接受 `F1`–`F24`，其余按键与组合会被拒绝并说明原因。`HotkeyFallbacks` 是一串组合键，显示首个组合键与其余数量（`+n`），点击仍按文本编辑。
 
-改动即时写入 `clipboard.ini` 并应用；常驻进程在窗口关闭时重启一次，而不是每改一项重启。右侧每行都是自己的控件：行只在指针悬停时着色，不标记选中项，点击即生效（开关行点任意位置翻转，值行点开编辑或列表）。只在另一项开启时生效的设置（如 `WindowLeft` / `WindowTop` 需要 `SaveWindowPos`，`MaxImageBytes` 需要 `CaptureImages`，`Paste*` 需要 `NoPaste=0`，`CompactWidth` / `CompactRows` 需要 `CompactMode`）在条件不满足时变灰、拒绝编辑并说明原因。显示名由键名派生（`MaxTextTotalBytes` → `Max text total bytes`），说明与取值范围取自 schema 的 `Description` / `Minimum` / `Maximum`，窗口不另存一份。日志 `settings: open … ms` 记录打开耗时及其分段。
+滚轮滚动列表，不改变任何值；右侧滚动条指针靠近时加宽加深，可拖动定位，点击滑块以外的轨道翻页。
+
+改动即时写入 `clipboard.ini` 并应用；常驻进程在窗口关闭时重启一次，而不是每改一项重启。只有在另一项开启时生效的设置（如 `WindowLeft` / `WindowTop` 需要 `SaveWindowPos`，`MaxImageBytes` 需要 `CaptureImages`，`Paste*` 需要 `NoPaste=0`，`CompactWidth` / `CompactRows` 需要 `CompactMode`）在条件不满足时变灰、拒绝编辑并说明原因。显示名由键名派生（`MaxTextTotalBytes` → `Max text total bytes`），说明与取值范围取自 schema 的 `Description` / `Minimum` / `Maximum`，窗口不另存一份。日志 `settings: open … ms` 记录打开耗时及其分段。
 
 ### 导出、导入与备份
 
@@ -326,6 +325,8 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `Default` | 默认写法；`config init` 写它，读取失败时也回退到它 |
 | `Minimum` / `Maximum` | `int` / `number` 的上下界 |
 | `Enum` | `enum` 的合法值；`list` 时是允许的 token |
+| `Suggest` | 设置窗口为该键提供的候选值（点开列表的快捷方式）；不限制可填内容 |
+| `ReadOnly` | 理由字符串：设置窗口只展示该值、拒绝编辑（用于会移动数据目录的 `DataDir`） |
 | `Pattern` | `list` 中单个 token 的形状（默认字母、数字、`_ . -`） |
 | `Description` | 一句话说明，写成 `clipboard.ini` 中该键上方的注释（基础键与插件键都是） |
 | `Ref` | 值驱动的变量（`[ref]$script:X`） |

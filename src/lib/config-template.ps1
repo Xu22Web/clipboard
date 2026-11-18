@@ -53,7 +53,11 @@ function Get-IniTemplateLines {
       }
       $spec = $script:IniSchema[$key]
       if ($spec.Contains('Description') -and [string]$spec['Description']) {
-        $t.Add('# ' + [string]$spec['Description'])
+        $line = '# ' + [string]$spec['Description']
+        # a value whose whole domain is declared says so in the file too, or the only place to
+        # learn the alternatives would be the window
+        if ($spec.Contains('Enum')) { $line = $line + ' (one of: ' + (@($spec['Enum']) -join ', ') + ')' }
+        $t.Add($line)
       }
       if ($key -eq 'Plugins') {
         $t.Add($key + '=' + (@($script:PluginList) -join ','))

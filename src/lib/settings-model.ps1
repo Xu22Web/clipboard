@@ -20,7 +20,7 @@ function Get-SettingGroupTable {
       'PasteTyping', 'NoPaste', 'AppRules')
     'Hotkey' = @('Hotkey', 'HotkeyFallbacks')
     'History' = @('MaxItems', 'MaxTextBytes', 'MaxTextTotalBytes', 'MaxMediaTotalBytes')
-    'Panel' = @('WindowWidth', 'SaveWindowPos', 'WindowLeft', 'WindowTop', 'ShowTime', 'ShowTypeIcon',
+    'Panel' = @('WindowWidth', 'Rows', 'SaveWindowPos', 'WindowLeft', 'WindowTop', 'ShowTime', 'ShowTypeIcon',
       'ShowThumbnails', 'Highlight', 'HighlightMaxBytes', 'ShowNewlineMarker', 'PreviewHover',
       'PreviewDelay', 'PreviewChars', 'Undo', 'ScrollLines', 'Animations', 'DpiAware')
     'Compact' = @('CompactMode', 'CompactWidth', 'CompactRows')
@@ -61,6 +61,7 @@ function Get-SettingKind($spec) {
     'int' { return 'number' }
     'hotkey' { return 'hotkey' }
     'theme' { return 'theme' }
+    'enum' { return 'choice' }
     'regex' { return 'regex' }
     'list' { return 'list' }
     'apprule' { return 'rules' }
@@ -131,30 +132,14 @@ function Format-SettingListText([string]$raw, $choices) {
   return ([string]$hit) + ' of ' + ([string]$all.Count)
 }
 
-# The keys the window answers, as Fluent chips: the same shape and the same order rules the
-# history panel's footer uses. Built from the row the keyboard is on, so a chip never promises
-# an action that row would refuse, and the key that leaves comes last because the footer
-# truncates from the right.
-function Get-SettingHints([string]$kind, [bool]$enabled) {
-  $pairs = New-Object System.Collections.Generic.List[object]
-  $pairs.Add(@('Up/Down', 'Move'))
-  if ($enabled) {
-    if ($kind -eq 'bool') { $pairs.Add(@('Enter', 'Toggle')) }
-    elseif ($kind -eq 'list' -or $kind -eq 'theme') { $pairs.Add(@('Enter', 'Choose')) }
-    else { $pairs.Add(@('Enter', 'Edit')) }
-    if ($kind -eq 'bool' -or $kind -eq 'number' -or $kind -eq 'theme') { $pairs.Add(@('Left/Right', 'Change')) }
-  }
-  $pairs.Add(@('Tab', 'Group'))
-  $pairs.Add(@('Esc', 'Close'))
-  return $pairs.ToArray()
-}
-
 # The sentence under the value: the schema's own Description, plus the range an integer
 # accepts. The description is the documentation of the setting, so quoting it here keeps the
 # window and the README from inventing two different stories about one key.
 function Get-SettingHelp($schema, [string]$key) {
   $spec = Get-SchemaProperty $schema $key
   if ($null -eq $spec) { return '' }
+  # a read-only value is never edited here, so the line that would have described it says why
+  if ($spec.Contains('ReadOnly')) { return 'Read-only - ' + [string]$spec['ReadOnly'] }
   $d = ''
   if ($spec.Contains('Description')) { $d = [string]$spec['Description'] }
   if ((Get-SettingKind $spec) -eq 'number') {
@@ -235,10 +220,14 @@ function Get-SettingsRows($schema, [string]$group) {
       Kind    = Get-SettingKind $spec
       # a list setting is a multi-select: several names, ticked in place, instead of one value
       Multi   = ((Get-SettingKind $spec) -eq 'list')
+      # a value the schema marks read-only is shown and refused, with the reason in its help
+      Locked  = $spec.Contains('ReadOnly')
       Raw     = $raw
       Text    = Format-SettingText $schema $key $raw
       Help    = Get-SettingHelp $schema $key
       Choices = @(Get-SettingChoices $schema $key)
+      # a shortcut row draws its value as key caps instead of a string
+      Chords  = @(Get-SettingChordList $schema $key $raw)
       Enabled = $enabled
       Why     = $why
     })

@@ -34,11 +34,10 @@ function Show-Settings {
   $pal = Get-UiPalette
 
   $script:SetGroup = 0
-  $script:SetSel = 0
   $script:SetScroll = 0
   $script:SetHover = -1
-  # the footer starts on the keys, not on a sentence: the chips are what a footer is for here,
-  # and a message only takes their place while there is something to say
+  # nothing in this window is selected: every row is its own control, acted on with the pointer.
+  # The footer is a status line - a message after a write, and the count at the right end.
   $script:SetMsg = ''
   $script:SetMsgErr = $false
   $script:SetEditBad = $false
@@ -48,11 +47,18 @@ function Show-Settings {
   $script:SetPal = $pal
   $script:SetDirty = $false
   $script:SetRows = @()
+  # the row under the pointer, and whether the close button is: the only two hover states left
+  $script:SetHover = -1
+  $script:SetCloseHot = $false
+  # a shortcut row waiting for its chord, and the modifiers held so far
+  $script:SetRecKey = ''
+  $script:SetRecPreview = @()
   # how far each switch has travelled, 0 or 1 at rest: the window eases these on a timer so a
   # flip moves instead of blinking between two states
   $script:SetToggleK = @{}
   $script:SetToggleTarget = @{}
   $script:SetDrop = $null
+  $script:SetDropKey = ''
   $script:SetDropIndex = -1
   $script:SetDropHover = -1
   $script:SetDropMulti = $false
@@ -82,14 +88,6 @@ function Show-Settings {
     $maxScroll = [Math]::Max(0, @($script:SetRows).Count - $vis)
     if ($script:SetScroll -gt $maxScroll) { $script:SetScroll = $maxScroll }
     if ($script:SetScroll -lt 0) { $script:SetScroll = 0 }
-    if ($script:SetSel -ge @($script:SetRows).Count) { $script:SetSel = [Math]::Max(0, @($script:SetRows).Count - 1) }
-    if ($script:SetSel -lt 0) { $script:SetSel = 0 }
-  }
-
-  function Get-CurrentRow {
-    $rows = $script:SetRows
-    if ($null -eq $rows -or $script:SetSel -lt 0 -or $script:SetSel -ge @($rows).Count) { return $null }
-    return $rows[$script:SetSel]
   }
 
   # a row whose owner setting is off: shown, greyed, and refusing edits with the reason
@@ -105,30 +103,22 @@ function Show-Settings {
     Show-Message ([string]$row.Label + ': ' + $why) $true
   }
 
+  # the index a row has in the list right now, so the pointer's fix on it survives a refresh
+  function Get-RowIndex($row) {
+    if ($null -eq $row) { return -1 }
+    $rows = @($script:SetRows)
+    for ($i = 0; $i -lt $rows.Count; $i++) { if ([string]$rows[$i].Key -eq [string]$row.Key) { return $i } }
+    return -1
+  }
+
   function Set-CurrentGroup([int]$idx) {
     $n = @($groups).Count
     if ($n -eq 0) { return }
     if ($null -ne $script:SetDrop) { Close-Choices }
     $script:SetGroup = (($idx % $n) + $n) % $n
-    $script:SetSel = 0
     $script:SetScroll = 0
     $script:SetHover = -1
     Refresh-Settings
-    $form.Invalidate()
-  }
-
-  function Move-Selection([int]$delta) {
-    $count = @($script:SetRows).Count
-    if ($count -eq 0) { return }
-    if ($null -ne $script:SetDrop) { Close-Choices }
-    $next = $script:SetSel + $delta
-    if ($next -lt 0) { $next = 0 }
-    if ($next -gt ($count - 1)) { $next = $count - 1 }
-    if ($next -eq $script:SetSel) { return }
-    $script:SetSel = $next
-    $vis = Get-SettingsVisibleRows $script:SetLayout
-    if ($script:SetSel -lt $script:SetScroll) { $script:SetScroll = $script:SetSel }
-    if ($script:SetSel -ge ($script:SetScroll + $vis)) { $script:SetScroll = $script:SetSel - $vis + 1 }
     $form.Invalidate()
   }
 
@@ -154,7 +144,7 @@ function Show-Settings {
     }
   }
 
-  # one write, whatever produced it: the toggle, the step, the cycle or a typed value
+  # one write, whatever produced it: a flipped switch, a tick, a picked name or a typed value
   function Apply-Setting([string]$key, [string]$value, [string]$what) {
     $r = Set-SettingValue $key $value
     if (-not $r.Ok) { Show-Message ([string]$key + ': ' + [string]$r.Error) $true; return $false }
@@ -183,7 +173,7 @@ function Show-Settings {
     if ($null -ne $box) {
       try { $form.Controls.Remove($box); $box.Dispose() } catch { }
     }
-    # the keyboard goes back to the window, or the next arrow key would reach nothing
+    # the keyboard goes back to the window, so a field that is closed does not keep the caret
     try { $form.Focus() } catch { }
     $form.Invalidate()
   }
@@ -207,13 +197,14 @@ function Show-Settings {
     End-Edit $false
   }
 
-  function Begin-Edit {
-    $row = Get-CurrentRow
+  function Begin-Edit($row) {
     if ($null -eq $row) { return }
     if ($row.Kind -eq 'bool') { return }
     if (-not (Test-RowEnabled $row)) { Show-RowRefused $row; return }
+    $idx = Get-RowIndex $row
+    if ($idx -lt 0) { return }
     End-Edit $true
-    $rowTop = [int]$script:SetLayout.ListTop + (($script:SetSel - $script:SetScroll) * [int]$script:SetLayout.RowHeight)
+    $rowTop = [int]$script:SetLayout.ListTop + (($idx - $script:SetScroll) * [int]$script:SetLayout.RowHeight)
     $rect = Get-SettingEditRect $script:SetLayout $rowTop
     $script:SetEditKey = [string]$row.Key
     $script:SetEditRect = $rect
@@ -246,13 +237,12 @@ function Show-Settings {
   }
 
   # the value the open list is listing, read from the row itself: a tick has to show the setting
-  # as it is now, not as it was when the list opened
+  # as it is now, not as it was when the list opened. The list remembers the key it is listing
+  # rather than the position, because a write rebuilds the rows.
   function Get-DropRaw {
-    $rows = $script:SetRows
-    if ($null -eq $rows) { return '' }
-    $i = [int]$script:SetSel
-    if ($i -lt 0 -or $i -ge @($rows).Count) { return '' }
-    return [string]$rows[$i].Raw
+    if (-not $script:SetDropKey) { return '' }
+    foreach ($r in @($script:SetRows)) { if ([string]$r.Key -eq [string]$script:SetDropKey) { return [string]$r.Raw } }
+    return ''
   }
 
   # Tick one name in the open list and write the whole list back. A setting that would be left
@@ -274,27 +264,25 @@ function Show-Settings {
     if ($null -ne $script:SetDrop) { try { $script:SetDrop.Invalidate() } catch { } }
   }
 
-  function Open-Choices {
-    $row = Get-CurrentRow
+  function Open-Choices($row) {
     if ($null -eq $row) { return }
     if (-not (Test-RowEnabled $row)) { Show-RowRefused $row; return }
     $choices = @()
     if ($row.ContainsKey('Choices')) { $choices = @($row.Choices) }
-    if ($choices.Count -eq 0) { Begin-Edit; return }
+    if ($choices.Count -eq 0) { Begin-Edit $row; return }
     if ($null -ne $script:SetDrop) { Close-Choices; return }
+    $idx = Get-RowIndex $row
+    if ($idx -lt 0) { return }
     $current = [string]$row.Raw
     $multi = $false
     if ($row.ContainsKey('Multi')) { $multi = [bool]$row.Multi }
-    $rowTop = [int]$script:SetLayout.ListTop + (($script:SetSel - $script:SetScroll) * [int]$script:SetLayout.RowHeight)
+    $rowTop = [int]$script:SetLayout.ListTop + (($idx - $script:SetScroll) * [int]$script:SetLayout.RowHeight)
     $rect = Get-SettingDropRect $script:SetLayout $rowTop @($choices).Count
+    $script:SetDropKey = [string]$row.Key
     $script:SetDropMulti = $multi
     $script:SetDropIndex = -1
     if (-not $multi) {
       for ($i = 0; $i -lt $choices.Count; $i++) { if ([string]$choices[$i] -eq $current) { $script:SetDropIndex = $i } }
-    } else {
-      # a multi-select has no current row: the ticks say what is on, so the keyboard starts on
-      # the first name and pressing Space walks down the list on its own
-      $script:SetDropIndex = 0
     }
     $script:SetDropHover = -1
     $dd = New-Object Cb.FluentForm
@@ -374,62 +362,90 @@ function Show-Settings {
       [void](Apply-Setting ([string]$s.Tag.Key) ([string]$list[$i]) ('set to ' + [string]$list[$i]))
       Close-Choices
     })
-    $dd.Add_KeyDown({
-      param($s, $e)
-      $list = @($s.Tag.Choices)
-      $multi = [bool]$script:SetDropMulti
-      if ($e.KeyCode -eq [Windows.Forms.Keys]::Escape) { Close-Choices }
-      elseif ($e.KeyCode -eq [Windows.Forms.Keys]::Enter -or $e.KeyCode -eq [Windows.Forms.Keys]::Space) {
-        if ($multi) {
-          # the keyboard ticks where it stands and moves on, the way a checked list behaves
-          if ($script:SetDropIndex -ge 0 -and $script:SetDropIndex -lt $list.Count) {
-            Toggle-DropItem ([string]$list[$script:SetDropIndex])
-            if ($script:SetDropIndex -lt ($list.Count - 1)) { $script:SetDropIndex++ }
-          }
-          $s.Invalidate()
-          return
-        }
-        if ($e.KeyCode -eq [Windows.Forms.Keys]::Space) { return }
-        if ($script:SetDropIndex -ge 0 -and $script:SetDropIndex -lt $list.Count) {
-          [void](Apply-Setting ([string]$s.Tag.Key) ([string]$list[$script:SetDropIndex]) ('set to ' + [string]$list[$script:SetDropIndex]))
-        }
-        Close-Choices
-      } elseif ($e.KeyCode -eq [Windows.Forms.Keys]::Down) {
-        if ($script:SetDropIndex -lt ($list.Count - 1)) { $script:SetDropIndex++; $s.Invalidate() }
-      } elseif ($e.KeyCode -eq [Windows.Forms.Keys]::Up) {
-        if ($script:SetDropIndex -gt 0) { $script:SetDropIndex--; $s.Invalidate() }
-      }
-    })
     $dd.Add_Deactivate({ Close-Choices })
     $script:SetDrop = $dd
     $dd.Show()
     try { $dd.Activate() } catch { }
   }
 
-  function Adjust-Current([int]$dir) {
-    $row = Get-CurrentRow
+  # one switch, flipped where it was clicked: the only thing a bool row does
+  function Flip-Row($row) {
     if ($null -eq $row) { return }
     if (-not (Test-RowEnabled $row)) { Show-RowRefused $row; return }
     $key = [string]$row.Key
-    if ($row.Kind -eq 'bool') {
-      $v = Get-SettingToggle $schema $key
-      if ($null -ne $v) { [void](Apply-Setting $key $v ('turned ' + $(if ($v -eq '1') { 'on' } else { 'off' }))) }
+    $v = Get-SettingToggle $schema $key
+    if ($null -ne $v) { [void](Apply-Setting $key $v ('turned ' + $(if ($v -eq '1') { 'on' } else { 'off' }))) }
+  }
+
+  # A shortcut is recorded, not typed: a spelled-out chord is the one value that is easier to get
+  # wrong on paper than by pressing it. The row waits for one chord; the caps show what is held
+  # while the keys are down.
+  function Start-Record($row) {
+    if ($null -eq $row) { return }
+    if (-not (Test-RowEnabled $row)) { Show-RowRefused $row; return }
+    End-Edit $true
+    $script:SetRecKey = [string]$row.Key
+    $script:SetRecPreview = @()
+    try { $form.Focus() } catch { }
+    Show-Message ('Press the keys for ' + [string]$row.Label + ', Esc to cancel') $false
+    $form.Invalidate()
+  }
+
+  function Cancel-Record {
+    if (-not $script:SetRecKey) { return }
+    $script:SetRecKey = ''
+    $script:SetRecPreview = @()
+    Show-Message 'recording cancelled' $false
+    $form.Invalidate()
+  }
+
+  # the modifiers held right now, as the caps to show while the row waits for its key
+  function Get-RecPreview($e) {
+    $mods = @()
+    if (Test-ChordWinHeld) { $mods += 'Win' }
+    if ($e.Control) { $mods += 'Ctrl' }
+    if ($e.Alt) { $mods += 'Alt' }
+    if ($e.Shift) { $mods += 'Shift' }
+    return $mods
+  }
+
+  # One key of a recording. A modifier on its own only updates the caps; the first key that is not
+  # a modifier completes the chord, and a key the tool cannot register is refused with the reason.
+  function Record-Key($e) {
+    if ($e.KeyCode -eq [Windows.Forms.Keys]::Escape) {
+      Cancel-Record
+      $e.Handled = $true
+      $e.SuppressKeyPress = $true
       return
     }
-    if ($row.Kind -eq 'number') {
-      $v = Get-SettingStepped $schema $key $dir
-      if ($null -eq $v) { Show-Message ($key + ' is already at the end of its range') $true; return }
-      [void](Apply-Setting $key $v ('set to ' + $v))
+    $modOnly = @(
+      [Windows.Forms.Keys]::ControlKey, [Windows.Forms.Keys]::Menu, [Windows.Forms.Keys]::ShiftKey,
+      [Windows.Forms.Keys]::LWin, [Windows.Forms.Keys]::RWin
+    )
+    if ($modOnly -contains $e.KeyCode) {
+      $script:SetRecPreview = @(Get-RecPreview $e)
+      $form.Invalidate()
+      $e.Handled = $true
       return
     }
-    if ($row.Kind -eq 'theme') {
-      $v = Get-SettingCycled $schema $key $dir
-      if ($null -eq $v) { Show-Message 'no other theme in themes\' $true; return }
-      [void](Apply-Setting $key $v ('set to ' + $v))
+    $name = Get-ChordKeyName $e.KeyCode
+    if (-not $name) {
+      Show-Message 'that key cannot be a hotkey: use a letter, a digit, F1-F24, Insert, Delete, Home, End, PageUp, PageDown or Space' $true
       return
     }
-    # nothing to step: the value is typed
-    Begin-Edit
+    $chord = Format-ChordValue (Test-ChordWinHeld) $e.Control $e.Alt $e.Shift $name
+    if (-not (Test-ChordUsable $chord)) {
+      # a bare letter would take that key away from every program
+      Show-Message 'a hotkey needs a modifier, or an F1-F24 key on its own' $true
+      return
+    }
+    $key = [string]$script:SetRecKey
+    $script:SetRecKey = ''
+    $script:SetRecPreview = @()
+    [void](Apply-Setting $key $chord ('set to ' + $chord))
+    $e.Handled = $true
+    $e.SuppressKeyPress = $true
+    $form.Invalidate()
   }
 
   $form = New-Object Cb.FluentForm
@@ -487,7 +503,8 @@ function Show-Settings {
           if ($script:SetToggleK.ContainsKey($name)) { $k = [double]$script:SetToggleK[$name] }
           elseif ([string]$row.Raw -eq '1') { $k = 1.0 } else { $k = 0.0 }
         }
-        Draw-SettingsRow $g $pal $layout $row $x $rowTop $width ($idx -eq $script:SetHover) $k
+        $armed = ($script:SetRecKey -and ($script:SetRecKey -eq [string]$row.Key))
+        Draw-SettingsRow $g $pal $layout $row $x $rowTop $width ($idx -eq $script:SetHover) $k $armed @($script:SetRecPreview)
       }
       $thumb = Get-SettingsScrollThumb $layout @($rows).Count $vis $script:SetScroll
       Draw-SettingsScrollbar $g $pal $layout $thumb $script:SetSbK
@@ -495,21 +512,23 @@ function Show-Settings {
         $r = $script:SetEditRect
         Draw-SettingEditField $g $pal ([int]$r.Left) ([int]$r.Top) ([int]$r.Width) ([int]$r.Height) $script:SetEditBad
       }
-      # the footer: the keys for the row the keyboard is on, the count and the version at the
-      # right end, a message in place of the chips while there is one
-      $hints = @()
-      $cur = Get-CurrentRow
-      if ($null -ne $cur) { $hints = @(Get-SettingHints ([string]$cur.Kind) (Test-RowEnabled $cur)) }
+      # the close button, top right, where every window puts one
+      Draw-SettingsClose $g $pal $layout $script:SetCloseHot
+      # the footer is a status line: what the last write did, and the count with the version at
+      # the right end. There is no key to describe - this window is driven by the pointer.
       $count = @($rows).Count
       $right = ([string]$count) + ' item'
       if ($count -ne 1) { $right = ([string]$count) + ' items' }
       $right = $right + '   v' + [string]$script:Version
-      Draw-SettingsFooter $g $pal $layout $hints $right $script:SetMsg $script:SetMsgErr
+      Draw-SettingsFooter $g $pal $layout $right $script:SetMsg $script:SetMsgErr
     } catch {
       Write-Log ('settings paint: ' + $_.Exception.Message + ' @ ' + $_.ScriptStackTrace)
     }
   })
 
+  # The window answers no shortcut of its own: every row is acted on with the pointer. The keys it
+  # listens for are the ones a value needs - the field's Enter and Esc, and the chord a recording
+  # row is waiting for. Esc with nothing open closes the window, the habit every dialog has.
   $form.Add_KeyDown({
     param($s, $e)
     if ($null -ne $script:SetEditBox) {
@@ -519,50 +538,21 @@ function Show-Settings {
         $e.SuppressKeyPress = $true
       } elseif ($e.KeyCode -eq [Windows.Forms.Keys]::Escape) {
         End-Edit $true
-        Show-Message 'edit cancelled' $false
         $e.Handled = $true
         $e.SuppressKeyPress = $true
       }
       return
     }
-    switch ($e.KeyCode) {
-      ([Windows.Forms.Keys]::Down) { Move-Selection 1; $e.Handled = $true; $e.SuppressKeyPress = $true }
-      ([Windows.Forms.Keys]::Up) { Move-Selection -1; $e.Handled = $true; $e.SuppressKeyPress = $true }
-      ([Windows.Forms.Keys]::PageDown) { Move-Selection (Get-SettingsVisibleRows $script:SetLayout); $e.Handled = $true }
-      ([Windows.Forms.Keys]::PageUp) { Move-Selection (-(Get-SettingsVisibleRows $script:SetLayout)); $e.Handled = $true }
-      ([Windows.Forms.Keys]::Right) { Adjust-Current 1; $e.Handled = $true; $e.SuppressKeyPress = $true }
-      ([Windows.Forms.Keys]::Left) { Adjust-Current (-1); $e.Handled = $true; $e.SuppressKeyPress = $true }
-      ([Windows.Forms.Keys]::Space) { Adjust-Current 1; $e.Handled = $true; $e.SuppressKeyPress = $true }
-      ([Windows.Forms.Keys]::Enter) {
-        $row = Get-CurrentRow
-        if ($null -ne $row -and $row.Kind -eq 'bool') { Adjust-Current 1 }
-        elseif ($null -ne $row -and $row.ContainsKey('Choices') -and @($row.Choices).Count -gt 0) { Open-Choices }
-        else { Begin-Edit }
-        $e.Handled = $true
-        $e.SuppressKeyPress = $true
-      }
-      ([Windows.Forms.Keys]::F4) {
-        # the key that opens a combo box in every Windows dialog
-        Open-Choices
-        $e.Handled = $true
-        $e.SuppressKeyPress = $true
-      }
-      ([Windows.Forms.Keys]::Tab) {
-        $dir = 1
-        if ($e.Shift) { $dir = -1 }
-        Set-CurrentGroup ($script:SetGroup + $dir)
-        $e.Handled = $true
-        $e.SuppressKeyPress = $true
-      }
-      ([Windows.Forms.Keys]::Escape) { $form.Close(); $e.Handled = $true }
-      default { }
+    if ($script:SetRecKey) { Record-Key $e; return }
+    if ($e.KeyCode -eq [Windows.Forms.Keys]::Escape) {
+      $form.Close()
+      $e.Handled = $true
     }
   })
 
   $form.Add_MouseWheel({
     param($s, $e)
-    # the wheel scrolls the page, it does not walk the keyboard through it: turning it must
-    # never change a setting
+    # the wheel scrolls the page - it never changes a value and never picks a row
     $vis = Get-SettingsVisibleRows $script:SetLayout
     $maxScroll = [Math]::Max(0, @($script:SetRows).Count - $vis)
     $dir = 1
@@ -597,6 +587,10 @@ function Show-Settings {
       $script:SetSbHot = $hot
       $form.Invalidate()
     }
+    $close = Get-SettingsCloseRect $script:SetLayout
+    $overClose = ($e.X -ge [int]$close.Left -and $e.X -le ([int]$close.Left + [int]$close.Width) -and
+      $e.Y -ge [int]$close.Top -and $e.Y -le ([int]$close.Top + [int]$close.Height))
+    if ($overClose -ne $script:SetCloseHot) { $script:SetCloseHot = $overClose; $form.Invalidate() }
     $idx = Get-SettingsRowAt $script:SetLayout @($script:SetRows).Count $script:SetScroll $e.X $e.Y
     if ($idx -ne $script:SetHover) { $script:SetHover = $idx; $form.Invalidate() }
   })
@@ -612,6 +606,10 @@ function Show-Settings {
   $form.Add_MouseDown({
     param($s, $e)
     if ($e.Button -ne [Windows.Forms.MouseButtons]::Left) { return }
+    # a recording that did not get its chord is dropped by the next click, the way a field is;
+    # clicking the waiting row a second time is what clears it on purpose
+    $wasRec = [string]$script:SetRecKey
+    if ($wasRec) { $script:SetRecKey = ''; $script:SetRecPreview = @(); $form.Invalidate() }
     # A click anywhere ends the edit that was open. Leaving the field is the only way out of it
     # for a pointer user, and committing is what a settings page does; a value the schema refuses
     # keeps the field open with the reason in the footer.
@@ -643,6 +641,13 @@ function Show-Settings {
       }
       return
     }
+    # the close button first: it sits in the header, above everything else
+    $close = Get-SettingsCloseRect $script:SetLayout
+    if ($e.X -ge [int]$close.Left -and $e.X -le ([int]$close.Left + [int]$close.Width) -and
+      $e.Y -ge [int]$close.Top -and $e.Y -le ([int]$close.Top + [int]$close.Height)) {
+      $form.Close()
+      return
+    }
     # the left column is a set of buttons, not a list to scroll
     if ($e.X -lt [int]$script:SetLayout.SideWidth) {
       $i = [int][Math]::Floor(($e.Y - [int]$script:SetLayout.HeadHeight) / [int]$script:SetLayout.GroupHeight)
@@ -651,26 +656,32 @@ function Show-Settings {
     }
     $idx = Get-SettingsRowAt $script:SetLayout @($script:SetRows).Count $script:SetScroll $e.X $e.Y
     if ($idx -lt 0) { return }
-    $wasSel = ($idx -eq $script:SetSel)
-    $script:SetSel = $idx
     $row = $script:SetRows[$idx]
+    if ($row.ContainsKey('Locked') -and $row.Locked) {
+      Show-Message ([string]$row.Label + ': ' + [string]$row.Help) $true
+      return
+    }
     if (-not (Test-RowEnabled $row)) {
       Show-RowRefused $row
       $form.Invalidate()
       return
     }
-    $rowTop = [int]$script:SetLayout.ListTop + (($idx - $script:SetScroll) * [int]$script:SetLayout.RowHeight)
-    # every row is its own control: a click on a switch row flips it wherever it lands, and a
-    # click on a value edits it - there is no separate "select, then act" step
+    # every row is its own control: a click on a switch row flips it wherever it lands, a click
+    # on a shortcut waits for a chord, a click on a value opens its list, and anything else is
+    # typed - there is no select-then-act step
+    if ($row.Kind -eq 'hotkey') {
+      if ($wasRec -ne [string]$row.Key) { Start-Record $row } else { Show-Message 'recording cancelled' $false }
+      return
+    }
     if ($row.Kind -eq 'bool') {
-      Adjust-Current 1
+      Flip-Row $row
       return
     }
     if ($row.ContainsKey('Choices') -and @($row.Choices).Count -gt 0) {
-      Open-Choices
+      Open-Choices $row
       return
     }
-    Begin-Edit
+    Begin-Edit $row
   })
 
   # A switch that flips in one frame reads as a jump. One timer eases every switch in flight and
