@@ -31,8 +31,18 @@ function Get-SettingChordList($schema, [string]$key, [string]$raw) {
   return $out
 }
 
-# One SendKeys name as Windows prints it: {INSERT} is Insert, {PGDN} is PageDown, a bare letter
-# stays a letter. An unknown name is passed through as written, which is what SendKeys does.
+# The keys a choice stands for, or nothing when the choice is a word. A paste-keys choice is a
+# SendKeys spelling ("^v") and a hotkey choice is a chord: both are drawn as caps in the list,
+# because picking one is picking a key combination, and "^+{INSERT}" says nothing to a reader.
+function Get-SettingChoiceKeys([string]$text) {
+  $t = ([string]$text).Trim()
+  if (-not $t) { return @() }
+  if ($t -notmatch '[\^\{\+]') { return @() }
+  $chord = Convert-SendKeysToChord $t
+  if ($chord) { return @(Get-SettingChordKeys $chord) }
+  return @(Get-SettingChordKeys $t)
+}
+
 function Format-SendKeyName([string]$name) {
   $t = ([string]$name).Trim()
   if (-not $t) { return '' }

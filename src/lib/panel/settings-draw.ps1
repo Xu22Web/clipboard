@@ -542,13 +542,24 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
     $maxLines = 3
     $drawn = [Math]::Min($chords.Count, $maxLines)
     if ($armed -and $drawn -ge $maxLines) { $drawn = $maxLines - 1 }
+    $capW = 0
     for ($i = 0; $i -lt $drawn; $i++) {
       $line = Get-SettingsChordLineRect $layout $y $i
       $del = Get-SettingsChordDeleteRect $layout $y $i
-      [void](Draw-SettingChord $g $pal ([int]$del.Left - (Px 6)) ([int]$line.Top + [int]($line.Height / 2)) (Get-SettingChordKeys ([string]$chords[$i])) $enabled)
-      $cross = $pal['Faint']
+      $cy = [int]$line.Top + [int]($line.Height / 2)
+      $capW = [int](Draw-SettingChord $g $pal ([int]$del.Left - (Px 10)) $cy (Get-SettingChordKeys ([string]$chords[$i])) $enabled)
+      # the remove affordance is quiet until the pointer is on it, then a disc and a red cross:
+      # a mark that stays loud on every line would compete with the chords themselves
+      if ($i -eq $hotDelete) {
+        $disc = Px 16
+        $b = New-Object Drawing.SolidBrush $pal['HoverBg']
+        try {
+          $g.FillEllipse($b, ([int]$del.Left + (([int]$del.Width - $disc) / 2)), ($cy - [int]($disc / 2)), $disc, $disc)
+        } finally { $b.Dispose() }
+      }
+      $cross = $pal['Dim']
       if ($i -eq $hotDelete) { $cross = $pal['Warn'] }
-      Draw-SettingsCross $g $pal ([int]$del.Left + [int]($del.Width / 2)) ([int]$del.Top + [int]($del.Height / 2)) (Px 3) $cross
+      Draw-SettingsCross $g $pal ([int]$del.Left + [int]($del.Width / 2)) $cy (Px 3) $cross
     }
     if ($armed) {
       # the chord being recorded goes on the next free line: the chain is being added to, not
@@ -560,11 +571,22 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
       return
     }
     if ($chords.Count -gt $drawn) {
-      $line = Get-SettingsChordLineRect $layout $y $drawn
+      # The rest of the chain is stated beside the last chord instead of on a line of its own: the
+      # row is one card tall, and a fourth line would fall outside it. The pill gives way to the
+      # caps when they reach it, so the two never overlap on a narrow window.
+      $line = Get-SettingsChordLineRect $layout $y ([Math]::Max(0, $drawn - 1))
       $more = '+' + [string]($chords.Count - $drawn) + ' more'
-      $box = New-Object Drawing.RectangleF -ArgumentList @(
-        [single][Math]::Max(0, [int]$line.Left), [single][int]$line.Top, [single]([int]$line.Right - [int]$line.Left), [single][int]$line.Height)
-      $g.DrawString($more, $script:FSmall, (Get-Brush $pal['Faint']), $box, $sf.Right)
+      $pw = [int][Math]::Ceiling((Get-SettingsTextWidth $more $script:FSmall) + (Px 16))
+      $ph = Px 18
+      $pt = [int]$line.Top + [int](($line.Height - $ph) / 2)
+      $capsLeft = [int]$line.Right - (Px 10) - $capW
+      $px = [Math]::Max([int]$line.Left, ($capsLeft - (Px 8) - $pw))
+      $path = New-RoundPath $px $pt $pw $ph (Px 9)
+      $fill = New-Object Drawing.SolidBrush $pal['KeyCapBg']
+      $edge = New-Object Drawing.Pen $pal['KeyCapBorder'], 1
+      try { $g.FillPath($fill, $path); $g.DrawPath($edge, $path) } finally { $path.Dispose(); $fill.Dispose(); $edge.Dispose() }
+      $pbox = New-Object Drawing.RectangleF -ArgumentList @([single]$px, [single]$pt, [single]$pw, [single]$ph)
+      $g.DrawString($more, $script:FSmall, (Get-Brush $pal['Faint']), $pbox, $sf.Center)
     }
     return
   }
@@ -591,9 +613,10 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
 }
 
 # The keys of one chord as the caps the footer and the panel's hints draw: filled, stroked and
-# rounded, so a shortcut reads key by key. Returns the width it took, which is what lets a chain
-# of them be laid out from the right edge.
-function Draw-SettingChord($g, $pal, [int]$right, [int]$cy, $keys, [bool]$enabled, [bool]$accentLast = $false) {
+# rounded, so a shortcut reads key by key. $anchor is the edge the run ends at when $align is
+# 'right' and the edge it starts at when it is 'left' (a list of chords starts at its margin).
+# Returns the width it took, which is what lets a chain of them be laid out beside something else.
+function Draw-SettingChord($g, $pal, [int]$anchor, [int]$cy, $keys, [bool]$enabled, [bool]$accentLast = $false, [string]$align = 'right') {
   if ($null -eq $g -or $null -eq $pal) { return 0 }
   $list = @($keys)
   if ($list.Count -eq 0) { return 0 }
@@ -601,18 +624,23 @@ function Draw-SettingChord($g, $pal, [int]$right, [int]$cy, $keys, [bool]$enable
   if (-not $font) { return 0 }
   $fmt = New-PickerStringFormats
   $chipH = Px $script:Metric['ChipHeight']
-  $gap = Px 4
-  $padX = Px 10
+  # the caps of one chord are held together by a plus between them, which is how the shortcut is
+  # written everywhere else: a bare gap made three caps read as three separate values
+  $plusW = Px 13
+  $padX = Px 14
+  $minW = Px 24
   $big = New-Object Drawing.SizeF -ArgumentList @(1000, 100)
   $widths = @()
   $total = 0
-  foreach ($k in $list) {
-    $w = [int]([Math]::Ceiling($g.MeasureString([string]$k, $font, $big, $fmt.None).Width) + $padX)
+  for ($i = 0; $i -lt $list.Count; $i++) {
+    $w = [int][Math]::Ceiling($g.MeasureString([string]$list[$i], $font, $big, $fmt.None).Width + $padX)
+    if ($w -lt $minW) { $w = $minW }
     $widths += $w
-    $total += $w + $gap
+    $total += $w
+    if ($i -lt ($list.Count - 1)) { $total += $plusW }
   }
-  if ($total -gt 0) { $total -= $gap }
-  $x = $right - $total
+  $x = $anchor - $total
+  if ($align -eq 'left') { $x = $anchor }
   $top = $cy - [int]($chipH / 2)
   $radius = Px $script:Metric['CapRadius']
   $ink = $pal['Text']
@@ -632,7 +660,14 @@ function Draw-SettingChord($g, $pal, [int]$right, [int]$cy, $keys, [bool]$enable
     try { $g.FillPath($fill, $path); $g.DrawPath($edge, $path) } finally { $path.Dispose(); $fill.Dispose(); $edge.Dispose() }
     $box = New-Object Drawing.RectangleF -ArgumentList @([single]$x, [single]$top, [single]$w, [single]$chipH)
     $g.DrawString([string]$list[$i], $font, (Get-Brush $capInk), $box, $fmt.Center)
-    $x += $w + $gap
+    $x += $w
+    if ($i -lt ($list.Count - 1)) {
+      # the plus takes the slot between two caps, in the quiet ink: it joins them without
+      # competing with the keys themselves
+      $pb = New-Object Drawing.RectangleF -ArgumentList @([single]$x, [single]$top, [single]$plusW, [single]$chipH)
+      $g.DrawString('+', $font, (Get-Brush $pal['Faint']), $pb, $fmt.Center)
+      $x += $plusW
+    }
   }
   return $total
 }

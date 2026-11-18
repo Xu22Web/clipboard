@@ -13,11 +13,13 @@
 
 # The lock that makes the window a single one: a named object that exists only while a settings
 # window is open. Opening it either hands back that object - no window is open - or nothing, which
-# means the request belongs to the window that already holds it.
-function Open-SettingsLock {
+# means the request belongs to the window that already holds it. The name is a parameter so a
+# test can use one of its own instead of racing the window someone has open.
+function Open-SettingsLock([string]$name = '') {
+  if (-not $name) { $name = $SettingsLock }
   $lock = $null
   $created = $false
-  try { $lock = New-Object System.Threading.Mutex($false, $SettingsLock, [ref]$created) } catch { return $null }
+  try { $lock = New-Object System.Threading.Mutex($false, $name, [ref]$created) } catch { return $null }
   if ($created) { return $lock }
   try { $lock.Dispose() } catch { }
   return $null
@@ -25,13 +27,15 @@ function Open-SettingsLock {
 
 # The open window's doorbell, created by the window and wrung by a request that finds the lock
 # taken. Polling it costs one WaitOne(0) on a loop the window already runs.
-function Open-SettingsAsk {
-  try { return (New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, $SettingsShow)) } catch { return $null }
+function Open-SettingsAsk([string]$name = '') {
+  if (-not $name) { $name = $SettingsShow }
+  try { return (New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, $name)) } catch { return $null }
 }
 
-function Ring-SettingsAsk {
+function Ring-SettingsAsk([string]$name = '') {
+  if (-not $name) { $name = $SettingsShow }
   try {
-    $ask = [System.Threading.EventWaitHandle]::OpenExisting($SettingsShow)
+    $ask = [System.Threading.EventWaitHandle]::OpenExisting($name)
     [void]$ask.Set()
     $ask.Dispose()
     return $true
@@ -515,7 +519,10 @@ function Show-Settings {
           $shown = (-not $multi) -and $isCur
           if ($isHot -or $shown) {
             $tint = $p['HoverBg']
-            if ($shown) { $tint = $p['SelBg'] }
+            # the value in the file carries the accent, the way a selected entry does in the
+            # panel: a hover tint alone is too quiet to tell "this is the one" from "this is
+            # under the pointer"
+            if ($shown) { $tint = $p['AccentSoft'] }
             $b = New-Object Drawing.SolidBrush $tint
             $path = New-RoundPath (Px 4) $top ($cw - (2 * (Px 4))) $bandH (Px 4)
             try { $g.FillPath($b, $path) } finally { $path.Dispose(); $b.Dispose() }
@@ -525,8 +532,6 @@ function Show-Settings {
           $textLeft = Px 12
           if ($multi) { $textLeft = Px 34 }
           $text = [string]$list[$i]
-          $tb = New-Object Drawing.RectangleF -ArgumentList @(
-            [single]$textLeft, [single]$top, [single]($cw - $textLeft - (Px 12)), [single]$bandH)
           if ($multi) {
             # The tick is centred on the band the name is centred in, one pixel up: a 16 px box
             # on the band's centre leaves its bottom edge below the text baseline (measured on
@@ -534,6 +539,15 @@ function Show-Settings {
             $tick = Px 16
             Draw-SettingsTick $g $p (Px 12) ($top + [int](($bandH - $tick) / 2) - [int](Px 1)) $tick (Get-SettingListOn $raw $text)
           }
+          # A choice that names keys is drawn as the keys it sends: the list is where a person
+          # picks which combination to paste with, and "^+{INSERT}" is not a thing anyone reads.
+          $keys = @(Get-SettingChoiceKeys $text)
+          if ($keys.Count -gt 0) {
+            [void](Draw-SettingChord $g $p $textLeft ($top + [int]($bandH / 2)) $keys $true $false 'left')
+            continue
+          }
+          $tb = New-Object Drawing.RectangleF -ArgumentList @(
+            [single]$textLeft, [single]$top, [single]($cw - $textLeft - (Px 12)), [single]$bandH)
           $g.DrawString($text, $script:FBody, (Get-Brush $ink), $tb, $sf.Ellipsis)
         }
       } catch { Write-Log ('settings drop paint: ' + $_.Exception.Message) }

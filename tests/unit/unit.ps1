@@ -2633,29 +2633,45 @@ try {
         Expect ($seen.Count -eq $props.Count) ([string]$seen.Count + ' of ' + [string]$props.Count)
       }
 
+      It 'a choice that names keys is read as the keys, not as their spelling' {
+        # the list is where a person picks which combination to paste with: "^+{INSERT}" says
+        # nothing to a reader, Ctrl, Shift and Insert say it all
+        Expect ((@(Get-SettingChoiceKeys '^+{INSERT}') -join '+') -eq 'Ctrl+Shift+Insert') (@(Get-SettingChoiceKeys '^+{INSERT}') -join '+')
+        Expect ((@(Get-SettingChoiceKeys '^v') -join '+') -eq 'Ctrl+V') (@(Get-SettingChoiceKeys '^v') -join '+')
+        # a word choice names no keys, so the list draws the word
+        Expect (@(Get-SettingChoiceKeys 'win11-dark').Count -eq 0) 'a word choice was read as keys'
+      }
+
       It 'a key reads as its words' {
-        Expect ((Get-SettingLabel 'MaxTextTotalBytes') -eq 'Max text total size') (Get-SettingLabel 'MaxTextTotalBytes')
-        Expect ((Get-SettingLabel 'Rows') -eq 'Rows') (Get-SettingLabel 'Rows')
-        Expect ((Get-SettingLabel 'CompactMode') -eq 'Compact mode') (Get-SettingLabel 'CompactMode')
+        # compared case-sensitively on purpose: -eq ignores case, so "Max text total size" would
+        # pass too, and every word of a label is meant to keep the capital its key gave it
+        Expect ((Get-SettingLabel 'MaxTextTotalBytes') -ceq 'Max Text Total Size') (Get-SettingLabel 'MaxTextTotalBytes')
+        Expect ((Get-SettingLabel 'Rows') -ceq 'Rows') (Get-SettingLabel 'Rows')
+        Expect ((Get-SettingLabel 'CompactMode') -ceq 'Compact Mode') (Get-SettingLabel 'CompactMode')
+        # a format's name is written the way the format writes it, not in the key's camel case
+        Expect ((Get-SettingLabel 'MaxRtfBytes') -ceq 'Max RTF Size') (Get-SettingLabel 'MaxRtfBytes')
       }
 
       It 'the window is a single one, and a second request rings its doorbell' {
         # the lock exists only while a window does: a request that cannot take it has to reach the
-        # open window instead of opening a second copy of it
-        $first = Open-SettingsLock
+        # open window instead of opening a second copy of it. Names of its own, or the test would
+        # fail whenever the window happens to be open on the machine running it.
+        $name = 'Local\clipboard.test.settings.' + $PID
+        $ring = $name + '.ring'
+        $first = Open-SettingsLock $name
         Expect ($null -ne $first) 'the first request was refused its lock'
         try {
-          Expect ($null -eq (Open-SettingsLock)) 'a second window would have opened'
-          $ask = Open-SettingsAsk
+          Expect ($null -eq (Open-SettingsLock $name)) 'a second window would have opened'
+          $ask = Open-SettingsAsk $ring
           Expect ($null -ne $ask) 'the open window has no doorbell'
           try {
             Expect (-not $ask.WaitOne(0)) 'the doorbell rang on its own'
-            Expect (Ring-SettingsAsk) 'the ring did not reach the open window'
+            Expect (Ring-SettingsAsk $ring) 'the ring did not reach the open window'
             Expect ($ask.WaitOne(0)) 'the signal never arrived'
           } finally { $ask.Dispose() }
         } finally { $first.Dispose() }
         # once the window is gone the lock is free again
-        $again = Open-SettingsLock
+        $again = Open-SettingsLock $name
         Expect ($null -ne $again) 'the lock outlived the window'
         if ($null -ne $again) { $again.Dispose() }
       }

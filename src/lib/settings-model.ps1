@@ -48,8 +48,15 @@ function Get-SettingLabel([string]$key) {
   }
   $s = $sb.ToString()
   if ($s.Length -eq 0) { return '' }
-  # "bytes" is the file's unit, not what the user sets: the row shows the size in B, KB or MB
-  $s = ($s -replace ' bytes$', ' size')
+  # "bytes" is the file's unit, not what the user sets: the row shows the size in B, KB or MB.
+  # The replacement keeps the capital the key gave the word - every other word in the label
+  # keeps its own, so a lowercase "size" would be the one word out of step.
+  $s = ($s -replace ' bytes$', ' Size')
+  # A key spells an acronym in camel case (MaxRtfBytes); a label that said "Rtf" would be the one
+  # place in the window where it is not written the way the format itself is.
+  foreach ($pair in @(@('Html', 'HTML'), @('Rtf', 'RTF'), @('Dpi', 'DPI'), @('Url', 'URL'))) {
+    $s = $s -creplace ('\b' + $pair[0] + '\b'), $pair[1]
+  }
   return ([string]$s[0]).ToUpperInvariant() + $s.Substring(1)
 }
 
@@ -361,14 +368,14 @@ function Get-SettingAboutFacts {
       $sv = Get-StoreVersion
       $label = [string]$sv.Label
       if ([string]$sv.Kind -eq 'current') { $label = 'data v' + [string]$sv.Version + ' (' + $label + ')' }
-      $f['Data format'] = $label
+      $f['Data Format'] = $label
     } catch { }
     if (Get-Command Get-Records -ErrorAction SilentlyContinue) {
       try { $f['Entries'] = ([string]@(Get-Records).Count) + ' kept' } catch { }
     }
   }
-  $f['Store folder'] = [string]$script:StoreDir
-  $f['Settings file'] = [string]$script:IniPath
+  $f['Store Folder'] = [string]$script:StoreDir
+  $f['Settings File'] = [string]$script:IniPath
   return $f
 }
 
@@ -390,10 +397,10 @@ function Get-SettingAboutRows {
   $rows = New-Object System.Collections.Generic.List[object]
   $help = @{
     'Version'       = 'clipboard, the clipboard history for Windows'
-    'Data format'   = 'the header history.dat is written with; clipboard migrate upgrades an older file'
-    'Entries'       = 'rows in history.dat; Max items caps them, a mark can protect a row'
-    'Store folder'  = 'history.dat, the media files and the log live here'
-    'Settings file' = 'every value in this window is written here'
+    'Data Format'   = 'the header history.dat is written with; clipboard migrate upgrades an older file'
+    'Entries'       = 'rows in history.dat; Max Items caps them, a mark can protect a row'
+    'Store Folder'  = 'history.dat, the media files and the log live here'
+    'Settings File' = 'every value in this window is written here'
     'Plugins'       = 'loaded in this order; Plugins= picks them, an empty value means all of them'
   }
   foreach ($k in @($facts.Keys)) {
@@ -402,7 +409,7 @@ function Get-SettingAboutRows {
     $why = ''
     if ($help.ContainsKey($label)) { $why = [string]$help[$label] }
     if ($label -eq 'Version') { $text = 'version ' + $text }
-    if ($label -ceq 'Store folder' -or $label -ceq 'Settings file') {
+    if ($label -ceq 'Store Folder' -or $label -ceq 'Settings File') {
       # the full path is the fact; the row shows the segment that names it
       if ($why) { $why = $text + '  -  ' + $why } else { $why = $text }
       $text = Get-SettingLeaf $text
