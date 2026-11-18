@@ -19,7 +19,7 @@ Windows 10 / 11 的剪贴板历史工具，纯 PowerShell 5.1 实现，无第三
 - 容量分四项独立计算：条数、单条大小、文本总量、媒体预算；超出时由旧到新丢弃，受保护标记的行不参与裁剪（[配置](#配置)）
 - 面板为 Win11 Fluent 风格自绘界面：虚拟列表、置顶行冻结、长文本省略、搜索命中高亮、悬停预览卡片，深浅两套主题
 - 完整键盘操作：方向键与翻页、`Ctrl+1..0` 数字快选、`Del` 删除、`Ctrl+Z` 撤销、`F2` 就地编辑、右键菜单；面板快捷键见[面板快捷键](#面板快捷键)
-- 常驻进程带托盘图标（单击显示历史）与右键菜单（显示历史、暂停捕获、清空、打开配置与数据目录、重启、退出），崩溃后自动重启；可选开机自启与桌面快捷方式
+- 常驻进程带托盘图标（单击显示历史）与右键菜单（显示历史、设置窗口、编辑设置文件、暂停捕获、清空、打开数据目录、重启、关于、退出），崩溃后自动重启；可选开机自启与桌面快捷方式
 - 置顶、收藏、高亮、类型分析、按类型打开、粘贴改写、过期清理由插件提供，默认全部启用（[插件](#插件)）
 - 全部设置集中在 `clipboard.ini`：`config init` 写出带注释的模板，`config set` 校验后写入（[配置](#配置)）
 - 历史文件带格式版本号，`clipboard migrate` 负责升级（[数据版本与迁移](#数据版本与迁移)）
@@ -70,6 +70,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | **daemon** | `serve` | 运行常驻进程（捕获 + 热键 + 托盘） |
 | | `stop` | 停止常驻进程 |
 | | `ui` | 打开历史面板（常驻进程未运行时自动拉起） |
+| | `settings` | 打开设置窗口（自绘，与面板同一套主题与字体） |
 | | `status` | 常驻状态、自启状态、生效热键、存储路径、各标记数量 |
 | | `pause` / `resume` | 暂停 / 恢复捕获 |
 | **history** | `list [-Count N]` | 列出条目，最新在前（相对时间，最前一项带 `*`） |
@@ -94,8 +95,24 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | | `help` | 帮助（插件命令按插件名分组列在后面） |
 
 `clipboard help` 的分组与此对应：`[daemon]` `[history]` `[config]` `[theme]` `[setup]`，加上每个已加载插件的 `[plugin: <name>]`。
-
 每登录会话只有一个常驻进程：启动时占用命名互斥体 `Local\clipboard.daemon`。已有一个在运行时，`serve` 打印 `clipboard already running` 并请运行中的实例打开面板，随后退出，不注册热键、不开捕获循环。面板一次只开一个，已开时热键为关闭。历史文件写入由 `Local\clipboard.store` 互斥体串行，命令行进程与常驻进程不会同时写。
+
+### 设置窗口
+
+`clipboard settings` 打开设置窗口（托盘右键菜单的 `Settings...` 在常驻进程内直接打开，省一次进程启动）：左侧是可切换的分组，右侧是该组设置项，页脚显示键位说明或校验结果。
+
+| 键 | 作用 |
+|---|---|
+| `↑` `↓` / `PgUp` `PgDn` | 移动当前项 |
+| 滚轮 | 滚动列表，不改变当前项，也不改任何值 |
+| `←` `→` / `Space` | 调整：开关翻转（带过渡动画，受 `Animations` 控制），数值按其范围的千分之一量级步进，主题在 `themes\` 内循环 |
+| `Enter` | 布尔项翻转；有下拉的值（`Theme`、`PasteKeys`）展开列表；其余进入就地编辑（`Enter` 提交、`Esc` 取消、校验失败时保持打开并显示原因） |
+| `F4` | 展开有下拉的值的列表 |
+| 点击输入框以外的地方 / 切到别的窗口 | 提交当前编辑；校验失败则保持打开 |
+| `Tab` / `Shift+Tab` | 下一个 / 上一个分组 |
+| `Esc` | 关闭 |
+
+改动即时写入 `clipboard.ini` 并应用；常驻进程在窗口关闭时重启一次，而不是每改一项重启。右侧每行都是自己的控件：行只在指针悬停时着色，不标记选中项，点击即生效（开关行点任意位置翻转，值行点开编辑或列表）。只在另一项开启时生效的设置（如 `WindowLeft` / `WindowTop` 需要 `SaveWindowPos`，`MaxImageBytes` 需要 `CaptureImages`，`Paste*` 需要 `NoPaste=0`，`CompactWidth` / `CompactRows` 需要 `CompactMode`）在条件不满足时变灰、拒绝编辑并说明原因。显示名由键名派生（`MaxTextTotalBytes` → `Max text total bytes`），说明与取值范围取自 schema 的 `Description` / `Minimum` / `Maximum`，窗口不另存一份。日志 `settings: open … ms` 记录打开耗时及其分段。
 
 ### 导出、导入与备份
 
@@ -668,6 +685,8 @@ src/                    程序本体（打包只读这个目录）
   lib/shortcut.ps1        开机自启与桌面快捷方式的安装与卸载
   lib/config.ps1          config 命令面：应用设置、打印有效值、重启常驻
   lib/config-template.ps1 写进文件的 clipboard.ini：行序与分组、按模板重写、reset
+  lib/settings-model.ps1  设置窗口的行：分组表、键名读成词、当前值与帮助文案
+  lib/settings-types.ps1  每种设置类型的编辑行为：翻转、步长、循环、校验
   lib/usage.ps1           help 输出
   lib/dispatch.ps1        Invoke-Main：Initialize-Main（Apply-Config + 装配插件）→ Invoke-Dispatch
   lib/proxy.ps1           命令代理
@@ -685,6 +704,9 @@ src/                    程序本体（打包只读这个目录）
   lib/panel/anim.ps1        过渡动画的数值层
   lib/panel/focus.ps1      取前台与交还前台、松开仍按住的修饰键
   lib/panel/media-render.ps1 图片与富文本的位图与缓存
+  lib/panel/settings.ps1    设置窗口：分组栏、行列表、按键与鼠标、关闭时重载常驻
+  lib/panel/settings-draw.ps1 设置窗口的绘制：分组栏、行、Fluent 开关、页脚
+  lib/panel/settings-edit.ps1 设置的就地编辑：叠在行上的输入框、写回与校验
 
   lib/plugin/             插件层：三个文件要么全有要么全无
   lib/plugin/plugins.ps1         插件运行时
@@ -748,6 +770,8 @@ src/                    程序本体（打包只读这个目录）
 | `picker: closed the flyout in front (it cannot be covered)` | 热键按下时开始菜单或 Windows 搜索在前台，已用 `Esc` 关闭它并在其后的窗口上打开面板 |
 | `picker: not opened (the window in front cannot be covered)` | 前台窗口带 UIAccess 但不是开始菜单/搜索（或 `400 ms` 内没关掉），面板不开 |
 | `picker: tray open from …` | 单击托盘图标或点「显示历史」：面板从该窗口打开，点击来源的任务栏/托盘窗口不算目标 |
+| `tray settings: …` | 点托盘菜单「Settings...」时新进程没能启动：原因（命令本身报错记 `settings: …`） |
+| `tray settings file: …` | 点托盘菜单「Edit settings file...」时记事本没能打开 `clipboard.ini` |
 | `paste skipped` / `sendkeys fail` | 未能夺回前台因而未注入 / 注入失败 |
 | `paste keys: SendKeys` | `PasteKeys` 不是单个组合键（序列、重复等 SendKeys 专有写法），该次用 SendKeys 发送 |
 | `picker: no handle` / `picker: topmost skipped` | 面板窗口未建立句柄，本次打开放弃 / 置顶失败，面板照常显示 |

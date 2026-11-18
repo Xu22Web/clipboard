@@ -10,6 +10,7 @@ function Show-Usage {
       @('serve', 'run the resident daemon (capture + hotkey + tray)'),
       @('stop', 'stop the resident daemon'),
       @('ui', 'open the history picker (starts the daemon if needed)'),
+      @('settings', 'open the settings window'),
       @('status', 'show daemon state and settings'),
       @('pause', 'pause capture'),
       @('resume', 'resume capture')
@@ -116,7 +117,6 @@ function Show-Usage {
   Write-Host '  clipboard put "hello there"    echo hi | clipboard put    clipboard list -Count 5'
   Write-Host '  clipboard config set Theme win11-light    clipboard config set MaxItems 200'
   Write-Host '  clipboard serve                clipboard ui               clipboard config edit'
-
   $missing = @()
   if (Get-Command Get-PluginMissingNames -ErrorAction SilentlyContinue) { $missing = @(Get-PluginMissingNames) }
   if ($missing.Count -gt 0) {

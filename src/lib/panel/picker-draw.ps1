@@ -392,3 +392,60 @@ function Draw-RowBackdrop($g, [int]$x, [int]$y, [int]$w, [int]$h, [int]$radius, 
   $path.Dispose()
   $brush.Dispose()
 }
+
+# The type ramp and the two font families, resolved once per process. Both windows the tool
+# owns - the history panel and the settings window - draw with these, so the two cannot end up
+# on different faces or sizes, and a second window costs no second font build.
+#
+# The family comes from the theme, then from what Windows ships: Segoe UI Variable Text is the
+# Win11 face, Segoe UI the Win10 one, and the icon font follows the same rule (Fluent Icons on
+# Win11, MDL2 on Win10). A theme that names a family the machine does not have falls through
+# instead of drawing with a substituted face.
+function Initialize-PanelFonts {
+  if ($null -ne $script:FBody) { return $true }
+  try { Use-Drawing } catch { }
+  if (-not $script:UiFamily) {
+    $script:UiFamily = 'Tahoma'
+    $wantFace = [string]$script:ThemeFace.Font
+    if ($wantFace -and (Test-Font $wantFace)) { $script:UiFamily = $wantFace }
+    elseif (Test-Font 'Segoe UI Variable Text') { $script:UiFamily = 'Segoe UI Variable Text' }
+    elseif (Test-Font 'Segoe UI') { $script:UiFamily = 'Segoe UI' }
+    $wantIcon = [string]$script:ThemeFace.Icon
+    $script:IconFamily = ''
+    if ($wantIcon -and (Test-Font $wantIcon)) { $script:IconFamily = $wantIcon }
+    elseif (Test-Font 'Segoe Fluent Icons') { $script:IconFamily = 'Segoe Fluent Icons' }
+    elseif (Test-Font 'Segoe MDL2 Assets') { $script:IconFamily = 'Segoe MDL2 Assets' }
+  }
+  # Win11 type ramp by default; a theme may override any of the sizes through Fonts.
+  $tf = $script:ThemeFonts
+  $szBody = 10.5; $szSmall = 9.0; $szTiny = 9.0; $szTitle = 13.0
+  $szIcon = 12.0; $szIconSmall = 10.0; $szIconBig = 24.0; $szIconTiny = 9.0
+  if ($null -ne $tf) {
+    if ($tf.ContainsKey('Body')) { $szBody = [double]$tf['Body'] }
+    if ($tf.ContainsKey('Small')) { $szSmall = [double]$tf['Small'] }
+    if ($tf.ContainsKey('Tiny')) { $szTiny = [double]$tf['Tiny'] }
+    if ($tf.ContainsKey('Title')) { $szTitle = [double]$tf['Title'] }
+    if ($tf.ContainsKey('Icon')) { $szIcon = [double]$tf['Icon'] }
+    if ($tf.ContainsKey('IconSmall')) { $szIconSmall = [double]$tf['IconSmall'] }
+    if ($tf.ContainsKey('IconBig')) { $szIconBig = [double]$tf['IconBig'] }
+    if ($tf.ContainsKey('IconTiny')) { $szIconTiny = [double]$tf['IconTiny'] }
+  }
+  $script:FBody = New-Object Drawing.Font($script:UiFamily, [single]$szBody)
+  $script:FSmall = New-Object Drawing.Font($script:UiFamily, [single]$szSmall)
+  $script:FTiny = New-Object Drawing.Font($script:UiFamily, [single]$szTiny)
+  $script:FTitle = New-Object Drawing.Font($script:UiFamily, [single]$szTitle, [Drawing.FontStyle]::Bold)
+  if ($script:IconFamily) {
+    # 12 pt renders a 16 px glyph, 10 pt a 13 px one, 9 pt the 12 px clear button a fluent
+    # text field carries, 24 pt the empty-state art
+    $script:FIcon = New-Object Drawing.Font($script:IconFamily, [single]$szIcon)
+    $script:FIconSmall = New-Object Drawing.Font($script:IconFamily, [single]$szIconSmall)
+    $script:FIconBig = New-Object Drawing.Font($script:IconFamily, [single]$szIconBig)
+    $script:FIconTiny = New-Object Drawing.Font($script:IconFamily, [single]$szIconTiny)
+  } else {
+    $script:FIcon = $script:FBody
+    $script:FIconSmall = $script:FSmall
+    $script:FIconBig = $script:FTitle
+    $script:FIconTiny = $script:FSmall
+  }
+  return $true
+}

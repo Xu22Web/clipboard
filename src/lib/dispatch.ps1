@@ -15,7 +15,7 @@ function Initialize-Main($Call) {
 # Only the two that put a panel on screen need the palette. Everything else - put, get,
 # list, del, status, config, help - would pay ~250 ms to load System.Drawing for colours it
 # never draws, and another ~300 ms to read the theme file, so it skips the theme altogether.
-$needColors = ($Command -eq '' -or $Command -eq 'ui' -or $Command -eq 'serve')
+$needColors = ($Command -eq '' -or $Command -eq 'ui' -or $Command -eq 'serve' -or $Command -eq 'settings')
 Apply-Config -NoColors:(-not $needColors) -SkipTheme:(-not $needColors)
 # Plugins are loaded by default: clipboard.ini lists them by name, in load order. A file
 # that is not listed is never executed, so the list is the whole surface.
@@ -92,6 +92,7 @@ switch ($Command.ToLower()) {
     if ($r.Changed) { Restart-ResidentIfRunning }
   }
   'serve' { Start-Serve }
+  'settings' { Show-Settings }
   'ui' {
     $sent = $false
     try { $e = [System.Threading.EventWaitHandle]::OpenExisting($EventName); [void]$e.Set(); $sent = $true } catch { }

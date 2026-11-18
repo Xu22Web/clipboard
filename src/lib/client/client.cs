@@ -118,7 +118,7 @@ static class Client
   // commands the resident never answers: they change settings, move the store, touch the
   // registry, or are the resident itself. Same list as $script:ProxyDirectOnly in proxy.ps1.
   static readonly string[] Direct = new string[] {
-    "config", "themes", "install", "uninstall", "serve", "stop", "ui", "edit",
+    "config", "themes", "install", "uninstall", "serve", "stop", "ui", "settings", "edit",
     "export", "import", "backup", "restore", "migrate"
   };
 

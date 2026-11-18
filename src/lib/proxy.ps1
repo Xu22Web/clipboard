@@ -21,7 +21,7 @@ $script:ProxyFrameLimit = 1048576
 # names the resident never answers: they change settings, move the store, touch the registry,
 # or are the resident itself
 $script:ProxyDirectOnly = @(
-  '', 'config', 'themes', 'install', 'uninstall', 'serve', 'stop', 'ui', 'edit',
+  '', 'config', 'themes', 'install', 'uninstall', 'serve', 'stop', 'ui', 'settings', 'edit',
   'export', 'import', 'backup', 'restore', 'migrate', '-h', '--help'
 )
 

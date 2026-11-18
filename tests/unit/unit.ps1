@@ -230,6 +230,7 @@ try {
         $requiredLib = @('lib\base', 'lib\native', 'lib\panel\focus', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
           'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\panel\anim',
           'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\serve', 'lib\shortcut',
+          'lib\settings-model', 'lib\settings-types', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings',
           'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch',
           'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey',
           'utils\query-words', 'utils\transfer', 'utils\apprules', 'utils\fileio',
@@ -2607,6 +2608,63 @@ try {
         $area = Get-AreaAt $script:PickerAreas $script:PickerFallbackArea 2200 300
         $p = Get-CompactPlacement 6 40 92 520 $area 2200 300 20 3
         Expect ($p.Left -eq 2200) ($p.Left -as [string])
+      }
+    }
+
+    Describe 'settings window model' {
+      # The window draws whatever these two files hand it, so what is checked here is that every
+      # setting can reach it, that a key reads as words, and that a value the schema refuses is
+      # refused before anything is written.
+      It 'every setting the schema declares reaches exactly one group' {
+        $seen = @{}
+        $twice = @()
+        foreach ($g in @(Get-SettingGroups $script:SettingsSchema)) {
+          foreach ($row in @(Get-SettingsRows $script:SettingsSchema $g)) {
+            if ($seen.ContainsKey($row.Key)) { $twice += $row.Key }
+            $seen[$row.Key] = $true
+          }
+        }
+        $props = Get-SchemaProperties $script:SettingsSchema
+        Expect ($twice.Count -eq 0) ($twice -join ', ')
+        Expect ($seen.Count -eq $props.Count) ([string]$seen.Count + ' of ' + [string]$props.Count)
+      }
+
+      It 'a key reads as its words' {
+        Expect ((Get-SettingLabel 'MaxTextTotalBytes') -eq 'Max text total bytes') (Get-SettingLabel 'MaxTextTotalBytes')
+        Expect ((Get-SettingLabel 'Rows') -eq 'Rows') (Get-SettingLabel 'Rows')
+        Expect ((Get-SettingLabel 'CompactMode') -eq 'Compact mode') (Get-SettingLabel 'CompactMode')
+      }
+
+      It 'each schema type maps onto one of the editors the window has' {
+        $kinds = @{}
+        foreach ($k in @((Get-SchemaProperties $script:SettingsSchema).Keys)) {
+          $kind = Get-SettingKind (Get-SchemaProperty $script:SettingsSchema $k)
+          $kinds[$kind] = $true
+        }
+        # four behaviours, not eight types: the window would have to draw eight otherwise
+        $allowed = @('bool', 'number', 'text', 'hotkey', 'theme', 'regex', 'list', 'rules')
+        $unknown = @()
+        foreach ($k in @($kinds.Keys)) { if ($allowed -notcontains $k) { $unknown += $k } }
+        Expect ($unknown.Count -eq 0) ($unknown -join ', ')
+        Expect ($kinds.ContainsKey('bool') -and $kinds.ContainsKey('number') -and $kinds.ContainsKey('theme')) ($kinds.Keys -join ',')
+      }
+
+      It 'a step grows with the range it walks' {
+        $ms = Get-SettingStep (Get-SchemaProperty $script:SettingsSchema 'PasteSettle')
+        $rows = Get-SettingStep (Get-SchemaProperty $script:SettingsSchema 'CompactRows')
+        $bytes = Get-SettingStep (Get-SchemaProperty $script:SettingsSchema 'MaxTextBytes')
+        # a millisecond delay and a byte budget must not move by the same amount per press
+        Expect ($ms -gt $rows) ([string]$ms + ' vs ' + [string]$rows)
+        Expect ($bytes -gt $ms) ([string]$bytes + ' vs ' + [string]$ms)
+      }
+
+      It 'a value the schema refuses never reaches the writer' {
+        $bad = Convert-SettingInput $script:SettingsSchema 'PasteSettle' '-5'
+        Expect (-not $bad.Ok) ([string]$bad.Value)
+        $good = Convert-SettingInput $script:SettingsSchema 'PasteSettle' '150'
+        Expect (($good.Ok) -and ([string]$good.Value -eq '150')) ([string]$good.Value)
+        $switch = Convert-SettingInput $script:SettingsSchema 'CaptureImages' 'on'
+        Expect (($switch.Ok) -and ([string]$switch.Value -eq '1')) ([string]$switch.Value)
       }
     }
 

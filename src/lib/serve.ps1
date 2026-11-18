@@ -219,12 +219,30 @@ function Invoke-ServeOnce {
       })
     [void]$dm.Items.Add('-')
 
-    $iSet = $dm.Items.Add('Settings...')
+    # The settings window is its own process: it runs a modal loop and owns a window the user
+    # works in, and the tray has to stay responsive while it is open. Starting the command is
+    # the same thing `clipboard settings` does, so both entry points stay one code path.
+    $iSettings = $dm.Items.Add('Settings...')
+    $iSettings.Add_Click({
+        try {
+          # the resident already has every module loaded, so opening the window here costs one
+          # window and not a whole PowerShell start; the command line keeps the other path
+          if (Get-Command Show-Settings -ErrorAction SilentlyContinue) {
+            Show-Settings
+          } else {
+            Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList @(
+              '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', (Join-Path $Root 'clipboard.ps1'), 'settings'
+            )
+          }
+        } catch { Write-Log ('tray settings: ' + $_.Exception.Message) }
+      })
+    # the file itself, for a key the window does not cover (a plugin's settings, a retired key)
+    $iSet = $dm.Items.Add('Edit settings file...')
     $iSet.Add_Click({
         try {
           $p = Write-IniTemplate
           Start-Process -FilePath 'notepad.exe' -ArgumentList ('"' + $p + '"')
-        } catch { Write-Log ('tray settings: ' + $_.Exception.Message) }
+        } catch { Write-Log ('tray settings file: ' + $_.Exception.Message) }
       })
     $iOpen = $dm.Items.Add('Open data folder')
     $iOpen.Add_Click({
