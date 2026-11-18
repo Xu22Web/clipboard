@@ -682,6 +682,14 @@ try {
         Expect ($script:StructWinText -match 'function Save-UiaSelection') 'the selection is never saved'
         Expect ($script:StructWinText -match 'function Restore-UiaSelection') 'the selection is never restored'
         Expect ($script:StructPickerText -match 'Save-UiaSelection \$prev') 'the picker never saves the selection'
+        # a field with no text pattern at all - a Win32 edit control, which is what a chat or
+        # note client puts in front - answers EM_GETSEL instead, and that is the kind the caret
+        # was lost in: the paste landed at the start of the field
+        Expect ($script:StructWinText -match 'IsEditControl') 'the plain edit control is never recognised'
+        Expect ($script:StructWinText -match 'GetEditSelection') 'the edit control selection is never read'
+        Expect ($script:StructWinText -match 'SetEditSelection') 'the edit control selection is never put back'
+        Expect ($script:StructWinText -match "Kind = 'edit'") 'the saved selection has no edit control form'
+        Expect ($script:StructPickerText -match 'Save-UiaSelection \$prev \$script:PrevFocus') 'the picker never hands the focus control to the save'
         $iBack = $script:StructPickerText.IndexOf('Restore-UiaSelection $script:SavedSel')
         $iKeys = $script:StructPickerText.IndexOf('SendWait($PasteKeys)')
         Expect ($iBack -ge 0 -and $iKeys -gt $iBack) ('order ' + $iBack + '/' + $iKeys)

@@ -72,7 +72,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     # selection, and then the paste would land at the start of the field instead of where the
     # user was typing. Cloned ranges are put back just before the keys go out.
     $script:SavedSel = @()
-    try { $script:SavedSel = @(Save-UiaSelection $prev) } catch { $script:SavedSel = @() }
+    try { $script:SavedSel = @(Save-UiaSelection $prev $script:PrevFocus) } catch { $script:SavedSel = @() }
     if ($script:SavedSel.Count -gt 0) { Write-Log ('selection saved: ' + $script:SavedSel.Count + ' range(s)') }
     $script:Entries = @(Get-Records)
     if ($script:Entries.Count -eq 0) { Write-Log 'picker: empty (showing hint)' }

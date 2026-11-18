@@ -515,6 +515,44 @@ namespace Cb {
       return SendMessageTimeout(hwnd, 0, IntPtr.Zero, IntPtr.Zero, 0x0002, timeoutMs, out result) != IntPtr.Zero;
     }
 
+    // ---- the selection of a plain edit control ---------------------------------------
+    // An editor built on the Win32 edit control - Notepad, a WinForms TextBox, several chat
+    // clients - answers UI Automation with no text pattern at all, so the caret the panel wants
+    // back before pasting cannot be read there (measured: a WinForms TextBox reports an empty
+    // pattern list while it still answers EM_GETSEL). These two messages reach it anyway.
+    private const int EM_GETSEL = 0x00B0;
+    private const int EM_SETSEL = 0x00B1;
+
+    // The class names a Win32 edit control goes by: the plain one, the RichEdit generations and
+    // the wrapper Windows Forms puts around both. Only these are asked, because a message the
+    // control does not know returns zero - which would read as "the caret is at the start".
+    public static bool IsEditControl(IntPtr hwnd) {
+      string cls = WindowClass(hwnd);
+      if (cls.Length == 0) { return false; }
+      string lc = cls.ToLowerInvariant();
+      if (lc == "edit" || lc == "tedit" || lc == "tmemo") { return true; }
+      if (lc.StartsWith("richedit")) { return true; }
+      if (lc.StartsWith("windowsforms10.edit")) { return true; }
+      if (lc.StartsWith("windowsforms10.richedit")) { return true; }
+      return false;
+    }
+
+    // EM_GETSEL packs the two ends into the result; the low word is where the selection starts.
+    public static bool GetEditSelection(IntPtr hwnd, out int start, out int end) {
+      start = 0; end = 0;
+      if (hwnd == IntPtr.Zero) { return false; }
+      long v = SendMessageW(hwnd, EM_GETSEL, IntPtr.Zero, IntPtr.Zero).ToInt64();
+      start = (int)(v & 0xFFFF);
+      end = (int)((v >> 16) & 0xFFFF);
+      return true;
+    }
+
+    public static bool SetEditSelection(IntPtr hwnd, int start, int end) {
+      if (hwnd == IntPtr.Zero) { return false; }
+      SendMessageW(hwnd, EM_SETSEL, (IntPtr)start, (IntPtr)end);
+      return true;
+    }
+
     // ---- typing without the clipboard ------------------------------------------------
     // SendInput with KEYEVENTF_UNICODE puts the characters straight into the focused control,
     // so a target that ignores Ctrl+V still receives the text and the clipboard is not

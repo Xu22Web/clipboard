@@ -189,8 +189,26 @@ function Get-UiaCaretRect([IntPtr]$hwnd) {
 # their selection: the paste then lands at the start of the field while the caret was at the
 # end (measured on a page that resets its selection on blur). Windows that keep their own
 # caret need none of this, and a provider without a text pattern returns nothing at all.
-function Save-UiaSelection([IntPtr]$hwnd) {
+#
+# Two sources, because the field kinds differ: UI Automation answers for the browsers and for
+# every control that publishes a text pattern, while a plain Win32 edit control - Notepad, a
+# WinForms TextBox, several chat clients - publishes none and answers EM_GETSEL instead. The
+# focus handle is what decides which one is asked, and it is also what the second path needs.
+function Save-UiaSelection([IntPtr]$hwnd, [IntPtr]$focus = [IntPtr]::Zero) {
   if ($hwnd -eq [IntPtr]::Zero) { return @() }
+  if ($focus -ne [IntPtr]::Zero) {
+    $isEdit = $false
+    try { Add-Native; $isEdit = [Cb.Win]::IsEditControl($focus) } catch { $isEdit = $false }
+    if ($isEdit) {
+      $s = 0
+      $e = 0
+      try {
+        if ([Cb.Win]::GetEditSelection($focus, [ref]$s, [ref]$e)) {
+          return @(@{ Kind = 'edit'; Hwnd = $focus; Start = [int]$s; End = [int]$e })
+        }
+      } catch { }
+    }
+  }
   if (-not (Initialize-CaretLookup)) { return @() }
   try { if (-not [Cb.Win]::IsResponsive($hwnd, 40)) { return @() } } catch { return @() }
   $el = $null
@@ -209,18 +227,27 @@ function Save-UiaSelection([IntPtr]$hwnd) {
   $saved = New-Object System.Collections.Generic.List[object]
   try {
     $tp = $el.GetCurrentPattern($pattern)
-    foreach ($rg in @($tp.GetSelection())) { if ($null -ne $rg) { $saved.Add($rg.Clone()) } }
+    foreach ($rg in @($tp.GetSelection())) {
+      if ($null -ne $rg) { $saved.Add(@{ Kind = 'uia'; Range = $rg.Clone() }) }
+    }
   } catch { return @() }
   return , $saved.ToArray()
 }
 
 # Put those selections back, which is also what places the caret again. Returns how many were
-# restored; a range whose element is gone throws and is skipped.
+# restored; an entry whose element or window is gone throws and is skipped.
 function Restore-UiaSelection($ranges) {
   $done = 0
-  foreach ($rg in @($ranges)) {
-    if ($null -eq $rg) { continue }
-    try { $rg.Select(); $done++ } catch { }
+  foreach ($item in @($ranges)) {
+    if ($null -eq $item) { continue }
+    try {
+      if ($item -is [hashtable] -and $item.Kind -eq 'edit') {
+        if ([Cb.Win]::SetEditSelection($item.Hwnd, [int]$item.Start, [int]$item.End)) { $done++ }
+      } elseif ($item -is [hashtable] -and $null -ne $item.Range) {
+        $item.Range.Select()
+        $done++
+      }
+    } catch { }
   }
   return $done
 }
