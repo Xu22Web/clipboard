@@ -99,18 +99,21 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 ### 设置窗口
 
-`clipboard settings` 打开设置窗口（托盘右键菜单的 `Settings...` 在常驻进程内直接打开，省一次进程启动）：左侧是可切换的分组，右侧是该组设置项，页脚显示键位说明或校验结果。
+`clipboard settings` 打开设置窗口（托盘右键菜单的 `Settings...` 在常驻进程内直接打开，省一次进程启动）：左侧是可切换的分组，右侧是该组设置项。页脚与应用主面板一致：左侧是当前项的键位提示，右侧是该组项数与版本号；写入后提示语接管左侧，约 2 秒（错误约 2.6 秒）后退回键位提示。
 
 | 键 | 作用 |
 |---|---|
 | `↑` `↓` / `PgUp` `PgDn` | 移动当前项 |
 | 滚轮 | 滚动列表，不改变当前项，也不改任何值 |
+| 右侧滚动条 | 指针靠近时加宽加深；拖动滑块定位，点击滑块以外的轨道翻页 |
 | `←` `→` / `Space` | 调整：开关翻转（带过渡动画，受 `Animations` 控制），数值按其范围的千分之一量级步进，主题在 `themes\` 内循环 |
-| `Enter` | 布尔项翻转；有下拉的值（`Theme`、`PasteKeys`）展开列表；其余进入就地编辑（`Enter` 提交、`Esc` 取消、校验失败时保持打开并显示原因） |
+| `Enter` | 布尔项翻转；有下拉的值（`Theme`、`PasteKeys`、`Plugins`）展开列表；其余进入就地编辑（`Enter` 提交、`Esc` 取消、校验失败时保持打开并显示原因） |
 | `F4` | 展开有下拉的值的列表 |
 | 点击输入框以外的地方 / 切到别的窗口 | 提交当前编辑；校验失败则保持打开 |
 | `Tab` / `Shift+Tab` | 下一个 / 上一个分组 |
 | `Esc` | 关闭 |
+
+`Plugins` 是多选下拉框：值是 `plugins\` 目录里的插件名，打开后每行一个勾选框，勾选即写入并保持列表打开（`Space` 在键盘上勾选并下移），值为 `All` 或 `n of m`。全不选会被拒绝，因为空的 `Plugins=` 表示加载全部插件。
 
 改动即时写入 `clipboard.ini` 并应用；常驻进程在窗口关闭时重启一次，而不是每改一项重启。右侧每行都是自己的控件：行只在指针悬停时着色，不标记选中项，点击即生效（开关行点任意位置翻转，值行点开编辑或列表）。只在另一项开启时生效的设置（如 `WindowLeft` / `WindowTop` 需要 `SaveWindowPos`，`MaxImageBytes` 需要 `CaptureImages`，`Paste*` 需要 `NoPaste=0`，`CompactWidth` / `CompactRows` 需要 `CompactMode`）在条件不满足时变灰、拒绝编辑并说明原因。显示名由键名派生（`MaxTextTotalBytes` → `Max text total bytes`），说明与取值范围取自 schema 的 `Description` / `Minimum` / `Maximum`，窗口不另存一份。日志 `settings: open … ms` 记录打开耗时及其分段。
 

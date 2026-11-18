@@ -188,7 +188,7 @@ function Draw-CardContent($g, $win, $ps, $c) {
   # Fill through Clear: the window carries the same rounded region as the panel, so this
   # covers the whole silhouette without leaving a rim of the form colour in any corner.
   $g.Clear($c.Bg)
-  Draw-PanelFrame $g ([int]$win.ClientSize.Width) ([int]$win.ClientSize.Height) $c.Border (Get-WindowRadius)
+  Draw-PanelFrame $g ([int]$win.ClientSize.Width) ([int]$win.ClientSize.Height) $c.Border (Get-WindowRadius) $c.Bg
   $y = $c.Pad
   $caption = New-Object Drawing.RectangleF -ArgumentList @([single]$c.Pad, [single]$y, [single]($c.W - 2 * $c.Pad), [single]$c.LineH)
   # the caption line is the card's own chrome, so the wait belongs there: a line inside the

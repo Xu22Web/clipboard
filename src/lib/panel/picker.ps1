@@ -1656,7 +1656,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
 
     $form.Add_Paint({
         param($s, $e)
-        Draw-PanelFrame $e.Graphics $form.ClientSize.Width $form.ClientSize.Height $ui.Border (Get-WindowRadius)
+        Draw-PanelFrame $e.Graphics $form.ClientSize.Width $form.ClientSize.Height $ui.Border (Get-WindowRadius) $ui.Surface
       })
     $form.Add_Shown({
         # the layout and the list were built before Show() (see below), so the frame is already

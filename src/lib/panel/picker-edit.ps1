@@ -175,7 +175,7 @@ function Begin-RowEdit {
         $pal = $script:EditorCtx.Ui
         # the same 1 px edge the panel itself draws: the editor covers the whole client area,
         # so an accent frame would read as a second window on top of the panel
-        Draw-PanelFrame $g ([int]$s.Width) ([int]$s.Height) $pal.Border (Get-WindowRadius)
+        Draw-PanelFrame $g ([int]$s.Width) ([int]$s.Height) $pal.Border (Get-WindowRadius) $pal.Surface
         # the box has no border of its own (a native one cannot follow the theme), so the
         # field outline is drawn here, one pixel outside the control
         $st = $script:EditRow

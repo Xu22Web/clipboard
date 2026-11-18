@@ -2666,6 +2666,32 @@ try {
         $switch = Convert-SettingInput $script:SettingsSchema 'CaptureImages' 'on'
         Expect (($switch.Ok) -and ([string]$switch.Value -eq '1')) ([string]$switch.Value)
       }
+
+      It 'the window edge is one opaque ring on all four sides' {
+        # Two defects this guards, both seen on screen: the sides that lie exactly on the pixel
+        # boundary were rasterized away, and a translucent edge painted again on every repaint
+        # drifted lighter because the surface under it is clipped in that same row.
+        $bg = [Drawing.Color]::FromArgb(255, 32, 32, 32)
+        $edge = [Drawing.Color]::FromArgb(255, 255, 255, 255)
+        $bmp = New-Object Drawing.Bitmap 200, 120
+        $g = [Drawing.Graphics]::FromImage($bmp)
+        try {
+          $g.Clear($bg)
+          Draw-PanelFrame $g 200 120 $edge 8 $bg
+          $first = $bmp.GetPixel(100, 0).ToArgb()
+          # a repaint starts from the same surface and must land on the same colour
+          $g.Clear($bg)
+          Draw-PanelFrame $g 200 120 $edge 8 $bg
+          $sides = @($bmp.GetPixel(100, 0), $bmp.GetPixel(100, 119), $bmp.GetPixel(0, 60), $bmp.GetPixel(199, 60))
+          $flat = ''
+          $same = $true
+          foreach ($p in $sides) {
+            $flat += ($p.ToArgb() -as [string]) + ' '
+            if ($p.ToArgb() -ne $first) { $same = $false }
+          }
+          Expect (($first -ne $bg.ToArgb()) -and $same) $flat
+        } finally { $g.Dispose(); $bmp.Dispose() }
+      }
     }
 
     Describe 'preview slot' {

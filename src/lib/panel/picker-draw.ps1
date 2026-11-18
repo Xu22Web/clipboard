@@ -36,31 +36,69 @@ $script:FrameAlphaMin = 46
 # only a broken chain at about half strength, which reads as a frame that is missing exactly
 # where it turns. Filling a 1 px ring instead puts whole pixels on the arcs too, so the corners
 # come out at the same weight as the sides. Every custom-drawn window edge goes through here.
-function Draw-PanelFrame($g, [int]$w, [int]$h, $color, [int]$radius) {
+# The colour the frame is filled with. A theme's separator is translucent, and a translucent
+# fill is not idempotent: the window region clips the outermost row and column away from the
+# surface fill, so every repaint added one more pass of the same faint colour there and the edge
+# drifted lighter the longer the window stayed open. Composited against the surface it sits on,
+# the frame is opaque, and painting it twice paints the same pixel twice.
+function Get-FrameColour($color, $behind) {
+  $a = [int]$color.A
+  if ($a -lt $script:FrameAlphaMin) { $a = [int]$script:FrameAlphaMin }
+  if ($null -eq $behind) { return [Drawing.Color]::FromArgb($a, [int]$color.R, [int]$color.G, [int]$color.B) }
+  $k = $a / 255.0
+  return [Drawing.Color]::FromArgb(255,
+    [int][Math]::Round(($color.R * $k) + ($behind.R * (1 - $k))),
+    [int][Math]::Round(($color.G * $k) + ($behind.G * (1 - $k))),
+    [int][Math]::Round(($color.B * $k) + ($behind.B * (1 - $k))))
+}
+
+function Draw-PanelFrame($g, [int]$w, [int]$h, $color, [int]$radius, $behind = $null) {
   if ($null -eq $g -or $w -lt 6 -or $h -lt 6) { return }
   $t = [Math]::Max(1, (Px 1))
   if (($radius * 2) -gt ($w - 3) -or ($radius * 2) -gt ($h - 3)) { $radius = [int]([Math]::Min($w - 3, $h - 3) / 2) }
   # a translucent separator colour is lifted, so the silhouette reads on a dark surface
-  if ($color.A -lt $script:FrameAlphaMin) { $color = [Drawing.Color]::FromArgb([int]$script:FrameAlphaMin, [int]$color.R, [int]$color.G, [int]$color.B) }
+  $color = Get-FrameColour $color $behind
   $outer = $null
   $inner = $null
   $ring = New-Object Drawing.Drawing2D.GraphicsPath
   $brush = New-Object Drawing.SolidBrush $color
-  # no antialiasing: the point is a line made of whole pixels, and a smoothed edge would be
+  # No antialiasing: the point is a line made of whole pixels, and a smoothed edge would be
   # soft again - the window's own region edge is just as hard. The caller's mode is put back,
   # because the text and the pictures drawn after this want their smoothing.
+  #
+  # The ring is built from four rectangles for the sides and four sector pairs for the corners
+  # rather than one outline minus another. Two rounded outlines spanning the same grid were
+  # rasterized asymmetrically - the sides that lie exactly on the pixel boundary came out one
+  # pixel short, which left the frame along the right and bottom only - while filled
+  # rectangles and pies land on whole rows and columns by construction.
   $was = $g.SmoothingMode
   $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::None
   try {
-    $ring.FillMode = [Drawing.Drawing2D.FillMode]::Alternate
-    # the shape spans the whole pixel grid, not its last centre: a fill keeps the pixels whose
-    # centre is inside, so a path that ends at w-1 loses the last column and row - the frame
-    # then ran along the top and left only
-    $outer = New-RoundPath 0 0 $w $h $radius
-    $inner = New-RoundPath $t $t ($w - (2 * $t)) ($h - (2 * $t)) ([Math]::Max(1, $radius - $t))
-    $ring.AddPath($outer, $true)
-    $ring.AddPath($inner, $true)
-    $g.FillPath($brush, $ring)
+    $span = $w - (2 * $t)
+    $side = $h - (2 * $t)
+    if ($span -gt 0) {
+      $g.FillRectangle($brush, $radius, 0, $span, $t)
+      $g.FillRectangle($brush, $radius, ($h - $t), $span, $t)
+    }
+    if ($side -gt 0) {
+      $g.FillRectangle($brush, 0, $radius, $t, $side)
+      $g.FillRectangle($brush, ($w - $t), $radius, $t, $side)
+    }
+    if ($radius -gt 0) {
+      $ring.FillMode = [Drawing.Drawing2D.FillMode]::Alternate
+      $d = $radius * 2
+      $di = [Math]::Max(2, ($radius - $t) * 2)
+      # top left, top right, bottom right, bottom left - the outer sector and the inner one in
+      # one path, so the fill keeps only the band between them
+      $corners = @(
+        @(0, 0, 180), @(($w - $d), 0, 270), @(($w - $d), ($h - $d), 0), @(0, ($h - $d), 90)
+      )
+      foreach ($c in $corners) {
+        $ring.AddPie([int]$c[0], [int]$c[1], $d, $d, [int]$c[2], 90)
+        $ring.AddPie(([int]$c[0] + $t), ([int]$c[1] + $t), $di, $di, [int]$c[2], 90)
+      }
+      $g.FillPath($brush, $ring)
+    }
   } finally {
     $g.SmoothingMode = $was
     if ($null -ne $outer) { $outer.Dispose() }

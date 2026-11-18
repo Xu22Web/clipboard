@@ -53,8 +53,9 @@ function Get-SettingStepped($schema, [string]$key, [int]$dir) {
 }
 
 # The values a setting offers as a list, or an empty array when it is typed. A list is only
-# for a value whose whole domain is small and known at run time: the themes on disk, and the
-# three paste chords that cover every target anyone meets. Everything else is free text.
+# for a value whose whole domain is small and known at run time: the themes on disk, the three
+# paste chords that cover every target anyone meets, and the plugin files on disk. Everything
+# else is free text.
 function Get-SettingChoices($schema, [string]$key) {
   $spec = Get-SchemaProperty $schema $key
   if ($null -eq $spec) { return @() }
@@ -66,12 +67,57 @@ function Get-SettingChoices($schema, [string]$key) {
     }
     return $names
   }
+  if ($kind -eq 'list' -and $key -ceq 'Plugins') { return @(Get-SettingPluginNames) }
   if ($kind -eq 'text' -and $key -ceq 'PasteKeys') {
     # the three chords that between them cover every target: the default, the terminal-style
     # shift-insert, and the same without shift for programs that map Ctrl+Insert
     return @('^v', '^+{INSERT}', '^{INSERT}')
   }
   return @()
+}
+
+# every plugin file on disk, read from the folder rather than from what is loaded: a plugin
+# switched off in Plugins= is exactly the one the list has to offer back
+function Get-SettingPluginNames {
+  $names = @()
+  if (Get-Command Get-AllPluginNames -ErrorAction SilentlyContinue) {
+    try {
+      $dir = ''
+      if ($script:Root) { $dir = Join-Path $script:Root 'plugins' }
+      if ($dir) { $names = @(Get-AllPluginNames $dir) }
+    } catch { $names = @() }
+  }
+  if (@($names).Count -eq 0) { $names = @($script:PluginList) }
+  return $names
+}
+
+# The names a list setting holds, in the order the file spells them: that order is the plugin
+# load order, so a name already listed keeps its place when another one is ticked.
+function Split-SettingList([string]$raw) {
+  $out = New-Object System.Collections.Generic.List[string]
+  foreach ($n in @(([string]$raw) -split '[,;]')) {
+    $t = ([string]$n).Trim()
+    if ($t) { $out.Add($t) }
+  }
+  return $out.ToArray()
+}
+
+function Get-SettingListOn([string]$raw, [string]$name) {
+  foreach ($n in @(Split-SettingList $raw)) { if ([string]$n -ieq $name) { return $true } }
+  return $false
+}
+
+# Tick or untick one name, keeping the rest in place. Returns the new comma list, or $null when
+# the change would leave the list empty: an empty Plugins= means every plugin on disk, so an
+# empty result would read as "all of them" right after unticking the last one.
+function Get-SettingListToggled([string]$raw, [string]$name) {
+  $cur = @(Split-SettingList $raw)
+  $was = Get-SettingListOn $raw $name
+  $out = New-Object System.Collections.Generic.List[string]
+  foreach ($n in $cur) { if (-not ([string]$n -ieq $name)) { $out.Add([string]$n) } }
+  if (-not $was) { $out.Add($name) }
+  if ($out.Count -eq 0) { return $null }
+  return ($out -join ',')
 }
 
 # The value a list-type setting moves to: the next or previous name on disk, wrapping at the

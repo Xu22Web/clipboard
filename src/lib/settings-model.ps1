@@ -106,6 +106,9 @@ function Format-SettingText($schema, [string]$key, [string]$raw) {
     if ([string]$raw -eq '1') { return 'On' }
     return 'Off'
   }
+  # A list holds several names and the value column is one line wide, so it states the count
+  # instead: which names are ticked is what opening the list shows.
+  if ($kind -eq 'list') { return (Format-SettingListText $raw (Get-SettingChoices $schema $key)) }
   if ([string]$raw -eq '') {
     $hint = ''
     if ($null -ne $spec) { $hint = [string](Get-SchemaHint $schema $key) }
@@ -113,6 +116,37 @@ function Format-SettingText($schema, [string]$key, [string]$raw) {
     return '(empty)'
   }
   return [string]$raw
+}
+
+# The count a list setting shows: All, or how many of the names on offer are ticked.
+function Format-SettingListText([string]$raw, $choices) {
+  $all = @($choices)
+  $on = @(Split-SettingList $raw)
+  if ($all.Count -eq 0) { return ([string]$on.Count) + ' selected' }
+  $hit = 0
+  foreach ($n in $on) {
+    foreach ($c in $all) { if ([string]$c -ieq [string]$n) { $hit++; break } }
+  }
+  if ($hit -ge $all.Count) { return 'All' }
+  return ([string]$hit) + ' of ' + ([string]$all.Count)
+}
+
+# The keys the window answers, as Fluent chips: the same shape and the same order rules the
+# history panel's footer uses. Built from the row the keyboard is on, so a chip never promises
+# an action that row would refuse, and the key that leaves comes last because the footer
+# truncates from the right.
+function Get-SettingHints([string]$kind, [bool]$enabled) {
+  $pairs = New-Object System.Collections.Generic.List[object]
+  $pairs.Add(@('Up/Down', 'Move'))
+  if ($enabled) {
+    if ($kind -eq 'bool') { $pairs.Add(@('Enter', 'Toggle')) }
+    elseif ($kind -eq 'list' -or $kind -eq 'theme') { $pairs.Add(@('Enter', 'Choose')) }
+    else { $pairs.Add(@('Enter', 'Edit')) }
+    if ($kind -eq 'bool' -or $kind -eq 'number' -or $kind -eq 'theme') { $pairs.Add(@('Left/Right', 'Change')) }
+  }
+  $pairs.Add(@('Tab', 'Group'))
+  $pairs.Add(@('Esc', 'Close'))
+  return $pairs.ToArray()
 }
 
 # The sentence under the value: the schema's own Description, plus the range an integer
@@ -199,6 +233,8 @@ function Get-SettingsRows($schema, [string]$group) {
       Group   = $group
       Label   = Get-SettingLabel $key
       Kind    = Get-SettingKind $spec
+      # a list setting is a multi-select: several names, ticked in place, instead of one value
+      Multi   = ((Get-SettingKind $spec) -eq 'list')
       Raw     = $raw
       Text    = Format-SettingText $schema $key $raw
       Help    = Get-SettingHelp $schema $key

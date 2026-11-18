@@ -16,7 +16,9 @@ function Get-SettingsLayout([int]$w, [int]$h) {
   $pad = Px 14
   $sideW = Px 196
   $headH = Px 62
-  $footH = Px 44
+  # the panel's own footer height: the settings window puts the same key chips on the same line,
+  # so the two windows cannot end up with two different footer weights
+  $footH = Px 40
   return @{
     Width     = $w
     Height    = $h
@@ -30,6 +32,10 @@ function Get-SettingsLayout([int]$w, [int]$h) {
     # the lane on the right belongs to the scrollbar: a Fluent list never draws its rows to the
     # very edge and then has nowhere to put the thumb
     ListRight = $w - $pad - (Px 8)
+    # the lane the pointer can grab. The thumb is three pixels wide, a mouse is not, so the hit
+    # area is twelve and the thumb stays centred in it - the same arrangement the panel uses.
+    SbLeft    = $w - $pad - (Px 8)
+    SbLane    = Px 12
     ListTop   = $headH
     ListBottom = $h - $footH
     ToggleWidth = Px 40
@@ -46,46 +52,21 @@ function Get-SettingsVisibleRows($layout) {
   return $n
 }
 
-# The 1 px edge of the settings windows. Draw-PanelFrame lifts a faint separator until it reads
-# on a dark surface, which is right for the panel - it floats over other windows with no shadow -
-# but wrong here: a settings window sits beside real Fluent windows, whose edge is the theme's own
-# 8% separator, composited over the surface and nothing more. Same ring, no lift.
-function Draw-SettingsFrame($g, [int]$w, [int]$h, $color, [int]$radius) {
-  if ($null -eq $g -or $w -lt 6 -or $h -lt 6) { return }
-  $t = [Math]::Max(1, (Px 1))
-  if (($radius * 2) -gt ($w - 3) -or ($radius * 2) -gt ($h - 3)) { $radius = [int]([Math]::Min($w - 3, $h - 3) / 2) }
-  $ring = New-Object Drawing.Drawing2D.GraphicsPath
-  $brush = New-Object Drawing.SolidBrush $color
-  $was = $g.SmoothingMode
-  $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::None
-  $outer = $null
-  $inner = $null
-  try {
-    $ring.FillMode = [Drawing.Drawing2D.FillMode]::Alternate
-    $outer = New-RoundPath 0 0 $w $h $radius
-    $inner = New-RoundPath $t $t ($w - (2 * $t)) ($h - (2 * $t)) ([Math]::Max(1, $radius - $t))
-    $ring.AddPath($outer, $true)
-    $ring.AddPath($inner, $true)
-    $g.FillPath($brush, $ring)
-  } finally {
-    $g.SmoothingMode = $was
-    if ($null -ne $outer) { $outer.Dispose() }
-    if ($null -ne $inner) { $inner.Dispose() }
-    $ring.Dispose()
-    $brush.Dispose()
-  }
-}
+# The settings windows draw their edge with Draw-PanelFrame, the same call the history panel
+# makes: one silhouette, one weight, one lift for every custom-drawn window in the tool. The
+# lifted alpha is what makes an edge read at all on a dark surface, and a settings window sits
+# beside the panel often enough that two different edge weights would show.
 
 # The window: surface, frame, and the separator between the two columns. The header carries the
-# title and where the user is; the footer is drawn on top of the same surface with a separator
-# above it, the way the panel's own footer sits.
+# title and where the user is; the footer is the same surface with no line above it, because the
+# panel's footer has none either - the chips and their baseline are what mark it off.
 function Draw-SettingsChrome($g, $pal, $layout, [string]$title, [string]$subtitle) {
   if ($null -eq $g -or $null -eq $pal) { return }
   $w = [int]$layout.Width
   $h = [int]$layout.Height
   $bg = New-Object Drawing.SolidBrush $pal['Surface']
   try { $g.FillRectangle($bg, 0, 0, $w, $h) } finally { $bg.Dispose() }
-  Draw-SettingsFrame $g $w $h $pal['Border'] (Get-WindowRadius)
+  Draw-PanelFrame $g $w $h $pal['Border'] (Get-WindowRadius) $pal['Surface']
   $sf = New-PickerStringFormats
   $pad = [int]$layout.Pad
   $titleBox = New-Object Drawing.RectangleF -ArgumentList @([single]$pad, [single](Px 12), [single]($w - (2 * $pad)), [single](Px 26))
@@ -94,12 +75,11 @@ function Draw-SettingsChrome($g, $pal, $layout, [string]$title, [string]$subtitl
     $subBox = New-Object Drawing.RectangleF -ArgumentList @([single]$pad, [single](Px 36), [single]($w - (2 * $pad)), [single](Px 18))
     $g.DrawString($subtitle, $script:FSmall, (Get-Brush $pal['Faint']), $subBox, $sf.Ellipsis)
   }
-  # one hairline between the columns and one above the footer: Fluent separates by a line, not
-  # by a shadow
+  # one hairline between the columns: Fluent separates the navigation pane by a line, and the
+  # line stops at the footer so the two never meet in a corner
   $pen = New-Object Drawing.Pen $pal['Border']
   try {
     $g.DrawLine($pen, [int]$layout.SideWidth, [int]$layout.HeadHeight, [int]$layout.SideWidth, [int]$layout.ListBottom)
-    $g.DrawLine($pen, 0, [int]$layout.ListBottom, $w, [int]$layout.ListBottom)
   } finally { $pen.Dispose() }
 }
 
@@ -260,39 +240,104 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
   }
 }
 
-# The footer: what the keys do, or the reason the last edit was refused. An error is drawn in
-# Warn, which is the token the panel already uses for something the user has to read.
-function Draw-SettingsFooter($g, $pal, $layout, [string]$text, [bool]$isError) {
-  if ($null -eq $g -or -not $text) { return }
-  $sf = New-PickerStringFormats
-  $ink = $pal['Faint']
-  if ($isError) { $ink = $pal['Warn'] }
-  $box = New-Object Drawing.RectangleF -ArgumentList @(
-    [single]([int]$layout.Pad), [single]([int]$layout.ListBottom),
-    [single]([int]$layout.Width - (2 * [int]$layout.Pad)), [single]([int]$layout.FootHeight))
-  $g.DrawString($text, $script:FSmall, (Get-Brush $ink), $box, $sf.Ellipsis)
+# The tick of a multi-select list: a rounded square, filled with the accent and carrying a tick
+# in the surface colour when the name is on, and an empty outline when it is not. Drawn rather
+# than taken from a font, because the icon font is optional and a missing glyph would leave a
+# box where the state should be.
+function Draw-SettingsTick($g, $pal, [int]$x, [int]$y, [int]$size, [bool]$on) {
+  if ($null -eq $g -or $null -eq $pal -or $size -lt 6) { return }
+  $r = [Math]::Max(1, [int](Px 3))
+  if (-not $on) {
+    $pen = New-Object Drawing.Pen $pal['FieldBorder']
+    $path = New-RoundPath $x $y $size $size $r
+    try { $g.DrawPath($pen, $path) } finally { $path.Dispose(); $pen.Dispose() }
+    return
+  }
+  $brush = New-Object Drawing.SolidBrush $pal['Accent']
+  $path = New-RoundPath $x $y $size $size $r
+  try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
+  $pen = New-Object Drawing.Pen $pal['Surface'], ([Math]::Max(1, (Px 2)))
+  $pen.StartCap = [Drawing.Drawing2D.LineCap]::Round
+  $pen.EndCap = [Drawing.Drawing2D.LineCap]::Round
+  try {
+    $ax = $x + [int]($size * 0.26)
+    $bx = $x + [int]($size * 0.44)
+    $cx = $x + [int]($size * 0.76)
+    $ay = $y + [int]($size * 0.52)
+    $by = $y + [int]($size * 0.72)
+    $cy = $y + [int]($size * 0.30)
+    $g.DrawLine($pen, $ax, $ay, $bx, $by)
+    $g.DrawLine($pen, $bx, $by, $cx, $cy)
+  } finally { $pen.Dispose() }
 }
 
-# The scrollbar, when the group is longer than the list area. A Fluent list carries a thin
-# rounded thumb instead of a system bar: the track is barely there and the thumb is the only
-# thing with any weight, so the list still reads as one surface.
-function Draw-SettingsScrollbar($g, $pal, $layout, [int]$rows, [int]$visible, [int]$scroll) {
-  if ($null -eq $g -or $visible -le 0 -or $rows -le $visible) { return }
-  $trackW = Px 3
-  $x = [int]$layout.ListRight + (Px 3)
+# The footer is the panel's footer: key chips on the left saying what the keys do, one quiet
+# label at the right end, and a message in place of the chips while there is one. There is no
+# selected row to describe here - every row is its own control - so the left half answers the
+# only question a footer can answer in this window, which is what the keyboard is for.
+function Draw-SettingsFooter($g, $pal, $layout, $hints, [string]$rightText, [string]$msg, [bool]$isError) {
+  if ($null -eq $g -or $null -eq $pal) { return }
+  $sf = New-PickerStringFormats
+  $left = [int]$layout.Pad
+  $top = [int]$layout.ListBottom
+  $limit = [int]$layout.Width - [int]$layout.Pad
+  if ($rightText) {
+    $rightW = Px 150
+    $box = New-Object Drawing.RectangleF -ArgumentList @(
+      [single]($limit - $rightW), [single]$top, [single]$rightW, [single]([int]$layout.FootHeight))
+    $g.DrawString($rightText, $script:FSmall, (Get-Brush $pal['Faint']), $box, $sf.Right)
+    $limit = $limit - $rightW - (Px 8)
+  }
+  if ($msg) {
+    # a refusal is drawn in Warn, the token the panel already uses for something to read
+    $ink = $pal['Dim']
+    if ($isError) { $ink = $pal['Warn'] }
+    $box = New-Object Drawing.RectangleF -ArgumentList @(
+      [single]$left, [single]$top, [single]($limit - $left), [single]([int]$layout.FootHeight))
+    $g.DrawString($msg, $script:FSmall, (Get-Brush $ink), $box, $sf.Ellipsis)
+    return
+  }
+  $cy = $top + [int]([int]$layout.FootHeight / 2)
+  Draw-KeyChips $g $left $cy $hints $pal['Dim'] $pal['Faint'] $limit
+}
+
+# Where the thumb sits, as one calculation shared by the paint, the hit test and the drag: a
+# pointer that grabs the middle of the thumb must keep grabbing the middle of it.
+function Get-SettingsScrollThumb($layout, [int]$rows, [int]$visible, [int]$scroll) {
+  if ($null -eq $layout -or $visible -le 0 -or $rows -le $visible) { return $null }
   $top = [int]$layout.ListTop
-  $h = [int]$layout.ListBottom - $top
-  if ($h -lt (Px 20)) { return }
-  $trackBrush = New-Object Drawing.SolidBrush $pal['HoverBg']
-  $track = New-RoundPath $x $top $trackW $h ([int]($trackW / 2))
-  try { $g.FillPath($trackBrush, $track) } finally { $track.Dispose(); $trackBrush.Dispose() }
-  $thumbH = [int][Math]::Max((Px 24), [int]($h * ($visible / [double]$rows)))
-  if ($thumbH -gt $h) { $thumbH = $h }
+  $track = [int]$layout.ListBottom - $top
+  if ($track -lt (Px 24)) { return $null }
+  $len = [int][Math]::Max((Px 24), [int]($track * ($visible / [double]$rows)))
+  if ($len -gt $track) { $len = $track }
   $span = [Math]::Max(1, $rows - $visible)
-  $offset = [int][Math]::Round(($h - $thumbH) * ($scroll / [double]$span))
-  if ($offset -lt 0) { $offset = 0 }
-  if ($offset -gt ($h - $thumbH)) { $offset = $h - $thumbH }
-  $thumbBrush = New-Object Drawing.SolidBrush $pal['Faint']
-  $thumb = New-RoundPath $x ($top + $offset) $trackW $thumbH ([int]($trackW / 2))
-  try { $g.FillPath($thumbBrush, $thumb) } finally { $thumb.Dispose(); $thumbBrush.Dispose() }
+  $room = $track - $len
+  $off = [int][Math]::Round($room * ($scroll / [double]$span))
+  if ($off -lt 0) { $off = 0 }
+  if ($off -gt $room) { $off = $room }
+  return @{ Top = ($top + $off); Len = $len; TrackTop = $top; TrackLen = $track; Span = $span }
+}
+
+# the lane a pointer may grab, which is wider than the three pixels the thumb occupies
+function Get-SettingsScrollLane($layout) {
+  return @{
+    Left = [int]$layout.SbLeft; Width = [int]$layout.SbLane
+    Top = [int]$layout.ListTop; Height = ([int]$layout.ListBottom - [int]$layout.ListTop)
+  }
+}
+
+# The thumb, the way the panel draws its own: no visible track, a rounded thumb that widens and
+# darkens as the pointer comes near. $k is the hover ramp, 0 at rest and 1 under the pointer, so
+# the two windows move at the same speed.
+function Draw-SettingsScrollbar($g, $pal, $layout, $thumb, [double]$k) {
+  if ($null -eq $g -or $null -eq $pal -or $null -eq $thumb) { return }
+  if ($k -lt 0) { $k = 0 }
+  if ($k -gt 1) { $k = 1 }
+  $w = [int][Math]::Round((Px 3) + ($k * ((Px 5) - (Px 3))))
+  $alpha = [int][Math]::Round(110 + ($k * 80))
+  $x = [int]$layout.SbLeft + [int](([int]$layout.SbLane - $w) / 2)
+  $ink = $pal['Dim']
+  $brush = New-Object Drawing.SolidBrush ([Drawing.Color]::FromArgb($alpha, $ink.R, $ink.G, $ink.B))
+  $path = New-RoundPath $x ([int]$thumb.Top) $w ([int]$thumb.Len) ([Math]::Max(1, [int]($w / 2)))
+  try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
 }

@@ -37,8 +37,11 @@ function Show-Settings {
   $script:SetSel = 0
   $script:SetScroll = 0
   $script:SetHover = -1
-  $script:SetMsg = 'Up/Down select    Left/Right adjust    Enter edit    Tab group    Esc close'
+  # the footer starts on the keys, not on a sentence: the chips are what a footer is for here,
+  # and a message only takes their place while there is something to say
+  $script:SetMsg = ''
   $script:SetMsgErr = $false
+  $script:SetEditBad = $false
   $script:SetEditKey = ''
   $script:SetEditBox = $null
   $script:SetEditRect = $null
@@ -52,6 +55,11 @@ function Show-Settings {
   $script:SetDrop = $null
   $script:SetDropIndex = -1
   $script:SetDropHover = -1
+  $script:SetDropMulti = $false
+  # the scrollbar thumb: hover ramp, the pixel that was grabbed, and whether the drag is on
+  $script:SetSbK = 0.0
+  $script:SetSbHot = $false
+  $script:SetSbDrag = -1
 
   $w = [int](Px 780)
   $h = [int](Px 620)
@@ -124,10 +132,26 @@ function Show-Settings {
     $form.Invalidate()
   }
 
+  # the footer returns to the key chips by itself: a message answers one action, it is not a
+  # permanent line of the window
+  function Clear-Message {
+    $script:SetMsg = ''
+    $script:SetMsgErr = $false
+    if (-not $form.IsDisposed) { $form.Invalidate() }
+  }
+
   function Show-Message([string]$text, [bool]$bad) {
     $script:SetMsg = $text
     $script:SetMsgErr = $bad
     $form.Invalidate()
+    # a refusal is worth reading twice as long as a confirmation
+    $ms = [int]$script:Timing['FootInfo']
+    if ($bad) { $ms = [int]$script:Timing['FootWarn'] }
+    if ($null -ne $script:SetFootTimer -and $ms -gt 0) {
+      $script:SetFootTimer.Stop()
+      $script:SetFootTimer.Interval = $ms
+      $script:SetFootTimer.Start()
+    }
   }
 
   # one write, whatever produced it: the toggle, the step, the cycle or a typed value
@@ -155,6 +179,7 @@ function Show-Settings {
     $script:SetEditBox = $null
     $script:SetEditKey = ''
     $script:SetEditRect = $null
+    $script:SetEditBad = $false
     if ($null -ne $box) {
       try { $form.Controls.Remove($box); $box.Dispose() } catch { }
     }
@@ -171,7 +196,13 @@ function Show-Settings {
     $box = $script:SetEditBox
     if (-not $key -or $null -eq $box) { End-Edit $true; return }
     $r = Convert-SettingInput $schema $key ([string]$box.Text)
-    if (-not $r.Ok) { Show-Message ($key + ': ' + [string]$r.Error) $true; return }
+    if (-not $r.Ok) {
+      # the field is what the refusal is about, so the field is what turns red - not whatever
+      # message happened to be in the footer a moment ago
+      $script:SetEditBad = $true
+      Show-Message ($key + ': ' + [string]$r.Error) $true
+      return
+    }
     [void](Apply-Setting $key ([string]$r.Value) ('set to ' + [string]$r.Value))
     End-Edit $false
   }
@@ -186,6 +217,7 @@ function Show-Settings {
     $rect = Get-SettingEditRect $script:SetLayout $rowTop
     $script:SetEditKey = [string]$row.Key
     $script:SetEditRect = $rect
+    $script:SetEditBad = $false
     $box = New-SettingEditor $form $pal ([int]$rect.Left + (Px 4)) ([int]$rect.Top + (Px 4)) ([int]$rect.Width - (Px 8)) ([int]$rect.Height - (Px 8))
     $box.Text = Get-SettingEditSeed $schema ([string]$row.Key)
     $script:SetEditBox = $box
@@ -207,8 +239,39 @@ function Show-Settings {
     $script:SetDropIndex = -1
     $script:SetDropHover = -1
     if ($null -ne $dd) { try { $dd.Close(); $dd.Dispose() } catch { } }
+    # cleared after the window is gone: the last paint during Close still reads it
+    $script:SetDropMulti = $false
     try { $form.Activate() } catch { }
     $form.Invalidate()
+  }
+
+  # the value the open list is listing, read from the row itself: a tick has to show the setting
+  # as it is now, not as it was when the list opened
+  function Get-DropRaw {
+    $rows = $script:SetRows
+    if ($null -eq $rows) { return '' }
+    $i = [int]$script:SetSel
+    if ($i -lt 0 -or $i -ge @($rows).Count) { return '' }
+    return [string]$rows[$i].Raw
+  }
+
+  # Tick one name in the open list and write the whole list back. A setting that would be left
+  # empty is refused: an empty Plugins= means every plugin on disk, so unticking the last one
+  # would read as "all of them" the moment the window redrew.
+  function Toggle-DropItem([string]$name) {
+    $key = ''
+    if ($null -ne $script:SetDrop -and $null -ne $script:SetDrop.Tag) { $key = [string]$script:SetDrop.Tag.Key }
+    if (-not $key) { return }
+    $raw = Get-DropRaw
+    $next = Get-SettingListToggled $raw $name
+    if ($null -eq $next) {
+      Show-Message ('keep at least one: an empty ' + $key + ' means every one') $true
+      return
+    }
+    $what = 'unticked '
+    if (-not (Get-SettingListOn $raw $name)) { $what = 'ticked ' }
+    [void](Apply-Setting $key $next ($what + $name))
+    if ($null -ne $script:SetDrop) { try { $script:SetDrop.Invalidate() } catch { } }
   }
 
   function Open-Choices {
@@ -220,10 +283,19 @@ function Show-Settings {
     if ($choices.Count -eq 0) { Begin-Edit; return }
     if ($null -ne $script:SetDrop) { Close-Choices; return }
     $current = [string]$row.Raw
+    $multi = $false
+    if ($row.ContainsKey('Multi')) { $multi = [bool]$row.Multi }
     $rowTop = [int]$script:SetLayout.ListTop + (($script:SetSel - $script:SetScroll) * [int]$script:SetLayout.RowHeight)
     $rect = Get-SettingDropRect $script:SetLayout $rowTop @($choices).Count
+    $script:SetDropMulti = $multi
     $script:SetDropIndex = -1
-    for ($i = 0; $i -lt $choices.Count; $i++) { if ([string]$choices[$i] -eq $current) { $script:SetDropIndex = $i } }
+    if (-not $multi) {
+      for ($i = 0; $i -lt $choices.Count; $i++) { if ([string]$choices[$i] -eq $current) { $script:SetDropIndex = $i } }
+    } else {
+      # a multi-select has no current row: the ticks say what is on, so the keyboard starts on
+      # the first name and pressing Space walks down the list on its own
+      $script:SetDropIndex = 0
+    }
     $script:SetDropHover = -1
     $dd = New-Object Cb.FluentForm
     $dd.Activates = $true
@@ -248,25 +320,36 @@ function Show-Settings {
         $ch = [int]$s.ClientSize.Height
         $bg = New-Object Drawing.SolidBrush $p['Field']
         try { $g.FillRectangle($bg, 0, 0, $cw, $ch) } finally { $bg.Dispose() }
-        Draw-SettingsFrame $g $cw $ch $p['Border'] (Px 6)
+        # the same frame call and the same radius the window uses: the region clips at
+        # Get-WindowRadius, so a ring drawn on any other radius is cut where it turns
+        Draw-PanelFrame $g $cw $ch $p['Border'] (Get-WindowRadius) $p['Field']
         $sf = New-PickerStringFormats
         $list = @($s.Tag.Choices)
         $itemH = Px 30
+        $multi = [bool]$script:SetDropMulti
+        $raw = Get-DropRaw
         for ($i = 0; $i -lt $list.Count; $i++) {
           $top = [int](Px 4) + ($i * $itemH)
           $isCur = ($i -eq $script:SetDropIndex)
           $isHot = ($i -eq $script:SetDropHover)
-          if ($isHot -or $isCur) {
+          $shown = (-not $multi) -and $isCur
+          if ($isHot -or $shown) {
             $tint = $p['HoverBg']
-            if ($isCur) { $tint = $p['SelBg'] }
+            if ($shown) { $tint = $p['SelBg'] }
             $b = New-Object Drawing.SolidBrush $tint
             $path = New-RoundPath (Px 4) $top ($cw - (2 * (Px 4))) ($itemH - (Px 2)) (Px 4)
             try { $g.FillPath($b, $path) } finally { $path.Dispose(); $b.Dispose() }
           }
           $ink = $p['Dim']
-          if ($isCur -or $isHot) { $ink = $p['Text'] }
+          if ($shown -or $isHot) { $ink = $p['Text'] }
+          $textLeft = Px 12
+          if ($multi) {
+            $textLeft = Px 34
+            $ticked = Get-SettingListOn $raw ([string]$list[$i])
+            Draw-SettingsTick $g $p (Px 12) ($top + [int](($itemH - (Px 16)) / 2)) (Px 16) $ticked
+          }
           $tb = New-Object Drawing.RectangleF -ArgumentList @(
-            [single](Px 12), [single]$top, [single]($cw - (Px 24)), [single]($itemH - (Px 2)))
+            [single]$textLeft, [single]$top, [single]($cw - $textLeft - (Px 12)), [single]($itemH - (Px 2)))
           $g.DrawString([string]$list[$i], $script:FBody, (Get-Brush $ink), $tb, $sf.Ellipsis)
         }
       } catch { Write-Log ('settings drop paint: ' + $_.Exception.Message) }
@@ -274,23 +357,39 @@ function Show-Settings {
     $dd.Add_MouseMove({
       param($s, $e)
       $i = [int][Math]::Floor(($e.Y - (Px 4)) / (Px 30))
-      if ($i -ge @($s.Tag.Choices).Count) { $i = -1 }
+      if ($i -ge @($s.Tag.Choices).Count -or $i -lt 0) { $i = -1 }
       if ($i -ne $script:SetDropHover) { $script:SetDropHover = $i; $s.Invalidate() }
     })
     $dd.Add_MouseDown({
       param($s, $e)
       $i = [int][Math]::Floor(($e.Y - (Px 4)) / (Px 30))
       $list = @($s.Tag.Choices)
-      if ($i -ge 0 -and $i -lt $list.Count) {
-        [void](Apply-Setting ([string]$s.Tag.Key) ([string]$list[$i]) ('set to ' + [string]$list[$i]))
+      if ($i -lt 0 -or $i -ge $list.Count) { return }
+      if ([bool]$script:SetDropMulti) {
+        # a tick is not a choice, so the list stays open for the next one
+        $script:SetDropIndex = $i
+        Toggle-DropItem ([string]$list[$i])
+        return
       }
+      [void](Apply-Setting ([string]$s.Tag.Key) ([string]$list[$i]) ('set to ' + [string]$list[$i]))
       Close-Choices
     })
     $dd.Add_KeyDown({
       param($s, $e)
       $list = @($s.Tag.Choices)
+      $multi = [bool]$script:SetDropMulti
       if ($e.KeyCode -eq [Windows.Forms.Keys]::Escape) { Close-Choices }
-      elseif ($e.KeyCode -eq [Windows.Forms.Keys]::Enter) {
+      elseif ($e.KeyCode -eq [Windows.Forms.Keys]::Enter -or $e.KeyCode -eq [Windows.Forms.Keys]::Space) {
+        if ($multi) {
+          # the keyboard ticks where it stands and moves on, the way a checked list behaves
+          if ($script:SetDropIndex -ge 0 -and $script:SetDropIndex -lt $list.Count) {
+            Toggle-DropItem ([string]$list[$script:SetDropIndex])
+            if ($script:SetDropIndex -lt ($list.Count - 1)) { $script:SetDropIndex++ }
+          }
+          $s.Invalidate()
+          return
+        }
+        if ($e.KeyCode -eq [Windows.Forms.Keys]::Space) { return }
         if ($script:SetDropIndex -ge 0 -and $script:SetDropIndex -lt $list.Count) {
           [void](Apply-Setting ([string]$s.Tag.Key) ([string]$list[$script:SetDropIndex]) ('set to ' + [string]$list[$script:SetDropIndex]))
         }
@@ -372,7 +471,7 @@ function Show-Settings {
       $rows = $script:SetRows
       $layout = $script:SetLayout
       $pal = $script:SetPal
-      Draw-SettingsChrome $g $pal $layout 'Settings' ([string]$groups[$script:SetGroup] + '   ' + [string](@($rows).Count) + ' items')
+      Draw-SettingsChrome $g $pal $layout 'Settings' ([string]$groups[$script:SetGroup])
       Draw-SettingsSide $g $pal $layout $groups $script:SetGroup
       $vis = Get-SettingsVisibleRows $layout
       $x = [int]$layout.ListLeft
@@ -390,12 +489,22 @@ function Show-Settings {
         }
         Draw-SettingsRow $g $pal $layout $row $x $rowTop $width ($idx -eq $script:SetHover) $k
       }
-      Draw-SettingsScrollbar $g $pal $layout @($rows).Count $vis $script:SetScroll
+      $thumb = Get-SettingsScrollThumb $layout @($rows).Count $vis $script:SetScroll
+      Draw-SettingsScrollbar $g $pal $layout $thumb $script:SetSbK
       if ($script:SetEditKey -and $null -ne $script:SetEditRect) {
         $r = $script:SetEditRect
-        Draw-SettingEditField $g $pal ([int]$r.Left) ([int]$r.Top) ([int]$r.Width) ([int]$r.Height) $script:SetMsgErr
+        Draw-SettingEditField $g $pal ([int]$r.Left) ([int]$r.Top) ([int]$r.Width) ([int]$r.Height) $script:SetEditBad
       }
-      Draw-SettingsFooter $g $pal $layout $script:SetMsg $script:SetMsgErr
+      # the footer: the keys for the row the keyboard is on, the count and the version at the
+      # right end, a message in place of the chips while there is one
+      $hints = @()
+      $cur = Get-CurrentRow
+      if ($null -ne $cur) { $hints = @(Get-SettingHints ([string]$cur.Kind) (Test-RowEnabled $cur)) }
+      $count = @($rows).Count
+      $right = ([string]$count) + ' item'
+      if ($count -ne 1) { $right = ([string]$count) + ' items' }
+      $right = $right + '   v' + [string]$script:Version
+      Draw-SettingsFooter $g $pal $layout $hints $right $script:SetMsg $script:SetMsgErr
     } catch {
       Write-Log ('settings paint: ' + $_.Exception.Message + ' @ ' + $_.ScriptStackTrace)
     }
@@ -464,10 +573,40 @@ function Show-Settings {
     if ($next -ne $script:SetScroll) { $script:SetScroll = $next; $form.Invalidate() }
   })
 
+  # the thumb lands on the row the drag aims at: the scroll position is a row index, so the
+  # pixel is turned back into one through the same span the paint used
+  function Scroll-ToThumb([int]$thumbTop) {
+    $thumb = Get-SettingsScrollThumb $script:SetLayout @($script:SetRows).Count (Get-SettingsVisibleRows $script:SetLayout) $script:SetScroll
+    if ($null -eq $thumb) { return }
+    $room = [int]$thumb.TrackLen - [int]$thumb.Len
+    if ($room -le 0) { return }
+    $v = [int][Math]::Round((($thumbTop - [int]$thumb.TrackTop) * [int]$thumb.Span) / [double]$room)
+    if ($v -lt 0) { $v = 0 }
+    if ($v -gt [int]$thumb.Span) { $v = [int]$thumb.Span }
+    if ($v -ne $script:SetScroll) { $script:SetScroll = $v; $form.Invalidate() }
+  }
+
   $form.Add_MouseMove({
     param($s, $e)
+    if ($script:SetSbDrag -ge 0) { Scroll-ToThumb ($e.Y - $script:SetSbDrag); return }
+    $lane = Get-SettingsScrollLane $script:SetLayout
+    $hot = ($e.X -ge [int]$lane.Left -and $e.X -le ([int]$lane.Left + [int]$lane.Width) -and
+      $e.Y -ge [int]$lane.Top -and $e.Y -le ([int]$lane.Top + [int]$lane.Height))
+    if ($hot -ne $script:SetSbHot) {
+      # the thumb widens and darkens as the pointer arrives, the way the panel's own does
+      $script:SetSbHot = $hot
+      $form.Invalidate()
+    }
     $idx = Get-SettingsRowAt $script:SetLayout @($script:SetRows).Count $script:SetScroll $e.X $e.Y
     if ($idx -ne $script:SetHover) { $script:SetHover = $idx; $form.Invalidate() }
+  })
+
+  $form.Add_MouseUp({
+    param($s, $e)
+    if ($script:SetSbDrag -lt 0) { return }
+    $script:SetSbDrag = -1
+    $form.Capture = $false
+    $form.Invalidate()
   })
 
   $form.Add_MouseDown({
@@ -481,6 +620,27 @@ function Show-Settings {
       $inside = ($e.X -ge $box.Left -and $e.X -le ($box.Left + $box.Width) -and
         $e.Y -ge $box.Top -and $e.Y -le ($box.Top + $box.Height))
       if (-not $inside) { Complete-Edit }
+      return
+    }
+    # the scrollbar lane comes before the rows: it sits beside them, and a press on the thumb
+    # starts a drag while a press on the track pages toward the click
+    $lane = Get-SettingsScrollLane $script:SetLayout
+    if ($e.X -ge [int]$lane.Left -and $e.X -le ([int]$lane.Left + [int]$lane.Width) -and
+      $e.Y -ge [int]$lane.Top -and $e.Y -le ([int]$lane.Top + [int]$lane.Height)) {
+      $thumb = Get-SettingsScrollThumb $script:SetLayout @($script:SetRows).Count (Get-SettingsVisibleRows $script:SetLayout) $script:SetScroll
+      if ($null -eq $thumb) { return }
+      if ($e.Y -ge [int]$thumb.Top -and $e.Y -le ([int]$thumb.Top + [int]$thumb.Len)) {
+        $script:SetSbDrag = $e.Y - [int]$thumb.Top
+        $form.Capture = $true
+      } else {
+        $page = Get-SettingsVisibleRows $script:SetLayout
+        $to = $script:SetScroll - $page
+        if ($e.Y -gt [int]$thumb.Top) { $to = $script:SetScroll + $page }
+        $maxScroll = [Math]::Max(0, @($script:SetRows).Count - $page)
+        if ($to -lt 0) { $to = 0 }
+        if ($to -gt $maxScroll) { $to = $maxScroll }
+        if ($to -ne $script:SetScroll) { $script:SetScroll = $to; $form.Invalidate() }
+      }
       return
     }
     # the left column is a set of buttons, not a list to scroll
@@ -515,7 +675,11 @@ function Show-Settings {
 
   # A switch that flips in one frame reads as a jump. One timer eases every switch in flight and
   # asks for a repaint only while something moves, so a window sitting still costs nothing;
-  # Animations=0 makes the step 1.0, which lands on the target in a single frame.
+  # Animations=0 makes the step 1.0, which lands on the target in a single frame. The scrollbar
+  # ramp rides the same timer, at the same step the panel uses for its own thumb.
+  $script:SetFootTimer = New-Object Windows.Forms.Timer
+  $script:SetFootTimer.Add_Tick({ $script:SetFootTimer.Stop(); Clear-Message })
+
   $animTimer = New-Object Windows.Forms.Timer
   $animTimer.Interval = 15
   $animTimer.Add_Tick({
@@ -530,6 +694,16 @@ function Show-Settings {
       $next = $now + (($want - $now) * $step)
       if ([Math]::Abs($want - $next) -lt 0.02) { $next = $want }
       $script:SetToggleK[$name] = $next
+      $moved = $true
+    }
+    # the scrollbar ramp: 1 under the pointer or while dragging, 0 otherwise
+    $sbWant = 0.0
+    if ($script:SetSbHot -or $script:SetSbDrag -ge 0) { $sbWant = 1.0 }
+    $sbNow = [double]$script:SetSbK
+    if ([Math]::Abs($sbWant - $sbNow) -gt 0.01) {
+      $sbNext = $sbNow + (($sbWant - $sbNow) * $step)
+      if ([Math]::Abs($sbWant - $sbNext) -lt 0.02) { $sbNext = $sbWant }
+      $script:SetSbK = $sbNext
       $moved = $true
     }
     if ($moved) { $form.Invalidate() }
@@ -554,6 +728,7 @@ function Show-Settings {
     [void]$form.ShowDialog()
   } finally {
     try { $animTimer.Stop(); $animTimer.Dispose() } catch { }
+    try { $script:SetFootTimer.Stop(); $script:SetFootTimer.Dispose() } catch { }
     Close-Choices
     End-Edit $true
     try { $form.Dispose() } catch { }
