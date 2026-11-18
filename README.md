@@ -99,22 +99,23 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 ### 设置窗口
 
-`clipboard settings` 打开设置窗口（托盘右键菜单的 `Settings...` 在常驻进程内直接打开，省一次进程启动）。窗口只用指针操作，不设快捷键：左侧点选分组，右侧每行就是一个控件；右上角 `✕` 关闭，`Esc` 同样关闭。页脚是状态行：最后一次写入的结果，右侧是该组项数与版本号，约 2 秒（错误约 2.6 秒）后自动清空。
+`clipboard settings` 打开设置窗口（托盘右键菜单的 `Settings...` 在常驻进程内直接打开，省一次进程启动）。窗口只用指针操作，不设快捷键：左侧点选分组，右侧每行就是一个控件；右上角 `✕` 关闭，`Esc` 同样关闭。页脚是操作栏：左侧是最后一次操作的结果，右侧是项数、版本号与三个按钮，消息约 2 秒（错误约 2.6 秒）后自动清空。
 
 | 行 | 点击后 |
 |---|---|
 | 开关行 | 就地翻转，带过渡动画（受 `Animations` 控制） |
 | 数值 / 文本行 | 控件列出现输入框；`Enter` 或点窗口别处提交，校验失败保持打开并说明原因 |
-| `Theme` / `PasteKeys` | 展开列表，点一项即写入 |
-| `Plugins` | 展开多选列表，勾选即写入并保持打开，值为 `All` 或 `n of m`；全不选会被拒绝，因为空的 `Plugins=` 表示加载全部插件 |
-| `Hotkey` | 进入录制：按下想要的组合键即写入，`Esc` 取消，再点该行也取消 |
+| `Theme` / `PasteKeys` | 展开列表，点一项即暂存 |
+| `Plugins` | 展开多选列表，勾选即暂存并保持打开，值为 `All` 或 `n of m`；全不选会被拒绝，因为空的 `Plugins=` 表示加载全部插件 |
+| `Hotkey` | 进入录制：按下想要的组合键即暂存，`Esc` 取消，再点该行也取消 |
 | `DataDir` | 只读：显示当前数据目录，点击只给出原因（改它要 `clipboard config set DataDir`，否则会把历史拆成两份） |
+| `Autostart` / `DesktopShortcut` | 可翻转，但只由 `install` 生效：说明行以 `Takes effect on the next install.` 开头，改它不触发常驻进程重启 |
 
-快捷键按 Win11 键帽显示（`Ctrl` `Alt` `V` 各一枚），修饰键顺序统一为 Win、Ctrl、Alt、Shift。录制中显示已按住的修饰键和一个强调色待定键帽；没有修饰键的裸键只接受 `F1`–`F24`，其余按键与组合会被拒绝并说明原因。`HotkeyFallbacks` 是一串组合键，显示首个组合键与其余数量（`+n`），点击仍按文本编辑。
+快捷键按 Win11 键帽显示（`Ctrl` `Alt` `V` 各一枚），修饰键顺序统一为 Win、Ctrl、Alt、Shift。录制中显示已按住的修饰键和一个强调色待定键帽；没有修饰键的裸键只接受 `F1`–`F24`，其余按键与组合会被拒绝并说明原因。`HotkeyFallbacks` 是一串组合键，显示首个组合键与其余数量（`+n`），点击按文本编辑：`,` 或 `;` 分隔，写入时逐个校验，无法识别的组合键会被拒绝并指出是哪一段。
 
 滚轮滚动列表，不改变任何值；右侧滚动条指针靠近时加宽加深，可拖动定位，点击滑块以外的轨道翻页。
 
-改动即时写入 `clipboard.ini` 并应用；常驻进程在窗口关闭时重启一次，而不是每改一项重启。只有在另一项开启时生效的设置（如 `WindowLeft` / `WindowTop` 需要 `SaveWindowPos`，`MaxImageBytes` 需要 `CaptureImages`，`Paste*` 需要 `NoPaste=0`，`CompactWidth` / `CompactRows` 需要 `CompactMode`）在条件不满足时变灰、拒绝编辑并说明原因。显示名由键名派生（`MaxTextTotalBytes` → `Max text total bytes`），说明与取值范围取自 schema 的 `Description` / `Minimum` / `Maximum`，窗口不另存一份。日志 `settings: open … ms` 记录打开耗时及其分段。
+改动先进暂存表，不立即写盘：行显示待写入的值并在左侧带一个强调色圆点，受它控制的设置立刻变灰。右下的三个按钮在没有暂存值时禁用：`Restore defaults` 把每个键改为 schema 声明的默认值（只读的 `DataDir` 除外），`Discard` 丢弃暂存值，`Save` 一次写入 `clipboard.ini` 并应用。常驻进程在窗口关闭时重启一次，而不是每改一项或每次保存就重启；带未保存改动关闭窗口会先确认，取消则窗口保持打开、暂存值保留。只有在另一项开启时生效的设置（如 `WindowLeft` / `WindowTop` 需要 `SaveWindowPos`，`MaxImageBytes` 需要 `CaptureImages`，`Paste*` 需要 `NoPaste=0`，`CompactWidth` / `CompactRows` 需要 `CompactMode`）在条件不满足时变灰、拒绝编辑并说明原因。显示名由键名派生（`MaxTextTotalBytes` → `Max text total bytes`），说明与取值范围取自 schema 的 `Description` / `Minimum` / `Maximum`，窗口不另存一份。日志 `settings: open … ms` 记录打开耗时及其分段。
 
 ### 导出、导入与备份
 
@@ -321,12 +322,13 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 | 字段 | 说明 |
 |---|---|
-| `Type` | `string` / `int` / `number` / `bool` / `list` / `enum` / `regex` / `color` / `hotkey` / `theme` / `apprule` / `any` |
+| `Type` | `string` / `int` / `number` / `bool` / `list` / `enum` / `regex` / `color` / `hotkey` / `hotkeys` / `theme` / `apprule` / `any`；`hotkeys` 是 `,` 或 `;` 分隔的组合键链，逐个校验 |
 | `Default` | 默认写法；`config init` 写它，读取失败时也回退到它 |
 | `Minimum` / `Maximum` | `int` / `number` 的上下界 |
 | `Enum` | `enum` 的合法值；`list` 时是允许的 token |
 | `Suggest` | 设置窗口为该键提供的候选值（点开列表的快捷方式）；不限制可填内容 |
 | `ReadOnly` | 理由字符串：设置窗口只展示该值、拒绝编辑（用于会移动数据目录的 `DataDir`） |
+| `InstallOnly` | `true` = 只有 `install` 会按该值建/删快捷方式；写入后不重启常驻进程，设置窗口在说明行注明生效时机（`Autostart` / `DesktopShortcut`） |
 | `Pattern` | `list` 中单个 token 的形状（默认字母、数字、`_ . -`） |
 | `Description` | 一句话说明，写成 `clipboard.ini` 中该键上方的注释（基础键与插件键都是） |
 | `Ref` | 值驱动的变量（`[ref]$script:X`） |

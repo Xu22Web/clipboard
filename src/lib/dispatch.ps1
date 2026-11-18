@@ -276,9 +276,8 @@ switch ($Command.ToLower()) {
         Write-Host 'usage: clipboard config set <key> <value>'
       } else {
         if (Set-ConfigKey $Sub $Arg) {
-          # the two install keys only matter to `install`, so nothing has to reload
-          $installOnly = @('autostart', 'desktopshortcut') -contains ([string]$Sub).ToLower()
-          if (-not $installOnly) { Restart-ResidentIfRunning }
+          # an install-only key (the two shortcuts) only matters to `install`, so nothing reloads
+          if (-not (Test-SchemaInstallOnly $script:SettingsSchema $Sub)) { Restart-ResidentIfRunning }
         }
       }
     }

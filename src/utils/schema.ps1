@@ -17,7 +17,7 @@
 # Property spec fields, JSON Schema names where one exists:
 #
 #   Type        required: string | int | number | bool | list | enum | regex | color |
-#               hotkey | theme | apprule | any
+#               hotkey | hotkeys | theme | apprule | any
 #   Default     the value the file is written with; every reader falls back to it
 #   Hint        what an empty value means, shown by `config` in place of a blank
 #   Minimum     int / number lower bound
@@ -30,6 +30,8 @@
 #   ReadOnly    a reason: the value is shown in the window but not edited there (the store
 #               location, which a running resident would split in two)
 #   Pick        the dialog the settings window opens instead of typing: 'folder'
+#   InstallOnly only `install` acts on the value (creating or removing a shortcut): writing
+#               it is fine, but no reload can make it take effect, so the window says so
 #   Ref         the variable the value drives ([ref]$script:X); Apply-Config writes through
 #               it, which is why it is a reference and not a name - the minifier renames
 #               script variables, a name string would survive and address nothing
@@ -104,7 +106,7 @@ function Test-SchemaFormat($schema) {
         if ($spec -isnot [System.Collections.IDictionary]) { $bad.Add($k + ': not a dictionary'); continue }
         if (-not $spec.Contains('Type')) { $bad.Add($k + ': missing Type'); continue }
         $t = [string]$spec['Type']
-        if (@('string', 'int', 'number', 'bool', 'list', 'enum', 'regex', 'color', 'hotkey', 'theme', 'apprule', 'any') -notcontains $t) {
+        if (@('string', 'int', 'number', 'bool', 'list', 'enum', 'regex', 'color', 'hotkey', 'hotkeys', 'theme', 'apprule', 'any') -notcontains $t) {
           $bad.Add($k + ': unknown Type ' + $t)
         }
         if ($t -eq 'enum' -and -not $spec.Contains('Enum')) { $bad.Add($k + ': enum needs Enum') }
@@ -170,6 +172,15 @@ function Get-SchemaHint($schema, [string]$key) {
   $spec = Get-SchemaProperty $schema $key
   if ($null -eq $spec -or -not $spec.Contains('Hint')) { return '' }
   return [string]$spec['Hint']
+}
+
+# Whether only `install` acts on this key. Such a value is written like any other, but no
+# reload makes it take effect - the shortcut it controls is created or removed by install - so
+# a writer has to skip the reload and the settings window has to say what to do instead.
+function Test-SchemaInstallOnly($schema, [string]$key) {
+  $spec = Get-SchemaProperty $schema $key
+  if ($null -eq $spec -or -not $spec.Contains('InstallOnly')) { return $false }
+  return [bool]$spec['InstallOnly']
 }
 
 # Validate and normalise one raw value. Never throws; the answer is
@@ -252,6 +263,19 @@ function Convert-SchemaValue($schema, [string]$key, [string]$raw) {
   if ($type -eq 'hotkey') {
     if ((Parse-Hotkey $v).Vk -eq 0) { return @{ Ok = $false; Value = ''; Error = 'unknown key name' } }
     return @{ Ok = $true; Value = $v; Error = '' }
+  }
+  if ($type -eq 'hotkeys') {
+    # a chain is tried in order, so every chord in it has to be one the parser can register;
+    # the answer names the one that is not, because "unknown key" in a list of four says nothing
+    $chain = New-Object System.Collections.Generic.List[string]
+    foreach ($c in @($v -split '[,;]')) {
+      $chord = ([string]$c).Trim()
+      if (-not $chord) { continue }
+      if ((Parse-Hotkey $chord).Vk -eq 0) { return @{ Ok = $false; Value = ''; Error = 'unknown key name in ' + $chord } }
+      $chain.Add($chord)
+    }
+    if ($chain.Count -eq 0) { return @{ Ok = $false; Value = ''; Error = 'expected at least one chord' } }
+    return @{ Ok = $true; Value = ($chain -join ', '); Error = '' }
   }
   if ($type -eq 'apprule') {
     return (Test-AppRuleText $v)

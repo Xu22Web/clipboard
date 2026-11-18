@@ -7,26 +7,17 @@
 # Nothing here draws. Every answer is a value, a normalised file spelling, or a sentence the
 # footer can show, which is what makes these testable without a window.
 
-# The value a switch click produces: a boolean flips, everything else keeps its value and is
-# typed or picked.
-function Get-SettingToggle($schema, [string]$key) {
-  $spec = Get-SchemaProperty $schema $key
-  if ($null -eq $spec) { return $null }
-  if ((Get-SettingKind $spec) -ne 'bool') { return $null }
-  $raw = Get-SettingRaw $schema $key
-  if ([string]$raw -eq '1') { return '0' }
-  return '1'
-}
-
 # The chords a row shows as key caps: one for a hotkey, one per comma separated entry for the
 # chain, none for anything else. A shortcut is read key by key, so the row needs the parts and
 # not one string.
 function Get-SettingChordList($schema, [string]$key, [string]$raw) {
   $spec = Get-SchemaProperty $schema $key
   if ($null -eq $spec) { return @() }
-  if ((Get-SettingKind $spec) -ne 'hotkey' -and $key -cne 'HotkeyFallbacks') { return @() }
+  if ((Get-SettingKind $spec) -ne 'hotkey') { return @() }
+  # the same separators the resident splits a chain on, so a file written by hand with ';' still
+  # shows one cap per chord instead of one cap holding both
   $out = @()
-  foreach ($c in @(([string]$raw) -split ',')) {
+  foreach ($c in @(([string]$raw) -split '[,;]')) {
     $t = ([string]$c).Trim()
     if ($t) { $out += $t }
   }
@@ -214,10 +205,4 @@ function Get-SettingKindName([string]$kind) {
     'rules' { return 'rules' }
     default { return 'text' }
   }
-}
-
-# The value shown while it is being edited: a boolean opens the editor on its file spelling,
-# because that is what the writer takes back.
-function Get-SettingEditText($schema, [string]$key) {
-  return (Get-SettingRaw $schema $key)
 }

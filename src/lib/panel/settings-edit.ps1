@@ -6,34 +6,68 @@
 # window stays custom drawn.
 #
 # Writing goes through Set-IniKey and Apply-Config, which is exactly what `config set` does,
-# so a value typed here and a value typed on the command line cannot end up in different
-# places. The difference is the resident: a command restarts it on the spot, while a window
-# would restart it on every keystroke, so this file marks the settings dirty and the window
-# asks for one reload when it closes.
+# so a value saved here and a value typed on the command line cannot end up in different
+# places. The difference is when: the window stages every change and writes the whole set when
+# Save is pressed, while a command restarts the resident on the spot. Nothing here writes a
+# value the schema has not already accepted.
 
-# one value written back, or the reason it was not
-function Set-SettingValue([string]$key, [string]$value) {
-  if (-not (Get-Command Set-IniKey -ErrorAction SilentlyContinue)) { return @{ Ok = $false; Error = 'the settings file is not loaded' } }
-  if (-not (Set-IniKey $key $value)) { return @{ Ok = $false; Error = 'could not write clipboard.ini' } }
-  try { Apply-Config } catch { return @{ Ok = $false; Error = [string]$_.Exception.Message } }
-  $installOnly = @('autostart', 'desktopshortcut') -contains ([string]$key).ToLower()
-  if (-not $installOnly) { $script:SettingsDirty = $true }
-  return @{ Ok = $true; Error = '' }
+# The staged set, written in one pass: every key first, one Apply-Config after them, so the file
+# and the running settings agree whether one value or twenty were staged. An install-only key
+# still needs no reload, so on its own it does not ask the window for one on close.
+function Save-SettingsValues($pending) {
+  if ($null -eq $pending -or $pending.Count -eq 0) { return @{ Ok = $true; Error = ''; Count = 0 } }
+  if (-not (Get-Command Set-IniKey -ErrorAction SilentlyContinue)) { return @{ Ok = $false; Error = 'the settings file is not loaded'; Count = 0 } }
+  $written = 0
+  $reload = $false
+  foreach ($k in @($pending.Keys)) {
+    $key = [string]$k
+    if (-not (Set-IniKey $key ([string]$pending[$k]))) {
+      return @{ Ok = $false; Error = 'could not write ' + $key + ' to clipboard.ini'; Count = $written }
+    }
+    $written++
+    if (-not (Test-SchemaInstallOnly $script:SettingsSchema $key)) { $reload = $true }
+  }
+  try { Apply-Config } catch { return @{ Ok = $false; Error = [string]$_.Exception.Message; Count = $written } }
+  if ($reload) { $script:SettingsDirty = $true }
+  return @{ Ok = $true; Error = ''; Count = $written }
 }
 
-# The text a row opens its editor with. A number opens in the unit the row shows, because that is
+# The staged set Restore defaults produces: every key whose declared default differs from what it
+# holds, the staged value counted as what it holds. A read-only key is left out - DataDir's
+# default is a location, and the window has no business moving the store.
+function Get-SettingDefaultStaging($schema, $pending = $null) {
+  $out = @{}
+  $props = Get-SchemaProperties $schema
+  if ($null -eq $props) { return $out }
+  foreach ($k in @($props.Keys)) {
+    $key = [string]$k
+    $spec = $props[$k]
+    if ($spec -isnot [System.Collections.IDictionary]) { continue }
+    if ($spec.Contains('ReadOnly')) { continue }
+    $raw = Get-SettingRaw $schema $key
+    if ($null -ne $pending -and $pending.Contains($key)) { $raw = [string]$pending[$key] }
+    $r = Convert-SettingInput $schema $key (Get-SchemaDefault $schema $key)
+    if (-not $r.Ok) { continue }
+    $want = [string]$r.Value
+    if ($want -eq [string]$raw) { continue }
+    $out[$key] = $want
+  }
+  return $out
+}
+
+# The text a row opens its editor with, seeded from the value the row is showing - which is the
+# staged one while changes are waiting. A number opens in the unit the row shows, because that is
 # what the user just read; a value that is currently empty opens with its default spelled out,
 # because an empty box says nothing about what is allowed.
-function Get-SettingEditSeed($schema, [string]$key) {
+function Get-SettingEditSeed($schema, [string]$key, [string]$raw = '') {
   $spec = Get-SchemaProperty $schema $key
   if ($null -ne $spec -and (Get-SettingKind $spec) -eq 'number') {
-    $view = Get-SettingNumberView $schema $key (Get-SettingEditText $schema $key)
+    $view = Get-SettingNumberView $schema $key $raw
     if ([string]$view.Number -ne '') { return [string]$view.Number }
     $def = [string](Get-SchemaDefault $schema $key)
     if ($def -ne '') { return [string](Get-SettingNumberView $schema $key $def).Number }
     return ''
   }
-  $raw = Get-SettingEditText $schema $key
   if ([string]$raw -ne '') { return [string]$raw }
   return [string](Get-SchemaDefault $schema $key)
 }

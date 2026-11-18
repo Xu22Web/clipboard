@@ -5,10 +5,11 @@
 # do - it never takes the caret, never pastes, and it stays open when it loses the foreground,
 # because a settings window is a place the user returns to rather than a flyout.
 #
-# Values are written the moment they change (lib/panel/settings-edit.ps1 writes through
-# Set-IniKey and Apply-Config, exactly what `config set` does). The resident process is
-# reloaded once, when the window closes: restarting it on every keystroke would make the
-# window unusable.
+# Values are staged, not written: every change lands in one pending table that the rows are
+# drawn from, and Save writes the whole table in one pass (lib/panel/settings-edit.ps1). The
+# resident process is reloaded once, when the window closes after a save: restarting it per
+# keystroke would make the window unusable, and restarting it on a change nobody kept would be
+# work for nothing.
 
 function Show-Settings {
   $swOpen = [Diagnostics.Stopwatch]::StartNew()
@@ -50,6 +51,17 @@ function Show-Settings {
   $script:SetPal = $pal
   $script:SetDirty = $false
   $script:SetRows = @()
+  # the staged values: key -> file spelling, validated by the schema before it got here. The
+  # window writes nothing until Save, so this table is what the rows, the switch positions and
+  # the three footer actions all read.
+  $script:SetPending = @{}
+  # the footer actions, in the order they are drawn; Primary is the one that carries the accent
+  $script:SetActions = @(
+    @{ Key = 'defaults'; Label = 'Restore defaults'; Primary = $false },
+    @{ Key = 'discard'; Label = 'Discard'; Primary = $false },
+    @{ Key = 'save'; Label = 'Save'; Primary = $true }
+  )
+  $script:SetHotAction = -1
   # the row under the pointer, and whether the close button is: the only two hover states left
   $script:SetHover = -1
   $script:SetCloseHot = $false
@@ -71,21 +83,23 @@ function Show-Settings {
   $script:SetSbDrag = -1
 
   $w = [int](Px 780)
-  $h = [int](Px 620)
+  # the footer holds a 26 px button now, so the window is taller by the height it gained: the
+  # list still shows the same number of rows
+  $h = [int](Px 640)
   $layout = Get-SettingsLayout $w $h
 
   function Refresh-Settings {
-    $script:SetRows = @(Get-SettingsRows $schema $groups[$script:SetGroup])
-    # a switch that has never been drawn starts at the value it holds, not at zero
+    $script:SetRows = @(Get-SettingsRows $schema $groups[$script:SetGroup] $script:SetPending)
+    # Every switch is told where its row now points - a staged flip travels there on the timer,
+    # and a discard travels back - while a switch that has never been drawn starts there instead
+    # of at zero.
     foreach ($row in @($script:SetRows)) {
       if ($row.Kind -ne 'bool') { continue }
       $k = [string]$row.Key
-      if (-not $script:SetToggleK.ContainsKey($k)) {
-        $v = 0.0
-        if ([string]$row.Raw -eq '1') { $v = 1.0 }
-        $script:SetToggleK[$k] = $v
-        $script:SetToggleTarget[$k] = $v
-      }
+      $v = 0.0
+      if ([string]$row.Raw -eq '1') { $v = 1.0 }
+      $script:SetToggleTarget[$k] = $v
+      if (-not $script:SetToggleK.ContainsKey($k)) { $script:SetToggleK[$k] = $v }
     }
     $vis = Get-SettingsVisibleRows $script:SetLayout
     $maxScroll = [Math]::Max(0, @($script:SetRows).Count - $vis)
@@ -147,15 +161,28 @@ function Show-Settings {
     }
   }
 
-  # one write, whatever produced it: a flipped switch, a tick, a picked name or a typed value
-  function Apply-Setting([string]$key, [string]$value, [string]$what) {
-    $r = Set-SettingValue $key $value
-    if (-not $r.Ok) { Show-Message ([string]$key + ': ' + [string]$r.Error) $true; return $false }
-    if ($script:SetToggleK.ContainsKey($key)) {
-      # the switch is told where to go; the timer moves it there
-      $script:SetToggleTarget[$key] = $(if ([string]$value -eq '1') { 1.0 } else { 0.0 })
-    }
-    if ($key -eq 'Theme') {
+  # One change, whatever produced it: a flipped switch, a tick, a picked name, a typed value or a
+  # recorded chord. Nothing is written here - Save does that - so the change lives in the staged
+  # table and the footer says it is not saved yet.
+  function Stage-Setting([string]$key, [string]$value, [string]$what) {
+    if (-not $key) { return $false }
+    $script:SetPending[$key] = [string]$value
+    Refresh-Settings
+    Show-Message ($key + ': ' + $what + ', not saved yet') $false
+    return $true
+  }
+
+  # Save: the staged set written in one pass, then the palette and the rows follow it. The
+  # resident is still reloaded once, when the window closes - not here.
+  function Save-Settings {
+    if ($script:SetPending.Count -eq 0) { return }
+    $pending = $script:SetPending
+    $r = Save-SettingsValues $pending
+    if (-not $r.Ok) { Show-Message ('save failed: ' + [string]$r.Error) $true; return }
+    $script:SetPending = @{}
+    # the folder the window itself writes to moves with the store location it just saved
+    if ($pending.Contains('DataDir')) { $script:StoreDir = [string]$pending['DataDir'] }
+    if ($pending.Contains('Theme')) {
       # a new theme has to reach the palette and the fonts before the next paint
       Apply-Theme
       $script:FBody = $null
@@ -163,8 +190,40 @@ function Show-Settings {
       $script:SetPal = Get-UiPalette
     }
     Refresh-Settings
-    Show-Message ($key + ': ' + $what) $false
-    return $true
+    $n = [int]$r.Count
+    $said = ([string]$n) + ' setting'
+    if ($n -ne 1) { $said = $said + 's' }
+    Show-Message ($said + ' saved') $false
+  }
+
+  # Discard: the file is the truth, so dropping the staged table is the whole action, and every
+  # switch travels back to the value it holds.
+  function Discard-Settings {
+    if ($script:SetPending.Count -eq 0) { return }
+    $script:SetPending = @{}
+    Refresh-Settings
+    Show-Message 'changes discarded' $false
+  }
+
+  # Restore defaults: staged like every other change, so the page shows what it would become
+  # before anything is written.
+  function Restore-SettingsDefaults {
+    $next = Get-SettingDefaultStaging $schema $script:SetPending
+    if ($next.Count -eq 0) { Show-Message 'every value is already at its default' $false; return }
+    foreach ($k in @($next.Keys)) { $script:SetPending[[string]$k] = [string]$next[$k] }
+    Refresh-Settings
+    $n = $next.Count
+    $said = ([string]$n) + ' setting'
+    if ($n -ne 1) { $said = $said + 's' }
+    Show-Message ($said + ' back at the default, not saved yet') $false
+  }
+
+  # one footer action, by the key the action table gives it
+  function Invoke-SettingsAction([string]$key) {
+    if ($script:SetPending.Count -eq 0) { return }
+    if ($key -eq 'save') { Save-Settings; return }
+    if ($key -eq 'discard') { Discard-Settings; return }
+    Restore-SettingsDefaults
   }
 
   function End-Edit([bool]$cancel) {
@@ -207,7 +266,7 @@ function Show-Settings {
       if ($script:SetEditField.Unit) { $said = $said + ' ' + [string]$script:SetEditField.Unit }
       $what = 'set to ' + $said
     }
-    [void](Apply-Setting $key ([string]$r.Value) $what)
+    [void](Stage-Setting $key ([string]$r.Value) $what)
     End-Edit $false
   }
 
@@ -232,7 +291,7 @@ function Show-Settings {
       $boxW = [int]$rect.Width - (Get-SettingsUnitWidth ([string]$row.Unit)) - (Px 6)
     }
     $box = New-SettingEditor $form $pal ([int]$rect.Left + (Px 4)) ([int]$rect.Top + (Px 4)) $boxW ([int]$rect.Height - (Px 8)) $isNumber
-    $box.Text = Get-SettingEditSeed $schema ([string]$row.Key)
+    $box.Text = Get-SettingEditSeed $schema ([string]$row.Key) ([string]$row.Raw)
     $script:SetEditBox = $box
     $box.Add_LostFocus({ End-Edit $true })
     # the keyboard has to land in the field, not on the row it covers: assigning ActiveControl is
@@ -282,7 +341,7 @@ function Show-Settings {
     }
     $what = 'unticked '
     if (-not (Get-SettingListOn $raw $name)) { $what = 'ticked ' }
-    [void](Apply-Setting $key $next ($what + $name))
+    [void](Stage-Setting $key $next ($what + $name))
     if ($null -ne $script:SetDrop) { try { $script:SetDrop.Invalidate() } catch { } }
   }
 
@@ -381,7 +440,7 @@ function Show-Settings {
         Toggle-DropItem ([string]$list[$i])
         return
       }
-      [void](Apply-Setting ([string]$s.Tag.Key) ([string]$list[$i]) ('set to ' + [string]$list[$i]))
+      [void](Stage-Setting ([string]$s.Tag.Key) ([string]$list[$i]) ('set to ' + [string]$list[$i]))
       Close-Choices
     })
     $dd.Add_Deactivate({ Close-Choices })
@@ -390,13 +449,15 @@ function Show-Settings {
     try { $dd.Activate() } catch { }
   }
 
-  # one switch, flipped where it was clicked: the only thing a bool row does
+  # one switch, flipped where it was clicked: the only thing a bool row does. The flip starts
+  # from what the row shows - the staged value when there is one - so a second click lands back
+  # on the value the file holds.
   function Flip-Row($row) {
     if ($null -eq $row) { return }
     if (-not (Test-RowEnabled $row)) { Show-RowRefused $row; return }
-    $key = [string]$row.Key
-    $v = Get-SettingToggle $schema $key
-    if ($null -ne $v) { [void](Apply-Setting $key $v ('turned ' + $(if ($v -eq '1') { 'on' } else { 'off' }))) }
+    $v = '1'
+    if ([string]$row.Raw -eq '1') { $v = '0' }
+    [void](Stage-Setting ([string]$row.Key) $v ('turned ' + $(if ($v -eq '1') { 'on' } else { 'off' })))
   }
 
   # A shortcut is recorded, not typed: a spelled-out chord is the one value that is easier to get
@@ -433,7 +494,7 @@ function Show-Settings {
     $key = [string]$script:SetRecKey
     $script:SetRecKey = ''
     $script:SetRecPreview = @()
-    [void](Apply-Setting $key $chord ('set to ' + $chord))
+    [void](Stage-Setting $key $chord ('set to ' + $chord))
     $form.Invalidate()
   }
 
@@ -451,10 +512,8 @@ function Show-Settings {
       if ($dlg.ShowDialog() -ne [Windows.Forms.DialogResult]::OK) { return }
       $picked = [string]$dlg.SelectedPath
       if (-not $picked) { return }
-      if (-not (Apply-Setting ([string]$row.Key) $picked ('set to ' + $picked))) { return }
-      # the store the window writes to moves with it, so the row shows the new folder at once
-      $script:StoreDir = $picked
-      Refresh-Settings
+      # the folder is staged like any other value: the row shows it, and Save moves the store
+      if (-not (Stage-Setting ([string]$row.Key) $picked ('set to ' + $picked))) { return }
       $form.Invalidate()
     } catch {
       Show-Message ('folder picker failed: ' + $_.Exception.Message) $true
@@ -505,7 +564,7 @@ function Show-Settings {
     $script:SetRecKey = ''
     $script:SetRecPreview = @()
     Stop-HotkeyRecord ([string]$script:StoreDir)
-    [void](Apply-Setting $key $chord ('set to ' + $chord))
+    [void](Stage-Setting $key $chord ('set to ' + $chord))
     $e.Handled = $true
     $e.SuppressKeyPress = $true
     $form.Invalidate()
@@ -579,13 +638,14 @@ function Show-Settings {
       }
       # the close button, top right, where every window puts one
       Draw-SettingsClose $g $pal $layout $script:SetCloseHot
-      # the footer is a status line: what the last write did, and the count with the version at
-      # the right end. There is no key to describe - this window is driven by the pointer.
+      # the footer is the window's bar: the last change on the left, the count and the version in
+      # the quiet ink, and the three actions on the right. There is no key to describe - this
+      # window is driven by the pointer.
       $count = @($rows).Count
       $right = ([string]$count) + ' item'
       if ($count -ne 1) { $right = ([string]$count) + ' items' }
       $right = $right + '   v' + [string]$script:Version
-      Draw-SettingsFooter $g $pal $layout $right $script:SetMsg $script:SetMsgErr
+      Draw-SettingsFooter $g $pal $layout $script:SetMsg $script:SetMsgErr $right $script:SetActions ($script:SetPending.Count -gt 0) $script:SetHotAction
     } catch {
       Write-Log ('settings paint: ' + $_.Exception.Message + ' @ ' + $_.ScriptStackTrace)
     }
@@ -656,6 +716,16 @@ function Show-Settings {
     $overClose = ($e.X -ge [int]$close.Left -and $e.X -le ([int]$close.Left + [int]$close.Width) -and
       $e.Y -ge [int]$close.Top -and $e.Y -le ([int]$close.Top + [int]$close.Height))
     if ($overClose -ne $script:SetCloseHot) { $script:SetCloseHot = $overClose; $form.Invalidate() }
+    # the footer actions light up under the pointer the way the edit card's buttons do
+    $rects = @(Get-SettingsActionRects $script:SetLayout @($script:SetActions | ForEach-Object { [string]$_.Label }))
+    $hotAction = -1
+    for ($i = 0; $i -lt $rects.Count; $i++) {
+      $rc = $rects[$i]
+      if ($e.X -lt [int]$rc.Left -or $e.X -gt ([int]$rc.Left + [int]$rc.Width)) { continue }
+      if ($e.Y -lt [int]$rc.Top -or $e.Y -gt ([int]$rc.Top + [int]$rc.Height)) { continue }
+      $hotAction = $i
+    }
+    if ($hotAction -ne $script:SetHotAction) { $script:SetHotAction = $hotAction; $form.Invalidate() }
     $idx = Get-SettingsRowAt $script:SetLayout @($script:SetRows).Count $script:SetScroll $e.X $e.Y
     if ($idx -ne $script:SetHover) { $script:SetHover = $idx; $form.Invalidate() }
   })
@@ -683,6 +753,17 @@ function Show-Settings {
       $inside = ($e.X -ge $box.Left -and $e.X -le ($box.Left + $box.Width) -and
         $e.Y -ge $box.Top -and $e.Y -le ($box.Top + $box.Height))
       if (-not $inside) { Complete-Edit }
+      # A refusal keeps the field open, and then the click belongs to the field. A committed value
+      # lets the same click reach what it pointed at, so Save works with the editor still up.
+      if ($null -ne $script:SetEditBox) { return }
+    }
+    # the footer actions sit below the list, so no row and no lane can be under them
+    $acts = @(Get-SettingsActionRects $script:SetLayout @($script:SetActions | ForEach-Object { [string]$_.Label }))
+    for ($i = 0; $i -lt $acts.Count; $i++) {
+      $rc = $acts[$i]
+      if ($e.X -lt [int]$rc.Left -or $e.X -gt ([int]$rc.Left + [int]$rc.Width)) { continue }
+      if ($e.Y -lt [int]$rc.Top -or $e.Y -gt ([int]$rc.Top + [int]$rc.Height)) { continue }
+      Invoke-SettingsAction ([string]$script:SetActions[$i].Key)
       return
     }
     # the scrollbar lane comes before the rows: it sits beside them, and a press on the thumb
@@ -738,7 +819,7 @@ function Show-Settings {
     # every row is its own control: a click on a switch row flips it wherever it lands, a click
     # on a shortcut waits for a chord, a click on a value opens its list, and anything else is
     # typed - there is no select-then-act step
-    if ($row.Kind -eq 'hotkey') {
+    if ($row.ContainsKey('Record') -and $row.Record) {
       if ($wasRec -ne [string]$row.Key) { Start-Record $row } else { Show-Message 'recording cancelled' $false }
       return
     }
@@ -803,6 +884,20 @@ function Show-Settings {
     # leaving the window is the other way out of the field: a value is committed, never quietly
     # dropped, and a refusal keeps it open until the user is back
     if ($null -ne $script:SetEditBox) { Complete-Edit }
+  })
+
+  # Leaving with staged work would drop it without a word, and once the window is gone there is
+  # nowhere to say so: the one question is asked here, and No keeps the window open with the
+  # staged values still in place.
+  $form.Add_FormClosing({
+    param($s, $e)
+    if ($script:SetPending.Count -eq 0) { return }
+    try {
+      $ans = [Windows.Forms.MessageBox]::Show($form, 'Close without saving? The changed values are dropped.', 'Settings',
+        [Windows.Forms.MessageBoxButtons]::YesNo, [Windows.Forms.MessageBoxIcon]::Warning,
+        [Windows.Forms.MessageBoxDefaultButton]::Button2)
+      if ($ans -ne [Windows.Forms.DialogResult]::Yes) { $e.Cancel = $true }
+    } catch { }
   })
 
   try {

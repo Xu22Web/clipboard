@@ -16,9 +16,9 @@ function Get-SettingsLayout([int]$w, [int]$h) {
   $pad = Px 14
   $sideW = Px 196
   $headH = Px 62
-  # a status line, not a row of key chips: this window answers no shortcut, so the footer only
-  # has a message to show and the count to keep in the corner
-  $footH = Px 30
+  # the footer carries the message on the left and the three actions on the right, so it is tall
+  # enough for a button rather than only for a line of text
+  $footH = Px 44
   return @{
     Width     = $w
     Height    = $h
@@ -26,6 +26,11 @@ function Get-SettingsLayout([int]$w, [int]$h) {
     SideWidth = $sideW
     HeadHeight = $headH
     FootHeight = $footH
+    # a footer button: the height the edit card's Save / Cancel pair uses, so the two windows
+    # offer the same target with the same look
+    ActionHeight = Px 26
+    ActionGap = Px 8
+    ActionPad = Px 12
     RowHeight = Px 58
     GroupHeight = Px 34
     CloseSize = Px 32
@@ -192,21 +197,27 @@ function Get-SettingsNumberRect($layout, [int]$rowTop) {
   }
 }
 
-# How much room a unit label takes, measured with the font the row draws it in. Measured on a
-# scratch bitmap because the hit tests ask too, and they have no Graphics of their own.
-function Get-SettingsUnitWidth([string]$unit) {
-  if (-not $unit) { return 0 }
-  $font = $script:FSmall
-  if (-not $font) { return 0 }
+# How wide a string is in a given face. Measured on a scratch bitmap because the hit tests ask
+# too, and they have no Graphics of their own.
+function Get-SettingsTextWidth([string]$text, $font) {
+  if (-not $text) { return 0 }
+  if ($null -eq $font) { return (Px (8 * $text.Length)) }
   $bmp = New-Object Drawing.Bitmap 1, 1
   $g = [Drawing.Graphics]::FromImage($bmp)
   try {
     $fmt = New-PickerStringFormats
     $big = New-Object Drawing.SizeF -ArgumentList @(1000, 100)
-    return [int][Math]::Ceiling($g.MeasureString($unit, $font, $big, $fmt.None).Width + (Px 14))
+    return [int][Math]::Ceiling($g.MeasureString($text, $font, $big, $fmt.None).Width)
   } catch {
-    return (Px 34)
+    return (Px (8 * $text.Length))
   } finally { $g.Dispose(); $bmp.Dispose() }
+}
+
+# How much room a unit label takes, measured with the font the row draws it in, plus the gap that
+# separates it from the value.
+function Get-SettingsUnitWidth([string]$unit) {
+  if (-not $unit) { return 0 }
+  return ((Get-SettingsTextWidth $unit $script:FSmall) + (Px 14))
 }
 
 # A value field: the field colour, a hairline, the value at the right of it, then a unit in the
@@ -284,6 +295,14 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
   $labelBox = New-Object Drawing.RectangleF -ArgumentList @(
     [single]($x + (Px 12)), [single]($y + (Px 7)), [single]$textW, [single](Px 22))
   $g.DrawString([string]$row.Label, $script:FBody, (Get-Brush $labelInk), $labelBox, $sf.Ellipsis)
+  # a staged row carries a dot in the row's left padding: nothing is written yet, and a page with
+  # one changed value among thirty has to say which one. It sits outside the label so no text
+  # shifts when a value becomes staged.
+  if ($row.ContainsKey('Pending') -and $row.Pending) {
+    $dot = [Math]::Max(3, (Px 4))
+    $db = New-Object Drawing.SolidBrush $pal['Accent']
+    try { $g.FillEllipse($db, ($x + (Px 5)), ($y + (Px 15)), $dot, $dot) } finally { $db.Dispose() }
+  }
   if ($helpText) {
     $helpBox = New-Object Drawing.RectangleF -ArgumentList @(
       [single]($x + (Px 12)), [single]($y + (Px 28)), [single]$textW, [single](Px 18))
@@ -430,21 +449,96 @@ function Draw-SettingsTick($g, $pal, [int]$x, [int]$y, [int]$size, [bool]$on) {
   } finally { $pen.Dispose() }
 }
 
-# The footer is a status line: what the last write did, and the count with the version in the
-# corner. There is no key to describe here - the window is driven by the pointer - and a message
-# is drawn in Warn when it is a refusal, which is the token the panel uses for the same thing.
-function Draw-SettingsFooter($g, $pal, $layout, [string]$rightText, [string]$msg, [bool]$isError) {
+# Where the footer actions sit, right aligned and laid out from the right edge inwards so Save -
+# the primary one - always ends at the padding. The width follows the label, because "Restore
+# defaults" is three times "Save" and a fixed width would either clip it or leave a hole. One
+# function for the paint and the hit test, so a click lands on the rectangle that was drawn.
+function Get-SettingsActionRects($layout, $labels) {
+  $list = @($labels)
+  $h = [int]$layout.ActionHeight
+  $gap = [int]$layout.ActionGap
+  $pad = [int]$layout.ActionPad
+  $top = [int]$layout.ListBottom + [int](([int]$layout.FootHeight - $h) / 2)
+  $right = [int]$layout.Width - [int]$layout.Pad
+  $out = New-Object System.Collections.Generic.List[object]
+  for ($i = $list.Count - 1; $i -ge 0; $i--) {
+    $w = (Get-SettingsTextWidth ([string]$list[$i]) $script:FSmall) + (2 * $pad)
+    $right = $right - $w
+    $out.Insert(0, @{ Left = [int]$right; Top = [int]$top; Width = [int]$w; Height = $h })
+    $right = $right - $gap
+  }
+  return $out.ToArray()
+}
+
+# A footer action, drawn the way the edit card draws its Save / Cancel pair: a 4 px radius, the
+# field colour and its hairline for the secondary ones, the accent with the surface colour as ink
+# for the primary. Hover is the same wash the card uses. A disabled action keeps its shape and
+# loses its colour, because nothing is staged yet.
+function Draw-SettingsAction($g, $pal, $rect, [string]$label, [bool]$primary, [bool]$enabled, [bool]$hot) {
+  if ($null -eq $g -or $null -eq $pal -or $null -eq $rect) { return }
+  $x = [int]$rect.Left
+  $y = [int]$rect.Top
+  $w = [int]$rect.Width
+  $h = [int]$rect.Height
+  $radius = [int](Px 4)
+  $fill = $pal['Field']
+  $edge = $pal['FieldBorder']
+  $ink = $pal['Text']
+  if ($primary -and $enabled) { $fill = $pal['Accent']; $edge = $pal['Accent']; $ink = $pal['Surface'] }
+  if (-not $enabled) { $ink = $pal['Faint'] }
+  $path = New-RoundPath $x $y $w $h $radius
+  $brush = New-Object Drawing.SolidBrush $fill
+  try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
+  if ($hot -and $enabled) {
+    # the filled button takes a thin layer of the text colour, which lightens it on a dark theme
+    # and deepens it on a light one; the outlined ones fade toward the tint a row hovers in
+    $tint = Scale-Alpha $pal['HoverBg'] 1.0
+    if ($primary) { $tint = Scale-Alpha $pal['Text'] 0.15 }
+    if ($tint.A -gt 0) {
+      $over = New-RoundPath $x $y $w $h $radius
+      $ob = New-Object Drawing.SolidBrush $tint
+      try { $g.FillPath($ob, $over) } finally { $over.Dispose(); $ob.Dispose() }
+    }
+  }
+  $pen = New-Object Drawing.Pen $edge
+  $stroke = New-RoundPath $x $y $w $h $radius
+  try { $g.DrawPath($pen, $stroke) } finally { $stroke.Dispose(); $pen.Dispose() }
+  $sf = New-PickerStringFormats
+  $box = New-Object Drawing.RectangleF -ArgumentList @([single]$x, [single]$y, [single]$w, [single]$h)
+  $g.DrawString($label, $script:FSmall, (Get-Brush $ink), $box, $sf.Center)
+}
+
+# The footer is the window's own bar: what the last change did on the left, the count with the
+# version in the quiet ink, and the three actions on the right. There is no key to describe here -
+# the window is driven by the pointer - and a refusal is drawn in Warn, the token the panel uses
+# for the same thing. $actions is the fixed set of labels; $enabled says whether anything is
+# staged, which is what lights the whole group.
+function Draw-SettingsFooter($g, $pal, $layout, [string]$msg, [bool]$isError, [string]$rightText, $actions, [bool]$enabled, [int]$hot = -1) {
   if ($null -eq $g -or $null -eq $pal) { return }
   $sf = New-PickerStringFormats
   $left = [int]$layout.Pad
   $top = [int]$layout.ListBottom
   $limit = [int]$layout.Width - [int]$layout.Pad
+  # a hairline marks the bar off: the buttons make the footer a place with controls in it, and a
+  # Fluent dialog separates its command bar from the page
+  $pen = New-Object Drawing.Pen $pal['Border']
+  try { $g.DrawLine($pen, $left, $top, $limit, $top) } finally { $pen.Dispose() }
+  $specs = @($actions)
+  $rects = @(Get-SettingsActionRects $layout @($specs | ForEach-Object { [string]$_.Label }))
+  for ($i = 0; $i -lt $rects.Count; $i++) {
+    $primary = $false
+    if ($specs[$i].ContainsKey('Primary')) { $primary = [bool]$specs[$i].Primary }
+    Draw-SettingsAction $g $pal $rects[$i] ([string]$specs[$i].Label) $primary $enabled ($i -eq $hot)
+  }
+  if ($rects.Count -gt 0) { $limit = [int]$rects[0].Left - (Px 12) }
   if ($rightText) {
-    $rightW = Px 128
-    $box = New-Object Drawing.RectangleF -ArgumentList @(
-      [single]($limit - $rightW), [single]$top, [single]$rightW, [single]([int]$layout.FootHeight))
-    $g.DrawString($rightText, $script:FSmall, (Get-Brush $pal['Faint']), $box, $sf.Right)
-    $limit = $limit - $rightW - (Px 8)
+    $rightW = Get-SettingsTextWidth $rightText $script:FSmall
+    if ($rightW -gt 0) {
+      $box = New-Object Drawing.RectangleF -ArgumentList @(
+        [single]($limit - $rightW), [single]$top, [single]$rightW, [single]([int]$layout.FootHeight))
+      $g.DrawString($rightText, $script:FSmall, (Get-Brush $pal['Faint']), $box, $sf.Right)
+      $limit = $limit - $rightW - (Px 12)
+    }
   }
   if (-not $msg) { return }
   $ink = $pal['Dim']

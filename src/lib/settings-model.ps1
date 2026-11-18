@@ -62,6 +62,9 @@ function Get-SettingKind($spec) {
     'bool' { return 'bool' }
     'int' { return 'number' }
     'hotkey' { return 'hotkey' }
+    # a chain of chords is drawn the way one chord is - key caps - so it is the same kind; what
+    # it does not share is the recorder, which is a row flag (Record) and not a kind
+    'hotkeys' { return 'hotkey' }
     'theme' { return 'theme' }
     'enum' { return 'choice' }
     'regex' { return 'regex' }
@@ -154,6 +157,10 @@ function Get-SettingHelp($schema, [string]$key) {
   }
   $d = ''
   if ($spec.Contains('Description')) { $d = [string]$spec['Description'] }
+  # A value only install acts on cannot be made to take effect by any reload: the shortcut it
+  # controls is created or removed by `install`. The line says that first, because "why did the
+  # tick do nothing" is the question a settings page has to answer.
+  if (Test-SchemaInstallOnly $schema $key) { $d = 'Takes effect on the next install. ' + $d }
   if ((Get-SettingKind $spec) -eq 'number') {
     $lo = $null
     $hi = $null
@@ -214,7 +221,12 @@ function Get-SettingEnabledBy {
 
 # One row per key of one group, in the order the group names them. Keys a group names but the
 # schema no longer has are skipped instead of drawing an editor that cannot write anything.
-function Get-SettingsRows($schema, [string]$group) {
+#
+# $pending is the staged set the window holds before Save: a key in it is drawn with the value
+# waiting to be written, so the page previews the change. A value that owns another row is read
+# from the same overlay, which is why unticking Capture pictures greys MaxImageBytes before
+# anything reaches the file.
+function Get-SettingsRows($schema, [string]$group, $pending = $null) {
   $rows = New-Object System.Collections.Generic.List[object]
   $table = Get-SettingGroupTable
   $keys = @()
@@ -228,10 +240,17 @@ function Get-SettingsRows($schema, [string]$group) {
       foreach ($key in @($props.Keys)) { if (-not $named.ContainsKey([string]$key)) { $keys += [string]$key } }
     }
   }
+  # one read of one key, from the staged value when it has one
+  $rawOf = {
+    param([string]$k)
+    if ($null -ne $pending -and $pending.Contains($k)) { return [string]$pending[$k] }
+    return (Get-SettingRaw $schema $k)
+  }
   foreach ($key in $keys) {
     $spec = Get-SchemaProperty $schema $key
     if ($null -eq $spec) { continue }
-    $raw = Get-SettingRaw $schema $key
+    $raw = & $rawOf $key
+    $staged = ($null -ne $pending -and $pending.Contains($key))
     $kind = Get-SettingKind $spec
     # a number is shown in its own unit and typed in that unit, so the row carries the three
     # pieces the paint and the editor need: what to show, the label beside it, and the factor
@@ -243,7 +262,7 @@ function Get-SettingsRows($schema, [string]$group) {
     $dep = Get-SettingEnabledBy
     if ($dep.ContainsKey($key)) {
       $owner = $dep[$key]
-      if ((Get-SettingRaw $schema ([string]$owner.Key)) -ne [string]$owner.Value) {
+      if ((& $rawOf ([string]$owner.Key)) -ne [string]$owner.Value) {
         $enabled = $false
         $why = [string]$owner.Why
       }
@@ -257,9 +276,14 @@ function Get-SettingsRows($schema, [string]$group) {
       Multi   = ((Get-SettingKind $spec) -eq 'list')
       # a value the schema marks read-only is shown and refused, with the reason in its help
       Locked  = $spec.Contains('ReadOnly')
+      # a shortcut row waits for a chord from the keyboard; a chain of them is typed instead,
+      # because one recorded chord would replace the whole list
+      Record  = ([string]$spec['Type'] -ceq 'hotkey')
       # a path is chosen in a dialog, not typed: Pick names the dialog the row opens
       Pick    = $(if ($spec.Contains('Pick')) { [string]$spec['Pick'] } else { '' })
       Raw     = $raw
+      # the row holds a value that is not in the file yet: the paint marks it, Save writes it
+      Pending = $staged
       Number  = [string]$view.Number
       Unit    = [string]$view.Unit
       Scale   = [double]$view.Scale

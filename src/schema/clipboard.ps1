@@ -15,7 +15,7 @@
   Properties  = [ordered]@{
     DataDir           = @{ Type = 'string'; ReadOnly = 'the store location: `clipboard config set DataDir` moves it while nothing is running'; Pick = 'folder'; Default = 'data'; Description = 'write location; a relative path is relative to the script dir, empty = data' }
     Hotkey            = @{ Type = 'hotkey'; Ref = [ref]$script:Hotkey; Default = 'Ctrl+Alt+V'; Description = 'global hotkey' }
-    HotkeyFallbacks   = @{ Type = 'string'; Ref = [ref]$script:HotkeyFallbacks; Default = 'Ctrl+Alt+V, Win+V, Alt+`, Win+Shift+V'; Description = 'comma separated chain tried in order after Hotkey' }
+    HotkeyFallbacks   = @{ Type = 'hotkeys'; Ref = [ref]$script:HotkeyFallbacks; Default = 'Ctrl+Alt+V, Win+V, Alt+`, Win+Shift+V'; Description = 'comma separated chain tried in order after Hotkey' }
     PasteKeys         = @{ Type = 'string'; Suggest = @('^v', '^+{INSERT}', '^{INSERT}'); Ref = [ref]$script:PasteKeys; Default = '^v'; Description = 'SendKeys sent after picking' }
     ModReleaseTimeout = @{ Type = 'int'; Unit = 'ms'; Ref = [ref]$script:ModReleaseTimeout; Default = 1200; Minimum = 0; Maximum = 60000; Description = 'ms to wait for the modifiers; one still held afterwards is released' }
     PasteSettle       = @{ Type = 'int'; Unit = 'ms'; Ref = [ref]$script:PasteSettle; Default = 80; Minimum = 0; Maximum = 10000; Description = 'ms to wait before sending PasteKeys' }
@@ -61,8 +61,8 @@
     DpiAware          = @{ Type = 'bool'; Ref = [ref]$script:DpiAware; Default = 1; Description = '1 = per-monitor DPI aware rendering' }
     ScrollLines       = @{ Type = 'int'; Ref = [ref]$script:ScrollLines; Default = 0; Minimum = -1; Maximum = 50; Description = 'wheel step in rows (0 = a quarter of the rows on screen)' }
     Animations        = @{ Type = 'bool'; Ref = [ref]$script:Animations; Default = 1; Description = '1 = hover / selection / scrollbar transitions, 0 = instant' }
-    Autostart         = @{ Type = 'bool'; Ref = [ref]$script:Autostart; Default = 1; Description = '1 = install creates the logon shortcut (serve)' }
-    DesktopShortcut   = @{ Type = 'bool'; Ref = [ref]$script:DesktopShortcut; Default = 1; Description = '1 = install creates the desktop shortcut (ui)' }
+    Autostart         = @{ Type = 'bool'; InstallOnly = $true; Ref = [ref]$script:Autostart; Default = 1; Description = '1 = install creates the logon shortcut (serve)' }
+    DesktopShortcut   = @{ Type = 'bool'; InstallOnly = $true; Ref = [ref]$script:DesktopShortcut; Default = 1; Description = '1 = install creates the desktop shortcut (ui)' }
     Plugins           = @{ Type = 'list'; Default = ''; Hint = '(every plugin on disk)'; Description = 'comma separated names of the plugins to load, in load order (a bare Plugins= loads every file in the plugins folder)' }
   }
   # a plugin declares its own Settings and registers them as <plugin>.<Key> when it loads

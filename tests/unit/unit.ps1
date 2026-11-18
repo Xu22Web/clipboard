@@ -1094,7 +1094,10 @@ try {
         Apply-Config
         Expect ($script:ModReleaseTimeout -eq 1500) ('value=' + $script:ModReleaseTimeout)
         Expect ($script:PasteSettle -eq 250) ('value=' + $script:PasteSettle)
-        Expect ($script:HotkeyFallbacks -eq 'Alt+Q;Alt+W') ('value=' + $script:HotkeyFallbacks)
+        # the chain is read chord by chord: both survive, in the order the file tried them,
+        # whichever separator the file used
+        $chain = (@($script:HotkeyFallbacks -split '[,;]' | ForEach-Object { $_.Trim() }) -join '|')
+        Expect ($chain -eq 'Alt+Q|Alt+W') ('value=' + $script:HotkeyFallbacks)
       }
 
       It 'an empty file leaves every key with a value of its own' {
@@ -2712,6 +2715,84 @@ try {
         Expect (($good.Ok) -and ([string]$good.Value -eq '150')) ([string]$good.Value)
         $switch = Convert-SettingInput $script:SettingsSchema 'CaptureImages' 'on'
         Expect (($switch.Ok) -and ([string]$switch.Value -eq '1')) ([string]$switch.Value)
+      }
+
+      It 'a chain is checked chord by chord' {
+        # the chain is tried in order, so one unreadable chord is a fallback that would never
+        # register; the answer has to name the chord, not just refuse the whole line
+        $bad = Convert-SettingInput $script:SettingsSchema 'HotkeyFallbacks' 'Ctrl+Alt+V, Ctrl+Nonsense'
+        Expect (-not $bad.Ok) 'a chord the parser cannot read was accepted'
+        Expect ([string]$bad.Error -match 'Ctrl\+Nonsense') ([string]$bad.Error)
+        $good = Convert-SettingInput $script:SettingsSchema 'HotkeyFallbacks' (Get-SchemaDefault $script:SettingsSchema 'HotkeyFallbacks')
+        Expect ($good.Ok) ([string]$good.Error)
+        # the file may separate with either mark; what is written back is one spelling
+        $semi = Convert-SettingInput $script:SettingsSchema 'HotkeyFallbacks' 'Alt+Q;Alt+W'
+        Expect (($semi.Ok) -and ([string]$semi.Value -eq 'Alt+Q, Alt+W')) ([string]$semi.Value)
+        # the row shows one cap per chord, so a ';' file is not drawn as one cap holding both
+        $caps = @(Get-SettingChordList $script:SettingsSchema 'HotkeyFallbacks' 'Alt+Q;Alt+W, Ctrl+V')
+        Expect (($caps.Count -eq 3) -and ([string]$caps[2] -eq 'Ctrl+V')) ($caps -join ' | ')
+      }
+
+      It 'a chain is typed, the single hotkey is recorded' {
+        # recording one chord over a chain would replace the whole fallback list, so only the
+        # key whose type is one chord offers the recorder
+        $rows = @(Get-SettingsRows $script:SettingsSchema 'Hotkey')
+        $hot = @($rows | Where-Object { $_.Key -eq 'Hotkey' })
+        $chain = @($rows | Where-Object { $_.Key -eq 'HotkeyFallbacks' })
+        Expect (($hot.Count -eq 1) -and [bool]$hot[0].Record) 'the single hotkey is not recordable'
+        Expect (($chain.Count -eq 1) -and (-not [bool]$chain[0].Record)) 'the chain is recordable'
+      }
+
+      It 'a setting only install acts on says when it takes effect' {
+        # these two keys build or remove a shortcut, which no reload can do, so a window that
+        # ticked them and said nothing would look broken
+        Expect (Test-SchemaInstallOnly $script:SettingsSchema 'Autostart') 'Autostart'
+        Expect (Test-SchemaInstallOnly $script:SettingsSchema 'DesktopShortcut') 'DesktopShortcut'
+        Expect (-not (Test-SchemaInstallOnly $script:SettingsSchema 'Hotkey')) 'Hotkey'
+        $help = Get-SettingHelp $script:SettingsSchema 'DesktopShortcut'
+        Expect ([string]$help -match 'next install') ([string]$help)
+      }
+
+      It 'a staged value is what the page shows, before anything is written' {
+        # the window writes nothing until Save, so the row has to draw the staged value and mark
+        # itself, and a row a staged switch owns has to grey out before the file changes
+        $pending = @{ 'MaxImageBytes' = '4194304'; 'CaptureImages' = '0' }
+        $rows = @(Get-SettingsRows $script:SettingsSchema 'Clipboard' $pending)
+        $bytes = @($rows | Where-Object { $_.Key -eq 'MaxImageBytes' })[0]
+        Expect (([string]$bytes.Text -eq '4 MB') -and [bool]$bytes.Pending) ([string]$bytes.Text)
+        Expect (-not [bool]$bytes.Enabled) 'the cap stayed enabled with capture off'
+        $switch = @($rows | Where-Object { $_.Key -eq 'CaptureImages' })[0]
+        Expect ([string]$switch.Raw -eq '0') ([string]$switch.Raw)
+        # a key nobody staged keeps reporting the file
+        $plain = @($rows | Where-Object { $_.Key -eq 'Interval' })[0]
+        Expect (-not [bool]$plain.Pending) 'Interval was marked as staged'
+      }
+
+      It 'saving writes the staged set, and only the staged set' {
+        [IO.File]::WriteAllLines($script:UnitCfg, @('Rows=10'), $Utf8)
+        Apply-Config
+        $r = Save-SettingsValues @{ 'Rows' = '14'; 'MaxItems' = '500' }
+        Expect ($r.Ok) ([string]$r.Error)
+        Expect (($script:Rows -eq 14) -and ($script:MaxItems -eq 500)) ([string]$script:Rows + '/' + [string]$script:MaxItems)
+        # both reached the file, not only the running settings
+        Expect ((Get-IniKey 'Rows') -eq '14') ([string](Get-IniKey 'Rows'))
+        Expect ((Get-IniKey 'MaxItems') -eq '500') ([string](Get-IniKey 'MaxItems'))
+      }
+
+      It 'restore defaults stages the defaults and leaves the store location alone' {
+        [IO.File]::WriteAllLines($script:UnitCfg, @('Rows=42', ('MaxItems=' + [string]([int](Get-SchemaDefault $script:SettingsSchema 'MaxItems')))), $Utf8)
+        Apply-Config
+        $next = Get-SettingDefaultStaging $script:SettingsSchema $null
+        Expect ([string]$next['Rows'] -eq [string]([int](Get-SchemaDefault $script:SettingsSchema 'Rows'))) ([string]$next['Rows'])
+        # a key already at its default is not staged, and the read-only store location is never
+        # something the window decides
+        Expect (-not $next.ContainsKey('MaxItems')) 'MaxItems'
+        Expect (-not $next.ContainsKey('DataDir')) 'DataDir'
+        # the staged value counts as what the key holds: one already staged at its default is not
+        # staged again, and one staged away from it is
+        $def = [string]([int](Get-SchemaDefault $script:SettingsSchema 'Rows'))
+        Expect (-not (Get-SettingDefaultStaging $script:SettingsSchema @{ 'Rows' = $def }).ContainsKey('Rows')) 'Rows at its default'
+        Expect ([string](Get-SettingDefaultStaging $script:SettingsSchema @{ 'Rows' = '7' })['Rows'] -eq $def) 'Rows away from it'
       }
 
       It 'the window edge is one opaque ring on all four sides' {
