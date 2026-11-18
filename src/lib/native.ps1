@@ -352,6 +352,14 @@ function Get-CaretAnchor([IntPtr]$hwnd) {
     }
     if ($r.Height -gt 0 -and (Test-AnchorRect $r $window)) { $script:CaretSource = 'caret-pos'; return $r }
   } catch { }
+  # The line a plain edit control types at, read from its selection instead of from the caret it
+  # draws: a WinForms TextBox publishes no UI Automation text pattern and a control that draws no
+  # caret reports no rcCaret, so without this layer the panel only had the whole box and answered
+  # with fewer rows because the box looked full. RichEdit answers nothing here on purpose.
+  try {
+    $r = [Cb.Win]::EditCaretRect($hwnd)
+    if ($r.Height -gt 0 -and (Test-AnchorRect $r $window)) { $script:CaretSource = 'caret-line'; return $r }
+  } catch { }
   try {
     $r = [Cb.Win]::MsaaCaret($hwnd)
     if ($r.Width -gt 0 -and $r.Height -le 0) {

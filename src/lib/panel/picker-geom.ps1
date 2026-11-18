@@ -172,10 +172,17 @@ function Get-PickerBounds([int]$w, [int]$h, [string]$rawLeft, [string]$rawTop, $
   return @{ Left = [int]$p.Left; Top = [int]$p.Top; Fitted = $true }
 }
 
-# Rows, size and place of the compact panel for one caret, in screen pixels. The row count
-# asked for is capped by the monitor, then by the room on the side the panel opens on: a caret
-# near the bottom edge gets a shorter panel instead of one pushed over the line being read.
-# A caret whose monitor is unknown keeps the requested rows and opens below it.
+# Rows, size and place of the compact panel for one caret, in screen pixels. The row count asked
+# for is capped by the monitor, then by the room on the side the panel opens on: a caret near the
+# bottom edge gets a shorter panel instead of one pushed over the line being read. A caret whose
+# monitor is unknown keeps the requested rows and opens below it.
+#
+# Which rectangle the anchor is decides how much of it counts as used up. One line - rcCaret, a
+# caret object, a text selection, an edit control's own answer - is exact, so the room beside it
+# is the room there is and dropping rows is the only way to keep off it. A whole control - a chat
+# box, an editor that reports nothing smaller - is not full: the caret is one line somewhere
+# inside it, so the panel may slide over the control and keep the rows that were asked for, as
+# long as one row at the edge it comes from stays visible. That case is measured from that edge.
 function Get-CompactPlacement([int]$rows, [int]$rowHeight, [int]$chrome, [int]$width, $area, [int]$anchorLeft, [int]$anchorTop, [int]$anchorHeight, [int]$minRows, [int]$gap = 4) {
   if ($rowHeight -lt 1) { $rowHeight = 1 }
   if ($minRows -lt 1) { $minRows = 1 }
@@ -185,9 +192,20 @@ function Get-CompactPlacement([int]$rows, [int]$rowHeight, [int]$chrome, [int]$w
     return @{ Rows = [int]$rows; Width = $w; Height = $fit; Left = $anchorLeft; Top = ($anchorTop + $anchorHeight + $gap) }
   }
   if ([int]$area.Width -gt 0 -and $w -gt [int]$area.Width) { $w = [int]$area.Width }
+  $areaTop = [int]$area.Top
+  $areaBottom = [int]$area.Top + [int]$area.Height
+  $anchorBottom = $anchorTop + $anchorHeight
   $roomRows = Get-RowsForScreen $rows ([int]$area.Height) $rowHeight $chrome $minRows
-  $below = (([int]$area.Top + [int]$area.Height) - ($anchorTop + $anchorHeight + $gap))
-  $above = (($anchorTop - $gap) - [int]$area.Top)
+  # the nearest the panel may come to the anchor's own edges: flush outside them, or one of the
+  # anchor's rows still visible when it slides over a whole control
+  $topFloor = $anchorBottom + $gap
+  $bottomCeil = $anchorTop - $gap
+  if ($anchorHeight -gt (2 * $rowHeight)) {
+    $topFloor = [Math]::Min($topFloor, $anchorTop + $rowHeight + $gap)
+    $bottomCeil = [Math]::Max($bottomCeil, $anchorBottom - $rowHeight - $gap)
+  }
+  $below = $areaBottom - $topFloor
+  $above = $bottomCeil - $areaTop
   $useRows = $roomRows
   $h = Get-PanelHeight $useRows $rowHeight $chrome
   if ($h -gt $below -and $h -gt $above) {
@@ -197,9 +215,12 @@ function Get-CompactPlacement([int]$rows, [int]$rowHeight, [int]$chrome, [int]$w
     if ($fit -lt $useRows) { $useRows = $fit }
     $h = Get-PanelHeight $useRows $rowHeight $chrome
   }
-  if ($h -le $below) { $top = $anchorTop + $anchorHeight + $gap }
-  elseif ($h -le $above) { $top = $anchorTop - $gap - $h }
-  elseif ($below -ge $above) { $top = $anchorTop + $anchorHeight + $gap }
+  # below first, then above: the panel belongs under the line the user is typing on
+  if ($h -le ($areaBottom - ($anchorBottom + $gap))) { $top = $anchorBottom + $gap }
+  elseif ($h -le ($anchorTop - $gap - $areaTop)) { $top = $anchorTop - $gap - $h }
+  elseif ($h -le $below) { $top = $topFloor }
+  elseif ($h -le $above) { $top = $bottomCeil - $h }
+  elseif ($below -ge $above) { $top = $anchorBottom + $gap }
   else { $top = $anchorTop - $gap - $h }
   $p = Get-ClampedPoint $area $anchorLeft $top $w $h
   return @{ Rows = [int]$useRows; Width = [int]$w; Height = [int]$h; Left = [int]$p.Left; Top = [int]$p.Top }

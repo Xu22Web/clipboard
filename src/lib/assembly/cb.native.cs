@@ -553,6 +553,82 @@ namespace Cb {
       return true;
     }
 
+    // The line a plain Win32 edit control types at, in screen pixels: EM_POSFROMCHAR answers the
+    // corner of a character in client coordinates and the control's own font gives the line
+    // height. rcCaret and GetCaretPos both describe the caret the keyboard is drawing, which is
+    // what a control that draws none never reports; this reads the selection position instead.
+    //
+    // RichEdit is left out on purpose. Its EM_POSFROMCHAR takes a POINT to fill and does not fill
+    // it (measured on a RichEdit20W: the point stays 0,0, which would anchor the panel at the
+    // client corner), and it reports rcCaret anyway - so an empty answer here is better than a
+    // wrong one.
+    [StructLayout(LayoutKind.Sequential)] private struct TEXTMETRICW {
+      public int tmHeight, tmAscent, tmDescent, tmInternalLeading, tmExternalLeading;
+      public int tmAveCharWidth, tmMaxCharWidth, tmWeight, tmOverhang;
+      public int tmDigitizedAspectX, tmDigitizedAspectY;
+      public char tmFirstChar, tmLastChar, tmDefaultChar, tmBreakChar;
+      public byte tmItalic, tmUnderlined, tmStruckOut, tmPitchAndFamily, tmCharSet;
+    }
+    [DllImport("gdi32.dll", EntryPoint = "GetTextMetricsW")]
+    private static extern bool GetTextMetricsW(IntPtr dc, out TEXTMETRICW tm);
+    private const int EM_POSFROMCHAR = 0x00D6;
+
+    private static bool IsRichEditControl(IntPtr hwnd) {
+      string cls = WindowClass(hwnd);
+      if (cls.Length == 0) { return false; }
+      return cls.ToLowerInvariant().IndexOf("richedit") >= 0;
+    }
+
+    // a plain edit packs the character's corner into the result and answers -1 past the text
+    private static bool TryEditCharPoint(IntPtr hwnd, int index, out int x, out int y) {
+      x = -1; y = -1;
+      long v = SendMessageW(hwnd, EM_POSFROMCHAR, (IntPtr)index, IntPtr.Zero).ToInt64();
+      if (v < 0) { return false; }
+      x = (short)(v & 0xFFFF);
+      y = (short)((v >> 16) & 0xFFFF);
+      return (x >= 0 && y >= 0);
+    }
+
+    public static System.Drawing.Rectangle EditCaretRect(IntPtr hwnd) {
+      if (hwnd == IntPtr.Zero) { return System.Drawing.Rectangle.Empty; }
+      IntPtr edit = hwnd;
+      if (!IsEditControl(edit)) {
+        uint tid = GetWindowThreadProcessId(hwnd, IntPtr.Zero);
+        if (tid == 0) { return System.Drawing.Rectangle.Empty; }
+        GUITHREADINFO info = new GUITHREADINFO();
+        info.cbSize = Marshal.SizeOf(typeof(GUITHREADINFO));
+        if (!GetGUIThreadInfo(tid, ref info)) { return System.Drawing.Rectangle.Empty; }
+        edit = info.hwndFocus;
+      }
+      if (edit == IntPtr.Zero || !IsWindow(edit) || !IsEditControl(edit)) { return System.Drawing.Rectangle.Empty; }
+      if (IsRichEditControl(edit)) { return System.Drawing.Rectangle.Empty; }
+      int start, end;
+      if (!GetEditSelection(edit, out start, out end)) { return System.Drawing.Rectangle.Empty; }
+      int x, y;
+      if (!TryEditCharPoint(edit, start, out x, out y) && start > 0) {
+        if (!TryEditCharPoint(edit, start - 1, out x, out y)) { return System.Drawing.Rectangle.Empty; }
+      }
+      if (x < 0 || y < 0) { return System.Drawing.Rectangle.Empty; }
+      int lineH = 0;
+      IntPtr dc = GetDC(edit);
+      if (dc != IntPtr.Zero) {
+        try {
+          TEXTMETRICW tm;
+          if (GetTextMetricsW(dc, out tm) && tm.tmHeight > 0) { lineH = tm.tmHeight; }
+        } finally {
+          ReleaseDC(edit, dc);
+        }
+      }
+      if (lineH <= 0) { lineH = 16; }
+      // a point left over from another line or another state sits outside the client area
+      WINRECT client;
+      if (!GetClientRect(edit, out client)) { return System.Drawing.Rectangle.Empty; }
+      if (x > client.Right || y > client.Bottom) { return System.Drawing.Rectangle.Empty; }
+      CARETPOINT origin = new CARETPOINT();
+      if (!ClientToScreen(edit, ref origin)) { return System.Drawing.Rectangle.Empty; }
+      return new System.Drawing.Rectangle(x + origin.X, y + origin.Y, 1, lineH);
+    }
+
     // ---- typing without the clipboard ------------------------------------------------
     // SendInput with KEYEVENTF_UNICODE puts the characters straight into the focused control,
     // so a target that ignores Ctrl+V still receives the text and the clipboard is not

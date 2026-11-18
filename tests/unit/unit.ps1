@@ -2564,6 +2564,34 @@ try {
         Expect (($p.Rows -eq 5) -and ($p.Top -eq 24) -and ($p.Height -eq 292)) (($p.Rows -as [string]) + '/' + ($p.Top -as [string]) + '/' + ($p.Height -as [string]))
       }
 
+      It 'a whole control as the anchor keeps the rows by sliding over it' {
+        # the same 400 px work area, but the anchor is a 600 px chat box rather than one line:
+        # measured from the box's own edge there would be 96 px below and 176 px above, so the
+        # panel would drop to three rows although the caret is one line inside the box
+        $short = [pscustomobject]@{ Left = 0; Top = 0; Width = 1920; Height = 400 }
+        $p = Get-CompactPlacement 6 40 92 520 $short 400 0 600 3
+        Expect (($p.Rows -eq 6) -and ($p.Height -eq 332)) (($p.Rows -as [string]) + '/' + ($p.Height -as [string]))
+        # and it stops where one row of that control still shows below the panel's top edge
+        Expect ($p.Top -eq 44) ($p.Top -as [string])
+      }
+
+      It 'one line at the same place still gives up rows' {
+        # the box height is what decides, not the position: a one-line anchor 20 px tall in the
+        # same work area keeps the old answer
+        $short = [pscustomobject]@{ Left = 0; Top = 0; Width = 1920; Height = 400 }
+        $p = Get-CompactPlacement 6 40 92 520 $short 400 100 20 3
+        Expect (($p.Rows -eq 4) -and ($p.Top -eq 124)) (($p.Rows -as [string]) + '/' + ($p.Top -as [string]))
+      }
+
+      It 'a panel that slid over a control still stays inside the work area' {
+        # a 600 px control whose top has scrolled above the work area: sliding over it is the
+        # only way to keep every row, and the panel may still not run off the screen
+        $short = [pscustomobject]@{ Left = 0; Top = 0; Width = 1920; Height = 400 }
+        $p = Get-CompactPlacement 6 40 92 520 $short 400 -300 600 3
+        Expect ($p.Rows -eq 6) ($p.Rows -as [string])
+        Expect (($p.Top -ge 0) -and (($p.Top + $p.Height) -le 400)) (($p.Top -as [string]) + '+' + ($p.Height -as [string]))
+      }
+
       It 'a screen narrower than the panel narrows it' {
         $narrow = [pscustomobject]@{ Left = 0; Top = 0; Width = 400; Height = 1080 }
         $p = Get-CompactPlacement 6 40 92 520 $narrow 10 300 20 3
