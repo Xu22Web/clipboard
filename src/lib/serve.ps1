@@ -217,21 +217,17 @@ function Invoke-ServeOnce {
       })
     [void]$dm.Items.Add('-')
 
-    # The settings window is its own process: it runs a modal loop and owns a window the user
-    # works in, and the tray has to stay responsive while it is open. Starting the command is
-    # the same thing `clipboard settings` does, so both entry points stay one code path.
+    # The settings window is always its own process. Opening it here would put two modal windows
+    # on the resident's one thread - the window runs a modal loop, and the picker opens from that
+    # loop - and the window the user was working in stops taking input. A process of its own also
+    # keeps the tray responsive while the window is up. `clipboard settings` is the same command,
+    # so both entry points stay one code path.
     $iSettings = $dm.Items.Add('Settings...')
     $iSettings.Add_Click({
         try {
-          # the resident already has every module loaded, so opening the window here costs one
-          # window and not a whole PowerShell start; the command line keeps the other path
-          if (Get-Command Show-Settings -ErrorAction SilentlyContinue) {
-            Show-Settings
-          } else {
-            Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList @(
-              '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', (Join-Path $Root 'clipboard.ps1'), 'settings'
-            )
-          }
+          Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', (Join-Path $Root 'clipboard.ps1'), 'settings'
+          )
         } catch { Write-Log ('tray settings: ' + $_.Exception.Message) }
       })
     # the file itself, for a key the window does not cover (a plugin's settings, a retired key)
