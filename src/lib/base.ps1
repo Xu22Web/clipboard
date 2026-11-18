@@ -45,6 +45,11 @@ $MutexName = 'Local\clipboard.daemon'
 $EventName = 'Local\clipboard.show'
 $StopName  = 'Local\clipboard.stop'
 $StoreLock = 'Local\clipboard.store'
+# The settings window is one window per session: the mutex says whether one is open, and the
+# event is how a second request reaches it - a second `clipboard settings`, or the tray entry
+# while the command line already opened it.
+$SettingsLock = 'Local\clipboard.settings'
+$SettingsShow = 'Local\clipboard.settings.show'
 
 # --- UI metrics: 96 dpi design values, every one of them goes through Px() --------
 # A theme may override any key from its [metrics] section. MetricDefault is the built-in

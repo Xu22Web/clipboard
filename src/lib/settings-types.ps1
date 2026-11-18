@@ -7,12 +7,19 @@
 # Nothing here draws. Every answer is a value, a normalised file spelling, or a sentence the
 # footer can show, which is what makes these testable without a window.
 
-# The chords a row shows as key caps: one for a hotkey, one per comma separated entry for the
-# chain, none for anything else. A shortcut is read key by key, so the row needs the parts and
-# not one string.
+# The chords a row shows as key caps: one for a hotkey, one per entry for the chain, one for the
+# SendKeys spelling the paste keys are written in, none for anything else. A shortcut is read key
+# by key, so the row needs the parts and not one string.
 function Get-SettingChordList($schema, [string]$key, [string]$raw) {
   $spec = Get-SchemaProperty $schema $key
   if ($null -eq $spec) { return @() }
+  # the paste keys are SendKeys, not a chord in the file, but they are still keys to a person:
+  # "^v" is Ctrl and V, and the row says so the same way the hotkey row does
+  if ($key -ceq 'PasteKeys') {
+    $one = Convert-SendKeysToChord $raw
+    if ($one) { return @($one) }
+    return @()
+  }
   if ((Get-SettingKind $spec) -ne 'hotkey') { return @() }
   # the same separators the resident splits a chain on, so a file written by hand with ';' still
   # shows one cap per chord instead of one cap holding both
@@ -22,6 +29,92 @@ function Get-SettingChordList($schema, [string]$key, [string]$raw) {
     if ($t) { $out += $t }
   }
   return $out
+}
+
+# One SendKeys name as Windows prints it: {INSERT} is Insert, {PGDN} is PageDown, a bare letter
+# stays a letter. An unknown name is passed through as written, which is what SendKeys does.
+function Format-SendKeyName([string]$name) {
+  $t = ([string]$name).Trim()
+  if (-not $t) { return '' }
+  $u = $t.ToUpperInvariant()
+  switch ($u) {
+    'INSERT' { return 'Insert' }
+    'DEL' { return 'Delete' }
+    'DELETE' { return 'Delete' }
+    'HOME' { return 'Home' }
+    'END' { return 'End' }
+    'PGUP' { return 'PageUp' }
+    'PGDN' { return 'PageDown' }
+    'TAB' { return 'Tab' }
+    'ESC' { return 'Esc' }
+    'ENTER' { return 'Enter' }
+    'RETURN' { return 'Enter' }
+    'BACKSPACE' { return 'Backspace' }
+    'BS' { return 'Backspace' }
+    'SPACE' { return 'Space' }
+    'UP' { return 'Up' }
+    'DOWN' { return 'Down' }
+    'LEFT' { return 'Left' }
+    'RIGHT' { return 'Right' }
+    'ADD' { return '+' }
+    'SUBTRACT' { return '-' }
+    'MULTIPLY' { return '*' }
+    'DIVIDE' { return '/' }
+  }
+  if ($u -match '^F([1-9]|1[0-9]|2[0-4])$') { return $u }
+  return $t
+}
+
+# A SendKeys spelling as one chord, in the order the caps are drawn: modifiers first, then the
+# keys. Anything this does not understand becomes a key of its own, so nothing is silently lost.
+function Convert-SendKeysToChord([string]$keys) {
+  $t = [string]$keys
+  if (-not $t) { return '' }
+  $mods = @()
+  $names = @()
+  $i = 0
+  while ($i -lt $t.Length) {
+    $c = $t[$i]
+    if ($c -eq '^') { if ($mods -notcontains 'Ctrl') { $mods += 'Ctrl' }; $i++; continue }
+    if ($c -eq '+') { if ($mods -notcontains 'Shift') { $mods += 'Shift' }; $i++; continue }
+    if ($c -eq '%') { if ($mods -notcontains 'Alt') { $mods += 'Alt' }; $i++; continue }
+    if ($c -eq '~') { $names += 'Enter'; $i++; continue }
+    if ($c -eq '{') {
+      $end = $t.IndexOf('}', $i)
+      if ($end -lt 0) { $names += $t.Substring($i); break }
+      $names += (Format-SendKeyName $t.Substring($i + 1, $end - $i - 1))
+      $i = $end + 1
+      continue
+    }
+    if ($c -eq '(' -or $c -eq ')') { $i++; continue }
+    $names += ([string]$c).ToUpperInvariant()
+    $i++
+  }
+  $parts = @()
+  foreach ($m in @('Win', 'Ctrl', 'Alt', 'Shift')) { if ($mods -contains $m) { $parts += $m } }
+  foreach ($n in $names) { if ($n) { $parts += [string]$n } }
+  return ($parts -join '+')
+}
+
+# The chain a chord is added to: the order is the order the resident tries them, so a new chord
+# goes last, and the same chord twice would only be tried twice.
+function Get-SettingChordAdded([string]$raw, [string]$chord) {
+  $t = ([string]$chord).Trim()
+  if (-not $t) { return $raw }
+  $cur = @(Split-SettingList $raw)
+  foreach ($c in $cur) { if ([string]$c -ieq $t) { return ($cur -join ', ') } }
+  $cur += $t
+  return ($cur -join ', ')
+}
+
+# The chain without one chord, or $null when that would leave none: a chain with no chord falls
+# back to the default, so removing the last one has to be refused the way an empty list is.
+function Get-SettingChordRemoved([string]$raw, [string]$chord) {
+  $t = ([string]$chord).Trim()
+  $out = @()
+  foreach ($c in @(Split-SettingList $raw)) { if ([string]$c -ine $t) { $out += [string]$c } }
+  if ($out.Count -eq 0) { return $null }
+  return ($out -join ', ')
 }
 
 # The keys of one chord, in the order Windows prints them - Win, Ctrl, Alt, Shift, then the key -
@@ -86,7 +179,12 @@ function Get-SettingNumberView($schema, [string]$key, [string]$raw) {
   $unit = ''
   if ($null -ne $spec -and $spec.Contains('Unit')) { $unit = [string]$spec['Unit'] }
   $view = @{ Number = [string]$raw; Unit = ''; Scale = 1 }
-  if ([string]$raw -eq '') { return $view }
+  if ([string]$raw -eq '') {
+    # an empty field still says what it measures: (auto) with px beside it reads as a position.
+    # A size is the one unit left out, because there the magnitude picks between B, KB and MB.
+    if ($unit -and $unit -ne 'size') { $view.Unit = $unit }
+    return $view
+  }
   $n = 0.0
   if (-not [double]::TryParse([string]$raw, [ref]$n)) { return $view }
   if ($unit -eq 'size') {

@@ -55,6 +55,39 @@ function Load-Forms {
   $script:FormsReady = $true
 }
 
+# The taskbar takes a window's button icon from its process's AppUserModelID group, not from the
+# window, and a script host keeps the ID of its own executable: a window that sets its icon still
+# shows the host's mark. Declaring an ID of our own before the first window is created puts the
+# window in a group that has no icon, so the bar falls back to the window's. Once per process -
+# the shell reads the ID when a window is created, so it has to happen before the first one.
+function Set-AppId {
+  if ($script:AppIdSet) { return }
+  $script:AppIdSet = $true
+  try {
+    if ('Cb.Shell' -as [type]) { [void][Cb.Shell]::SetAppId('Clipboard.Settings') }
+  } catch { }
+}
+
+# The mark's colour, in one place: the tray draws its HICON with it and a window's icon is built
+# with it, so the two cannot drift apart.
+function Get-AppIconArgb {
+  return ([Drawing.Color]::FromArgb(255, 0, 120, 212)).ToArgb()
+}
+
+# The window icon: one file with every size the bar and Alt-Tab ask for, each drawn at that size
+# instead of scaled from one bitmap.
+function New-AppIcon {
+  if ($null -ne $script:AppIcon) { return $script:AppIcon }
+  $script:AppIcon = $null
+  try {
+    if ('Cb.Tray' -as [type]) {
+      $sizes = [int[]]@(16, 20, 24, 32, 40, 48, 64)
+      $script:AppIcon = [Cb.Tray]::BuildIcon($sizes, (Get-AppIconArgb))
+    }
+  } catch { $script:AppIcon = $null }
+  return $script:AppIcon
+}
+
 function Test-Font([string]$name) {
   # Enumerating the installed families costs ~50 ms and the picker asks three to six times
   # on every show, so the list is read once per process and kept as a set.

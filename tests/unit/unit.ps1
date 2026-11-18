@@ -2639,6 +2639,61 @@ try {
         Expect ((Get-SettingLabel 'CompactMode') -eq 'Compact mode') (Get-SettingLabel 'CompactMode')
       }
 
+      It 'the window is a single one, and a second request rings its doorbell' {
+        # the lock exists only while a window does: a request that cannot take it has to reach the
+        # open window instead of opening a second copy of it
+        $first = Open-SettingsLock
+        Expect ($null -ne $first) 'the first request was refused its lock'
+        try {
+          Expect ($null -eq (Open-SettingsLock)) 'a second window would have opened'
+          $ask = Open-SettingsAsk
+          Expect ($null -ne $ask) 'the open window has no doorbell'
+          try {
+            Expect (-not $ask.WaitOne(0)) 'the doorbell rang on its own'
+            Expect (Ring-SettingsAsk) 'the ring did not reach the open window'
+            Expect ($ask.WaitOne(0)) 'the signal never arrived'
+          } finally { $ask.Dispose() }
+        } finally { $first.Dispose() }
+        # once the window is gone the lock is free again
+        $again = Open-SettingsLock
+        Expect ($null -ne $again) 'the lock outlived the window'
+        if ($null -ne $again) { $again.Dispose() }
+      }
+
+      It 'the list scrolls by distance, so a half row is still a row under the pointer' {
+        # the offset is a pixel distance: a click lands on whatever row the paint put under it,
+        # and a drag can stop between two rows
+        $layout = Get-SettingsLayout 780 700
+        $rowH = [int]$layout.RowHeight
+        $x = [int]$layout.ListLeft + (Px 10)
+        $top = [int]$layout.ListTop
+        Expect ((Get-SettingsRowAt $layout 20 0 $x $top) -eq 0) 'the first row is not at the top'
+        # 30 px of scroll: the top of the list is the lower part of row 0
+        Expect ((Get-SettingsRowAt $layout 20 30 $x $top) -eq 0) 'a half-scrolled row 0 was lost'
+        Expect ((Get-SettingsRowAt $layout 20 30 $x ($top + ($rowH - 10))) -eq 1) 'the second row moved by the offset'
+        # one whole row of scroll puts row 1 at the top
+        Expect ((Get-SettingsRowAt $layout 20 $rowH $x $top) -eq 1) 'a whole-row offset did not advance the list'
+        Expect ((Get-SettingsRowAt $layout 20 0 $x ($top - 1)) -eq -1) 'a click above the list picked a row'
+      }
+
+      It 'the thumb travels over the distance there is to scroll' {
+        $layout = Get-SettingsLayout 780 700
+        $vis = Get-SettingsVisibleRows $layout
+        $rows = 40
+        $track = [int]$layout.ListBottom - [int]$layout.ListTop
+        $span = ($rows * [int]$layout.RowHeight) - $track
+        $start = Get-SettingsScrollThumb $layout $rows $vis 0
+        $end = Get-SettingsScrollThumb $layout $rows $vis $span
+        $half = Get-SettingsScrollThumb $layout $rows $vis ([int]($span / 2))
+        Expect ($null -ne $start -and $null -ne $end) 'a long list has no thumb'
+        Expect ($start.Span -eq $span) ([string]$start.Span + ' of ' + [string]$span)
+        Expect ($start.Top -eq [int]$layout.ListTop) ([string]$start.Top)
+        Expect (($end.Top + $end.Len) -eq [int]$layout.ListBottom) ([string]($end.Top + $end.Len))
+        # halfway down the content is halfway down the track, within the rounding of one pixel
+        $mid = ($start.Top + $end.Top) / 2
+        Expect ([Math]::Abs($half.Top - $mid) -le 1) ([string]$half.Top + ' vs ' + [string]$mid)
+      }
+
       It 'each schema type maps onto one of the editors the window has' {
         $kinds = @{}
         foreach ($k in @((Get-SchemaProperties $script:SettingsSchema).Keys)) {
@@ -2666,6 +2721,18 @@ try {
         Expect (($back.Ok) -and ([string]$back.Value -eq '16777216')) ([string]$back.Value)
         $half = Convert-SettingNumberInput $script:SettingsSchema 'MaxImageBytes' '0.5' 1048576
         Expect (($half.Ok) -and ([string]$half.Value -eq '524288')) ([string]$half.Value)
+      }
+
+      It 'an empty number holds its hint and still states its unit' {
+        # a position left empty follows the screen: the field has to say so rather than go blank,
+        # and the unit stays because it says what that empty value would be measured in
+        $auto = Format-SettingText $script:SettingsSchema 'WindowLeft' ''
+        Expect ($auto -eq [string](Get-SchemaHint $script:SettingsSchema 'WindowLeft')) $auto
+        $empty = Get-SettingNumberView $script:SettingsSchema 'WindowLeft' ''
+        $px = [string](Get-SchemaProperty $script:SettingsSchema 'WindowLeft')['Unit']
+        Expect (($empty.Number -eq '') -and ($empty.Unit -eq $px)) ($empty.Number + ' ' + $empty.Unit)
+        # a size takes its unit from the magnitude, so an empty one has none to state
+        Expect ((Get-SettingNumberView $script:SettingsSchema 'MaxImageBytes' '').Unit -eq '') 'a size stated a unit it could not pick'
       }
 
       It 'a recording asks the resident for the chord it holds' {
@@ -2734,14 +2801,33 @@ try {
         Expect (($caps.Count -eq 3) -and ([string]$caps[2] -eq 'Ctrl+V')) ($caps -join ' | ')
       }
 
-      It 'a chain is typed, the single hotkey is recorded' {
-        # recording one chord over a chain would replace the whole fallback list, so only the
-        # key whose type is one chord offers the recorder
+      It 'a chain is drawn as a list, a single hotkey as one line' {
+        # both are recorded, but a chain is a list: the window draws a line per chord with its own
+        # delete button, and a recorded chord joins the end instead of replacing the list
         $rows = @(Get-SettingsRows $script:SettingsSchema 'Hotkey')
-        $hot = @($rows | Where-Object { $_.Key -eq 'Hotkey' })
-        $chain = @($rows | Where-Object { $_.Key -eq 'HotkeyFallbacks' })
-        Expect (($hot.Count -eq 1) -and [bool]$hot[0].Record) 'the single hotkey is not recordable'
-        Expect (($chain.Count -eq 1) -and (-not [bool]$chain[0].Record)) 'the chain is recordable'
+        $hot = @($rows | Where-Object { $_.Key -eq 'Hotkey' })[0]
+        $chain = @($rows | Where-Object { $_.Key -eq 'HotkeyFallbacks' })[0]
+        Expect ([bool]$hot.Record -and (-not [bool]$hot.Chain)) 'the single hotkey'
+        Expect ([bool]$chain.Record -and [bool]$chain.Chain) 'the chain'
+        Expect (@($chain.Chords).Count -ge 2) ([string]@($chain.Chords).Count)
+        # adding appends in the order the resident tries them, and the same chord twice is no help
+        $added = Get-SettingChordAdded 'Ctrl+Alt+V, Win+V' 'Alt+Q'
+        Expect ($added -eq 'Ctrl+Alt+V, Win+V, Alt+Q') $added
+        $again = Get-SettingChordAdded $added 'alt+q'
+        Expect ($again -eq $added) $again
+        # removing the last chord is refused: a chain with nothing in it falls back to the default
+        $less = Get-SettingChordRemoved 'Ctrl+V, Alt+Q' 'Ctrl+V'
+        Expect ($less -eq 'Alt+Q') $less
+        Expect ($null -eq (Get-SettingChordRemoved 'Ctrl+V' 'Ctrl+V')) 'the last chord was removed'
+      }
+
+      It 'the paste keys read as the keys they send' {
+        # the file spells them in SendKeys (^v); a person reads them as Ctrl and V
+        Expect ((Convert-SendKeysToChord '^v') -eq 'Ctrl+V') (Convert-SendKeysToChord '^v')
+        Expect ((Convert-SendKeysToChord '^+{INSERT}') -eq 'Ctrl+Shift+Insert') (Convert-SendKeysToChord '^+{INSERT}')
+        Expect ((Convert-SendKeysToChord '^{INSERT}') -eq 'Ctrl+Insert') (Convert-SendKeysToChord '^{INSERT}')
+        $caps = @(Get-SettingChordList $script:SettingsSchema 'PasteKeys' '^v')
+        Expect (($caps.Count -eq 1) -and ([string]$caps[0] -eq 'Ctrl+V')) ($caps -join ' | ')
       }
 
       It 'a setting only install acts on says when it takes effect' {

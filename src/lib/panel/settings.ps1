@@ -11,10 +11,56 @@
 # keystroke would make the window unusable, and restarting it on a change nobody kept would be
 # work for nothing.
 
+# The lock that makes the window a single one: a named object that exists only while a settings
+# window is open. Opening it either hands back that object - no window is open - or nothing, which
+# means the request belongs to the window that already holds it.
+function Open-SettingsLock {
+  $lock = $null
+  $created = $false
+  try { $lock = New-Object System.Threading.Mutex($false, $SettingsLock, [ref]$created) } catch { return $null }
+  if ($created) { return $lock }
+  try { $lock.Dispose() } catch { }
+  return $null
+}
+
+# The open window's doorbell, created by the window and wrung by a request that finds the lock
+# taken. Polling it costs one WaitOne(0) on a loop the window already runs.
+function Open-SettingsAsk {
+  try { return (New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, $SettingsShow)) } catch { return $null }
+}
+
+function Ring-SettingsAsk {
+  try {
+    $ask = [System.Threading.EventWaitHandle]::OpenExisting($SettingsShow)
+    [void]$ask.Set()
+    $ask.Dispose()
+    return $true
+  } catch { return $false }
+}
+
 function Show-Settings {
   $swOpen = [Diagnostics.Stopwatch]::StartNew()
   Load-Forms
   Add-Native
+  # One settings window per session. A second `clipboard settings`, or the tray entry while the
+  # command line already opened it, brings that window forward instead of adding a copy beside it.
+  $script:SetLock = Open-SettingsLock
+  if ($null -eq $script:SetLock) {
+    # the open window creates its doorbell right after the lock, so a request landing in between
+    # waits for it rather than going unanswered
+    for ($i = 0; $i -lt 20; $i++) { if (Ring-SettingsAsk) { break }; Start-Sleep -Milliseconds 25 }
+    Write-Log 'settings: a window is already open, asked it to come forward'
+    return
+  }
+  $script:SetAsk = Open-SettingsAsk
+  # the ways out of here before the window exists (a schema that cannot be read) take the lock
+  # with them: left behind, it would keep the process from ever opening a window again
+  $releaseSettings = {
+    if ($null -ne $script:SetAsk) { try { $script:SetAsk.Dispose() } catch { }; $script:SetAsk = $null }
+    if ($null -ne $script:SetLock) { try { $script:SetLock.Dispose() } catch { }; $script:SetLock = $null }
+  }
+  # before the window exists, so the bar groups it on its own and shows its icon
+  Set-AppId
   Initialize-Dpi
   $msBase = [int]$swOpen.ElapsedMilliseconds
   Apply-Theme
@@ -25,11 +71,13 @@ function Show-Settings {
   $schema = $script:SettingsSchema
   if ($null -eq (Get-SchemaProperties $schema)) {
     Write-Log 'settings: the settings schema is not loaded, nothing to show'
+    & $releaseSettings
     return
   }
   $groups = @(Get-SettingGroups $schema)
   if ($groups.Count -eq 0) {
     Write-Log 'settings: the schema has no properties, nothing to show'
+    & $releaseSettings
     return
   }
   $pal = Get-UiPalette
@@ -62,6 +110,8 @@ function Show-Settings {
     @{ Key = 'save'; Label = 'Save'; Primary = $true }
   )
   $script:SetHotAction = -1
+  # the chord line whose delete button is under the pointer, -1 for none
+  $script:SetHotDelete = -1
   # the row under the pointer, and whether the close button is: the only two hover states left
   $script:SetHover = -1
   $script:SetCloseHot = $false
@@ -88,6 +138,29 @@ function Show-Settings {
   $h = [int](Px 700)
   $layout = Get-SettingsLayout $w $h
 
+  # The list scrolls by distance, not by row: a pixel offset keeps the pointer's grip on a row
+  # through a drag and lets the wheel stop between two rows, neither of which a row index can
+  # express. Everything that needs a row's y asks Get-SettingsRowTop, so the paint, the editors
+  # and the hit tests cannot disagree about where a row is.
+  function Get-SettingsScrollTop {
+    $room = [int]$script:SetLayout.ListBottom - [int]$script:SetLayout.ListTop
+    $all = @($script:SetRows).Count * [int]$script:SetLayout.RowHeight
+    return [Math]::Max(0, $all - $room)
+  }
+
+  function Set-ScrollTo([int]$value) {
+    $max = Get-SettingsScrollTop
+    if ($value -lt 0) { $value = 0 }
+    if ($value -gt $max) { $value = $max }
+    if ($value -eq [int]$script:SetScroll) { return $false }
+    $script:SetScroll = $value
+    return $true
+  }
+
+  function Get-SettingsRowTop([int]$idx) {
+    return ([int]$script:SetLayout.ListTop + ($idx * [int]$script:SetLayout.RowHeight) - [int]$script:SetScroll)
+  }
+
   function Refresh-Settings {
     $script:SetRows = @(Get-SettingsRows $schema $groups[$script:SetGroup] $script:SetPending)
     # Every switch is told where its row now points - a staged flip travels there on the timer,
@@ -103,8 +176,8 @@ function Show-Settings {
     }
     $vis = Get-SettingsVisibleRows $script:SetLayout
     $maxScroll = [Math]::Max(0, @($script:SetRows).Count - $vis)
-    if ($script:SetScroll -gt $maxScroll) { $script:SetScroll = $maxScroll }
-    if ($script:SetScroll -lt 0) { $script:SetScroll = 0 }
+    # the offset is a distance, so the clamp is one too, and it needs no visible-row count
+    [void](Set-ScrollTo ([int]$script:SetScroll))
   }
 
   # a row whose owner setting is off: shown, greyed, and refusing edits with the reason
@@ -226,6 +299,43 @@ function Show-Settings {
     Restore-SettingsDefaults
   }
 
+  # The value a recorded chord produces: a single hotkey replaces what it holds, a chain gains the
+  # chord at the end, which is where the resident tries it last.
+  function Get-RecordedValue([string]$key, [string]$chord) {
+    foreach ($r in @($script:SetRows)) {
+      if ([string]$r.Key -ne $key) { continue }
+      if ($r.ContainsKey('Chain') -and [bool]$r.Chain) { return (Get-SettingChordAdded ([string]$r.Raw) $chord) }
+      return $chord
+    }
+    return $chord
+  }
+
+  # One chord off a chain. The last one stays: a chain with nothing in it falls back to the
+  # default list, so removing it has to be refused the way an empty Plugins= is.
+  function Remove-SettingChord($row, [int]$index) {
+    $chords = @($row.Chords)
+    if ($index -lt 0 -or $index -ge $chords.Count) { return }
+    $next = Get-SettingChordRemoved ([string]$row.Raw) ([string]$chords[$index])
+    if ($null -eq $next) {
+      Show-Message 'keep at least one: a chain with no chord falls back to the default' $true
+      return
+    }
+    [void](Stage-Setting ([string]$row.Key) $next ('removed ' + [string]$chords[$index]))
+  }
+
+  # which chord line of a chain is under the pointer, -1 for none
+  function Get-ChordDeleteAt($row, [int]$rowTop, [int]$px, [int]$py) {
+    if ($null -eq $row) { return -1 }
+    if (-not ($row.ContainsKey('Chain') -and [bool]$row.Chain)) { return -1 }
+    $drawn = [Math]::Min(@($row.Chords).Count, 3)
+    for ($i = 0; $i -lt $drawn; $i++) {
+      $rc = Get-SettingsChordDeleteRect $script:SetLayout $rowTop $i
+      if ($px -ge [int]$rc.Left -and $px -le ([int]$rc.Left + [int]$rc.Width) -and
+        $py -ge [int]$rc.Top -and $py -le ([int]$rc.Top + [int]$rc.Height)) { return $i }
+    }
+    return -1
+  }
+
   function End-Edit([bool]$cancel) {
     $box = $script:SetEditBox
     $script:SetEditBox = $null
@@ -277,9 +387,9 @@ function Show-Settings {
     $idx = Get-RowIndex $row
     if ($idx -lt 0) { return }
     End-Edit $true
-    $rowTop = [int]$script:SetLayout.ListTop + (($idx - $script:SetScroll) * [int]$script:SetLayout.RowHeight)
+    $rowTop = Get-SettingsRowTop $idx
     $isNumber = ($row.Kind -eq 'number')
-    $rect = Get-SettingEditRect $script:SetLayout $rowTop
+    $rect = Get-SettingEditRect $script:SetLayout $rowTop (Get-SettingsControlWidth $row)
     if ($isNumber) { $rect = Get-SettingsNumberRect $script:SetLayout $rowTop }
     $script:SetEditKey = [string]$row.Key
     $script:SetEditRect = $rect
@@ -357,7 +467,7 @@ function Show-Settings {
     $current = [string]$row.Raw
     $multi = $false
     if ($row.ContainsKey('Multi')) { $multi = [bool]$row.Multi }
-    $rowTop = [int]$script:SetLayout.ListTop + (($idx - $script:SetScroll) * [int]$script:SetLayout.RowHeight)
+    $rowTop = Get-SettingsRowTop $idx
     $rect = Get-SettingDropRect $script:SetLayout $rowTop @($choices).Count
     $script:SetDropKey = [string]$row.Key
     $script:SetDropMulti = $multi
@@ -499,7 +609,7 @@ function Show-Settings {
     $key = [string]$script:SetRecKey
     $script:SetRecKey = ''
     $script:SetRecPreview = @()
-    [void](Stage-Setting $key $chord ('set to ' + $chord))
+    [void](Stage-Setting $key (Get-RecordedValue $key $chord) ('set to ' + $chord))
     $form.Invalidate()
   }
 
@@ -569,7 +679,7 @@ function Show-Settings {
     $script:SetRecKey = ''
     $script:SetRecPreview = @()
     Stop-HotkeyRecord ([string]$script:StoreDir)
-    [void](Stage-Setting $key $chord ('set to ' + $chord))
+    [void](Stage-Setting $key (Get-RecordedValue $key $chord) ('set to ' + $chord))
     $e.Handled = $true
     $e.SuppressKeyPress = $true
     $form.Invalidate()
@@ -583,14 +693,10 @@ function Show-Settings {
   $form.KeyPreview = $true
   $form.Text = 'Settings'
   $form.AccessibleName = 'Settings'
-  # The taskbar and Alt-Tab read the window icon, and a script window otherwise carries the
-  # PowerShell mark: build the tool's own clipboard drawing, the one the tray uses, at the size
-  # the bar asks for.
-  $script:SetHicon = [IntPtr]::Zero
-  try {
-    $script:SetHicon = [Cb.Tray]::Build([int](Px 32), ([Drawing.Color]::FromArgb(255, 0, 120, 212)).ToArgb())
-    if ($script:SetHicon -ne [IntPtr]::Zero) { $form.Icon = [Drawing.Icon]::FromHandle($script:SetHicon) }
-  } catch { $script:SetHicon = [IntPtr]::Zero }
+  # The one mark the tool draws (lib\native.ps1): the same icon the tray shows, so the taskbar
+  # button and Alt-Tab never carry a second drawing of it.
+  $icon = New-AppIcon
+  if ($null -ne $icon) { $form.Icon = $icon }
   $form.ClientSize = New-Object Drawing.Size -ArgumentList @($w, $h)
   $areas = @()
   try { foreach ($sc in [Windows.Forms.Screen]::AllScreens) { $areas += $sc.WorkingArea } } catch { }
@@ -625,22 +731,37 @@ function Show-Settings {
       Draw-SettingsChrome $g $pal $layout 'Settings' ([string]$groups[$script:SetGroup])
       Draw-SettingsSide $g $pal $layout $groups $script:SetGroup
       $vis = Get-SettingsVisibleRows $layout
+      # A pixel offset leaves a half row at each end: the first index and the remainder of the
+      # offset place them, and the clip keeps the top one out of the header and the bottom one
+      # out of the footer - both are drawn from the same list, with nothing snapped.
+      $rowH = [int]$layout.RowHeight
+      $off = [int]$script:SetScroll
+      $first = 0
+      if ($rowH -gt 0) { $first = [int][Math]::Floor($off / [double]$rowH) }
+      $base = [int]$layout.ListTop - ($off - ($first * $rowH))
       $x = [int]$layout.ListLeft
       $width = [int]$layout.ListRight - [int]$layout.ListLeft
-      for ($i = 0; $i -lt $vis; $i++) {
-        $idx = $i + $script:SetScroll
-        if ($idx -ge @($rows).Count) { break }
-        $rowTop = [int]$layout.ListTop + ($i * [int]$layout.RowHeight)
-        $row = $rows[$idx]
-        $k = 1.0
-        if ($row.Kind -eq 'bool') {
-          $name = [string]$row.Key
-          if ($script:SetToggleK.ContainsKey($name)) { $k = [double]$script:SetToggleK[$name] }
-          elseif ([string]$row.Raw -eq '1') { $k = 1.0 } else { $k = 0.0 }
+      $clipState = $g.Save()
+      try {
+        $g.SetClip((New-Object Drawing.Rectangle -ArgumentList @($x, [int]$layout.ListTop, $width, ([int]$layout.ListBottom - [int]$layout.ListTop))))
+        for ($i = 0; $i -le $vis; $i++) {
+          $idx = $first + $i
+          if ($idx -ge @($rows).Count) { break }
+          $rowTop = $base + ($i * $rowH)
+          $row = $rows[$idx]
+          $k = 1.0
+          if ($row.Kind -eq 'bool') {
+            $name = [string]$row.Key
+            if ($script:SetToggleK.ContainsKey($name)) { $k = [double]$script:SetToggleK[$name] }
+            elseif ([string]$row.Raw -eq '1') { $k = 1.0 } else { $k = 0.0 }
+          }
+          $armed = ($script:SetRecKey -and ($script:SetRecKey -eq [string]$row.Key))
+          $editingRow = ($script:SetEditKey -and ($script:SetEditKey -eq [string]$row.Key))
+          $hotDel = -1
+          if ($idx -eq $script:SetHover) { $hotDel = $script:SetHotDelete }
+          Draw-SettingsRow $g $pal $layout $row $x $rowTop $width ($idx -eq $script:SetHover) $k $armed @($script:SetRecPreview) $editingRow $hotDel
         }
-        $armed = ($script:SetRecKey -and ($script:SetRecKey -eq [string]$row.Key))
-        Draw-SettingsRow $g $pal $layout $row $x $rowTop $width ($idx -eq $script:SetHover) $k $armed @($script:SetRecPreview)
-      }
+      } finally { $g.Restore($clipState) }
       $thumb = Get-SettingsScrollThumb $layout @($rows).Count $vis $script:SetScroll
       Draw-SettingsScrollbar $g $pal $layout $thumb $script:SetSbK
       if ($script:SetEditKey -and $null -ne $script:SetEditRect) {
@@ -686,28 +807,34 @@ function Show-Settings {
 
   $form.Add_MouseWheel({
     param($s, $e)
-    # the wheel scrolls the page - it never changes a value and never picks a row
-    $vis = Get-SettingsVisibleRows $script:SetLayout
-    $maxScroll = [Math]::Max(0, @($script:SetRows).Count - $vis)
+    # the wheel scrolls the page - it never changes a value and never picks a row. A notch is the
+    # system's line count and a line is a line of text, not a row: a list that jumps a whole row
+    # per notch cannot be read while it moves
+    $lines = 3
+    try { $lines = [int][Windows.Forms.SystemInformation]::MouseWheelScrollLines } catch { }
+    $step = 0
+    if ($lines -lt 0) {
+      $step = [int]$script:SetLayout.ListBottom - [int]$script:SetLayout.ListTop
+    } elseif ($lines -gt 0) {
+      $step = $lines * [int](Px 20)
+    } else {
+      $step = 3 * [int](Px 20)
+    }
     $dir = 1
     if ($e.Delta -gt 0) { $dir = -1 }
-    $next = $script:SetScroll + ($dir * 3)
-    if ($next -lt 0) { $next = 0 }
-    if ($next -gt $maxScroll) { $next = $maxScroll }
-    if ($next -ne $script:SetScroll) { $script:SetScroll = $next; $form.Invalidate() }
+    if (Set-ScrollTo ([int]$script:SetScroll + ($dir * $step))) { $form.Invalidate() }
   })
 
-  # the thumb lands on the row the drag aims at: the scroll position is a row index, so the
-  # pixel is turned back into one through the same span the paint used
+  # The thumb follows the pointer by distance: the press point keeps its grip, and the offset is
+  # mapped through the same span the paint used, so a drag of one pixel moves the list by the
+  # matching fraction of a pixel instead of snapping to the next row.
   function Scroll-ToThumb([int]$thumbTop) {
     $thumb = Get-SettingsScrollThumb $script:SetLayout @($script:SetRows).Count (Get-SettingsVisibleRows $script:SetLayout) $script:SetScroll
     if ($null -eq $thumb) { return }
     $room = [int]$thumb.TrackLen - [int]$thumb.Len
     if ($room -le 0) { return }
     $v = [int][Math]::Round((($thumbTop - [int]$thumb.TrackTop) * [int]$thumb.Span) / [double]$room)
-    if ($v -lt 0) { $v = 0 }
-    if ($v -gt [int]$thumb.Span) { $v = [int]$thumb.Span }
-    if ($v -ne $script:SetScroll) { $script:SetScroll = $v; $form.Invalidate() }
+    if (Set-ScrollTo $v) { $form.Invalidate() }
   }
 
   $form.Add_MouseMove({
@@ -736,7 +863,14 @@ function Show-Settings {
     }
     if ($hotAction -ne $script:SetHotAction) { $script:SetHotAction = $hotAction; $form.Invalidate() }
     $idx = Get-SettingsRowAt $script:SetLayout @($script:SetRows).Count $script:SetScroll $e.X $e.Y
-    if ($idx -ne $script:SetHover) { $script:SetHover = $idx; $form.Invalidate() }
+    if ($idx -ne $script:SetHover) { $script:SetHover = $idx; $script:SetHotDelete = -1; $form.Invalidate() }
+    # a chord line's delete button is a target of its own
+    $hotDel = -1
+    if ($idx -ge 0) {
+      $rowTop = Get-SettingsRowTop $idx
+      $hotDel = Get-ChordDeleteAt $script:SetRows[$idx] $rowTop $e.X $e.Y
+    }
+    if ($hotDel -ne $script:SetHotDelete) { $script:SetHotDelete = $hotDel; $form.Invalidate() }
   })
 
   $form.Add_MouseUp({
@@ -786,13 +920,10 @@ function Show-Settings {
         $script:SetSbDrag = $e.Y - [int]$thumb.Top
         $form.Capture = $true
       } else {
-        $page = Get-SettingsVisibleRows $script:SetLayout
-        $to = $script:SetScroll - $page
-        if ($e.Y -gt [int]$thumb.Top) { $to = $script:SetScroll + $page }
-        $maxScroll = [Math]::Max(0, @($script:SetRows).Count - $page)
-        if ($to -lt 0) { $to = 0 }
-        if ($to -gt $maxScroll) { $to = $maxScroll }
-        if ($to -ne $script:SetScroll) { $script:SetScroll = $to; $form.Invalidate() }
+        $page = [int]$script:SetLayout.ListBottom - [int]$script:SetLayout.ListTop
+        $to = [int]$script:SetScroll - $page
+        if ($e.Y -gt [int]$thumb.Top) { $to = [int]$script:SetScroll + $page }
+        if (Set-ScrollTo $to) { $form.Invalidate() }
       }
       return
     }
@@ -827,6 +958,13 @@ function Show-Settings {
       $form.Invalidate()
       return
     }
+    # A chord line can be removed on its own: its delete button is a target inside the row, and
+    # it is checked before the row's own action, which would start a recording.
+    if ($row.ContainsKey('Chain') -and [bool]$row.Chain) {
+      $rowTop = Get-SettingsRowTop $idx
+      $on = Get-ChordDeleteAt $row $rowTop $e.X $e.Y
+      if ($on -ge 0) { Remove-SettingChord $row $on; return }
+    }
     # every row is its own control: a click on a switch row flips it wherever it lands, a click
     # on a shortcut waits for a chord, a click on a value opens its list, and anything else is
     # typed - there is no select-then-act step
@@ -845,6 +983,20 @@ function Show-Settings {
     Begin-Edit $row
   })
 
+  # Bring this window forward, whoever asked for it. The request may come from another process,
+  # where SetForegroundWindow is refused while that process owns the foreground, so the panel's
+  # own routine is reused; a minimized window is restored first, or the bar has nothing to show.
+  function Raise-Settings {
+    try {
+      if ($null -eq $form -or $form.IsDisposed) { return }
+      if ($form.WindowState -eq [Windows.Forms.FormWindowState]::Minimized) {
+        $form.WindowState = [Windows.Forms.FormWindowState]::Normal
+      }
+      [void](Take-Foreground $form.Handle)
+      $form.Activate()
+    } catch { }
+  }
+
   # A switch that flips in one frame reads as a jump. One timer eases every switch in flight and
   # asks for a repaint only while something moves, so a window sitting still costs nothing;
   # Animations=0 makes the step 1.0, which lands on the target in a single frame. The scrollbar
@@ -856,6 +1008,9 @@ function Show-Settings {
   $animTimer.Interval = 15
   $animTimer.Add_Tick({
     if ($form.IsDisposed) { return }
+    # a second request for the window: this process may be the one that owns it, or the other
+    # way round, so the signal is checked here, on the loop that is already running
+    try { if ($null -ne $script:SetAsk -and $script:SetAsk.WaitOne(0)) { Raise-Settings } } catch { }
     # a chord the resident handed over: it owns the key RegisterHotKey took, so this is the only
     # way the window can see it while recording
     if ($script:SetRecKey) {
@@ -928,11 +1083,7 @@ function Show-Settings {
     Close-Choices
     End-Edit $true
     try { $form.Dispose() } catch { }
-    # the window icon is an HICON built for this window: with the form gone, so is the handle
-    if ($script:SetHicon -ne [IntPtr]::Zero) {
-      try { [Cb.Tray]::Free($script:SetHicon) } catch { }
-      $script:SetHicon = [IntPtr]::Zero
-    }
+    & $releaseSettings
     # one reload for the whole session, and only when something was actually written
     if ($script:SetDirty) {
       try { Restart-ResidentIfRunning } catch { }

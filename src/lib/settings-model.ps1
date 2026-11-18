@@ -118,6 +118,14 @@ function Format-SettingText($schema, [string]$key, [string]$raw) {
   if ($kind -eq 'number') {
     # one string for anything that wants the whole value in a word: "16 MB", not 16777216
     $view = Get-SettingNumberView $schema $key $raw
+    if ([string]$view.Number -eq '') {
+      # an empty field holds its hint, the same word every other kind shows: (auto) says the
+      # position follows the screen rather than being zero
+      $hint = ''
+      if ($null -ne $spec) { $hint = [string](Get-SchemaHint $schema $key) }
+      if ($hint) { return $hint }
+      return '(empty)'
+    }
     if ([string]$view.Unit) { return ([string]$view.Number + ' ' + [string]$view.Unit) }
     return [string]$view.Number
   }
@@ -279,9 +287,12 @@ function Get-SettingsRows($schema, [string]$group, $pending = $null) {
       Multi   = ((Get-SettingKind $spec) -eq 'list')
       # a value the schema marks read-only is shown and refused, with the reason in its help
       Locked  = $spec.Contains('ReadOnly')
-      # a shortcut row waits for a chord from the keyboard; a chain of them is typed instead,
-      # because one recorded chord would replace the whole list
-      Record  = ([string]$spec['Type'] -ceq 'hotkey')
+      # a shortcut row waits for a chord from the keyboard; a chain of them is also recorded, and
+      # the chord joins the end of the list instead of replacing it
+      Record  = ((Get-SettingKind $spec) -eq 'hotkey')
+      # a chain is drawn as one line per chord, each with its own delete button: a list on one
+      # line with "+3" behind it says nothing about which chords are in it
+      Chain   = ([string]$spec['Type'] -ceq 'hotkeys')
       # a path is chosen in a dialog, not typed: Pick names the dialog the row opens
       Pick    = $(if ($spec.Contains('Pick')) { [string]$spec['Pick'] } else { '' })
       Raw     = $raw
@@ -332,7 +343,7 @@ function Get-SettingGroups($schema) {
 function New-SettingInfoRow([string]$key, [string]$label, [string]$text, [string]$help) {
   return @{
     Key = $key; Group = 'About'; Label = $label; Kind = 'info'
-    Multi = $false; Locked = $true; Record = $false; Pick = ''
+    Multi = $false; Locked = $true; Record = $false; Chain = $false; Pick = ''
     Raw = ''; Pending = $false; Number = ''; Unit = ''; Scale = 1
     Text = $text; Help = $help; Choices = @(); Chords = @()
     Enabled = $true; Why = ''

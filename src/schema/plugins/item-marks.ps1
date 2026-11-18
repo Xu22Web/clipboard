@@ -9,10 +9,10 @@
   File            = 'clipboard.ini'
   Version         = 1
   Properties      = [ordered]@{
-    MaxPins          = @{ Type = 'int'; Minimum = 0; Maximum = 1000; Default = 50; Description = 'pinned entry cap, 0 = unlimited' }
+    MaxPins          = @{ Type = 'int'; Unit = 'entries'; Minimum = 0; Maximum = 1000; Default = 50; Description = 'pinned entry cap, 0 = unlimited' }
     ClearKeepsPinned = @{ Type = 'bool'; Default = 1; Description = '1 = clear keeps pinned rows, 0 = clear wipes them too' }
     StickyPins       = @{ Type = 'bool'; Default = 1; Description = '1 = pinned rows stay on top while searching, 0 = the search hides them too' }
-    StickyRows       = @{ Type = 'int'; Minimum = 0; Maximum = 50; Default = 3; Description = 'rows the sticky pins may take while searching, 0 = as many as fit' }
+    StickyRows       = @{ Type = 'int'; Unit = 'rows'; Minimum = 0; Maximum = 50; Default = 3; Description = 'rows the sticky pins may take while searching, 0 = as many as fit' }
   }
   ThemeProperties = [ordered]@{
     StarGlyph    = @{ Type = 'string'; Default = [string][char]0xE735; Description = 'glyph shown for a starred entry' }

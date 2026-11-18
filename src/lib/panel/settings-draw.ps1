@@ -232,8 +232,9 @@ function Get-SettingsUnitWidth([string]$unit) {
 # A value field: the field colour, a hairline, the value at the right of it, then a unit in the
 # quiet ink when the value measures something. $mode is 'rest', 'edit' or 'bad', so a resting
 # number, an open editor and a refused value cannot drift apart - the editor draws the same box
-# with no value in it and puts its text box inside.
-function Draw-SettingsValueField($g, $pal, $rect, [string]$value, [string]$unit, [bool]$enabled, [string]$mode = 'rest') {
+# with no value in it and puts its text box inside. $hint draws the value in the quiet ink: an
+# empty field showing (auto) is a statement about the default, not a value in the file.
+function Draw-SettingsValueField($g, $pal, $rect, [string]$value, [string]$unit, [bool]$enabled, [string]$mode = 'rest', [bool]$hint = $false) {
   if ($null -eq $g -or $null -eq $pal -or $null -eq $rect) { return }
   Draw-SettingsFieldBox $g $pal $rect $mode
   $x = [int]$rect.Left
@@ -249,7 +250,7 @@ function Draw-SettingsValueField($g, $pal, $rect, [string]$value, [string]$unit,
   }
   if (-not $value) { return }
   $ink = $pal['Text']
-  if (-not $enabled) { $ink = $pal['Faint'] }
+  if (-not $enabled -or $hint) { $ink = $pal['Faint'] }
   $nb = New-Object Drawing.RectangleF -ArgumentList @(
     [single]($x + (Px 8)), [single]$y, [single]($w - $uw - (Px 12)), [single]$h)
   $g.DrawString($value, $script:FBody, (Get-Brush $ink), $nb, $sf.Right)
@@ -380,6 +381,53 @@ function Get-SettingsPathRect($layout, [int]$rowTop) {
   }
 }
 
+# How wide the control column is, per kind of row: a switch is narrow, a number field wider, a
+# path field wider still. The paint, the editor and the hit tests all ask here, so a box always
+# covers exactly the column its value was drawn in.
+function Get-SettingsControlWidth($row) {
+  if ($null -eq $row) { return (Px 170) }
+  if ($row.Kind -eq 'bool') { return (Px 74) }
+  if ($row.Kind -eq 'number') { return (Px 148) }
+  $pick = ''
+  if ($row.ContainsKey('Pick')) { $pick = [string]$row.Pick }
+  if ($pick) { return (Px 254) }
+  return (Px 170)
+}
+
+# The lines a chain of chords takes in the value column: one per chord, the height of a cap, so the
+# list reads as rows instead of one line with "+3" behind it. Three fit a row.
+function Get-SettingsChordLineRect($layout, [int]$rowTop, [int]$index) {
+  $lineH = Px 20
+  $top = (Get-SettingsControlTop $layout $rowTop $lineH) + ($index * $lineH)
+  $right = [int]$layout.ListRight - (Px 12)
+  return @{ Top = $top; Height = $lineH; Right = $right; Left = $right - (Px 240) }
+}
+
+# The delete button of one chord line: a 16 px box at the end of the line, where a list row puts
+# its remove affordance.
+function Get-SettingsChordDeleteRect($layout, [int]$rowTop, [int]$index) {
+  $line = Get-SettingsChordLineRect $layout $rowTop $index
+  $size = Px 16
+  return @{
+    Left   = [int]$line.Right - $size
+    Top    = [int]$line.Top + [int](($line.Height - $size) / 2)
+    Width  = $size
+    Height = $size
+  }
+}
+
+# A small cross, the same drawing the close button uses, for a line that can be removed.
+function Draw-SettingsCross($g, $pal, [int]$cx, [int]$cy, [int]$d, $colour) {
+  if ($null -eq $g -or $null -eq $pal) { return }
+  $pen = New-Object Drawing.Pen $colour
+  $pen.StartCap = [Drawing.Drawing2D.LineCap]::Round
+  $pen.EndCap = [Drawing.Drawing2D.LineCap]::Round
+  try {
+    $g.DrawLine($pen, ($cx - $d), ($cy - $d), ($cx + $d), ($cy + $d))
+    $g.DrawLine($pen, ($cx + $d), ($cy - $d), ($cx - $d), ($cy + $d))
+  } finally { $pen.Dispose() }
+}
+
 # One setting: the label and its help on the left, the control on the right, centred on the row.
 # That is the Fluent settings card - a name over a description, one control per card, and the
 # control holds the vertical middle of the card rather than the first line.
@@ -387,7 +435,7 @@ function Get-SettingsPathRect($layout, [int]$rowTop) {
 # This column is not a list: nothing marks a row as current, because every row is its own control
 # and a filled or outlined row reads as "these are selected items". Hovering is the only fill. A
 # row that cannot take effect is greyed and says which setting owns it.
-function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [bool]$hover, [double]$toggleK, [bool]$armed = $false, $preview = @()) {
+function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [bool]$hover, [double]$toggleK, [bool]$armed = $false, $preview = @(), [bool]$editing = $false, [int]$hotDelete = -1) {
   if ($null -eq $g -or $null -eq $row) { return }
   $enabled = $true
   if ($row.ContainsKey('Enabled')) { $enabled = [bool]$row.Enabled }
@@ -409,10 +457,7 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
   # the control column sets how much room the label and the help have: a switch is narrow, a
   # number field wider, a path field wider still. The text stops before it, so a description
   # never runs under the value.
-  $controlW = Px 170
-  if ($row.Kind -eq 'bool') { $controlW = Px 74 }
-  elseif ($row.Kind -eq 'number') { $controlW = Px 148 }
-  elseif ($pick) { $controlW = Px 254 }
+  $controlW = Get-SettingsControlWidth $row
   $textW = $valueRight - $controlW - (Px 12)
   if ($textW -lt (Px 120)) { $textW = [int](Px 120) }
   $labelInk = $pal['Text']
@@ -443,16 +488,24 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
       $g.DrawString([string]$lines[$i], $script:FSmall, (Get-Brush $pal['Faint']), $hb, $sf.None)
     }
   }
+  # A value being edited is covered by the field the editor puts there. Drawing the row's own
+  # value as well leaves the hint of an empty value showing beside the box, which is what put the
+  # (none) of a pattern next to its field instead of in it.
+  if ($editing) { return }
   if ($row.Kind -eq 'bool') {
     $t = Get-SettingsToggleRect $layout $y
     Draw-SettingsToggle $g $pal ([int]$t.Left) ([int]$t.Top) ([int]$t.Width) ([int]$t.Height) $toggleK $enabled
     return
   }
   # a number is a field with its unit beside it, never a bare number: 16 with no unit beside it
-  # says nothing about what it measures
+  # says nothing about what it measures. An empty value holds its hint in the same field, so the
+  # row that reads (auto) still says px
   if ($row.Kind -eq 'number') {
     $f = Get-SettingsNumberRect $layout $y
-    Draw-SettingsValueField $g $pal $f ([string]$row.Number) ([string]$row.Unit) $enabled
+    $value = [string]$row.Number
+    $isHint = $false
+    if (-not $value) { $value = [string]$row.Text; $isHint = $true }
+    Draw-SettingsValueField $g $pal $f $value ([string]$row.Unit) $enabled 'rest' $isHint
     return
   }
   # a path is a picker, not a value: the field says "this opens a dialog" and the folder that
@@ -467,13 +520,55 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
   if ($row.ContainsKey('Choices') -and $null -ne $row.Choices) { $choices = @($row.Choices) }
   $dropW = 0
   if ($choices.Count -gt 0 -and $enabled) { $dropW = Px 16 }
+  $cy = $y + [int](Px 19)
+  # a chevron, the same affordance a Fluent combo box carries. Drawn before the value, so a row
+  # that shows key caps keeps its affordance too.
+  if ($dropW -gt 0) {
+    $cx = $x + $valueRight - (Px 7)
+    $pen = New-Object Drawing.Pen $pal['Dim'], (Px 1)
+    try {
+      $g.DrawLine($pen, ($cx - (Px 3)), ($cy - (Px 2)), $cx, ($cy + (Px 2)))
+      $g.DrawLine($pen, $cx, ($cy + (Px 2)), ($cx + (Px 3)), ($cy - (Px 2)))
+    } finally { $pen.Dispose() }
+  }
   # A shortcut is a chord, not a string: its keys are drawn as the panel's key caps, right
-  # aligned so the chord ends where the value text did. While the row is being recorded the caps
-  # show what is held so far, followed by a dim placeholder.
+  # aligned so the chord ends where the value text did.
   $chords = @()
   if ($row.ContainsKey('Chords') -and $null -ne $row.Chords) { $chords = @($row.Chords) }
+  # A chain is a list, and a list on one line says nothing: every chord gets its own line with a
+  # delete button, and a fourth chord has to wait until one of the three is removed.
+  $chain = ($row.ContainsKey('Chain') -and [bool]$row.Chain)
+  if ($chain) {
+    $maxLines = 3
+    $drawn = [Math]::Min($chords.Count, $maxLines)
+    if ($armed -and $drawn -ge $maxLines) { $drawn = $maxLines - 1 }
+    for ($i = 0; $i -lt $drawn; $i++) {
+      $line = Get-SettingsChordLineRect $layout $y $i
+      $del = Get-SettingsChordDeleteRect $layout $y $i
+      [void](Draw-SettingChord $g $pal ([int]$del.Left - (Px 6)) ([int]$line.Top + [int]($line.Height / 2)) (Get-SettingChordKeys ([string]$chords[$i])) $enabled)
+      $cross = $pal['Faint']
+      if ($i -eq $hotDelete) { $cross = $pal['Warn'] }
+      Draw-SettingsCross $g $pal ([int]$del.Left + [int]($del.Width / 2)) ([int]$del.Top + [int]($del.Height / 2)) (Px 3) $cross
+    }
+    if ($armed) {
+      # the chord being recorded goes on the next free line: the chain is being added to, not
+      # replaced
+      $line = Get-SettingsChordLineRect $layout $y $drawn
+      $keys = @($preview)
+      $keys += [string][char]0x2026
+      [void](Draw-SettingChord $g $pal ([int]$line.Right) ([int]$line.Top + [int]($line.Height / 2)) $keys $enabled $true)
+      return
+    }
+    if ($chords.Count -gt $drawn) {
+      $line = Get-SettingsChordLineRect $layout $y $drawn
+      $more = '+' + [string]($chords.Count - $drawn) + ' more'
+      $box = New-Object Drawing.RectangleF -ArgumentList @(
+        [single][Math]::Max(0, [int]$line.Left), [single][int]$line.Top, [single]([int]$line.Right - [int]$line.Left), [single][int]$line.Height)
+      $g.DrawString($more, $script:FSmall, (Get-Brush $pal['Faint']), $box, $sf.Right)
+    }
+    return
+  }
   if ($armed -or $chords.Count -gt 0) {
-    $cy = $y + [int](Px 19)
     $xr = $x + $valueRight - $dropW
     if ($armed) {
       # the row is waiting for a chord: what is held so far, then one accent cap for the key
@@ -482,35 +577,17 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
       [void](Draw-SettingChord $g $pal $xr $cy $keys $enabled $true)
       return
     }
-    # A chain of chords is longer than the value column, so the first chord is drawn and the
-    # count of the rest follows it as plain text: a second row of caps would be a lie about how
-    # many keys the chain holds.
-    if ($chords.Count -gt 1) {
-      $more = '+' + [string]($chords.Count - 1)
-      $mw = [int][Math]::Ceiling($g.MeasureString($more, $script:FSmall, 1000, $sf.None).Width) + (Px 2)
-      $box = New-Object Drawing.RectangleF -ArgumentList @(
-        [single]($xr - $mw), [single]($cy - (Px 9)), [single]$mw, [single](Px 18))
-      $g.DrawString($more, $script:FSmall, (Get-Brush $pal['Faint']), $box, $sf.Center)
-      $xr = $xr - $mw - (Px 6)
-    }
     [void](Draw-SettingChord $g $pal $xr $cy (Get-SettingChordKeys ([string]$chords[0])) $enabled)
     return
   }
+  # the text sits on the control band, the same vertical centre the switch, the caps and the field
+  # the editor opens on use: a value that jumped two pixels when its box appeared would read as a
+  # misaligned row
   $valueBox = New-Object Drawing.RectangleF -ArgumentList @(
-    [single]($x + $valueRight - $controlW), [single]($y + (Px 4)), [single]($controlW - $dropW), [single](Px 26))
+    [single]($x + $valueRight - $controlW), [single]($y + (Px 6)), [single]($controlW - $dropW), [single](Px 26))
   $ink = $pal['Dim']
   if (-not $enabled) { $ink = $pal['Faint'] }
   $g.DrawString([string]$row.Text, $script:FBody, (Get-Brush $ink), $valueBox, $sf.Right)
-  if ($dropW -gt 0) {
-    # a chevron, the same affordance a Fluent combo box carries
-    $cx = $x + $valueRight - (Px 7)
-    $cy = $y + [int](Px 19)
-    $pen = New-Object Drawing.Pen $pal['Dim'], (Px 1)
-    try {
-      $g.DrawLine($pen, ($cx - (Px 3)), ($cy - (Px 2)), $cx, ($cy + (Px 2)))
-      $g.DrawLine($pen, $cx, ($cy + (Px 2)), ($cx + (Px 3)), ($cy - (Px 2)))
-    } finally { $pen.Dispose() }
-  }
 }
 
 # The keys of one chord as the caps the footer and the panel's hints draw: filled, stroked and
@@ -725,8 +802,10 @@ function Draw-SettingsClose($g, $pal, $layout, [bool]$hot) {
   } finally { $pen.Dispose() }
 }
 
-# Where the thumb sits, as one calculation shared by the paint, the hit test and the drag: a
-# pointer that grabs the middle of the thumb must keep grabbing the middle of it.
+# Where the thumb sits, as one calculation shared by the paint, the hit test and the drag: the
+# thumb covers as much of the track as the list shows of its content, and its offset is the pixel
+# scroll over the pixels there are to scroll, so one pixel of drag is the matching fraction of the
+# content instead of a whole row.
 function Get-SettingsScrollThumb($layout, [int]$rows, [int]$visible, [int]$scroll) {
   if ($null -eq $layout -or $visible -le 0 -or $rows -le $visible) { return $null }
   $top = [int]$layout.ListTop
@@ -734,7 +813,7 @@ function Get-SettingsScrollThumb($layout, [int]$rows, [int]$visible, [int]$scrol
   if ($track -lt (Px 24)) { return $null }
   $len = [int][Math]::Max((Px 24), [int]($track * ($visible / [double]$rows)))
   if ($len -gt $track) { $len = $track }
-  $span = [Math]::Max(1, $rows - $visible)
+  $span = [Math]::Max(1, ($rows * [int]$layout.RowHeight) - $track)
   $room = $track - $len
   $off = [int][Math]::Round($room * ($scroll / [double]$span))
   if ($off -lt 0) { $off = 0 }

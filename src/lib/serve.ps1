@@ -8,10 +8,8 @@
 # names: the kept names are s and p whether or not a single entry carries them, so counting
 # names said "2 pinned entries stay" on a history that had no pinned entry at all.
 #   @{ Text; Gone; Stay }
-# The tray icon is drawn at the size the taskbar asks for, so it stays sharp at 125% and
-# 150% instead of being a 16 px bitmap scaled up. The shape is the tool's own: a clipboard
-# board with its clip and two lines of text. The colour is the Windows accent blue, which
-# reads on both a light and a dark taskbar.
+# The tray shows the one mark lib\native.ps1 draws, at the size the notification area asks for
+# (16 * dpi): a bitmap scaled up from 16 is what made it look soft at 125% and 150%.
 $script:TrayIcon = $null
 $script:TrayHicon = [IntPtr]::Zero
 function New-TrayIcon {
@@ -23,7 +21,7 @@ function New-TrayIcon {
   if ($size -lt 16) { $size = 16 }
   if ($size -gt 48) { $size = 48 }
   $h = [IntPtr]::Zero
-  try { $h = [Cb.Tray]::Build($size, ([Drawing.Color]::FromArgb(255, 0, 120, 212)).ToArgb()) } catch { return $null }
+  try { $h = [Cb.Tray]::Build($size, (Get-AppIconArgb)) } catch { return $null }
   if ($h -eq [IntPtr]::Zero) { return $null }
   if ($script:TrayHicon -ne [IntPtr]::Zero) { try { [Cb.Tray]::Free($script:TrayHicon) } catch { } }
   $script:TrayHicon = $h

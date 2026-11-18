@@ -122,27 +122,30 @@ function New-SettingEditor($form, $pal, [int]$x, [int]$y, [int]$w, [int]$h, [boo
   return $box
 }
 
-# Where the choice list opens: under the row, in the control column, and above it when the list
-# would run past the bottom of the window.
+# Where the choice list opens: under the control it belongs to, in the control column, and above
+# it when the list would run past the bottom of the window.
 function Get-SettingDropRect($layout, [int]$rowTop, [int]$count) {
-  $rowH = [int]$layout.RowHeight - (Px 4)
   $right = [int]$layout.ListRight - (Px 6)
   $w = (Px 170) + (Px 16)
   $itemH = Px 30
   $h = [int](Px 8) + ($count * $itemH)
-  $top = $rowTop + $rowH + (Px 4)
+  # the list opens under the control, not under the row: a row is two lines tall now, and a popup
+  # that starts below it would sit a third of a card away from the box it belongs to
+  $fieldH = Px 28
+  $top = (Get-SettingsControlTop $layout $rowTop $fieldH) + $fieldH + (Px 6)
   $limit = [int]$layout.ListBottom - [int](Px 8)
   if (($top + $h) -gt $limit) { $top = [Math]::Max([int]$layout.ListTop, $rowTop - $h - (Px 4)) }
   return @{ Left = ($right - $w); Top = $top; Width = $w; Height = $h }
 }
 
 # The row a click lands on: -1 when the click is outside the list, so a click on the header or
-# the footer neither selects nor edits anything.
+# the footer neither selects nor edits anything. $scroll is a pixel offset, the same distance the
+# paint moved the rows by, so a list scrolled to a half row still answers with the row under the
+# pointer.
 function Get-SettingsRowAt($layout, [int]$rows, [int]$scroll, [int]$px, [int]$py) {
   if ($py -lt [int]$layout.ListTop -or $py -ge [int]$layout.ListBottom) { return -1 }
   if ($px -lt [int]$layout.ListLeft -or $px -gt [int]$layout.ListRight) { return -1 }
-  $i = [int][Math]::Floor(($py - [int]$layout.ListTop) / [int]$layout.RowHeight)
-  $i = $i + $scroll
+  $i = [int][Math]::Floor(($py - [int]$layout.ListTop + $scroll) / [double]$layout.RowHeight)
   if ($i -lt 0 -or $i -ge $rows) { return -1 }
   return $i
 }
@@ -157,13 +160,12 @@ function Test-SettingsToggleHit($layout, [int]$px, [int]$py, [int]$rowTop) {
 
 # Where the editor sits for a row: over the control column, holding the same vertical middle the
 # value does, so the text does not jump when the box appears.
-function Get-SettingEditRect($layout, [int]$rowTop) {
-  $rowH = [int]$layout.RowHeight - (Px 4)
+function Get-SettingEditRect($layout, [int]$rowTop, [int]$width = 0) {
   $h = Px 28
-  $right = [int]$layout.ListRight - (Px 6)
   # the control column, so the box covers the value and not the description beside it
-  $w = (Px 170) + (Px 16)
-  $left = $right - $w
+  if ($width -le 0) { $width = Px 170 }
+  $right = [int]$layout.ListRight - (Px 12)
+  $left = $right - $width
   if ($left -lt ([int]$layout.ListLeft + (Px 120))) { $left = [int]$layout.ListLeft + (Px 120) }
-  return @{ Left = $left; Top = ($rowTop + [int](($rowH - $h) / 2)); Width = ($right - $left); Height = $h }
+  return @{ Left = $left; Top = (Get-SettingsControlTop $layout $rowTop $h); Width = ($right - $left); Height = $h }
 }
