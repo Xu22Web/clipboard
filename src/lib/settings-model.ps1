@@ -48,6 +48,8 @@ function Get-SettingLabel([string]$key) {
   }
   $s = $sb.ToString()
   if ($s.Length -eq 0) { return '' }
+  # "bytes" is the file's unit, not what the user sets: the row shows the size in B, KB or MB
+  $s = ($s -replace ' bytes$', ' size')
   return ([string]$s[0]).ToUpperInvariant() + $s.Substring(1)
 }
 
@@ -110,6 +112,12 @@ function Format-SettingText($schema, [string]$key, [string]$raw) {
   # A list holds several names and the value column is one line wide, so it states the count
   # instead: which names are ticked is what opening the list shows.
   if ($kind -eq 'list') { return (Format-SettingListText $raw (Get-SettingChoices $schema $key)) }
+  if ($kind -eq 'number') {
+    # one string for anything that wants the whole value in a word: "16 MB", not 16777216
+    $view = Get-SettingNumberView $schema $key $raw
+    if ([string]$view.Unit) { return ([string]$view.Number + ' ' + [string]$view.Unit) }
+    return [string]$view.Number
+  }
   if ([string]$raw -eq '') {
     $hint = ''
     if ($null -ne $spec) { $hint = [string](Get-SchemaHint $schema $key) }
@@ -138,8 +146,12 @@ function Format-SettingListText([string]$raw, $choices) {
 function Get-SettingHelp($schema, [string]$key) {
   $spec = Get-SchemaProperty $schema $key
   if ($null -eq $spec) { return '' }
-  # a read-only value is never edited here, so the line that would have described it says why
-  if ($spec.Contains('ReadOnly')) { return 'Read-only - ' + [string]$spec['ReadOnly'] }
+  # a read-only value is never typed here, so the line that would have described it says why
+  if ($spec.Contains('ReadOnly')) {
+    $why = 'Read-only - ' + [string]$spec['ReadOnly']
+    if ($spec.Contains('Pick')) { $why = 'Click to choose the folder. ' + $why }
+    return $why
+  }
   $d = ''
   if ($spec.Contains('Description')) { $d = [string]$spec['Description'] }
   if ((Get-SettingKind $spec) -eq 'number') {
@@ -148,8 +160,25 @@ function Get-SettingHelp($schema, [string]$key) {
     if ($spec.Contains('Minimum')) { $lo = $spec['Minimum'] }
     if ($spec.Contains('Maximum')) { $hi = $spec['Maximum'] }
     # the range comes first: a description is ellipsized when it does not fit, and the numbers
-    # are the part that has to survive the cut
-    if ($null -ne $lo -and $null -ne $hi) { $d = '(' + [string]$lo + '-' + [string]$hi + ') ' + $d }
+    # are the part that has to survive the cut. A range is read in the same unit as the field
+    # above it - "1 KB-100 MB", never 1024-104857600 beside a box that says MB.
+    if ($null -ne $lo -and $null -ne $hi) {
+      $loText = [string]$lo
+      $hiText = [string]$hi
+      if ($spec.Contains('Unit')) {
+        $a = Get-SettingNumberView $schema $key ([string]$lo)
+        $b = Get-SettingNumberView $schema $key ([string]$hi)
+        if ([string]$a.Unit -and [string]$a.Unit -eq [string]$b.Unit) {
+          # one unit for both ends is written once: 50-60000 ms, not 50 ms-60000 ms
+          $loText = [string]$a.Number
+          $hiText = [string]$b.Number + ' ' + [string]$b.Unit
+        } else {
+          if ([string]$a.Unit) { $loText = ([string]$a.Number + ' ' + [string]$a.Unit) }
+          if ([string]$b.Unit) { $hiText = ([string]$b.Number + ' ' + [string]$b.Unit) }
+        }
+      }
+      $d = '(' + $loText + '-' + $hiText + ') ' + $d
+    }
   }
   return $d
 }
@@ -203,6 +232,12 @@ function Get-SettingsRows($schema, [string]$group) {
     $spec = Get-SchemaProperty $schema $key
     if ($null -eq $spec) { continue }
     $raw = Get-SettingRaw $schema $key
+    $kind = Get-SettingKind $spec
+    # a number is shown in its own unit and typed in that unit, so the row carries the three
+    # pieces the paint and the editor need: what to show, the label beside it, and the factor
+    # that turns it back into the value the file holds
+    $view = @{ Number = [string]$raw; Unit = ''; Scale = 1 }
+    if ($kind -eq 'number') { $view = Get-SettingNumberView $schema $key $raw }
     $enabled = $true
     $why = ''
     $dep = Get-SettingEnabledBy
@@ -222,7 +257,12 @@ function Get-SettingsRows($schema, [string]$group) {
       Multi   = ((Get-SettingKind $spec) -eq 'list')
       # a value the schema marks read-only is shown and refused, with the reason in its help
       Locked  = $spec.Contains('ReadOnly')
+      # a path is chosen in a dialog, not typed: Pick names the dialog the row opens
+      Pick    = $(if ($spec.Contains('Pick')) { [string]$spec['Pick'] } else { '' })
       Raw     = $raw
+      Number  = [string]$view.Number
+      Unit    = [string]$view.Unit
+      Scale   = [double]$view.Scale
       Text    = Format-SettingText $schema $key $raw
       Help    = Get-SettingHelp $schema $key
       Choices = @(Get-SettingChoices $schema $key)

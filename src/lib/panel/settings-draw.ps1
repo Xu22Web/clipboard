@@ -178,6 +178,72 @@ function Get-SettingsToggleRect($layout, [int]$rowTop) {
   }
 }
 
+# Where a number lives: one field, its value at the right edge before the unit. The editor opens
+# inside this rectangle, so the number does not move when it is clicked.
+function Get-SettingsNumberRect($layout, [int]$rowTop) {
+  $w = Px 132
+  $h = Px 28
+  $rowH = [int]$layout.RowHeight - (Px 4)
+  return @{
+    Left   = [int]$layout.ListRight - (Px 12) - $w
+    Top    = $rowTop + [int](($rowH - $h) / 2)
+    Width  = $w
+    Height = $h
+  }
+}
+
+# How much room a unit label takes, measured with the font the row draws it in. Measured on a
+# scratch bitmap because the hit tests ask too, and they have no Graphics of their own.
+function Get-SettingsUnitWidth([string]$unit) {
+  if (-not $unit) { return 0 }
+  $font = $script:FSmall
+  if (-not $font) { return 0 }
+  $bmp = New-Object Drawing.Bitmap 1, 1
+  $g = [Drawing.Graphics]::FromImage($bmp)
+  try {
+    $fmt = New-PickerStringFormats
+    $big = New-Object Drawing.SizeF -ArgumentList @(1000, 100)
+    return [int][Math]::Ceiling($g.MeasureString($unit, $font, $big, $fmt.None).Width + (Px 14))
+  } catch {
+    return (Px 34)
+  } finally { $g.Dispose(); $bmp.Dispose() }
+}
+
+# A value field: the field colour, a hairline, the value at the right of it, then a unit in the
+# quiet ink when the value measures something. $mode is 'rest', 'edit' or 'bad', so a resting
+# number, an open editor and a refused value cannot drift apart - the editor draws the same box
+# with no value in it and puts its text box inside.
+function Draw-SettingsValueField($g, $pal, $rect, [string]$value, [string]$unit, [bool]$enabled, [string]$mode = 'rest') {
+  if ($null -eq $g -or $null -eq $pal -or $null -eq $rect) { return }
+  $x = [int]$rect.Left
+  $y = [int]$rect.Top
+  $w = [int]$rect.Width
+  $h = [int]$rect.Height
+  $radius = [int](Px 4)
+  $fill = New-Object Drawing.SolidBrush $pal['Field']
+  $path = New-RoundPath $x $y $w $h $radius
+  try { $g.FillPath($fill, $path) } finally { $path.Dispose(); $fill.Dispose() }
+  $edge = $pal['FieldBorder']
+  if ($mode -eq 'edit') { $edge = $pal['Accent'] }
+  elseif ($mode -eq 'bad') { $edge = $pal['Warn'] }
+  $pen = New-Object Drawing.Pen $edge
+  $stroke = New-RoundPath $x $y $w $h $radius
+  try { $g.DrawPath($pen, $stroke) } finally { $stroke.Dispose(); $pen.Dispose() }
+  $sf = New-PickerStringFormats
+  $uw = Get-SettingsUnitWidth $unit
+  if ($uw -gt 0) {
+    $ub = New-Object Drawing.RectangleF -ArgumentList @(
+      [single]($x + $w - $uw), [single]$y, [single]($uw - (Px 8)), [single]$h)
+    $g.DrawString($unit, $script:FSmall, (Get-Brush $pal['Faint']), $ub, $sf.Right)
+  }
+  if (-not $value) { return }
+  $ink = $pal['Text']
+  if (-not $enabled) { $ink = $pal['Faint'] }
+  $nb = New-Object Drawing.RectangleF -ArgumentList @(
+    [single]($x + (Px 8)), [single]$y, [single]($w - $uw - (Px 12)), [single]$h)
+  $g.DrawString($value, $script:FBody, (Get-Brush $ink), $nb, $sf.Right)
+}
+
 # One setting: the label and its help on the left, the control on the right, centred on the row.
 # That is the Fluent settings card - a name over a description, one control per card, and the
 # control holds the vertical middle of the card rather than the first line.
@@ -191,10 +257,13 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
   if ($row.ContainsKey('Enabled')) { $enabled = [bool]$row.Enabled }
   $locked = $false
   if ($row.ContainsKey('Locked')) { $locked = [bool]$row.Locked }
+  $pick = ''
+  if ($row.ContainsKey('Pick')) { $pick = [string]$row.Pick }
   $h = [int]$layout.RowHeight - (Px 4)
   $radius = [int]$layout.Radius
-  # a read-only row never lights up: it is not a control, and a hover fill would promise one
-  if ($hover -and $enabled -and (-not $locked)) {
+  # a read-only row lights up only when it opens something (a folder picker); a value that can
+  # not be changed and can not be clicked is not a control at all
+  if ($hover -and $enabled -and ((-not $locked) -or $pick)) {
     $brush = New-Object Drawing.SolidBrush $pal['HoverBg']
     $path = New-RoundPath $x $y $w $h $radius
     try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
@@ -223,6 +292,13 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
   if ($row.Kind -eq 'bool') {
     $t = Get-SettingsToggleRect $layout $y
     Draw-SettingsToggle $g $pal ([int]$t.Left) ([int]$t.Top) ([int]$t.Width) ([int]$t.Height) $toggleK $enabled
+    return
+  }
+  # a number is a field with its unit beside it, never a bare number: 16 with no unit beside it
+  # says nothing about what it measures
+  if ($row.Kind -eq 'number') {
+    $f = Get-SettingsNumberRect $layout $y
+    Draw-SettingsValueField $g $pal $f ([string]$row.Number) ([string]$row.Unit) $enabled
     return
   }
   # the value holds the vertical middle of the whole row, the same line the switch sits on

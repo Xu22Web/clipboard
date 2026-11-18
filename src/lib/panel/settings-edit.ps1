@@ -21,10 +21,18 @@ function Set-SettingValue([string]$key, [string]$value) {
   return @{ Ok = $true; Error = '' }
 }
 
-# The text a row opens its editor with. A boolean never opens one - it flips - and a value that
-# is currently empty opens with its default spelled out, because an empty box says nothing about
-# what is allowed.
+# The text a row opens its editor with. A number opens in the unit the row shows, because that is
+# what the user just read; a value that is currently empty opens with its default spelled out,
+# because an empty box says nothing about what is allowed.
 function Get-SettingEditSeed($schema, [string]$key) {
+  $spec = Get-SchemaProperty $schema $key
+  if ($null -ne $spec -and (Get-SettingKind $spec) -eq 'number') {
+    $view = Get-SettingNumberView $schema $key (Get-SettingEditText $schema $key)
+    if ([string]$view.Number -ne '') { return [string]$view.Number }
+    $def = [string](Get-SchemaDefault $schema $key)
+    if ($def -ne '') { return [string](Get-SettingNumberView $schema $key $def).Number }
+    return ''
+  }
   $raw = Get-SettingEditText $schema $key
   if ([string]$raw -ne '') { return [string]$raw }
   return [string](Get-SchemaDefault $schema $key)
@@ -61,33 +69,9 @@ function Test-ChordWinHeld {
   return $false
 }
 
-# The chord a pressed key makes, in the spelling the file uses: modifiers in the order the parser
-# reads them, then the key. An empty answer means there is nothing to write yet.
-function Format-ChordValue([bool]$win, [bool]$ctrl, [bool]$alt, [bool]$shift, [string]$keyName) {
-  if (-not $keyName) { return '' }
-  $parts = @()
-  if ($win) { $parts += 'Win' }
-  if ($ctrl) { $parts += 'Ctrl' }
-  if ($alt) { $parts += 'Alt' }
-  if ($shift) { $parts += 'Shift' }
-  $parts += $keyName
-  return ($parts -join '+')
-}
-
-# Whether a recorded chord is usable as a hotkey: a global key with no modifier would swallow
-# that key everywhere in every program, so a bare key is only accepted as one of F1-F24.
-function Test-ChordUsable([string]$chord) {
-  $keys = @(Get-SettingChordKeys $chord)
-  if ($keys.Count -lt 2) {
-    if ($keys.Count -eq 1 -and ([string]$keys[0]) -match '^F([1-9]|1[0-9]|2[0-4])$') { return $true }
-    return $false
-  }
-  return $true
-}
-
 # The editor itself: a TextBox that covers the row's value area, styled from the theme so it
 # reads as part of the surface rather than as a system control dropped on top.
-function New-SettingEditor($form, $pal, [int]$x, [int]$y, [int]$w, [int]$h) {
+function New-SettingEditor($form, $pal, [int]$x, [int]$y, [int]$w, [int]$h, [bool]$alignRight = $false) {
   $box = New-Object Windows.Forms.TextBox
   $box.BorderStyle = 'None'
   $box.Font = $script:FBody
@@ -97,6 +81,8 @@ function New-SettingEditor($form, $pal, [int]$x, [int]$y, [int]$w, [int]$h) {
   $box.Top = $y
   $box.Width = $w
   $box.Height = $h
+  # a number reads from the right in its field, so its editor does too
+  if ($alignRight) { $box.TextAlign = 'Right' }
   $form.Controls.Add($box)
   $box.BringToFront()
   return $box
@@ -114,21 +100,6 @@ function Get-SettingDropRect($layout, [int]$rowTop, [int]$count) {
   $limit = [int]$layout.ListBottom - [int](Px 8)
   if (($top + $h) -gt $limit) { $top = [Math]::Max([int]$layout.ListTop, $rowTop - $h - (Px 4)) }
   return @{ Left = ($right - $w); Top = $top; Width = $w; Height = $h }
-}
-
-# Puts the themed field behind the editor: a rounded rectangle filled with the field colour and
-# stroked with the accent, the way a focused Fluent text field reads. A refused value turns the
-# stroke to Warn instead, so the reason in the footer has something to point at.
-function Draw-SettingEditField($g, $pal, [int]$x, [int]$y, [int]$w, [int]$h, [bool]$bad) {
-  if ($null -eq $g) { return }
-  $brush = New-Object Drawing.SolidBrush $pal['Field']
-  $path = New-RoundPath $x $y $w $h (Px 4)
-  try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
-  $edge = $pal['Accent']
-  if ($bad) { $edge = $pal['Warn'] }
-  $pen = New-Object Drawing.Pen $edge
-  $stroke = New-RoundPath $x $y $w $h (Px 4)
-  try { $g.DrawPath($pen, $stroke) } finally { $stroke.Dispose(); $pen.Dispose() }
 }
 
 # The row a click lands on: -1 when the click is outside the list, so a click on the header or

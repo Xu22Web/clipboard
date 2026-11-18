@@ -690,7 +690,8 @@ src/                    程序本体（打包只读这个目录）
   lib/config.ps1          config 命令面：应用设置、打印有效值、重启常驻
   lib/config-template.ps1 写进文件的 clipboard.ini：行序与分组、按模板重写、reset
   lib/settings-model.ps1  设置窗口的行：分组表、键名读成词、当前值与帮助文案
-  lib/settings-types.ps1  每种设置类型的编辑行为：翻转、步长、循环、校验
+  lib/settings-types.ps1  每种设置类型的编辑行为：翻转、组合键、单位换算、校验
+  lib/hotkey-record.ps1  录制热键时的交接：请求/应答两个文件，常驻把已注册的组合键交给窗口
   lib/usage.ps1           help 输出
   lib/dispatch.ps1        Invoke-Main：Initialize-Main（Apply-Config + 装配插件）→ Invoke-Dispatch
   lib/proxy.ps1           命令代理

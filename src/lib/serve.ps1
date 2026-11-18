@@ -284,7 +284,16 @@ function Invoke-ServeOnce {
     }
   } catch { Write-Log ('tray failed: ' + $_.Exception.Message) }
 
-  $hw.add_Hot({ try { Show-Picker } catch { Write-Log ('hotkey handler: ' + $_.Exception.Message) } })
+  $hw.add_Hot({
+      try {
+        # a recording settings window takes the chord; nobody else opens the panel
+        if (Send-HotkeyRecord $StoreDir $script:Hot) {
+          Write-Log ('hotkey handed to the settings window: ' + $script:Hot)
+          return
+        }
+        Show-Picker
+      } catch { Write-Log ('hotkey handler: ' + $_.Exception.Message) }
+    })
 
   # Build the panel once, in the background, and throw it away: right after a restart the
   # first hotkey would otherwise pay for the type load, the fonts, the GDI objects and every
@@ -325,7 +334,12 @@ function Invoke-ServeOnce {
       if ($script:UsePoll) {
         $pk = Parse-Hotkey $script:Hot
         $down = (([Cb.Win]::GetAsyncKeyState([int]$pk.Vk) -band 0x8000) -ne 0)
-        if ($down -and -not $script:PrevHotKey) { $script:PrevHotKey = $true; Show-Picker; return }
+        if ($down -and -not $script:PrevHotKey) {
+          $script:PrevHotKey = $true
+          if (Send-HotkeyRecord $StoreDir $script:Hot) { return }
+          Show-Picker
+          return
+        }
         if (-not $down) { $script:PrevHotKey = $false }
       }
 

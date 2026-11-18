@@ -29,6 +29,7 @@
 #   Description one line, written as the comment above the key in the ini template
 #   ReadOnly    a reason: the value is shown in the window but not edited there (the store
 #               location, which a running resident would split in two)
+#   Pick        the dialog the settings window opens instead of typing: 'folder'
 #   Ref         the variable the value drives ([ref]$script:X); Apply-Config writes through
 #               it, which is why it is a reference and not a name - the minifier renames
 #               script variables, a name string would survive and address nothing

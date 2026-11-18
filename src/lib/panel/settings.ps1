@@ -44,6 +44,9 @@ function Show-Settings {
   $script:SetEditKey = ''
   $script:SetEditBox = $null
   $script:SetEditRect = $null
+  # a number is edited in the unit the row shows, so the unit and its factor travel with the
+  # edit; a text field is the same field with neither
+  $script:SetEditField = @{ Number = $false; Scale = 1; Unit = '' }
   $script:SetPal = $pal
   $script:SetDirty = $false
   $script:SetRows = @()
@@ -170,6 +173,7 @@ function Show-Settings {
     $script:SetEditKey = ''
     $script:SetEditRect = $null
     $script:SetEditBad = $false
+    $script:SetEditField = @{ Number = $false; Scale = 1; Unit = '' }
     if ($null -ne $box) {
       try { $form.Controls.Remove($box); $box.Dispose() } catch { }
     }
@@ -185,7 +189,11 @@ function Show-Settings {
     $key = [string]$script:SetEditKey
     $box = $script:SetEditBox
     if (-not $key -or $null -eq $box) { End-Edit $true; return }
-    $r = Convert-SettingInput $schema $key ([string]$box.Text)
+    # a number is typed in the unit the row shows, so it is turned back into the stored value
+    # before the schema looks at it - ranges stay stated once, in bytes or milliseconds
+    $r = $null
+    if ($script:SetEditField.Number) { $r = Convert-SettingNumberInput $schema $key ([string]$box.Text) ([double]$script:SetEditField.Scale) }
+    else { $r = Convert-SettingInput $schema $key ([string]$box.Text) }
     if (-not $r.Ok) {
       # the field is what the refusal is about, so the field is what turns red - not whatever
       # message happened to be in the footer a moment ago
@@ -193,7 +201,13 @@ function Show-Settings {
       Show-Message ($key + ': ' + [string]$r.Error) $true
       return
     }
-    [void](Apply-Setting $key ([string]$r.Value) ('set to ' + [string]$r.Value))
+    $what = 'set to ' + [string]$r.Value
+    if ($script:SetEditField.Number) {
+      $said = ([string]$box.Text).Trim()
+      if ($script:SetEditField.Unit) { $said = $said + ' ' + [string]$script:SetEditField.Unit }
+      $what = 'set to ' + $said
+    }
+    [void](Apply-Setting $key ([string]$r.Value) $what)
     End-Edit $false
   }
 
@@ -205,11 +219,19 @@ function Show-Settings {
     if ($idx -lt 0) { return }
     End-Edit $true
     $rowTop = [int]$script:SetLayout.ListTop + (($idx - $script:SetScroll) * [int]$script:SetLayout.RowHeight)
+    $isNumber = ($row.Kind -eq 'number')
     $rect = Get-SettingEditRect $script:SetLayout $rowTop
+    if ($isNumber) { $rect = Get-SettingsNumberRect $script:SetLayout $rowTop }
     $script:SetEditKey = [string]$row.Key
     $script:SetEditRect = $rect
     $script:SetEditBad = $false
-    $box = New-SettingEditor $form $pal ([int]$rect.Left + (Px 4)) ([int]$rect.Top + (Px 4)) ([int]$rect.Width - (Px 8)) ([int]$rect.Height - (Px 8))
+    $script:SetEditField = @{ Number = $isNumber; Scale = [double]$row.Scale; Unit = [string]$row.Unit }
+    $boxW = [int]$rect.Width - (Px 8)
+    if ($isNumber) {
+      # the unit stays on screen while the number is edited, so the box stops before it
+      $boxW = [int]$rect.Width - (Get-SettingsUnitWidth ([string]$row.Unit)) - (Px 6)
+    }
+    $box = New-SettingEditor $form $pal ([int]$rect.Left + (Px 4)) ([int]$rect.Top + (Px 4)) $boxW ([int]$rect.Height - (Px 8)) $isNumber
     $box.Text = Get-SettingEditSeed $schema ([string]$row.Key)
     $script:SetEditBox = $box
     $box.Add_LostFocus({ End-Edit $true })
@@ -386,6 +408,7 @@ function Show-Settings {
     End-Edit $true
     $script:SetRecKey = [string]$row.Key
     $script:SetRecPreview = @()
+    [void](Start-HotkeyRecord ([string]$script:StoreDir))
     try { $form.Focus() } catch { }
     Show-Message ('Press the keys for ' + [string]$row.Label + ', Esc to cancel') $false
     $form.Invalidate()
@@ -395,8 +418,47 @@ function Show-Settings {
     if (-not $script:SetRecKey) { return }
     $script:SetRecKey = ''
     $script:SetRecPreview = @()
+    Stop-HotkeyRecord ([string]$script:StoreDir)
     Show-Message 'recording cancelled' $false
     $form.Invalidate()
+  }
+
+  # the chord the resident handed over, applied as if it had been pressed here
+  function Apply-RecordedChord([string]$chord) {
+    if (-not $script:SetRecKey -or -not $chord) { return }
+    if (-not (Test-ChordUsable $chord)) {
+      Show-Message ('that key cannot be used on its own: ' + $chord) $true
+      return
+    }
+    $key = [string]$script:SetRecKey
+    $script:SetRecKey = ''
+    $script:SetRecPreview = @()
+    [void](Apply-Setting $key $chord ('set to ' + $chord))
+    $form.Invalidate()
+  }
+
+  # A folder is chosen, not typed: the store location is a path, and a path typed by hand is a
+  # path that does not exist. The picker is the system one, so it knows the drives and the
+  # shares the user has.
+  function Pick-Folder($row) {
+    if ($null -eq $row) { return }
+    $dlg = New-Object Windows.Forms.FolderBrowserDialog
+    try {
+      $dlg.Description = 'Where the history and the media files live'
+      $dlg.ShowNewFolderButton = $true
+      $cur = [string]$row.Raw
+      if ($cur -and (Test-Path -LiteralPath $cur)) { $dlg.SelectedPath = $cur }
+      if ($dlg.ShowDialog() -ne [Windows.Forms.DialogResult]::OK) { return }
+      $picked = [string]$dlg.SelectedPath
+      if (-not $picked) { return }
+      if (-not (Apply-Setting ([string]$row.Key) $picked ('set to ' + $picked))) { return }
+      # the store the window writes to moves with it, so the row shows the new folder at once
+      $script:StoreDir = $picked
+      Refresh-Settings
+      $form.Invalidate()
+    } catch {
+      Show-Message ('folder picker failed: ' + $_.Exception.Message) $true
+    } finally { try { $dlg.Dispose() } catch { } }
   }
 
   # the modifiers held right now, as the caps to show while the row waits for its key
@@ -442,6 +504,7 @@ function Show-Settings {
     $key = [string]$script:SetRecKey
     $script:SetRecKey = ''
     $script:SetRecPreview = @()
+    Stop-HotkeyRecord ([string]$script:StoreDir)
     [void](Apply-Setting $key $chord ('set to ' + $chord))
     $e.Handled = $true
     $e.SuppressKeyPress = $true
@@ -509,8 +572,10 @@ function Show-Settings {
       $thumb = Get-SettingsScrollThumb $layout @($rows).Count $vis $script:SetScroll
       Draw-SettingsScrollbar $g $pal $layout $thumb $script:SetSbK
       if ($script:SetEditKey -and $null -ne $script:SetEditRect) {
-        $r = $script:SetEditRect
-        Draw-SettingEditField $g $pal ([int]$r.Left) ([int]$r.Top) ([int]$r.Width) ([int]$r.Height) $script:SetEditBad
+        # the same field the row draws, focused: the value is in the text box, the unit stays drawn
+        $mode = 'edit'
+        if ($script:SetEditBad) { $mode = 'bad' }
+        Draw-SettingsValueField $g $pal $script:SetEditRect '' ([string]$script:SetEditField.Unit) $true $mode
       }
       # the close button, top right, where every window puts one
       Draw-SettingsClose $g $pal $layout $script:SetCloseHot
@@ -657,6 +722,10 @@ function Show-Settings {
     $idx = Get-SettingsRowAt $script:SetLayout @($script:SetRows).Count $script:SetScroll $e.X $e.Y
     if ($idx -lt 0) { return }
     $row = $script:SetRows[$idx]
+    if ($row.ContainsKey('Pick') -and $row.Pick) {
+      Pick-Folder $row
+      return
+    }
     if ($row.ContainsKey('Locked') -and $row.Locked) {
       Show-Message ([string]$row.Label + ': ' + [string]$row.Help) $true
       return
@@ -695,6 +764,15 @@ function Show-Settings {
   $animTimer.Interval = 15
   $animTimer.Add_Tick({
     if ($form.IsDisposed) { return }
+    # a chord the resident handed over: it owns the key RegisterHotKey took, so this is the only
+    # way the window can see it while recording
+    if ($script:SetRecKey) {
+      $chord = Read-HotkeyRecord ([string]$script:StoreDir)
+      if ($chord) {
+        Stop-HotkeyRecord ([string]$script:StoreDir)
+        Apply-RecordedChord $chord
+      }
+    }
     $step = 0.22
     if (-not $script:Animations) { $step = 1.0 }
     $moved = $false
@@ -740,6 +818,7 @@ function Show-Settings {
   } finally {
     try { $animTimer.Stop(); $animTimer.Dispose() } catch { }
     try { $script:SetFootTimer.Stop(); $script:SetFootTimer.Dispose() } catch { }
+    Stop-HotkeyRecord ([string]$script:StoreDir)
     Close-Choices
     End-Edit $true
     try { $form.Dispose() } catch { }

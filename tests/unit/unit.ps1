@@ -230,7 +230,7 @@ try {
         $requiredLib = @('lib\base', 'lib\native', 'lib\panel\focus', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
           'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\panel\anim',
           'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\serve', 'lib\shortcut',
-          'lib\settings-model', 'lib\settings-types', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings',
+          'lib\settings-model', 'lib\settings-types', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings',
           'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch',
           'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey',
           'utils\query-words', 'utils\transfer', 'utils\apprules', 'utils\fileio',
@@ -2630,7 +2630,7 @@ try {
       }
 
       It 'a key reads as its words' {
-        Expect ((Get-SettingLabel 'MaxTextTotalBytes') -eq 'Max text total bytes') (Get-SettingLabel 'MaxTextTotalBytes')
+        Expect ((Get-SettingLabel 'MaxTextTotalBytes') -eq 'Max text total size') (Get-SettingLabel 'MaxTextTotalBytes')
         Expect ((Get-SettingLabel 'Rows') -eq 'Rows') (Get-SettingLabel 'Rows')
         Expect ((Get-SettingLabel 'CompactMode') -eq 'Compact mode') (Get-SettingLabel 'CompactMode')
       }
@@ -2647,6 +2647,42 @@ try {
         foreach ($k in @($kinds.Keys)) { if ($allowed -notcontains $k) { $unknown += $k } }
         Expect ($unknown.Count -eq 0) ($unknown -join ', ')
         Expect ($kinds.ContainsKey('bool') -and $kinds.ContainsKey('number') -and $kinds.ContainsKey('theme')) ($kinds.Keys -join ',')
+      }
+
+      It 'a size is shown and typed in the unit it reads best in' {
+        # the row must never ask anyone to read seven digits, and a typed number has to come back
+        # as the bytes the file stores
+        $mb = Get-SettingNumberView $script:SettingsSchema 'MaxImageBytes' '16777216'
+        Expect (($mb.Number -eq '16') -and ($mb.Unit -eq 'MB') -and ([double]$mb.Scale -eq 1048576)) ($mb.Number + ' ' + $mb.Unit + ' ' + $mb.Scale)
+        $kb = Get-SettingNumberView $script:SettingsSchema 'HighlightMaxBytes' '8192'
+        Expect (($kb.Number -eq '8') -and ($kb.Unit -eq 'KB')) ($kb.Number + ' ' + $kb.Unit)
+        $ms = Get-SettingNumberView $script:SettingsSchema 'ModReleaseTimeout' '1200'
+        Expect (($ms.Number -eq '1200') -and ($ms.Unit -eq 'ms')) ($ms.Number + ' ' + $ms.Unit)
+        $back = Convert-SettingNumberInput $script:SettingsSchema 'MaxImageBytes' '16' 1048576
+        Expect (($back.Ok) -and ([string]$back.Value -eq '16777216')) ([string]$back.Value)
+        $half = Convert-SettingNumberInput $script:SettingsSchema 'MaxImageBytes' '0.5' 1048576
+        Expect (($half.Ok) -and ([string]$half.Value -eq '524288')) ([string]$half.Value)
+      }
+
+      It 'a recording asks the resident for the chord it holds' {
+        # RegisterHotKey eats the chord, so the resident hands it over through two files: the
+        # window writes the request, the resident answers, the window reads it back. The whole
+        # handshake is file I/O, which is what makes it checkable without a desktop.
+        $dir = Join-Path ([IO.Path]::GetTempPath()) ('cb-record-' + [guid]::NewGuid().ToString('N'))
+        [void][IO.Directory]::CreateDirectory($dir)
+        try {
+          Expect ((Read-HotkeyRecord $dir) -eq '') 'nothing before the request'
+          Expect (Start-HotkeyRecord $dir) 'the request was not written'
+          Expect (Test-HotkeyRecordRequested $dir) 'the resident does not see the request'
+          Expect (-not (Send-HotkeyRecord $dir '')) 'an empty chord was handed over'
+          Expect (Send-HotkeyRecord $dir 'Ctrl+Alt+J') 'the chord was not handed over'
+          $got = Read-HotkeyRecord $dir
+          Expect ($got -eq 'Ctrl+Alt+J') $got
+          Stop-HotkeyRecord $dir
+          Expect ((Read-HotkeyRecord $dir) -eq '') 'the answer survived the end of the recording'
+        } finally {
+          Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+        }
       }
 
       It 'a shortcut is drawn in the order Windows prints it' {

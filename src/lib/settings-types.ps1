@@ -63,6 +63,70 @@ function Get-SettingChordKeys([string]$chord) {
   return $out
 }
 
+# The chord a recorded key makes, in the spelling the file uses: modifiers in the order the parser
+# reads them, then the key. An empty answer means there is nothing to write yet.
+function Format-ChordValue([bool]$win, [bool]$ctrl, [bool]$alt, [bool]$shift, [string]$keyName) {
+  if (-not $keyName) { return '' }
+  $parts = @()
+  if ($win) { $parts += 'Win' }
+  if ($ctrl) { $parts += 'Ctrl' }
+  if ($alt) { $parts += 'Alt' }
+  if ($shift) { $parts += 'Shift' }
+  $parts += $keyName
+  return ($parts -join '+')
+}
+
+# Whether a recorded chord is usable as a hotkey: a global key with no modifier would swallow
+# that key everywhere in every program, so a bare key is only accepted as one of F1-F24.
+function Test-ChordUsable([string]$chord) {
+  $keys = @(Get-SettingChordKeys $chord)
+  if ($keys.Count -lt 2) {
+    if ($keys.Count -eq 1 -and ([string]$keys[0]) -match '^F([1-9]|1[0-9]|2[0-4])$') { return $true }
+    return $false
+  }
+  return $true
+}
+
+# How a number is shown: the value in the unit it reads best in, that unit, and what one unit is
+# worth. A byte count is shown in B, KB or MB by its own size, so the field never asks anyone to
+# read seven digits; a duration keeps its milliseconds, which is the unit the file uses.
+function Get-SettingNumberView($schema, [string]$key, [string]$raw) {
+  $spec = Get-SchemaProperty $schema $key
+  $unit = ''
+  if ($null -ne $spec -and $spec.Contains('Unit')) { $unit = [string]$spec['Unit'] }
+  $view = @{ Number = [string]$raw; Unit = ''; Scale = 1 }
+  if ([string]$raw -eq '') { return $view }
+  $n = 0.0
+  if (-not [double]::TryParse([string]$raw, [ref]$n)) { return $view }
+  if ($unit -eq 'size') {
+    # the largest unit the value fills, so 204800 000 reads as 200 KB and not 204800 B
+    if ([Math]::Abs($n) -ge 1048576) { $view.Unit = 'MB'; $view.Scale = 1048576 }
+    elseif ([Math]::Abs($n) -ge 1024) { $view.Unit = 'KB'; $view.Scale = 1024 }
+    else { $view.Unit = 'B'; $view.Scale = 1 }
+  } elseif ($unit) {
+    $view.Unit = $unit
+  }
+  $shown = $n / [double]$view.Scale
+  $text = ([Math]::Round($shown, 3)).ToString([Globalization.CultureInfo]::InvariantCulture)
+  if ($text.Contains('.')) { $text = $text.TrimEnd('0').TrimEnd('.') }
+  $view.Number = $text
+  return $view
+}
+
+# The stored value a typed number means: what the field shows times the unit it shows it in. The
+# schema still validates the result, so a range stays stated once, in the file's own unit.
+function Convert-SettingNumberInput($schema, [string]$key, [string]$text, [double]$scale = 1) {
+  $t = ([string]$text).Trim()
+  if ($t -eq '') { return (Convert-SettingInput $schema $key '') }
+  if ($scale -lt 1) { $scale = 1 }
+  $d = 0.0
+  if (-not [double]::TryParse($t, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$d)) {
+    return @{ Ok = $false; Value = ''; Error = 'expected a number' }
+  }
+  $v = [long][Math]::Round($d * $scale)
+  return (Convert-SettingInput $schema $key ([string]$v))
+}
+
 # The values a setting offers as a list, or an empty array when it is typed. A list is only
 # for a value whose whole domain is small and known at run time: the themes on disk, the three
 # paste chords that cover every target anyone meets, and the plugin files on disk. Everything
