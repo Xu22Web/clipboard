@@ -39,7 +39,7 @@ Windows 10 / 11 的剪贴板历史工具，纯 PowerShell 5.1 实现，无第三
 
 ## 快速开始
 
-源码目录不是安装包。可直接运行程序本体（`src\clipboard.ps1` + `src\lib\` / `utils\` / `schema\`），也可在仓库根用 `cli` 执行 `package.ini` 中声明的命令。
+可直接运行程序本体（`src\clipboard.ps1` + `src\lib\` / `utils\` / `schema\`），也可在仓库根用 `cli` 执行 `package.ini` 中声明的命令。
 
 ```powershell
 cli              # 列出 package.ini 中的命令
@@ -77,7 +77,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | **daemon** | `serve` | 运行常驻进程（捕获 + 热键 + 托盘） |
 | | `stop` | 停止常驻进程 |
 | | `ui` | 打开历史面板（常驻进程未运行时自动拉起） |
-| | `settings` | 打开设置窗口（自绘，与面板同一套主题与字体） |
+| | `settings` | 打开设置窗口（与面板同一套主题与字体） |
 | | `status` | 常驻状态、自启状态、生效热键、存储路径、各标记数量 |
 | | `pause` / `resume` | 暂停 / 恢复捕获 |
 | **history** | `list [-Count N]` | 列出条目，最新在前（相对时间，最前一项带 `*`） |
@@ -160,7 +160,18 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `Esc` | 有搜索词时清空搜索，否则关闭面板 |
 | 拖动标题区 | 移动面板 |
 
-底部提示按当前可用操作生成，不是固定表：纯文本行显示 `Enter` Paste · `Ctrl+Enter` Copy · `F2` Edit · `Del` Delete · `Esc` Close；图片与带格式行没有 `F2`；多选时换成 `Ctrl+Enter` Copy N · `Del` Delete N；按住 `Ctrl` 时换成 `Ctrl+1-9,0` Pick · `Ctrl+Enter` Copy · `Ctrl+Z` Undo（`Undo=1` 时）与插件快捷键；紧凑形态只列 `Enter` Paste · `Ctrl+Enter` Copy · `Esc` Close（多选时换成 `Ctrl+Enter` Copy N · `Del` Delete N）；编辑中只列 `Enter` Save · `Shift+Enter` Newline · `Esc` Cancel。删除、置顶、清空的结果与被拒绝的原因显示在同一行。
+底部提示按当前可用操作生成，不是固定清单：
+
+| 状态 | 提示 |
+|---|---|
+| 纯文本行 | `Enter` Paste · `Ctrl+Enter` Copy · `F2` Edit · `Del` Delete · `Esc` Close |
+| 图片 / 带格式行 | 同上，没有 `F2` |
+| 多选 | `Ctrl+Enter` Copy N · `Del` Delete N |
+| 按住 `Ctrl` | `Ctrl+1-9,0` Pick · `Ctrl+Enter` Copy · `Ctrl+Z` Undo（`Undo=1` 时）· 插件快捷键 |
+| 紧凑形态 | `Enter` Paste · `Ctrl+Enter` Copy · `Esc` Close（多选时换成 `Ctrl+Enter` Copy N · `Del` Delete N） |
+| 编辑中 | `Enter` Save · `Shift+Enter` Newline · `Esc` Cancel |
+
+删除、置顶、清空的结果与被拒绝的原因显示在同一行。
 
 ## 搜索语法
 
@@ -209,11 +220,11 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | 头部 / 页脚高度 | 主题 `[metrics]` | 60 / 32 |
 | 时间列 | 跟随 `ShowTime` | 不显示 |
 | 右侧计数与版本 | 显示 | 不显示 |
-| 位置 | 保存位置 → 光标所在显示器居中 | 插入符下方，放不下时在其上方，两侧都不够时减少行数（锚点是整块控件时改为覆盖该控件并保留其一行，行数不变） |
+| 位置 | 保存位置 → 光标所在显示器居中 | 插入符下方，放不下时在其上方；两侧都不够时减少行数 |
 
 窗口宽度固定，高度由行数得出，两者都在开窗时定下，面板不能拖动改变尺寸。形态由 `CompactMode` 选择，托盘菜单的 `Compact mode` 勾选项直接改写该键，下一次打开生效。
 
-紧凑形态锚定插入符：读不到插入符时退到光标所在显示器居中；锚点高过两行时视为整块控件，上下两侧都放不下才让面板覆盖它（保留其一行可见）。面板左缘对齐锚点，与文本行留 4 px 间距；屏幕放不下时按较少的一行数重新定高。完整形态不读插入符。
+紧凑形态锚定插入符：读不到插入符时退到光标所在显示器居中；锚点高过两行时视为整块控件，上下两侧都放不下才覆盖它并保留其一行。面板左缘对齐锚点，与文本行留 4 px 间距；屏幕放不下时按较少的一行数重新定高。完整形态不读插入符。
 
 悬停预览卡放在面板两侧，放不下时先收窄、换到另一侧，两侧都不够时放在面板下方，不覆盖行。卡片只跟随停住的光标：滚动或改动过滤词后重新计 `PreviewDelay`，停住后才弹出光标下的那一行。
 
@@ -568,7 +579,7 @@ clipboard config set entry-actions.Reveal 0
 - 插件代码用 `Get-PluginSetting` 读取生效值，外观项用 `Get-PluginTheme`。
 - 插件未在 `Plugins=` 中列名时其键不生效，`config get` 会提示先启用该插件；`config init` 仍会写出其设置键以便查看。
 
-编写插件时的约束：
+插件加载与失败时的可见行为：
 
 - 插件名写错时提示 `[!] plugin not found: xxx`，基础功能不受影响。
 - 脚本块必须自包含：可以调用基础函数（`Get-Records`、`Get-EntryKind`、`Write-Log`、`Format-Item`），但不能引用插件文件作用域的变量（该作用域在命令执行时已销毁，捕获到的值为 `$null`）。多个脚本块需共享逻辑时，把逻辑作为哈希表的一个键，通过 `& (Get-PluginData '<插件名>' 'KindOf') $arg` 调用。
@@ -598,7 +609,7 @@ clipboard config set entry-actions.Reveal 0
 | 项 | 处理方式 |
 |---|---|
 | 图标字体 | 优先 `Segoe Fluent Icons`（Win11），缺失时回退 `Segoe MDL2 Assets`（Win10） |
-| 系统 DPI | `SetProcessDPIAware` 与 `GetDpiForSystem` 均在 `try/catch` 中（Win10 1607 之前没有后者），失败时按 96 dpi 渲染 |
+| 系统 DPI | `GetDpiForSystem` 在 Win10 1607 之前不存在，取不到时按 96 dpi 渲染 |
 | 主题 | 深浅色由自绘调色板决定，不依赖 `DwmSetWindowAttribute` 之类的 Win11 专用 API |
 | 全局热键 | `Win+V` 在 Win10/11 上被剪贴板历史占用，注册失败时按 `HotkeyFallbacks` 回退 |
 | 托盘与通知 | 只用 `NotifyIcon` 与气泡，不依赖 Win11 的 Toast 通道 |
@@ -750,7 +761,19 @@ flowchart TD
 
 除 `lib\themes.ps1` 与插件三件套外，模块缺失会报 `missing: …` 并以退出码 1 结束。
 
-模块按命令加载：`$baseModules` 是每条命令都需要的 18 个文件，六个可选组 `store` / `transfer` / `config` / `panel` / `panelgeom` / `settings` 由 `$commandGroups` 按命令决定（`panelgeom` 只有面板尺寸的纯计算，`status` 打印面板形状时用它；`settings` 是设置窗口用到的绘制与编辑，`settings` 命令加载 `config` 与它），因此 `version` 只解析 18 个文件，`list` 解析 31 个，只有绘制命令才加载面板；`-Library`（测试用）加载全部。
+模块按命令加载：`$baseModules` 是每条命令都需要的 18 个文件，六个可选组 `store` / `transfer` / `config` / `panel` / `panelgeom` / `settings` 由 `$commandGroups` 决定：
+
+| 命令 | 加载的可选组 |
+|---|---|
+| `version` `stop` | 无 |
+| `list` `get` `put` `pick` `edit` `del` `clear` `pause` `resume` | `store` |
+| `migrate` `export` `import` `backup` `restore` | `store` `transfer` |
+| `config` `themes` `install` `uninstall` | `config` |
+| `status` | `store` `config` `panelgeom` |
+| `settings` | `config` `settings` |
+| `serve`、`ui`、无参数 | `store` `config` `panel` |
+
+因此 `version` 解析 18 个文件，`list` 解析 31 个，只有 `panel` 组才加载面板；`-Library`（测试用）加载全部。
 
 写入位置由 `DataDir=` 决定，默认 `data`（脚本旁的 `data\`）；`config` 的 `data dir` 与 `status` 的 `store file` 显示解析后的绝对路径。程序不写入 `%LOCALAPPDATA%` 或其它用户目录：位置不可写时报错并以退出码 1 结束。除 `install`（快捷方式）与 `restore`（注册表项）外不写注册表。
 
@@ -783,10 +806,7 @@ CBHIST RS <数据版本> RS <flags> US <epoch 秒> US <extra> US <payload> RS <f
 
 ### 数据版本与迁移
 
-数据格式版本定义在 `src\lib\base.ps1` 的 `$script:DataVersion`。修改记录结构需同步两处：
-
-1. 在 `base.ps1` 中递增 `$script:DataVersion`；
-2. 在 `src\lib\migrate.ps1` 的 `$script:MigrationSteps` 中增加一步，键为起始版本，步骤接收整个文件文本并返回下一版本的文本。
+数据格式版本定义在 `src\lib\base.ps1` 的 `$script:DataVersion`。记录结构变更时递增该值，并在 `src\lib\migrate.ps1` 的 `$script:MigrationSteps` 增加一步：键为起始版本，步骤接收整个文件文本并返回下一版本的文本。
 
 `clipboard migrate` 按文件版本逐级执行步骤，写入前把原文件备份到 `data\backup\history-v<版本>-<时间>.dat`。当前只发布过一种布局，步骤表为空，因此：
 
@@ -979,7 +999,7 @@ Excludes=src/plugins/item-marks.ps1
 
 产物中的 `.ps1` 删注释与缩进，`Rename=1` 时内部函数与局部变量改名；`.ini` 只剩键值（主题格式见[主题](#主题)）。每步后重新解析，出现语法错误即中止。
 
-默认清单之外：`src\data\`、`src\clipboard.ini`、`tests\`、`tools\`、`cli.ini`、`package.ini`、`dist\`、`.git`。要带文档就在清单里加 `README.md,LICENSE,docs/**/*`，文档按相对仓库根的路径入包。
+默认清单之外：`src\data\`、`src\clipboard.ini`、`tests\`、`tools\`、`cli.ini`、`package.ini`、`dist\`、`.git`。带文档的包在清单里加上 `README.md,LICENSE,docs/**/*`，文档按相对仓库根的路径入包。
 
 ## 持续集成与发布
 
@@ -990,7 +1010,7 @@ Excludes=src/plugins/item-marks.ps1
 | `ci.yml` | 推送到 `master`、PR、手动（端到端 job 只在手动时跑） | 打印 PowerShell 版本 → `cli test -Unit -Integration`；不打包 |
 | `release.yml` | 推 `v*` tag、手动 | 校验 tag 与 `package.ini` 版本一致 → 跑测试 → 打包 → 生成 `SHA256SUMS.txt` → 发布 Release |
 
-- 结构组校验文件布局与纯 ASCII（PowerShell 5.1 按 GBK 解码无 BOM 的 UTF-8，脚本中出现中文即报语法错误），单元组按名字调用内部函数，集成组起子进程逐条验证 CLI 能力。
+- 结构组校验文件布局与纯 ASCII，单元组按名字调用内部函数，集成组起子进程逐条验证 CLI 能力。
 - 端到端组需要真实桌面，托管 runner 没有交互式会话，因此只在手动触发时运行；本机验证用 `cli test -E2E`。
 - 同一分支只保留一次运行（`concurrency`），`test` job 上限 20 分钟。
 - 发版只改 `package.ini` 的 `Version=`，再 `git tag v<version>` 并推送；版本号与 tag 不一致时 workflow 在第一步失败。手动触发 `release.yml` 时按 `package.ini` 发同名 Release，已存在则覆盖资产。
