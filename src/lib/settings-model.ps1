@@ -346,6 +346,24 @@ function Get-SettingGroups($schema) {
   return $out.ToArray()
 }
 
+# Which pages hold a value that is staged but not saved. The page list marks them, because a
+# change made three pages ago is invisible from here and Save would otherwise look idle.
+function Get-SettingGroupsWithPending($schema, $pending) {
+  $out = New-Object System.Collections.Generic.List[string]
+  if ($null -eq $pending -or @($pending.Keys).Count -eq 0) { return $out.ToArray() }
+  $table = Get-SettingGroupTable
+  $named = @{}
+  foreach ($g in @($table.Keys)) {
+    foreach ($key in @($table[$g])) { $named[[string]$key] = [string]$g }
+  }
+  foreach ($key in @($pending.Keys)) {
+    $where = ''
+    if ($named.ContainsKey([string]$key)) { $where = [string]$named[[string]$key] } else { $where = 'Other' }
+    if ($where -and -not $out.Contains($where)) { $out.Add($where) }
+  }
+  return $out.ToArray()
+}
+
 # One row that states something instead of setting it: no editor, no staged value, no switch.
 # It is marked locked so the row never lights up under the pointer - there is nothing to click.
 function New-SettingInfoRow([string]$key, [string]$label, [string]$text, [string]$help) {

@@ -107,8 +107,10 @@ function Get-SettingsBlend($from, $to, [double]$k) {
 
 # The left column: one line per group. The selected one is tinted and carries a 3 px accent
 # bar, and the bar is inset by the corner radius so it never cuts a rounded corner off - the
-# two shapes are drawn on the same path instead of one square bar over a round edge.
-function Draw-SettingsSide($g, $pal, $layout, $groups, [int]$selected) {
+# two shapes are drawn on the same path instead of one square bar over a round edge. A page with
+# a staged value carries the same dot a staged row does, at the end of its line, so a change
+# made on another page is visible from here.
+function Draw-SettingsSide($g, $pal, $layout, $groups, [int]$selected, $pendingGroups = @()) {
   if ($null -eq $g -or $null -eq $pal -or $null -eq $groups) { return }
   $sf = New-PickerStringFormats
   $x = [int]$layout.Pad
@@ -134,6 +136,13 @@ function Draw-SettingsSide($g, $pal, $layout, $groups, [int]$selected) {
     $box = New-Object Drawing.RectangleF -ArgumentList @(
       [single]($x + (Px 14)), [single]$top, [single]($w - (Px 20)), [single]$rowH)
     $g.DrawString([string]$groups[$i], $script:FBody, (Get-Brush $ink), $box, $sf.Ellipsis)
+    if (@($pendingGroups) -contains [string]$groups[$i]) {
+      $dot = [Math]::Max(4, (Px 5))
+      $db = New-Object Drawing.SolidBrush $pal['Accent']
+      try {
+        $g.FillEllipse($db, ($x + $w - (Px 12)), ($top + [int](($rowH - $dot) / 2)), $dot, $dot)
+      } finally { $db.Dispose() }
+    }
   }
 }
 

@@ -118,6 +118,8 @@ function Show-Settings {
   # window writes nothing until Save, so this table is what the rows, the switch positions and
   # the three footer actions all read.
   $script:SetPending = @{}
+  # the pages those staged values live on, which is what the page list marks
+  $script:SetPendingGroups = @()
   # the footer actions, in the order they are drawn; Primary is the one that carries the accent
   $script:SetActions = @(
     @{ Key = 'defaults'; Label = 'Restore defaults'; Primary = $false },
@@ -219,6 +221,8 @@ function Show-Settings {
 
   function Refresh-Settings {
     $script:SetRows = @(Get-SettingsRows $schema $groups[$script:SetGroup] $script:SetPending)
+    # which pages carry a staged value, kept here so a paint does not walk the group table
+    $script:SetPendingGroups = @(Get-SettingGroupsWithPending $schema $script:SetPending)
     # Every switch is told where its row now points - a staged flip travels there on the timer,
     # and a discard travels back - while a switch that has never been drawn starts there instead
     # of at zero.
@@ -295,7 +299,17 @@ function Show-Settings {
   # table and the footer says it is not saved yet.
   function Stage-Setting([string]$key, [string]$value, [string]$what) {
     if (-not $key) { return $false }
-    $script:SetPending[$key] = [string]$value
+    $value = [string]$value
+    # A value the file already holds is not a change: flipping a switch back, or picking the
+    # value that is already set, leaves nothing staged and no dot behind.
+    $held = [string](Get-SettingRaw $schema $key)
+    if ($value -ceq $held) {
+      if ($script:SetPending.ContainsKey($key)) { [void]$script:SetPending.Remove($key) }
+      Refresh-Settings
+      Show-Message ($key + ': unchanged') $false
+      return $true
+    }
+    $script:SetPending[$key] = $value
     Refresh-Settings
     Show-Message ($key + ': ' + $what + ', not saved yet') $false
     return $true
@@ -439,6 +453,11 @@ function Show-Settings {
       if ($script:SetEditField.Unit) { $said = $said + ' ' + [string]$script:SetEditField.Unit }
       $what = 'set to ' + $said
     }
+    # Entering a field and leaving it again is not an edit: the committed value is compared with
+    # the one the row shows, and an equal one closes the field without saying anything
+    $held = [string](Get-SettingRaw $schema $key)
+    if ($script:SetPending.ContainsKey($key)) { $held = [string]$script:SetPending[$key] }
+    if ([string]$r.Value -ceq $held) { End-Edit $false; return }
     [void](Stage-Setting $key ([string]$r.Value) $what)
     End-Edit $false
   }
@@ -839,7 +858,7 @@ function Show-Settings {
         }
       } else {
         Draw-SettingsChrome $g $pal $layout 'Settings' ([string]$groups[$script:SetGroup])
-        Draw-SettingsSide $g $pal $layout $groups $script:SetGroup
+        Draw-SettingsSide $g $pal $layout $groups $script:SetGroup $script:SetPendingGroups
       }
       $vis = Get-SettingsVisibleRows $layout
       # A pixel offset leaves a half row at each end: the first index and the remainder of the

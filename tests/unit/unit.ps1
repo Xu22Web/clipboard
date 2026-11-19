@@ -2633,6 +2633,16 @@ try {
         Expect ($seen.Count -eq $props.Count) ([string]$seen.Count + ' of ' + [string]$props.Count)
       }
 
+      It 'a page is marked while one of its keys is staged' {
+        # the page list says where an unsaved value lives: a change made on another page has to
+        # be visible from the one in front, and a key no page names belongs to Other
+        $groups = @(Get-SettingGroupsWithPending $script:SettingsSchema @{ 'MaxItems' = '5' })
+        Expect (($groups.Count -eq 1) -and ($groups[0] -ceq 'History')) ($groups -join ',')
+        $groups = @(Get-SettingGroupsWithPending $script:SettingsSchema @{ 'nobody.ownsThis' = '1' })
+        Expect (($groups.Count -eq 1) -and ($groups[0] -ceq 'Other')) ($groups -join ',')
+        Expect (@(Get-SettingGroupsWithPending $script:SettingsSchema @{}).Count -eq 0) 'an empty set marked a page'
+      }
+
       It 'a choice that names keys is read as the keys, not as their spelling' {
         # the list is where a person picks which combination to paste with: "^+{INSERT}" says
         # nothing to a reader, Ctrl, Shift and Insert say it all
