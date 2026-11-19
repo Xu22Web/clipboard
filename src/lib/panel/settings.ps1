@@ -816,8 +816,27 @@ function Show-Settings {
       $listOnly = ($dirty.Top -ge [int]$layout.ListTop) -and ($dirty.Bottom -le [int]$layout.ListBottom) -and
         ($dirty.Left -ge [int]$layout.ListLeft) -and ($dirty.Right -le [int]$layout.ListRight)
       if ($listOnly) {
+        # The strip has to be written, not blended: the clip bounds are fractional, and a surface
+        # fill that is antialiased along its edge leaves the old row showing through at half
+        # strength - a light line across the page at the edge of whatever was repainted.
         $strip = New-Object Drawing.SolidBrush $pal['Surface']
-        try { $g.FillRectangle($strip, $dirty) } finally { $strip.Dispose() }
+        $was = $g.CompositingMode
+        try {
+          $g.CompositingMode = [Drawing.Drawing2D.CompositingMode]::SourceCopy
+          $band = [Drawing.Rectangle]::Round($dirty)
+          $band.Inflate(2, 2)
+          # the blur of the strip must stay inside the list: two pixels up would reach the
+          # header, two down the footer's hairline, and neither is drawn while only a strip is
+          $listRect = New-Object Drawing.Rectangle -ArgumentList @(
+            ([int]$layout.ListLeft - 2), [int]$layout.ListTop,
+            (([int]$layout.ListRight - [int]$layout.ListLeft) + 4),
+            ([int]$layout.ListBottom - [int]$layout.ListTop))
+          $band = [Drawing.Rectangle]::Intersect($band, $listRect)
+          $g.FillRectangle($strip, $band)
+        } finally {
+          $g.CompositingMode = $was
+          $strip.Dispose()
+        }
       } else {
         Draw-SettingsChrome $g $pal $layout 'Settings' ([string]$groups[$script:SetGroup])
         Draw-SettingsSide $g $pal $layout $groups $script:SetGroup
