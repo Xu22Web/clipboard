@@ -176,6 +176,47 @@ function Show-Settings {
     return ([int]$script:SetLayout.ListTop + ($idx * [int]$script:SetLayout.RowHeight) - [int]$script:SetScroll)
   }
 
+  # the band one row occupies: a repaint that has to cover that row and nothing else
+  function Get-RowBandRect([int]$idx) {
+    if ($idx -lt 0) { return [Drawing.Rectangle]::Empty }
+    $rows = @($script:SetRows)
+    if ($idx -ge $rows.Count) { return [Drawing.Rectangle]::Empty }
+    $layout = $script:SetLayout
+    return (New-Object Drawing.Rectangle -ArgumentList @(
+      [int]$layout.ListLeft, (Get-SettingsRowTop $idx),
+      ([int]$layout.ListRight - [int]$layout.ListLeft), [int]$layout.RowHeight))
+  }
+
+  # The rectangle one animation frame has to repaint: the switch that is moving, or the thumb
+  # while it ramps. A whole-window repaint redraws the header, the page list, every row and the
+  # footer for a 40 x 20 switch, which is what made the easing stutter.
+  function Get-AnimationRect {
+    $rect = [Drawing.Rectangle]::Empty
+    $layout = $script:SetLayout
+    $rows = @($script:SetRows)
+    foreach ($name in @($script:SetToggleK.Keys)) {
+      if ([Math]::Abs([double]$script:SetToggleTarget[$name] - [double]$script:SetToggleK[$name]) -lt 0.001) { continue }
+      $idx = -1
+      for ($i = 0; $i -lt $rows.Count; $i++) {
+        if ([string]$rows[$i].Key -ceq [string]$name) { $idx = $i; break }
+      }
+      if ($idx -lt 0) { return [Drawing.Rectangle]::Empty }
+      $t = Get-SettingsToggleRect $layout (Get-SettingsRowTop $idx)
+      $one = New-Object Drawing.Rectangle -ArgumentList @(
+        ([int]$t.Left - 4), ([int]$t.Top - 4), ([int]$t.Width + 8), ([int]$t.Height + 8))
+      if ($rect.IsEmpty) { $rect = $one } else { $rect = [Drawing.Rectangle]::Union($rect, $one) }
+    }
+    $sbWant = 0.0
+    if ($script:SetSbHot -or $script:SetSbDrag -ge 0) { $sbWant = 1.0 }
+    if ([Math]::Abs($sbWant - [double]$script:SetSbK) -gt 0.01) {
+      $lane = Get-SettingsScrollLane $layout
+      $one = New-Object Drawing.Rectangle -ArgumentList @(
+        [int]$lane.Left, [int]$lane.Top, [int]$lane.Width, [int]$lane.Height)
+      if ($rect.IsEmpty) { $rect = $one } else { $rect = [Drawing.Rectangle]::Union($rect, $one) }
+    }
+    return $rect
+  }
+
   function Refresh-Settings {
     $script:SetRows = @(Get-SettingsRows $schema $groups[$script:SetGroup] $script:SetPending)
     # Every switch is told where its row now points - a staged flip travels there on the timer,
@@ -768,8 +809,19 @@ function Show-Settings {
       $rows = $script:SetRows
       $layout = $script:SetLayout
       $pal = $script:SetPal
-      Draw-SettingsChrome $g $pal $layout 'Settings' ([string]$groups[$script:SetGroup])
-      Draw-SettingsSide $g $pal $layout $groups $script:SetGroup
+      # A frame of an easing switch dirties only the switch, so whatever the clip leaves out is
+      # not drawn at all: the header, the page list, six other rows and the footer cost more
+      # than the row that is moving. A strip inside the list still gets the page behind it.
+      $dirty = $e.Graphics.VisibleClipBounds
+      $listOnly = ($dirty.Top -ge [int]$layout.ListTop) -and ($dirty.Bottom -le [int]$layout.ListBottom) -and
+        ($dirty.Left -ge [int]$layout.ListLeft) -and ($dirty.Right -le [int]$layout.ListRight)
+      if ($listOnly) {
+        $strip = New-Object Drawing.SolidBrush $pal['Surface']
+        try { $g.FillRectangle($strip, $dirty) } finally { $strip.Dispose() }
+      } else {
+        Draw-SettingsChrome $g $pal $layout 'Settings' ([string]$groups[$script:SetGroup])
+        Draw-SettingsSide $g $pal $layout $groups $script:SetGroup
+      }
       $vis = Get-SettingsVisibleRows $layout
       # A pixel offset leaves a half row at each end: the first index and the remainder of the
       # offset place them, and the clip keeps the top one out of the header and the bottom one
@@ -788,6 +840,8 @@ function Show-Settings {
           $idx = $first + $i
           if ($idx -ge @($rows).Count) { break }
           $rowTop = $base + ($i * $rowH)
+          # a row the clip does not reach is not drawn: the strip of one switch is 40 x 20
+          if (($rowTop + $rowH) -lt $dirty.Top -or $rowTop -gt $dirty.Bottom) { continue }
           $row = $rows[$idx]
           $k = 1.0
           if ($row.Kind -eq 'bool') {
@@ -802,14 +856,20 @@ function Show-Settings {
           Draw-SettingsRow $g $pal $layout $row $x $rowTop $width ($idx -eq $script:SetHover) $k $armed @($script:SetRecPreview) $editingRow $hotDel
         }
       } finally { $g.Restore($clipState) }
-      $thumb = Get-SettingsScrollThumb $layout @($rows).Count $vis $script:SetScroll
-      Draw-SettingsScrollbar $g $pal $layout $thumb $script:SetSbK
+      $lane = Get-SettingsScrollLane $layout
+      $laneRect = New-Object Drawing.Rectangle -ArgumentList @(
+        ([int]$lane.Left - 4), [int]$lane.Top, ([int]$lane.Width + 8), [int]$lane.Height)
+      if ($dirty.IntersectsWith($laneRect)) {
+        $thumb = Get-SettingsScrollThumb $layout @($rows).Count $vis $script:SetScroll
+        Draw-SettingsScrollbar $g $pal $layout $thumb $script:SetSbK
+      }
       if ($script:SetEditKey -and $null -ne $script:SetEditRect) {
         # the same field the row draws, focused: the value is in the text box, the unit stays drawn
         $mode = 'edit'
         if ($script:SetEditBad) { $mode = 'bad' }
         Draw-SettingsValueField $g $pal $script:SetEditRect '' ([string]$script:SetEditField.Unit) $true $mode
       }
+      if ($listOnly) { return }
       # the close button, top right, where every window puts one
       Draw-SettingsClose $g $pal $layout $script:SetCloseHot
       # the footer is the window's own bar: the last change on the left, the actions on the right.
@@ -918,14 +978,28 @@ function Show-Settings {
     }
     if ($hotAction -ne $script:SetHotAction) { $script:SetHotAction = $hotAction; $form.Invalidate() }
     $idx = Get-SettingsRowAt $script:SetLayout @($script:SetRows).Count $script:SetScroll $e.X $e.Y
-    if ($idx -ne $script:SetHover) { $script:SetHover = $idx; $script:SetHotDelete = -1; $form.Invalidate() }
+    if ($idx -ne $script:SetHover) {
+      # only the two rows change: one loses its hover, the other gains it
+      $was = Get-RowBandRect ([int]$script:SetHover)
+      $script:SetHover = $idx
+      $script:SetHotDelete = -1
+      $now = Get-RowBandRect $idx
+      if ($was.IsEmpty -and $now.IsEmpty) { $form.Invalidate() }
+      elseif ($was.IsEmpty) { $form.Invalidate($now) }
+      elseif ($now.IsEmpty) { $form.Invalidate($was) }
+      else { $form.Invalidate([Drawing.Rectangle]::Union($was, $now)) }
+    }
     # a chord line's delete button is a target of its own
     $hotDel = -1
     if ($idx -ge 0) {
       $rowTop = Get-SettingsRowTop $idx
       $hotDel = Get-ChordDeleteAt $script:SetRows[$idx] $rowTop $e.X $e.Y
     }
-    if ($hotDel -ne $script:SetHotDelete) { $script:SetHotDelete = $hotDel; $form.Invalidate() }
+    if ($hotDel -ne $script:SetHotDelete) {
+      $script:SetHotDelete = $hotDel
+      $band = Get-RowBandRect ([int]$script:SetHover)
+      if ($band.IsEmpty) { $form.Invalidate() } else { $form.Invalidate($band) }
+    }
   })
 
   $form.Add_MouseUp({
@@ -1098,7 +1172,11 @@ function Show-Settings {
       $script:SetSbK = $sbNext
       $moved = $true
     }
-    if ($moved) { $form.Invalidate() }
+    if ($moved) {
+      # repaint the switch that moved, not the page it sits on
+      $rect = Get-AnimationRect
+      if ($rect.IsEmpty) { $form.Invalidate() } else { $form.Invalidate($rect) }
+    }
   })
   $animTimer.Start()
 
