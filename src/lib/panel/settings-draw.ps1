@@ -33,8 +33,9 @@ function Get-SettingsLayout([int]$w, [int]$h) {
     ActionGap = Px 8
     ActionPad = Px 14
     ActionMin = Px 88
-    # two lines of help need the room for them
-    RowHeight = Px 72
+    # an 18 px cap is a line of its own plus the air under it: three chord lines have to fit a
+    # card with a gap between them, or the chain reads as one block of caps
+    RowHeight = Px 80
     GroupHeight = Px 34
     CloseSize = Px 32
     ListLeft  = $sideW + $pad
@@ -397,7 +398,7 @@ function Get-SettingsControlWidth($row) {
 # The lines a chain of chords takes in the value column: one per chord, the height of a cap, so the
 # list reads as rows instead of one line with "+3" behind it. Three fit a row.
 function Get-SettingsChordLineRect($layout, [int]$rowTop, [int]$index) {
-  $lineH = Px 20
+  $lineH = Px 22
   $top = (Get-SettingsControlTop $layout $rowTop $lineH) + ($index * $lineH)
   $right = [int]$layout.ListRight - (Px 12)
   return @{ Top = $top; Height = $lineH; Right = $right; Left = $right - (Px 240) }
@@ -462,6 +463,12 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
   if ($textW -lt (Px 120)) { $textW = [int](Px 120) }
   $labelInk = $pal['Text']
   $helpText = [string]$row.Help
+  # a chain longer than the three lines a card holds says how many it is not showing, and the
+  # help line is where that costs no room of its own
+  if ($row.ContainsKey('Chain') -and [bool]$row.Chain -and $row.ContainsKey('Chords') -and $null -ne $row.Chords) {
+    $n = @($row.Chords).Count
+    if ($n -gt 3) { $helpText = $helpText + ' (+' + [string]($n - 3) + ' more)' }
+  }
   if (-not $enabled) {
     $labelInk = $pal['Faint']
     if ($row.ContainsKey('Why') -and $row.Why) { $helpText = 'Off because ' + [string]$row.Why }
@@ -536,18 +543,18 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
   $chords = @()
   if ($row.ContainsKey('Chords') -and $null -ne $row.Chords) { $chords = @($row.Chords) }
   # A chain is a list, and a list on one line says nothing: every chord gets its own line with a
-  # delete button, and a fourth chord has to wait until one of the three is removed.
+  # delete button. The card holds three of them; a longer chain states the rest beside its help
+  # (see the count above), because a badge on a chord line competes with the caps for the width.
   $chain = ($row.ContainsKey('Chain') -and [bool]$row.Chain)
   if ($chain) {
     $maxLines = 3
     $drawn = [Math]::Min($chords.Count, $maxLines)
     if ($armed -and $drawn -ge $maxLines) { $drawn = $maxLines - 1 }
-    $capW = 0
     for ($i = 0; $i -lt $drawn; $i++) {
       $line = Get-SettingsChordLineRect $layout $y $i
       $del = Get-SettingsChordDeleteRect $layout $y $i
       $cy = [int]$line.Top + [int]($line.Height / 2)
-      $capW = [int](Draw-SettingChord $g $pal ([int]$del.Left - (Px 10)) $cy (Get-SettingChordKeys ([string]$chords[$i])) $enabled)
+      [void](Draw-SettingChord $g $pal ([int]$del.Left - (Px 10)) $cy (Get-SettingChordKeys ([string]$chords[$i])) $enabled)
       # the remove affordance is quiet until the pointer is on it, then a disc and a red cross:
       # a mark that stays loud on every line would compete with the chords themselves
       if ($i -eq $hotDelete) {
@@ -568,25 +575,6 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
       $keys = @($preview)
       $keys += [string][char]0x2026
       [void](Draw-SettingChord $g $pal ([int]$line.Right) ([int]$line.Top + [int]($line.Height / 2)) $keys $enabled $true)
-      return
-    }
-    if ($chords.Count -gt $drawn) {
-      # The rest of the chain is stated beside the last chord instead of on a line of its own: the
-      # row is one card tall, and a fourth line would fall outside it. The pill gives way to the
-      # caps when they reach it, so the two never overlap on a narrow window.
-      $line = Get-SettingsChordLineRect $layout $y ([Math]::Max(0, $drawn - 1))
-      $more = '+' + [string]($chords.Count - $drawn) + ' more'
-      $pw = [int][Math]::Ceiling((Get-SettingsTextWidth $more $script:FSmall) + (Px 16))
-      $ph = Px 18
-      $pt = [int]$line.Top + [int](($line.Height - $ph) / 2)
-      $capsLeft = [int]$line.Right - (Px 10) - $capW
-      $px = [Math]::Max([int]$line.Left, ($capsLeft - (Px 8) - $pw))
-      $path = New-RoundPath $px $pt $pw $ph (Px 9)
-      $fill = New-Object Drawing.SolidBrush $pal['KeyCapBg']
-      $edge = New-Object Drawing.Pen $pal['KeyCapBorder'], 1
-      try { $g.FillPath($fill, $path); $g.DrawPath($edge, $path) } finally { $path.Dispose(); $fill.Dispose(); $edge.Dispose() }
-      $pbox = New-Object Drawing.RectangleF -ArgumentList @([single]$px, [single]$pt, [single]$pw, [single]$ph)
-      $g.DrawString($more, $script:FSmall, (Get-Brush $pal['Faint']), $pbox, $sf.Center)
     }
     return
   }
@@ -725,6 +713,9 @@ function Get-SettingsActionRects($layout, $labels) {
     $right = $right - $w
     $out.Insert(0, @{ Left = [int]$right; Top = [int]$top; Width = [int]$w; Height = $h })
     $right = $right - $gap
+    # a wider break before the first action: resetting every value is not part of the
+    # save / discard pair, and a 8 px gap would let a pointer slide from one to the other
+    if ($i -eq 1) { $right = $right - (Px 16) }
   }
   return $out.ToArray()
 }
@@ -744,7 +735,9 @@ function Draw-SettingsAction($g, $pal, $rect, [string]$label, [bool]$primary, [b
   $edge = $pal['FieldBorder']
   $ink = $pal['Text']
   if ($primary -and $enabled) { $fill = $pal['Accent']; $edge = $pal['Accent']; $ink = $pal['Surface'] }
-  if (-not $enabled) { $ink = $pal['Faint'] }
+  # a disabled action gives up its fill as well as its colour: a filled button with grey text
+  # still reads as one that can be pressed
+  if (-not $enabled) { $fill = $pal['Surface']; $edge = $pal['Border']; $ink = $pal['Faint'] }
   $path = New-RoundPath $x $y $w $h $radius
   $brush = New-Object Drawing.SolidBrush $fill
   try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
@@ -789,7 +782,10 @@ function Draw-SettingsFooter($g, $pal, $layout, [string]$msg, [bool]$isError, $a
   for ($i = 0; $i -lt $rects.Count; $i++) {
     $primary = $false
     if ($specs[$i].ContainsKey('Primary')) { $primary = [bool]$specs[$i].Primary }
-    Draw-SettingsAction $g $pal $rects[$i] ([string]$specs[$i].Label) $primary $enabled ($i -eq $hot)
+    # an action may state its own state; the argument is what a caller without one gets
+    $on = $enabled
+    if ($specs[$i].ContainsKey('Enabled')) { $on = [bool]$specs[$i].Enabled }
+    Draw-SettingsAction $g $pal $rects[$i] ([string]$specs[$i].Label) $primary $on ($i -eq $hot)
   }
   if ($rects.Count -gt 0) { $limit = [int]$rects[0].Left - (Px 16) }
   if (-not $msg) { return }

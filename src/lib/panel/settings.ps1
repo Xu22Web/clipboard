@@ -306,9 +306,16 @@ function Show-Settings {
     Show-Message ($said + ' back at the default, not saved yet') $false
   }
 
+  # Which footer actions apply right now: the reset one always does, the other two only once
+  # something is staged, because saving or discarding nothing would do nothing
+  function Test-SettingsActionOn([string]$key) {
+    if ($key -eq 'defaults') { return $true }
+    return ($script:SetPending.Count -gt 0)
+  }
+
   # one footer action, by the key the action table gives it
   function Invoke-SettingsAction([string]$key) {
-    if ($script:SetPending.Count -eq 0) { return }
+    if (-not (Test-SettingsActionOn $key)) { return }
     if ($key -eq 'save') { Save-Settings; return }
     if ($key -eq 'discard') { Discard-Settings; return }
     Restore-SettingsDefaults
@@ -805,10 +812,24 @@ function Show-Settings {
       }
       # the close button, top right, where every window puts one
       Draw-SettingsClose $g $pal $layout $script:SetCloseHot
-      # the footer is the window's own bar: the last change on the left, the three actions on the
-      # right. There is no key to describe - this window is driven by the pointer - and the
-      # version belongs on the About page, where it can be read in full.
-      Draw-SettingsFooter $g $pal $layout $script:SetMsg $script:SetMsgErr $script:SetActions ($script:SetPending.Count -gt 0) $script:SetHotAction
+      # the footer is the window's own bar: the last change on the left, the actions on the right.
+      # A page with nothing to act on (About) has no actions at all - a Save that can only ever be
+      # disabled says the window is broken rather than that the page is a statement. A read-only
+      # row with a folder picker still stages a value, so the pick counts as something to act on.
+      # each action carries its own state: the reset one stays available, the pair waits for a change
+      $acts = @()
+      $actionable = @($script:SetRows | Where-Object {
+          (-not $_.Locked) -or ($_.ContainsKey('Pick') -and [string]$_.Pick)
+        })
+      if ($actionable.Count -gt 0) {
+        $acts = @(foreach ($a in $script:SetActions) {
+          $copy = @{}
+          foreach ($k in $a.Keys) { $copy[$k] = $a[$k] }
+          $copy['Enabled'] = (Test-SettingsActionOn ([string]$a.Key))
+          $copy
+        })
+      }
+      Draw-SettingsFooter $g $pal $layout $script:SetMsg $script:SetMsgErr $acts ($script:SetPending.Count -gt 0) $script:SetHotAction
     } catch {
       Write-Log ('settings paint: ' + $_.Exception.Message + ' @ ' + $_.ScriptStackTrace)
     }
@@ -889,6 +910,7 @@ function Show-Settings {
     $rects = @(Get-SettingsActionRects $script:SetLayout @($script:SetActions | ForEach-Object { [string]$_.Label }))
     $hotAction = -1
     for ($i = 0; $i -lt $rects.Count; $i++) {
+      if (-not (Test-SettingsActionOn ([string]$script:SetActions[$i].Key))) { continue }
       $rc = $rects[$i]
       if ($e.X -lt [int]$rc.Left -or $e.X -gt ([int]$rc.Left + [int]$rc.Width)) { continue }
       if ($e.Y -lt [int]$rc.Top -or $e.Y -gt ([int]$rc.Top + [int]$rc.Height)) { continue }
@@ -936,6 +958,7 @@ function Show-Settings {
     # the footer actions sit below the list, so no row and no lane can be under them
     $acts = @(Get-SettingsActionRects $script:SetLayout @($script:SetActions | ForEach-Object { [string]$_.Label }))
     for ($i = 0; $i -lt $acts.Count; $i++) {
+      if (-not (Test-SettingsActionOn ([string]$script:SetActions[$i].Key))) { continue }
       $rc = $acts[$i]
       if ($e.X -lt [int]$rc.Left -or $e.X -gt ([int]$rc.Left + [int]$rc.Width)) { continue }
       if ($e.Y -lt [int]$rc.Top -or $e.Y -gt ([int]$rc.Top + [int]$rc.Height)) { continue }
