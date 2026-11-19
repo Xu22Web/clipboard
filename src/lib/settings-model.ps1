@@ -20,11 +20,12 @@ function Get-SettingGroupTable {
       'PasteTyping', 'NoPaste', 'AppRules')
     'Hotkey' = @('Hotkey', 'HotkeyFallbacks')
     'History' = @('MaxItems', 'MaxTextBytes', 'MaxTextTotalBytes', 'MaxMediaTotalBytes')
-    'Panel' = @('WindowWidth', 'Rows', 'SaveWindowPos', 'WindowLeft', 'WindowTop', 'ShowTime', 'ShowTypeIcon',
-      'ShowThumbnails', 'Highlight', 'HighlightMaxBytes', 'ShowNewlineMarker', 'PreviewHover',
-      'PreviewDelay', 'PreviewChars', 'Undo', 'ScrollLines', 'Animations', 'DpiAware')
+    'Panel' = @('WindowWidth', 'Rows', 'SaveWindowPos', 'WindowLeft', 'WindowTop', 'ScrollLines', 'Undo')
     'Compact' = @('CompactMode', 'CompactWidth', 'CompactRows')
-    'Appearance' = @('Theme')
+    # theme plus everything that only changes how the panel looks or animates; the keys that
+    # move or size the window stay on Panel
+    'Appearance' = @('Theme', 'ShowTime', 'ShowTypeIcon', 'ShowThumbnails', 'Highlight', 'HighlightMaxBytes',
+      'ShowNewlineMarker', 'PreviewHover', 'PreviewDelay', 'PreviewChars', 'Animations', 'DpiAware')
     'Startup' = @('Autostart', 'DesktopShortcut', 'Balloon')
     'Plugins' = @('Plugins')
     'Storage' = @('DataDir')
