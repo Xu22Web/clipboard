@@ -8,6 +8,14 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     if (-not $Warm) { $script:PickerClose = $true }
     return
   }
+  # One modal window at a time in this process. The settings window runs a modal loop; opening
+  # the panel from inside that loop left two modal windows on one thread, the panel took the
+  # foreground and the settings window stopped taking input. A panel request while settings is
+  # open brings that window forward instead - the same thing the hotkey then does.
+  if ((Get-Command Test-SettingsWindowOpen -ErrorAction SilentlyContinue) -and (Test-SettingsWindowOpen)) {
+    [void](Ring-SettingsAsk)
+    return
+  }
   $script:PickerOpen = $true
   $script:PickerClose = $false
   # how long the window takes to appear: one line per open, so a slow start can be told

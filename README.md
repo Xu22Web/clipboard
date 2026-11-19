@@ -99,7 +99,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 ### 设置窗口
 
-`clipboard settings` 打开设置窗口；托盘菜单的 `Settings...` 走同一条路径，也是新开一个进程。窗口每会话只有一个：再有请求时已开的窗口前置并获得焦点，不会开出第二个。窗口只用指针操作：左侧点选分组，右侧每行一个控件，右上角 `✕` 或 `Esc` 关闭。页脚左侧显示最后一次操作的结果，右侧是三个按钮。窗口在任务栏与 Alt-Tab 中显示与托盘相同的图标，不沿用 PowerShell 宿主的图标。
+`clipboard settings` 打开设置窗口；托盘菜单的 `Settings...` 在常驻进程内打开，不新起进程。窗口每会话只有一个：再有请求时已开的窗口前置并获得焦点，不会开出第二个。窗口打开期间，热键与托盘单击只把窗口前置，不打开历史面板。窗口只用指针操作：左侧点选分组，右侧每行一个控件，右上角 `✕` 或 `Esc` 关闭。页脚左侧显示最后一次操作的结果，右侧是三个按钮。窗口在任务栏与 Alt-Tab 中显示与托盘相同的图标，不沿用 PowerShell 宿主的图标。
 
 | 行 | 点击后 |
 |---|---|
@@ -112,7 +112,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `DataDir` | 打开系统文件夹选择；历史不迁移，新目录从空开始 |
 | `Autostart` / `DesktopShortcut` | 只由 `install` 生效，说明行写明生效时机 |
 
-改动在 `Save` 之前只留在窗口内：已改的行左侧有强调色圆点，条件不满足的设置（如 `MaxImageBytes` 需要 `CaptureImages`）变灰并说明原因。页脚三个按钮为 `Restore defaults`（可写键回到 schema 默认值）、`Discard`（丢弃改动）、`Save`（一次写入 `clipboard.ini` 并应用），无改动时禁用。常驻进程在窗口关闭时重启一次；带未保存改动关闭会先确认。
+改动在 `Save` 之前只留在窗口内：已改的行左侧有强调色圆点，条件不满足的设置（如 `MaxImageBytes` 需要 `CaptureImages`）变灰并说明原因。页脚三个按钮为 `Restore defaults`（可写键回到 schema 默认值）、`Discard`（丢弃改动）、`Save`（一次写入 `clipboard.ini` 并应用），无改动时禁用。保存后常驻进程重启一次，新值随之生效；带未保存改动关闭会先确认。
 
 快捷键按 Win11 键帽显示，修饰键顺序为 Win、Ctrl、Alt、Shift；无修饰键的裸键只接受 `F1`–`F24`。滚轮滚动列表，右侧滚动条可拖动定位、点轨道翻页。最后一页 `About` 列出程序版本、数据格式、条目数、数据目录、设置文件与已加载插件。
 
@@ -860,11 +860,11 @@ CBHIST RS <数据版本> RS <flags> US <epoch 秒> US <extra> US <payload> RS <f
 | `cli test -Profile` | 打印最慢的命令行调用与每个分件的命令行耗时 |
 | `cli test -NoProgress` | 不绘制实时窗口 |
 | `cli test -NoColor` | 不输出颜色，标记改用 ASCII |
-| `cli test -Source dist\clipboard-0.1.0` | 对打包副本跑命令行分件 |
+| `cli test -Source dist\clipboard-0.2.0` | 对打包副本跑命令行分件 |
 
 也可直接运行 `powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run.ps1`。
 
-一个分件对应一个文件、一个进程、一个沙箱。并发数取逻辑处理器数，可由 `cli.ini` 的 `[test] Workers` 或 `-Workers` 指定，`1` 为串行。全量 462 项，其中端到端 23 项。
+一个分件对应一个文件、一个进程、一个沙箱。并发数取逻辑处理器数，可由 `cli.ini` 的 `[test] Workers` 或 `-Workers` 指定，`1` 为串行。全量 497 项，其中端到端 23 项。
 
 分件内的命令行调用默认经 `tests\lib\cli-runner.ps1`：分件启动时拉起一个子进程，每条命令在其内的独立 runspace 中执行，省去每次解释器启动。插件脚本块相关的命令（`pin`、`star`、`highlight`、`transform`、`kind`、`list` 等）仍起真实子进程，因为脚本块需要真实的模块加载作用域。
 
@@ -873,7 +873,7 @@ CBHIST RS <数据版本> RS <flags> US <epoch 秒> US <extra> US <payload> RS <f
 与 vitest 默认 reporter 相同：`RUN` 头，每个分件完成时一行（标记、相对 `tests\` 的路径、括号内的断言数与耗时）。运行中只有一个分件，或该分件有失败时，分件行下才打印用例树（组行带该组的断言数与耗时，断言行不带耗时）。全部失败断言与原因集中在末尾的 `Failed Tests N` 块，随后是 `Test Files` / `Tests` / `Start at` / `Duration` 四行。
 
 ```text
- RUN  clipboard v0.1.0  D:\Users\xzz\Desktop\Project\clipboard
+ RUN  clipboard v0.2.0  D:\Users\xzz\Desktop\Project\clipboard
 
  ok cli\settings.ps1 (13 tests) 30.5s
    ok int (13 tests) 27.8s
@@ -919,11 +919,7 @@ Describe 'int' {
 | `Wait-Until { 条件 } -Timeout 毫秒` | 轮询到条件成立 |
 | `Skip-Test '原因'` | 块内判定本机无法运行时，把该条记为跳过 |
 
-块内抛出异常或任一断言失败即判该条失败，失败信息取第一条断言的消息。分件一律用 `Describe` / `It` / `Expect` 书写，`tests\lib\harness.ps1` 不再提供 `Check` / `Skip`。
-
-`Describe` 块内只写声明（`Describe` / `It` / 钩子）。代码先收集用例再按书写顺序执行，写在块内的普通语句会在收集阶段执行，执行顺序与预期不符；准备与清理写入钩子，分件顶层只保留沙箱与进程这类一次性准备。
-
-断言只写两类：守回归（对应实际缺陷）与守契约（对外行为、文件格式、命令行输出）。不复述常量，不断言私有实现细节，同一行为不写第二条等价断言。
+块内抛出异常或任一断言失败即判该条失败，失败信息取第一条断言的消息。`tests\lib\harness.ps1` 提供上表 API，不提供 `Check` / `Skip`；用例先收集再按书写顺序执行，因此写在 `Describe` 块内的普通语句在收集阶段执行。
 
 ### 分件与泳道
 
@@ -968,9 +964,7 @@ Describe 'int' {
 
 工具的日志都经 `tools\utils\console.ps1` 输出：`[..]` 步骤（青）、`[ok]` 完成并附耗时（绿）、`[!]` 警告（黄）、`[x]` 失败（红），明细行缩进变暗；耗时不足一秒显示毫秒。级别为 `silent < error < warn < info`：`-Quiet` 只留 `[!]` 与 `[x]`，`-Silent` 只留 `[x]`，环境变量 `CLIPBOARD_LOG_LEVEL` 可为整条 shell 指定级别（命令行开关优先），`cli dev -Timestamp` 给每行加 `HH:mm:ss`。输出被重定向、或设置了 `NO_COLOR` 时只留纯文本，`FORCE_COLOR=1` 强制保留颜色；`cli nosuchcmd` 会给出最接近的命令名。
 
-### 文档维护
-
-`README.md` 是唯一的对外文档，插件与主题说明页在 `docs\`。命令、设置键、标记、文件布局、默认值、取值范围与文件格式发生变化时必须同步，取值与 `clipboard help`、`clipboard config`、`src\schema\clipboard.ps1` 一致；纯内部重构、性能微调、排查过程与本机实测数据不写入。
+`README.md` 是对外文档，插件与主题的说明页在 `docs\`。
 
 ## 打包分发
 

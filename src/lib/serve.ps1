@@ -67,6 +67,9 @@ function Start-Serve {
 
   $script:StopEvt = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, $StopName)
   $script:ExitKind = ''
+  # the settings window is opened from the tray in this process, and a save has to rebuild the
+  # loop instead of restarting the process it lives in (lib\config.ps1, Restart-ResidentIfRunning)
+  $script:InResident = $true
   try {
     Load-Forms
     Add-Native
@@ -81,10 +84,11 @@ function Start-Serve {
       $script:ExitKind = ''
       $started = Get-Date
       try { Invoke-ServeOnce } catch { Write-Log ('serve crash: ' + $_.Exception.Message) }
-      # the tray's Restart entry: rebuild the scene without leaving the supervisor loop, so
-      # the mutex, the stop event and the process itself stay exactly as they are
+      # the tray's Restart entry, or a save in a settings window opened from the tray: rebuild the
+      # scene without leaving the supervisor loop, so the mutex, the stop event and the process
+      # itself stay exactly as they are
       if ($script:ExitKind -eq 'restart') {
-        Write-Log 'serve restart (requested from the tray)'
+        Write-Log 'serve restart (requested inside the process)'
         $round = 0
         $delay = 1000
         if ($script:StopEvt.WaitOne(200)) { break }
@@ -217,17 +221,20 @@ function Invoke-ServeOnce {
       })
     [void]$dm.Items.Add('-')
 
-    # The settings window is always its own process. Opening it here would put two modal windows
-    # on the resident's one thread - the window runs a modal loop, and the picker opens from that
-    # loop - and the window the user was working in stops taking input. A process of its own also
-    # keeps the tray responsive while the window is up. `clipboard settings` is the same command,
-    # so both entry points stay one code path.
+    # The settings window is opened here, in the resident: a process of its own costs a PowerShell
+    # start (2.0 s measured) for a window that is built in 0.9 s. What that cannot allow is two
+    # modal windows on this one thread, so Show-Picker refuses while the window is open and brings
+    # it forward instead - see lib\panel\picker.ps1.
     $iSettings = $dm.Items.Add('Settings...')
     $iSettings.Add_Click({
         try {
-          Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList @(
-            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', (Join-Path $Root 'clipboard.ps1'), 'settings'
-          )
+          if (Get-Command Show-Settings -ErrorAction SilentlyContinue) {
+            Show-Settings
+          } else {
+            Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList @(
+              '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', (Join-Path $Root 'clipboard.ps1'), 'settings'
+            )
+          }
         } catch { Write-Log ('tray settings: ' + $_.Exception.Message) }
       })
     # the file itself, for a key the window does not cover (a plugin's settings, a retired key)

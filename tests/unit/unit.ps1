@@ -2662,6 +2662,9 @@ try {
         Expect ($null -ne $first) 'the first request was refused its lock'
         try {
           Expect ($null -eq (Open-SettingsLock $name)) 'a second window would have opened'
+          # the picker asks this before it opens: a second modal window on the same thread takes
+          # the input away from the settings window
+          Expect (Test-SettingsWindowOpen $name) 'a window was reported closed while it held the lock'
           $ask = Open-SettingsAsk $ring
           Expect ($null -ne $ask) 'the open window has no doorbell'
           try {
@@ -2674,6 +2677,7 @@ try {
         $again = Open-SettingsLock $name
         Expect ($null -ne $again) 'the lock outlived the window'
         if ($null -ne $again) { $again.Dispose() }
+        Expect (-not (Test-SettingsWindowOpen $name)) 'a closed window was still reported open'
       }
 
       It 'the list scrolls by distance, so a half row is still a row under the pointer' {

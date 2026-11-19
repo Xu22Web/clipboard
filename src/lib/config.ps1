@@ -334,6 +334,17 @@ function Set-ConfigKey([string]$key, [string]$value) {
 # resident that serves this data folder: another install (or a test sandbox) holding the
 # machine-wide mutex must not be stopped by a `config set` here.
 function Restart-ResidentIfRunning {
+  # The settings window may be running inside the resident itself (opened from the tray), where
+  # stopping the process would take the window with it: the supervisor rebuilds its own loop
+  # instead, which re-reads the same file. This is what the tray's Restart entry does.
+  # Asked first, because the probe below cannot answer for ourselves: it takes the daemon mutex
+  # to see whether anyone holds it, and this process holds it on the very thread asking.
+  if ($script:InResident) {
+    $script:ExitKind = 'restart'
+    Write-Host '     resident reloads to pick up the new settings'
+    try { [Windows.Forms.Application]::ExitThread() } catch { }
+    return
+  }
   if (-not (Test-ResidentOwnsStore)) { Write-Host '     resident is not running, nothing to reload'; return }
   try {
     $se = [System.Threading.EventWaitHandle]::OpenExisting($StopName)

@@ -42,6 +42,15 @@ function Ring-SettingsAsk([string]$name = '') {
   } catch { return $false }
 }
 
+# Is a settings window open in this session? Its lock exists only while one is, so asking is
+# opening it and letting go again. The picker asks before it opens: see lib\panel\picker.ps1.
+function Test-SettingsWindowOpen([string]$name = '') {
+  $lock = Open-SettingsLock $name
+  if ($null -eq $lock) { return $true }
+  try { $lock.Dispose() } catch { }
+  return $false
+}
+
 function Show-Settings {
   $swOpen = [Diagnostics.Stopwatch]::StartNew()
   Load-Forms
