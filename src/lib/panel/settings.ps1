@@ -110,7 +110,9 @@ function Show-Settings {
   # edit; a text field is the same field with neither
   $script:SetEditField = @{ Number = $false; Scale = 1; Unit = '' }
   $script:SetPal = $pal
-  $script:SetDirty = $false
+  # set by Save-SettingsValues (settings-edit.ps1) when a written key needs the resident to
+  # re-read the file; the reload itself happens on the way out, below
+  $script:SettingsDirty = $false
   $script:SetRows = @()
   # the staged values: key -> file spelling, validated by the schema before it got here. The
   # window writes nothing until Save, so this table is what the rows, the switch positions and
@@ -1115,10 +1117,11 @@ function Show-Settings {
     End-Edit $true
     try { $form.Dispose() } catch { }
     & $releaseSettings
-    # one reload for the whole session, and only when something was actually written
-    if ($script:SetDirty) {
+    # one reload for the whole session, and only when a written key needed the resident to
+    # read the file again (an install-only key does not)
+    if ($script:SettingsDirty) {
       try { Restart-ResidentIfRunning } catch { }
-      $script:SetDirty = $false
+      $script:SettingsDirty = $false
     }
   }
 }
