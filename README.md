@@ -879,7 +879,7 @@ CBHIST RS <数据版本> RS <flags> US <epoch 秒> US <extra> US <payload> RS <f
 | `cli test -Profile` | 打印最慢的命令行调用与每个分件的命令行耗时 |
 | `cli test -NoProgress` | 不绘制实时窗口 |
 | `cli test -NoColor` | 不输出颜色，标记改用 ASCII |
-| `cli test -Source dist\clipboard-0.2.1` | 对打包副本跑命令行分件 |
+| `cli test -Source dist\clipboard-0.1.0` | 对打包副本跑命令行分件 |
 
 也可直接运行 `powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run.ps1`。
 
@@ -892,7 +892,7 @@ CBHIST RS <数据版本> RS <flags> US <epoch 秒> US <extra> US <payload> RS <f
 与 vitest 默认 reporter 相同：`RUN` 头，每个分件完成时一行（标记、相对 `tests\` 的路径、括号内的断言数与耗时）。运行中只有一个分件，或该分件有失败时，分件行下才打印用例树（组行带该组的断言数与耗时，断言行不带耗时）。全部失败断言与原因集中在末尾的 `Failed Tests N` 块，随后是 `Test Files` / `Tests` / `Start at` / `Duration` 四行。
 
 ```text
- RUN  clipboard v0.2.1  D:\Users\xzz\Desktop\Project\clipboard
+ RUN  clipboard v0.1.0  D:\Users\xzz\Desktop\Project\clipboard
 
  ok cli\settings.ps1 (13 tests) 30.5s
    ok int (13 tests) 27.8s
