@@ -413,7 +413,8 @@ function Show-Settings {
   function Get-ChordDeleteAt($row, [int]$rowTop, [int]$px, [int]$py) {
     if ($null -eq $row) { return -1 }
     if (-not ($row.ContainsKey('Chain') -and [bool]$row.Chain)) { return -1 }
-    $drawn = [Math]::Min(@($row.Chords).Count, 3)
+    # every chord of a chain is drawn: the schema refuses more than the three lines a card holds
+    $drawn = @($row.Chords).Count
     for ($i = 0; $i -lt $drawn; $i++) {
       $rc = Get-SettingsChordDeleteRect $script:SetLayout $rowTop $i
       if ($px -ge [int]$rc.Left -and $px -le ([int]$rc.Left + [int]$rc.Width) -and
@@ -690,6 +691,12 @@ function Show-Settings {
   function Start-Record($row) {
     if ($null -eq $row) { return }
     if (-not (Test-RowEnabled $row)) { Show-RowRefused $row; return }
+    # three chord lines are all the card holds, and the schema refuses a longer chain: a fourth
+    # recorded here would be written and then have nowhere to appear or be removed from
+    if ($row.ContainsKey('Chain') -and [bool]$row.Chain -and @($row.Chords).Count -ge 3) {
+      Show-Message 'three chords fill this row: remove one first' $true
+      return
+    }
     End-Edit $true
     $script:SetRecKey = [string]$row.Key
     $script:SetRecPreview = @()
@@ -775,7 +782,7 @@ function Show-Settings {
     }
     $name = Get-ChordKeyName $e.KeyCode
     if (-not $name) {
-      Show-Message 'that key cannot be a hotkey: use a letter, a digit, F1-F24, Insert, Delete, Home, End, PageUp, PageDown or Space' $true
+      Show-Message 'that key cannot be a hotkey: use a letter, a digit, F1-F24, a punctuation key, Insert, Delete, Home, End, PageUp, PageDown or Space' $true
       return
     }
     $chord = Format-ChordValue (Test-ChordWinHeld) $e.Control $e.Alt $e.Shift $name

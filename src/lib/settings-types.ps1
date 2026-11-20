@@ -107,12 +107,14 @@ function Convert-SendKeysToChord([string]$keys) {
 }
 
 # The chain a chord is added to: the order is the order the resident tries them, so a new chord
-# goes last, and the same chord twice would only be tried twice.
+# goes last, and the same chord twice would only be tried twice. Three is the limit, because three
+# chord lines are what the card holds - the schema refuses a longer chain for the same reason.
 function Get-SettingChordAdded([string]$raw, [string]$chord) {
   $t = ([string]$chord).Trim()
   if (-not $t) { return $raw }
   $cur = @(Split-SettingList $raw)
   foreach ($c in $cur) { if ([string]$c -ieq $t) { return ($cur -join ', ') } }
+  if ($cur.Count -ge 3) { return ($cur -join ', ') }
   $cur += $t
   return ($cur -join ', ')
 }

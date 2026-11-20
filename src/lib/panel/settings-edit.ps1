@@ -90,6 +90,20 @@ function Get-ChordKeyName($keyCode) {
     ([Windows.Forms.Keys]::End) { return 'END' }
     ([Windows.Forms.Keys]::PageUp) { return 'PGUP' }
     ([Windows.Forms.Keys]::PageDown) { return 'PGDN' }
+    # Punctuation has a name of its own because the character is not the key: ',' is 0x2C while
+    # the key that types it is VK_OEM_COMMA (0xBC), and the same holds for . / - = ; ' \ and the
+    # bracket pair - and a comma in the file would also split the chain in two.
+    ([Windows.Forms.Keys]::Oemtilde) { return 'BACKTICK' }
+    ([Windows.Forms.Keys]::OemMinus) { return 'MINUS' }
+    ([Windows.Forms.Keys]::Oemplus) { return 'EQUALS' }
+    ([Windows.Forms.Keys]::OemOpenBrackets) { return 'LBRACKET' }
+    ([Windows.Forms.Keys]::OemCloseBrackets) { return 'RBRACKET' }
+    ([Windows.Forms.Keys]::OemPipe) { return 'BACKSLASH' }
+    ([Windows.Forms.Keys]::OemSemicolon) { return 'SEMICOLON' }
+    ([Windows.Forms.Keys]::OemQuotes) { return 'QUOTE' }
+    ([Windows.Forms.Keys]::OemComma) { return 'COMMA' }
+    ([Windows.Forms.Keys]::OemPeriod) { return 'PERIOD' }
+    ([Windows.Forms.Keys]::OemQuestion) { return 'SLASH' }
   }
   return $null
 }

@@ -291,6 +291,9 @@ function Convert-SchemaValue($schema, [string]$key, [string]$raw) {
       $chain.Add($chord)
     }
     if ($chain.Count -eq 0) { return @{ Ok = $false; Value = ''; Error = 'expected at least one chord' } }
+    # the settings card holds three chord lines, so the chain holds three: a fourth would be in
+    # the file and in the order the resident tries, but drawn nowhere and deletable nowhere
+    if ($chain.Count -gt 3) { return @{ Ok = $false; Value = ''; Error = 'at most three chords, got ' + [string]$chain.Count } }
     return @{ Ok = $true; Value = ($chain -join ', '); Error = '' }
   }
   if ($type -eq 'apprule') {

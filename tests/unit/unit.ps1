@@ -977,12 +977,45 @@ try {
         Expect ($v.Vk -eq 0x56) ('vk=0x' + $v.Vk.ToString('X2'))
         $f9 = Parse-Hotkey 'ctrl + alt + f9'
         Expect ($f9.Vk -eq 0x78 -and $f9.Mods -eq 3) ('vk=0x' + $f9.Vk.ToString('X2'))
+        # a punctuation key is not the character it types: the backtick is 0xC0 as a key, while
+        # 0x60 - what the character's code point gives - is the numeric keypad's 0
         $tick = Parse-Hotkey 'Ctrl+Alt+`'
-        Expect ($tick.Vk -eq 0x60) ('vk=0x' + $tick.Vk.ToString('X2'))
+        Expect ($tick.Vk -eq 0xC0) ('vk=0x' + $tick.Vk.ToString('X2'))
+        $named = Parse-Hotkey 'Alt+BACKTICK'
+        Expect ($named.Vk -eq 0xC0 -and $named.Mods -eq 1) ('vk=0x' + $named.Vk.ToString('X2'))
+        # the name and the character both read, because the window records one of them and a
+        # hand-written file may hold the other
+        $comma = Parse-Hotkey 'Ctrl+COMMA'
+        Expect ($comma.Vk -eq 0xBC) ('vk=0x' + $comma.Vk.ToString('X2'))
       }
 
       It 'Parse-Hotkey leaves an unknown key empty' {
         Expect ((Parse-Hotkey 'Ctrl+Nope').Vk -eq 0) ''
+      }
+
+      It 'every key the recorder can name is one the parser reads' {
+        # the two tables have to agree: a name the window writes but the schema cannot read is a
+        # hotkey that looks recorded, saves, and never registers
+        $table = @(
+          @{ Key = 0xC0; Name = 'BACKTICK' }
+          @{ Key = 0xBD; Name = 'MINUS' }
+          @{ Key = 0xBB; Name = 'EQUALS' }
+          @{ Key = 0xDB; Name = 'LBRACKET' }
+          @{ Key = 0xDD; Name = 'RBRACKET' }
+          @{ Key = 0xDC; Name = 'BACKSLASH' }
+          @{ Key = 0xBA; Name = 'SEMICOLON' }
+          @{ Key = 0xDE; Name = 'QUOTE' }
+          @{ Key = 0xBC; Name = 'COMMA' }
+          @{ Key = 0xBE; Name = 'PERIOD' }
+          @{ Key = 0xBF; Name = 'SLASH' }
+        )
+        $bad = @()
+        foreach ($r in $table) {
+          $name = [string](Get-ChordKeyName $r.Key)
+          if ($name -ne [string]$r.Name) { $bad += ([string]$r.Name + ' is named ' + $name); continue }
+          if ((Parse-Hotkey ('Ctrl+' + $name)).Vk -ne [int]$r.Key) { $bad += ('the parser reads ' + $name + ' as another key') }
+        }
+        Expect ($bad.Count -eq 0) ($bad -join ', ')
       }
 
       It 'Format-Item gives a payload one line' {
@@ -2856,6 +2889,9 @@ try {
         # the file may separate with either mark; what is written back is one spelling
         $semi = Convert-SettingInput $script:SettingsSchema 'HotkeyFallbacks' 'Alt+Q;Alt+W'
         Expect (($semi.Ok) -and ([string]$semi.Value -eq 'Alt+Q, Alt+W')) ([string]$semi.Value)
+        # the settings card holds three chord lines, so a fourth has nowhere to be shown or removed
+        $many = Convert-SettingInput $script:SettingsSchema 'HotkeyFallbacks' 'Alt+Q, Alt+W, Alt+E, Alt+R'
+        Expect (-not $many.Ok) ('a fourth chord was accepted: ' + [string]$many.Value)
         # the row shows one cap per chord, so a ';' file is not drawn as one cap holding both
         $caps = @(Get-SettingChordList $script:SettingsSchema 'HotkeyFallbacks' 'Alt+Q;Alt+W, Ctrl+V')
         Expect (($caps.Count -eq 3) -and ([string]$caps[2] -eq 'Ctrl+V')) ($caps -join ' | ')
@@ -2875,6 +2911,10 @@ try {
         Expect ($added -eq 'Ctrl+Alt+V, Win+V, Alt+Q') $added
         $again = Get-SettingChordAdded $added 'alt+q'
         Expect ($again -eq $added) $again
+        # three is the limit: a fourth would be in the file and in the order the resident tries,
+        # but drawn nowhere and removable nowhere
+        $full = Get-SettingChordAdded $added 'Alt+Z'
+        Expect ($full -eq $added) $full
         # removing the last chord is refused: a chain with nothing in it falls back to the default
         $less = Get-SettingChordRemoved 'Ctrl+V, Alt+Q' 'Ctrl+V'
         Expect ($less -eq 'Alt+Q') $less

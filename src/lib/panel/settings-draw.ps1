@@ -439,7 +439,8 @@ function Get-SettingsControlRect($layout, $row, [int]$rowTop) {
 }
 
 # The lines a chain of chords takes in the value column: one per chord, the height of a cap, so the
-# list reads as rows instead of one line with "+3" behind it. Three fit a row.
+# list reads as rows instead of one line with "+3" behind it. The chain holds three, which is what
+# the card holds: every chord in the file is a line here, with a delete button of its own.
 function Get-SettingsChordLineRect($layout, [int]$rowTop, [int]$index) {
   $lineH = Px 22
   $top = (Get-SettingsControlTop $layout $rowTop $lineH) + ($index * $lineH)
@@ -495,12 +496,6 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [d
   if ($textW -lt (Px 120)) { $textW = [int](Px 120) }
   $labelInk = $pal['Text']
   $helpText = [string]$row.Help
-  # a chain longer than the three lines a card holds says how many it is not showing, and the
-  # help line is where that costs no room of its own
-  if ($row.ContainsKey('Chain') -and [bool]$row.Chain -and $row.ContainsKey('Chords') -and $null -ne $row.Chords) {
-    $n = @($row.Chords).Count
-    if ($n -gt 3) { $helpText = $helpText + ' (+' + [string]($n - 3) + ' more)' }
-  }
   if (-not $enabled) {
     $labelInk = $pal['Faint']
     if ($row.ContainsKey('Why') -and $row.Why) { $helpText = 'Off because ' + [string]$row.Why }

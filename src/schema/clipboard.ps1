@@ -15,7 +15,7 @@
   Properties  = [ordered]@{
     DataDir           = @{ Type = 'string'; Required = $true; ReadOnly = 'the history is not moved: the chosen folder starts empty'; Pick = 'folder'; Default = 'data'; Description = 'write location; a relative path is relative to the script dir' }
     Hotkey            = @{ Type = 'hotkey'; Ref = [ref]$script:Hotkey; Default = 'Ctrl+Alt+V'; Description = 'global hotkey' }
-    HotkeyFallbacks   = @{ Type = 'hotkeys'; Ref = [ref]$script:HotkeyFallbacks; Default = 'Ctrl+Alt+V, Win+V, Alt+`, Win+Shift+V'; Description = 'comma separated chain tried in order after Hotkey' }
+    HotkeyFallbacks   = @{ Type = 'hotkeys'; Ref = [ref]$script:HotkeyFallbacks; Default = 'Win+V, Alt+BACKTICK, Win+Shift+V'; Description = 'comma separated chain tried in order after Hotkey, at most three' }
     PasteKeys         = @{ Type = 'string'; Suggest = @('^v', '^+{INSERT}', '^{INSERT}'); Ref = [ref]$script:PasteKeys; Default = '^v'; Description = 'SendKeys sent after picking' }
     ModReleaseTimeout = @{ Type = 'int'; Unit = 'ms'; Ref = [ref]$script:ModReleaseTimeout; Default = 1200; Minimum = 0; Maximum = 60000; Description = 'ms to wait for the modifiers; one still held afterwards is released' }
     PasteSettle       = @{ Type = 'int'; Unit = 'ms'; Ref = [ref]$script:PasteSettle; Default = 80; Minimum = 0; Maximum = 10000; Description = 'ms to wait before sending PasteKeys' }
