@@ -39,6 +39,9 @@ try {
   }
 } catch { }
 #@version-end
+# Where the program lives. One place, so the About page, the usage text and anything else that
+# names it cannot drift apart.
+$script:ProjectUrl = 'https://github.com/Xu22Web/clipboard'
 
 # --- runtime identities (stable: shortcuts and a second instance rely on them) ----
 $MutexName = 'Local\clipboard.daemon'

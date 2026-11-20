@@ -443,5 +443,18 @@ function Get-SettingAboutRows {
   if ($names.Count -eq 1) { $pText = '1 loaded' } elseif ($names.Count -gt 1) { $pText = ([string]$names.Count) + ' loaded' }
   if ($names.Count -gt 0) { $pWhy = ($names -join ', ') + '  -  ' + $pWhy }
   $rows.Add((New-SettingInfoRow 'About.Plugins' 'Plugins' $pText $pWhy))
+  # the one row on this page that leaves the window: the repository. It is a link, not a fact -
+  # the value column carries the owner/name pair in the accent colour and the address in full is
+  # the sentence under it, because a URL in the value column would be cut at its head.
+  $url = [string]$script:ProjectUrl
+  if ($url) {
+    $short = ($url.TrimEnd('/') -replace '^(?i)https?://[^/]+/', '')
+    if (-not $short) { $short = $url }
+    $link = New-SettingInfoRow 'About.Repository' 'Repository' $short ($url + '  -  the source, the releases and the issue tracker')
+    $link.Kind = 'link'
+    $link.Locked = $false
+    $link.Url = $url
+    $rows.Add($link)
+  }
   return $rows.ToArray()
 }

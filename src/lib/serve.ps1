@@ -175,37 +175,37 @@ function Invoke-ServeOnce {
           Show-Picker -Tray
         } catch { Write-Log ('tray open: ' + $_.Exception.Message) }
       })
-    $dm = New-Object Windows.Forms.ContextMenuStrip
+    $dm = New-TrayMenu (New-TrayMenuSkin)
 
-    # The menu is built once and read every time it opens: the count and the tick on "Pause
-    # capture" come from the Opening handler, so they never go stale while the tray lives.
-    $iShow = $dm.Items.Add('Show history')
+    # The menu is built once and read every time it opens: the count on its header, the hotkey
+    # and the two switches come from the Opening handler, so they never go stale while the tray
+    # lives. The look is lib\panel\tray-menu.ps1 - the panel's palette, frame and row rhythm.
+    $iShow = $dm.Show
     $iShow.Add_Click({ try { Show-Picker -Tray } catch { Write-Log ('tray open: ' + $_.Exception.Message) } })
-    try { $iShow.Font = New-Object Drawing.Font($dm.Font, [Drawing.FontStyle]::Bold) } catch { }
     # The two panel shapes are a user preference, not a momentary state, so the tick writes the
     # ini key and the running copy of it: the next open is the other shape.
-    $iCompact = $dm.Items.Add('Compact mode')
+    $iCompact = $dm.Compact
     $iCompact.Add_Click({
         try {
           $on = -not [bool]$script:CompactMode
           $script:CompactMode = $on
           $iCompact.Checked = $on
+          $iCompact.Invalidate()
           [void](Set-IniKey 'CompactMode' $(if ($on) { '1' } else { '0' }))
           Write-Log ('tray: compact mode=' + $on)
         } catch { Write-Log ('tray compact: ' + $_.Exception.Message) }
       })
-    $iInfo = $dm.Items.Add('clipboard')
-    $iInfo.Enabled = $false
-    [void]$dm.Items.Add('-')
 
-    $iPause = $dm.Items.Add('Pause capture')
+    $iPause = $dm.Pause
     $iPause.Add_Click({
         try {
           if (Test-Path -LiteralPath $Paused) { Remove-Item -LiteralPath $Paused -Force }
           else { Ensure-Dir; New-Item -ItemType File -Path $Paused -Force | Out-Null }
+          $iPause.Checked = (Test-Path -LiteralPath $Paused)
+          $iPause.Invalidate()
         } catch { Write-Log ('tray pause: ' + $_.Exception.Message) }
       })
-    $iClear = $dm.Items.Add('Clear history...')
+    $iClear = $dm.Clear
     $iClear.Add_Click({
         try {
           $prompt = Get-ClearPrompt @(Get-Records)
@@ -219,13 +219,12 @@ function Invoke-ServeOnce {
           Write-Log 'tray: history cleared'
         } catch { Write-Log ('tray clear: ' + $_.Exception.Message) }
       })
-    [void]$dm.Items.Add('-')
 
     # The settings window is opened here, in the resident: a process of its own costs a PowerShell
     # start (2.0 s measured) for a window that is built in 0.9 s. What that cannot allow is two
     # modal windows on this one thread, so Show-Picker refuses while the window is open and brings
     # it forward instead - see lib\panel\picker.ps1.
-    $iSettings = $dm.Items.Add('Settings...')
+    $iSettings = $dm.Settings
     $iSettings.Add_Click({
         try {
           if (Get-Command Show-Settings -ErrorAction SilentlyContinue) {
@@ -238,47 +237,49 @@ function Invoke-ServeOnce {
         } catch { Write-Log ('tray settings: ' + $_.Exception.Message) }
       })
     # the file itself, for a key the window does not cover (a plugin's settings, a retired key)
-    $iSet = $dm.Items.Add('Edit settings file...')
+    $iSet = $dm.EditFile
     $iSet.Add_Click({
         try {
           $p = Write-IniTemplate
           Start-Process -FilePath 'notepad.exe' -ArgumentList ('"' + $p + '"')
         } catch { Write-Log ('tray settings file: ' + $_.Exception.Message) }
       })
-    $iOpen = $dm.Items.Add('Open data folder')
+    $iOpen = $dm.Folder
     $iOpen.Add_Click({
         try { Ensure-Dir; Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $StoreDir + '"') }
         catch { Write-Log ('tray folder: ' + $_.Exception.Message) }
       })
-    $iRestart = $dm.Items.Add('Restart')
+    $iRestart = $dm.Restart
     $iRestart.Add_Click({ $script:ExitKind = 'restart'; [Windows.Forms.Application]::ExitThread() })
-    $iAbout = $dm.Items.Add('About')
+    $iAbout = $dm.About
     $iAbout.Add_Click({
         try {
-          $n = @(Get-Records).Count
-          $msg = 'clipboard ' + $script:Version + "`n`n" +
-                 'hotkey   : ' + $eff + "`n" +
-                 'entries  : ' + $n + "`n" +
-                 'data     : ' + $StoreDir + "`n" +
-                 'settings : ' + $IniPath
-          [void][Windows.Forms.MessageBox]::Show($msg, 'About clipboard', [Windows.Forms.MessageBoxButtons]::OK, [Windows.Forms.MessageBoxIcon]::Information)
+          # the About page of the settings window states the version, the data format, the entry
+          # count, the store and the plugins, read from the same variables as the rest of the
+          # tool - so this row opens that page instead of spelling them out in a message box
+          if (Get-Command Show-Settings -ErrorAction SilentlyContinue) {
+            Show-Settings -Group 'About'
+          } else {
+            Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList @(
+              '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', (Join-Path $Root 'clipboard.ps1'), 'settings', 'About'
+            )
+          }
         } catch { Write-Log ('tray about: ' + $_.Exception.Message) }
       })
-    [void]$dm.Items.Add('-')
 
-    $iExit = $dm.Items.Add('Exit')
+    $iExit = $dm.Exit
     $iExit.Add_Click({ $script:ExitKind = 'user'; [Windows.Forms.Application]::ExitThread() })
 
-    $dm.Add_Opening({
-        try { $iPause.Checked = Test-Path -LiteralPath $Paused } catch { }
-        try { $iCompact.Checked = [bool]$script:CompactMode } catch { }
+    $dm.Menu.Add_Opening({
         try {
-          $n = @(Get-Records).Count
-          $iInfo.Text = $n.ToString() + $(if ($n -eq 1) { ' entry' } else { ' entries' }) + '   ' + $eff
-        } catch { $iInfo.Text = $eff }
+          $entries = -1
+          try { $entries = @(Get-Records).Count } catch { $entries = -1 }
+          Update-TrayMenu $dm -Entries $entries -Hotkey $eff -Paused (Test-Path -LiteralPath $Paused) -Compact ([bool]$script:CompactMode)
+        } catch { Write-Log ('tray menu: ' + $_.Exception.Message) }
       })
 
-    $script:Tray.ContextMenuStrip = $dm
+    $script:Tray.ContextMenuStrip = $dm.Menu
+
     $script:Tray.Visible = $true
     if ($script:ShowBalloon) {
       $script:Tray.ShowBalloonTip(5000, 'clipboard is running', ('Hotkey: ' + $eff + '  |  click the tray icon for history'), [Windows.Forms.ToolTipIcon]::Info)

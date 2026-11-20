@@ -51,7 +51,11 @@ function Test-SettingsWindowOpen([string]$name = '') {
   return $false
 }
 
+# -Group opens on that page instead of the first one: the tray's About entry lands on About,
+# which is where the version, the store and the loaded plugins are stated. An unknown name falls
+# back to the first page - a window on the wrong page is still a window that opens.
 function Show-Settings {
+  param([string]$Group = '')
   $swOpen = [Diagnostics.Stopwatch]::StartNew()
   Load-Forms
   Add-Native
@@ -96,6 +100,11 @@ function Show-Settings {
   $pal = Get-UiPalette
 
   $script:SetGroup = 0
+  if ($Group) {
+    for ($g = 0; $g -lt $groups.Count; $g++) {
+      if ([string]$groups[$g] -eq $Group) { $script:SetGroup = $g; break }
+    }
+  }
   $script:SetScroll = 0
   $script:SetHover = -1
   # nothing in this window is selected: every row is its own control, acted on with the pointer.
@@ -838,10 +847,18 @@ function Show-Settings {
         # The strip has to be written, not blended: the clip bounds are fractional, and a surface
         # fill that is antialiased along its edge leaves the old row showing through at half
         # strength - a light line across the page at the edge of whatever was repainted.
+        #
+        # It also has to land on whole pixels. Written half over with SourceCopy, the edge row
+        # becomes a half transparent pixel, and the compositor blends what is left with the black
+        # behind the window: a dark line across the top of the list, which is what the first
+        # hovered row left behind until the smoothing came off for this one fill (measured, a
+        # row of #101010 against a #202020 surface).
         $strip = New-Object Drawing.SolidBrush $pal['Surface']
         $was = $g.CompositingMode
+        $sm = $g.SmoothingMode
         try {
           $g.CompositingMode = [Drawing.Drawing2D.CompositingMode]::SourceCopy
+          $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::None
           $band = [Drawing.Rectangle]::Round($dirty)
           $band.Inflate(2, 2)
           # the blur of the strip must stay inside the list: two pixels up would reach the
@@ -853,6 +870,7 @@ function Show-Settings {
           $band = [Drawing.Rectangle]::Intersect($band, $listRect)
           $g.FillRectangle($strip, $band)
         } finally {
+          $g.SmoothingMode = $sm
           $g.CompositingMode = $was
           $strip.Dispose()
         }
@@ -891,7 +909,7 @@ function Show-Settings {
           $editingRow = ($script:SetEditKey -and ($script:SetEditKey -eq [string]$row.Key))
           $hotDel = -1
           if ($idx -eq $script:SetHover) { $hotDel = $script:SetHotDelete }
-          Draw-SettingsRow $g $pal $layout $row $x $rowTop $width ($idx -eq $script:SetHover) $k $armed @($script:SetRecPreview) $editingRow $hotDel
+          Draw-SettingsRow $g $pal $layout $row $x $rowTop $width $k $armed @($script:SetRecPreview) $editingRow $hotDel
         }
       } finally { $g.Restore($clipState) }
       $lane = Get-SettingsScrollLane $layout
@@ -1017,15 +1035,11 @@ function Show-Settings {
     if ($hotAction -ne $script:SetHotAction) { $script:SetHotAction = $hotAction; $form.Invalidate() }
     $idx = Get-SettingsRowAt $script:SetLayout @($script:SetRows).Count $script:SetScroll $e.X $e.Y
     if ($idx -ne $script:SetHover) {
-      # only the two rows change: one loses its hover, the other gains it
-      $was = Get-RowBandRect ([int]$script:SetHover)
+      # A row does not light up under the pointer: only the control in it is a target, and a
+      # control that needs a hover (the delete cross of a chord) paints its own. So a change of
+      # row repaints nothing.
       $script:SetHover = $idx
       $script:SetHotDelete = -1
-      $now = Get-RowBandRect $idx
-      if ($was.IsEmpty -and $now.IsEmpty) { $form.Invalidate() }
-      elseif ($was.IsEmpty) { $form.Invalidate($now) }
-      elseif ($now.IsEmpty) { $form.Invalidate($was) }
-      else { $form.Invalidate([Drawing.Rectangle]::Union($was, $now)) }
     }
     # a chord line's delete button is a target of its own
     $hotDel = -1
@@ -1111,8 +1125,29 @@ function Show-Settings {
     $idx = Get-SettingsRowAt $script:SetLayout @($script:SetRows).Count $script:SetScroll $e.X $e.Y
     if ($idx -lt 0) { return }
     $row = $script:SetRows[$idx]
-    # a page that states facts rather than settings has nothing to click
+    # a page that states facts rather than settings has nothing to click, except a link: that one
+    # row leaves the window, so it opens in the browser and the window stays where it is
     if ($row.Kind -eq 'info') { return }
+    $rowTop = Get-SettingsRowTop $idx
+    # Only the control answers a press: the switch itself, the field a value is typed in, the
+    # column a dropdown or a chord sits in. The row used to be the target, which made a click on
+    # the label or beside a switch act on the row.
+    $ctrl = Get-SettingsControlRect $script:SetLayout $row $rowTop
+    if ($ctrl.IsEmpty) { return }
+    if ($e.X -lt [int]$ctrl.Left -or $e.X -ge ([int]$ctrl.Left + [int]$ctrl.Width)) { return }
+    if ($e.Y -lt [int]$ctrl.Top -or $e.Y -ge ([int]$ctrl.Top + [int]$ctrl.Height)) { return }
+    if ($row.Kind -eq 'link') {
+      $url = ''
+      if ($row.ContainsKey('Url')) { $url = [string]$row.Url }
+      if (-not $url) { return }
+      try {
+        Start-Process -FilePath $url
+        Show-Message ('opened ' + $url) $false
+        Write-Log ('settings: opened ' + $url)
+      } catch { Show-Message ('could not open ' + $url) $true }
+      $form.Invalidate()
+      return
+    }
     if ($row.ContainsKey('Pick') -and $row.Pick) {
       Pick-Folder $row
       return
@@ -1129,7 +1164,6 @@ function Show-Settings {
     # A chord line can be removed on its own: its delete button is a target inside the row, and
     # it is checked before the row's own action, which would start a recording.
     if ($row.ContainsKey('Chain') -and [bool]$row.Chain) {
-      $rowTop = Get-SettingsRowTop $idx
       $on = Get-ChordDeleteAt $row $rowTop $e.X $e.Y
       if ($on -ge 0) { Remove-SettingChord $row $on; return }
     }

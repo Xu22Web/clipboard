@@ -92,7 +92,7 @@ switch ($Command.ToLower()) {
     if ($r.Changed) { Restart-ResidentIfRunning }
   }
   'serve' { Start-Serve }
-  'settings' { Show-Settings }
+  'settings' { Show-Settings -Group ([string]$Value) }
   'ui' {
     $sent = $false
     try { $e = [System.Threading.EventWaitHandle]::OpenExisting($EventName); [void]$e.Set(); $sent = $true } catch { }

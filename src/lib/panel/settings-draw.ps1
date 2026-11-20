@@ -404,6 +404,40 @@ function Get-SettingsControlWidth($row) {
   return (Px 170)
 }
 
+# The rectangle a row's control occupies: the switch itself, the number field, the folder field,
+# or the column a dropdown, a typed value, a chord or a link sits in. The paint draws inside it
+# and a press is accepted only inside it, so a click on the label or on the help line does
+# nothing - the row used to be the target, and a stray click beside a switch flipped it.
+function Get-SettingsControlRect($layout, $row, [int]$rowTop) {
+  if ($null -eq $row -or $null -eq $layout) { return [Drawing.Rectangle]::Empty }
+  if ($row.Kind -eq 'bool') {
+    $t = Get-SettingsToggleRect $layout $rowTop
+    return (New-Object Drawing.Rectangle -ArgumentList @([int]$t.Left, [int]$t.Top, [int]$t.Width, [int]$t.Height))
+  }
+  if ($row.Kind -eq 'number') {
+    $f = Get-SettingsNumberRect $layout $rowTop
+    return (New-Object Drawing.Rectangle -ArgumentList @([int]$f.Left, [int]$f.Top, [int]$f.Width, [int]$f.Height))
+  }
+  $pick = ''
+  if ($row.ContainsKey('Pick')) { $pick = [string]$row.Pick }
+  if ($pick) {
+    $f = Get-SettingsPathRect $layout $rowTop
+    return (New-Object Drawing.Rectangle -ArgumentList @([int]$f.Left, [int]$f.Top, [int]$f.Width, [int]$f.Height))
+  }
+  # a chain is a list of chord lines, each with its own delete button: the whole right-hand
+  # column of the row is the target, because the lines and the buttons are all inside it and a
+  # line is allowed to sit above the row's own band
+  if ($row.ContainsKey('Chain') -and [bool]$row.Chain) {
+    $line = Get-SettingsChordLineRect $layout $rowTop 0
+    return (New-Object Drawing.Rectangle -ArgumentList @(
+      [int]$line.Left, $rowTop, [int]($line.Right - $line.Left), [int]$layout.RowHeight))
+  }
+  $w = [int]$layout.ListRight - [int]$layout.ListLeft
+  $controlW = Get-SettingsControlWidth $row
+  return (New-Object Drawing.Rectangle -ArgumentList @(
+    [int]([int]$layout.ListLeft + ($w - (Px 12)) - $controlW), [int]($rowTop + (Px 6)), [int]$controlW, [int](Px 26)))
+}
+
 # The lines a chain of chords takes in the value column: one per chord, the height of a cap, so the
 # list reads as rows instead of one line with "+3" behind it. Three fit a row.
 function Get-SettingsChordLineRect($layout, [int]$rowTop, [int]$index) {
@@ -445,23 +479,12 @@ function Draw-SettingsCross($g, $pal, [int]$cx, [int]$cy, [int]$d, $colour) {
 # This column is not a list: nothing marks a row as current, because every row is its own control
 # and a filled or outlined row reads as "these are selected items". Hovering is the only fill. A
 # row that cannot take effect is greyed and says which setting owns it.
-function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [bool]$hover, [double]$toggleK, [bool]$armed = $false, $preview = @(), [bool]$editing = $false, [int]$hotDelete = -1) {
+function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [double]$toggleK, [bool]$armed = $false, $preview = @(), [bool]$editing = $false, [int]$hotDelete = -1) {
   if ($null -eq $g -or $null -eq $row) { return }
   $enabled = $true
   if ($row.ContainsKey('Enabled')) { $enabled = [bool]$row.Enabled }
-  $locked = $false
-  if ($row.ContainsKey('Locked')) { $locked = [bool]$row.Locked }
   $pick = ''
   if ($row.ContainsKey('Pick')) { $pick = [string]$row.Pick }
-  $h = [int]$layout.RowHeight - (Px 4)
-  $radius = [int]$layout.Radius
-  # a read-only row lights up only when it opens something (a folder picker); a value that can
-  # not be changed and can not be clicked is not a control at all
-  if ($hover -and $enabled -and ((-not $locked) -or $pick)) {
-    $brush = New-Object Drawing.SolidBrush $pal['HoverBg']
-    $path = New-RoundPath $x $y $w $h $radius
-    try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
-  }
   $sf = New-PickerStringFormats
   $valueRight = $w - (Px 12)
   # the control column sets how much room the label and the help have: a switch is narrow, a
@@ -529,6 +552,23 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
   if ($pick) {
     $f = Get-SettingsPathRect $layout $y
     Draw-SettingsPathField $g $pal $f ([string]$row.Raw) $enabled
+    return
+  }
+  # A link is the one value that leaves the window. The accent is what says it can be pressed,
+  # the open-in-new mark after it says it goes elsewhere, and both sit in the value column so the
+  # row still reads like every other row on the page.
+  if ($row.Kind -eq 'link') {
+    $ctrl = Get-SettingsControlRect $layout $row $y
+    $mark = Px 12
+    $markGap = Px 5
+    $linkBox = New-Object Drawing.RectangleF -ArgumentList @(
+      [single]$ctrl.Left, [single]$ctrl.Top, [single]($ctrl.Width - $mark - $markGap), [single]$ctrl.Height)
+    $g.DrawString([string]$row.Text, $script:FBody, (Get-Brush $pal['Accent']), $linkBox, $sf.Right)
+    if ($script:IconFamily) {
+      $markBox = New-Object Drawing.RectangleF -ArgumentList @(
+        [single]($ctrl.Left + $ctrl.Width - $mark), [single]$ctrl.Top, [single]$mark, [single]$ctrl.Height)
+      $g.DrawString([string][char]0xE8A7, $script:FIconTiny, (Get-Brush $pal['Accent']), $markBox, $sf.Center)
+    }
     return
   }
   # the value holds the vertical middle of the whole row, the same line the switch sits on
@@ -601,9 +641,11 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [b
   }
   # the text sits on the control band, the same vertical centre the switch, the caps and the field
   # the editor opens on use: a value that jumped two pixels when its box appeared would read as a
-  # misaligned row
+  # misaligned row. The box is the control the row answers a press on, so it comes from the same
+  # function the hit test asks (Get-SettingsControlRect).
+  $ctrl = Get-SettingsControlRect $layout $row $y
   $valueBox = New-Object Drawing.RectangleF -ArgumentList @(
-    [single]($x + $valueRight - $controlW), [single]($y + (Px 6)), [single]($controlW - $dropW), [single](Px 26))
+    [single]$ctrl.Left, [single]$ctrl.Top, [single]($ctrl.Width - $dropW), [single]$ctrl.Height)
   $ink = $pal['Dim']
   if (-not $enabled) { $ink = $pal['Faint'] }
   $g.DrawString([string]$row.Text, $script:FBody, (Get-Brush $ink), $valueBox, $sf.Right)

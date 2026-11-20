@@ -1521,4 +1521,358 @@ namespace Cb {
       h(this, a);
     }
   }
+
+  // ---- the tray menu (lib/panel/tray-menu.ps1) -----------------------------------------
+  // Windows draws a menu in the system colours: a light surface with the system font, beside a
+  // panel and a settings window that are both drawn from one palette. This menu is drawn from
+  // that palette instead - the same surface and the same frame as the other windows, a glyph
+  // column, rows that light up the way a panel row does, a right-hand column for a hint or a
+  // switch, and hairlines instead of the system's etched separators.
+  //
+  // The numbers arrive already multiplied by the DPI scale, like every other pixel constant in
+  // the tool (utils/dpi.ps1), so nothing here has to know about scaling.
+  public class TraySkin {
+    public System.Drawing.Color Surface = System.Drawing.Color.FromArgb(32, 32, 32);
+    public System.Drawing.Color Border = System.Drawing.Color.Empty;
+    public System.Drawing.Color Text = System.Drawing.Color.White;
+    public System.Drawing.Color Dim = System.Drawing.Color.FromArgb(170, 170, 170);
+    public System.Drawing.Color Faint = System.Drawing.Color.FromArgb(138, 138, 138);
+    public System.Drawing.Color Accent = System.Drawing.Color.FromArgb(96, 205, 255);
+    // hover and pressed come from the theme as translucent overlays; an empty colour means the
+    // row does not light up at all
+    public System.Drawing.Color Hover = System.Drawing.Color.Empty;
+    public System.Drawing.Color Selected = System.Drawing.Color.Empty;
+    // the switch: the field colour for the track that is off, the accent for the one that is on
+    public System.Drawing.Color Field = System.Drawing.Color.Empty;
+    public System.Drawing.Color FieldBorder = System.Drawing.Color.Empty;
+    public System.Drawing.Font Body;
+    public System.Drawing.Font Small;
+    public System.Drawing.Font Glyph;
+    // the 96 dpi fallback for a menu built without a skin from the tool: lib\panel\tray-menu.ps1
+    // resolves every one of these through Px(), and that is what the resident uses
+    public int Width = 222;
+    public int RowHeight = 28;
+    public int Radius = 8;
+    public int RowRadius = 5;
+    public int PadLeft = 9;
+    public int PadRight = 11;
+    public int GlyphBox = 18;
+    public int Gap = 8;
+    public int Top = 4;
+    public int Bottom = 4;
+    public int SeparatorInset = 9;
+    public int SeparatorGap = 7;
+    public int SwitchWidth = 26;
+    public int SwitchHeight = 14;
+    // the highlight is inset from the edge, the way a panel row is: a row that touches the
+    // frame reads as part of the window edge
+    public int RowInset = 3;
+  }
+
+  // One row, painted whole: the strip never draws a row, so the layout of a row (glyph, label,
+  // hint or switch) lives in exactly one place. A header row is the same layout without the
+  // hover state - it names the menu and carries the count.
+  public class TrayItem : System.Windows.Forms.ToolStripMenuItem {
+    public TraySkin Skin;
+    public string Glyph = "";
+    public string Hint = "";
+    public bool IsHeader = false;
+    public bool IsSwitch = false;
+
+    static readonly System.Drawing.StringFormat LeftFmt = MakeFormat(System.Drawing.StringAlignment.Near, false);
+    static readonly System.Drawing.StringFormat RightFmt = MakeFormat(System.Drawing.StringAlignment.Far, false);
+    static readonly System.Drawing.StringFormat GlyphFmt = MakeFormat(System.Drawing.StringAlignment.Center, true);
+
+    static System.Drawing.StringFormat MakeFormat(System.Drawing.StringAlignment a, bool noTrim) {
+      System.Drawing.StringFormat f = new System.Drawing.StringFormat();
+      f.Alignment = a;
+      f.LineAlignment = System.Drawing.StringAlignment.Center;
+      f.FormatFlags = System.Drawing.StringFormatFlags.NoWrap | System.Drawing.StringFormatFlags.NoClip;
+      if (!noTrim) f.Trimming = System.Drawing.StringTrimming.EllipsisCharacter;
+      return f;
+    }
+
+    // A click says which row was hit. It has to be recorded on the way down, not from the
+    // click that follows: the strip decides whether to close before the row raises its own
+    // Click, which is why a flag set in a handler arrives one row too late (measured).
+    protected override void OnMouseDown(System.Windows.Forms.MouseEventArgs e) {
+      TrayMenu m = Parent as TrayMenu;
+      if (m != null) { m.Clicked = this; }
+      base.OnMouseDown(e);
+    }
+
+    protected override void OnClick(System.EventArgs e) {
+      TrayMenu m = Parent as TrayMenu;
+      if (m != null) { m.Clicked = this; }
+      base.OnClick(e);
+    }
+
+    static System.Drawing.Drawing2D.GraphicsPath RoundRect(System.Drawing.Rectangle r, int radius) {
+      System.Drawing.Drawing2D.GraphicsPath p = new System.Drawing.Drawing2D.GraphicsPath();
+      int d = radius * 2;
+      if (d <= 0 || d > r.Width || d > r.Height) { p.AddRectangle(r); return p; }
+      p.AddArc(r.X, r.Y, d, d, 180f, 90f);
+      p.AddArc(r.Right - d, r.Y, d, d, 270f, 90f);
+      p.AddArc(r.Right - d, r.Bottom - d, d, d, 0f, 90f);
+      p.AddArc(r.X, r.Bottom - d, d, d, 90f, 90f);
+      p.CloseFigure();
+      return p;
+    }
+
+    public TrayItem(string label, TraySkin skin) : base(label) {
+      Skin = skin;
+      AutoSize = false;
+      Margin = System.Windows.Forms.Padding.Empty;
+      Padding = System.Windows.Forms.Padding.Empty;
+      Size = new System.Drawing.Size(skin.Width, skin.RowHeight);
+      Font = skin.Body;
+    }
+
+    // the silhouette of the whole menu, for the window region the strip takes when it opens
+    public static System.Drawing.Drawing2D.GraphicsPath RoundPath(int w, int h, int radius) {
+      return RoundRect(new System.Drawing.Rectangle(0, 0, w, h), radius);
+    }
+
+    // A header is a label, not an action: an arrow key may not land on it and the hover tint
+    // never lights it up. A click on it runs nothing and dismisses the menu the way any other
+    // inert row does - ToolStripDropDown closes on an item click, and a title is not worth
+    // holding the menu open for.
+    public override bool CanSelect { get { return IsHeader ? false : base.CanSelect; } }
+
+    // the whole of one row: the background it lights up with, the glyph, the label and what the
+    // right-hand column carries
+    protected override void OnPaint(System.Windows.Forms.PaintEventArgs e) {
+      System.Drawing.Graphics g = e.Graphics;
+      // the same hint the panel and the settings window draw with, so the three surfaces
+      // rasterise type the same way instead of whatever the system default happens to be
+      System.Drawing.Text.TextRenderingHint hint = g.TextRenderingHint;
+      g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+      try {
+        PaintRow(g);
+      } finally { g.TextRenderingHint = hint; }
+    }
+
+    void PaintRow(System.Drawing.Graphics g) {
+      System.Drawing.Rectangle b = new System.Drawing.Rectangle(System.Drawing.Point.Empty, Size);
+      bool hot = (Selected || Pressed) && Enabled && !IsHeader;
+      if (hot) {
+        System.Drawing.Color fill = Pressed ? Skin.Selected : Skin.Hover;
+        if (fill.A > 0) {
+          System.Drawing.Drawing2D.SmoothingMode was = g.SmoothingMode;
+          g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+          using (System.Drawing.Drawing2D.GraphicsPath p = RoundRect(
+                   new System.Drawing.Rectangle(b.X + Skin.RowInset, b.Y, b.Width - 1 - (Skin.RowInset * 2), b.Height - 1), Skin.RowRadius))
+          using (System.Drawing.SolidBrush br = new System.Drawing.SolidBrush(fill)) { g.FillPath(br, p); }
+          g.SmoothingMode = was;
+        }
+      }
+      System.Drawing.Color ink = Enabled ? Skin.Text : Skin.Faint;
+      int x = Skin.PadLeft;
+      if (Glyph.Length > 0 && Skin.Glyph != null) {
+        System.Drawing.Color gc = !Enabled ? Skin.Faint : (IsHeader ? Skin.Accent : Skin.Dim);
+        using (System.Drawing.SolidBrush br = new System.Drawing.SolidBrush(gc)) {
+          g.DrawString(Glyph, Skin.Glyph, br,
+            new System.Drawing.RectangleF(x, 0, Skin.GlyphBox, b.Height), GlyphFmt);
+        }
+      }
+      int labelX = x + Skin.GlyphBox + Skin.Gap;
+      int rightW = 0;
+      if (IsSwitch && Skin.Body != null) { rightW = Skin.SwitchWidth; }
+      else if (Hint.Length > 0 && Skin.Small != null) {
+        rightW = (int)System.Math.Ceiling(g.MeasureString(Hint, Skin.Small).Width);
+      }
+      int labelRight = b.Width - Skin.PadRight - (rightW > 0 ? rightW + Skin.Gap : 0);
+      int labelW = labelRight - labelX;
+      if (labelW > 0) {
+        using (System.Drawing.SolidBrush br = new System.Drawing.SolidBrush(ink)) {
+          g.DrawString(Text, Skin.Body, br,
+            new System.Drawing.RectangleF(labelX, 0, labelW, b.Height), LeftFmt);
+        }
+      }
+      if (IsSwitch) { PaintSwitch(g, b); }
+      else if (Hint.Length > 0 && Skin.Small != null) {
+        using (System.Drawing.SolidBrush br = new System.Drawing.SolidBrush(Skin.Faint)) {
+          g.DrawString(Hint, Skin.Small, br,
+            new System.Drawing.RectangleF(labelRight + Skin.Gap, 0, rightW, b.Height), RightFmt);
+        }
+      }
+    }
+
+    // A switch rather than a tick: the panel and the settings window are Fluent, and a tick in
+    // a gutter belongs to the system menu that this one replaces. The knob is the surface on an
+    // accent track and the dim ink on a field track, so it reads at both extremes.
+    void PaintSwitch(System.Drawing.Graphics g, System.Drawing.Rectangle b) {
+      int w = Skin.SwitchWidth, h = Skin.SwitchHeight;
+      int x = b.Width - Skin.PadRight - w;
+      int y = (b.Height - h) / 2;
+      bool on = Checked;
+      System.Drawing.Drawing2D.SmoothingMode was = g.SmoothingMode;
+      g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+      try {
+        System.Drawing.Rectangle track = new System.Drawing.Rectangle(x, y, w, h);
+        using (System.Drawing.Drawing2D.GraphicsPath p = RoundRect(track, h / 2)) {
+          using (System.Drawing.SolidBrush br = new System.Drawing.SolidBrush(on ? Skin.Accent : Skin.Field)) { g.FillPath(br, p); }
+          if (!on && Skin.FieldBorder.A > 0) {
+            using (System.Drawing.Pen pen = new System.Drawing.Pen(Skin.FieldBorder)) { g.DrawPath(pen, p); }
+          }
+        }
+        int d = h - 4;
+        int kx = on ? (x + w - 2 - d) : (x + 2);
+        System.Drawing.Color knob = !Enabled ? Skin.Faint : (on ? Skin.Surface : Skin.Dim);
+        using (System.Drawing.SolidBrush br = new System.Drawing.SolidBrush(knob)) {
+          g.FillEllipse(br, kx, y + 2, d, d);
+        }
+      } finally { g.SmoothingMode = was; }
+    }
+  }
+
+  // The strip itself paints only what a row cannot: the surface, the frame and the separators.
+  // The region is rounded when the menu opens, so the silhouette matches the panel's instead of
+  // the square one a menu gets, and the frame is filled as a one pixel ring rather than stroked
+  // - a stroke on a curve covers half a pixel and the arcs come out paler than the sides.
+  public class TrayMenu : System.Windows.Forms.ContextMenuStrip {
+    public TraySkin Skin;
+    // the row the last click landed on, so the close that follows knows what was hit
+    public TrayItem Clicked;
+
+    public TrayMenu(TraySkin skin) {
+      Skin = skin;
+      // the size is the skin's, not the labels': every row is laid out to one width so the
+      // glyph column, the labels and the right-hand column line up all the way down
+      AutoSize = false;
+      Size = new System.Drawing.Size(skin.Width, skin.RowHeight);
+      Margin = System.Windows.Forms.Padding.Empty;
+      ShowImageMargin = false;
+      ShowCheckMargin = false;
+      DropShadowEnabled = false;
+      Renderer = new TrayMenuRenderer(skin);
+    }
+
+    // The height follows from the rows that are there, so a hidden row does not leave a gap.
+    //
+    // Fit() has to run before the menu is first shown, not only when it opens: the drop-down
+    // works out where it goes (flip above the cursor near the bottom edge) from the size it has
+    // at that moment, and a menu that is still the one-row placeholder is placed as if it were
+    // 32 px tall and then grows off the screen - the first right click after a start landed 27
+    // px too low because of exactly that. lib\panel\tray-menu.ps1 calls it once the rows are in.
+    public void Fit() {
+      try {
+        int top = System.Math.Max(0, Skin.Top - Padding.Top);
+        int bottom = System.Math.Max(0, Skin.Bottom - Padding.Bottom);
+        int h = Padding.Vertical;
+        for (int n = 0; n < Items.Count; n++) {
+          System.Windows.Forms.ToolStripItem it = Items[n];
+          int mt = (n == 0) ? top : 0;
+          int mb = (n == (Items.Count - 1)) ? bottom : 0;
+          if ((it.Margin.Top != mt) || (it.Margin.Bottom != mb)) {
+            it.Margin = new System.Windows.Forms.Padding(it.Margin.Left, mt, it.Margin.Right, mb);
+          }
+          h += it.Height + it.Margin.Vertical;
+        }
+        Size = new System.Drawing.Size(Skin.Width, h);
+      } catch { }
+    }
+
+    protected override void OnOpening(System.ComponentModel.CancelEventArgs e) {
+      base.OnOpening(e);
+      Clicked = null;
+      Fit();
+    }
+
+    // the same ring the panel's frame is drawn with (lib/panel/picker-draw.ps1)
+    public static void Frame(System.Drawing.Graphics g, int w, int h, int radius, System.Drawing.Color color) {
+      if (w < 6 || h < 6) { return; }
+      int t = 1;
+      if ((radius * 2) > (w - 3) || (radius * 2) > (h - 3)) { radius = Math.Min(w - 3, h - 3) / 2; }
+      System.Drawing.Drawing2D.SmoothingMode was = g.SmoothingMode;
+      g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+      using (System.Drawing.SolidBrush br = new System.Drawing.SolidBrush(color))
+      using (System.Drawing.Drawing2D.GraphicsPath ring = new System.Drawing.Drawing2D.GraphicsPath()) {
+        int span = w - (2 * t), side = h - (2 * t);
+        if (span > 0) {
+          g.FillRectangle(br, radius, 0, span, t);
+          g.FillRectangle(br, radius, h - t, span, t);
+        }
+        if (side > 0) {
+          g.FillRectangle(br, 0, radius, t, side);
+          g.FillRectangle(br, w - t, radius, t, side);
+        }
+        if (radius > 0) {
+          ring.FillMode = System.Drawing.Drawing2D.FillMode.Alternate;
+          int d = radius * 2;
+          int di = Math.Max(2, (radius - t) * 2);
+          int[][] corners = new int[][] {
+            new int[] { 0, 0, 180 }, new int[] { w - d, 0, 270 },
+            new int[] { w - d, h - d, 0 }, new int[] { 0, h - d, 90 }
+          };
+          foreach (int[] c in corners) {
+            ring.AddPie(c[0], c[1], d, d, c[2], 90);
+            ring.AddPie(c[0] + t, c[1] + t, di, di, c[2], 90);
+          }
+          g.FillPath(br, ring);
+        }
+      }
+      g.SmoothingMode = was;
+    }
+
+    protected override void OnOpened(System.EventArgs e) {
+      base.OnOpened(e);
+      try {
+        System.Drawing.Region old = Region;
+        using (System.Drawing.Drawing2D.GraphicsPath p = TrayItem.RoundPath(Width, Height, Skin.Radius)) {
+          Region = new System.Drawing.Region(p);
+        }
+        if (old != null) { old.Dispose(); }
+      } catch { }
+    }
+
+    // A switch reports a state instead of doing something, so clicking one leaves the menu
+    // open: the point of the row is what it now shows. Every other row closes it, the way a
+    // menu does. Esc, a click elsewhere and a moved foreground all still close it.
+    protected override void OnClosing(System.Windows.Forms.ToolStripDropDownClosingEventArgs e) {
+      base.OnClosing(e);
+      if (!e.Cancel && e.CloseReason == System.Windows.Forms.ToolStripDropDownCloseReason.ItemClicked) {
+        TrayItem it = Clicked;
+        if (it == null) {
+          // reached from the keyboard: no mouse down came first, so the selected row is the one
+          foreach (System.Windows.Forms.ToolStripItem o in Items) {
+            TrayItem t = o as TrayItem;
+            if (t != null && t.Selected) { it = t; break; }
+          }
+        }
+        if (it != null && it.IsSwitch) { e.Cancel = true; }
+      }
+      Clicked = null;
+    }
+  }
+
+  class TrayMenuRenderer : System.Windows.Forms.ToolStripRenderer {
+    readonly TraySkin skin;
+    public TrayMenuRenderer(TraySkin s) { skin = s; }
+
+    protected override void OnRenderToolStripBackground(System.Windows.Forms.ToolStripRenderEventArgs e) {
+      using (System.Drawing.SolidBrush br = new System.Drawing.SolidBrush(skin.Surface)) {
+        e.Graphics.FillRectangle(br, new System.Drawing.Rectangle(System.Drawing.Point.Empty, e.ToolStrip.Size));
+      }
+    }
+
+    protected override void OnRenderToolStripBorder(System.Windows.Forms.ToolStripRenderEventArgs e) {
+      TrayMenu.Frame(e.Graphics, e.ToolStrip.Width, e.ToolStrip.Height, skin.Radius, skin.Border);
+    }
+
+    protected override void OnRenderImageMargin(System.Windows.Forms.ToolStripRenderEventArgs e) { }
+
+    // a hairline, inset, instead of the system's etched pair - measured off the strip rather
+    // than off the item, which the layout insets a little on each side
+    protected override void OnRenderSeparator(System.Windows.Forms.ToolStripSeparatorRenderEventArgs e) {
+      System.Drawing.Rectangle b = e.Item.Bounds;
+      int y = b.Top + (b.Height / 2);
+      int left = skin.SeparatorInset;
+      int right = e.ToolStrip.Width - skin.SeparatorInset;
+      if (right <= left) { return; }
+      using (System.Drawing.Pen pen = new System.Drawing.Pen(skin.Border)) {
+        e.Graphics.DrawLine(pen, left, y, right, y);
+      }
+    }
+  }
 }

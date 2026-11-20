@@ -229,7 +229,7 @@ try {
         # the entry file names these by relative path; a package must carry all of them
         $requiredLib = @('lib\base', 'lib\native', 'lib\panel\focus', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
           'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\panel\anim',
-          'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\serve', 'lib\shortcut',
+          'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\panel\tray-menu', 'lib\serve', 'lib\shortcut',
           'lib\settings-model', 'lib\settings-types', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings',
           'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch',
           'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey',
@@ -2914,14 +2914,19 @@ try {
 
       It 'the last page states the version and the store' {
         # About is not built from schema keys, so it is the one group that exists whatever the
-        # schema says, and every one of its rows is a statement rather than a control
+        # schema says, and every one of its rows is a statement rather than a control - the one
+        # row that can be pressed is the link to the repository, which leaves the window instead
+        # of changing anything
         $groups = @(Get-SettingGroups $script:SettingsSchema)
         Expect ($groups.Count -gt 0 -and $groups[$groups.Count - 1] -eq 'About') ($groups -join ',')
         $rows = @(Get-SettingsRows $script:SettingsSchema 'About')
         $version = @($rows | Where-Object { $_.Label -eq 'Version' })
         Expect (($version.Count -eq 1) -and ([string]$version[0].Text -match [regex]::Escape([string]$script:Version))) ([string]$version[0].Text)
         $clickable = @($rows | Where-Object { $_.Record -or $_.Pick -or (-not $_.Locked) })
-        Expect ($clickable.Count -eq 0) (@($clickable | ForEach-Object { $_.Label }) -join ', ')
+        $links = @($clickable | Where-Object { $_.Kind -eq 'link' })
+        Expect ($clickable.Count -eq $links.Count) (@($clickable | ForEach-Object { $_.Label }) -join ', ')
+        Expect ($links.Count -eq 1) ([string]$links.Count)
+        Expect ([string]$links[0].Url -eq [string]$script:ProjectUrl) ([string]$links[0].Url)
       }
 
       It 'a staged value is what the page shows, before anything is written' {        # the window writes nothing until Save, so the row has to draw the staged value and mark
