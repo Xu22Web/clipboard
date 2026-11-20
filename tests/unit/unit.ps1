@@ -696,6 +696,25 @@ try {
         Expect ($iBack -ge 0 -and $iKeys -gt $iBack) ('order ' + $iBack + '/' + $iKeys)
       }
 
+      It 'keeps the caret in a field that is re-made under it' {
+        # A page that re-renders on blur - a Vue or React patch replacing the node - removes the
+        # element the cloned range points at. Putting the clone back selected inside the removed
+        # tree while the caret stayed on the first character of the new element, which is where
+        # the paste went (measured). The element id tells the two cases apart, and the text
+        # around the caret is what a provider can find again in the new element.
+        Expect ($script:StructWinText -match 'function Read-TextSelection') 'the element selection is never read'
+        Expect ($script:StructWinText -match 'function Get-ElementRuntimeId') 'the element id is never read'
+        Expect ($script:StructWinText -match 'function New-SelectionContext') 'the text around the caret is never saved'
+        Expect ($script:StructWinText -match 'function Select-TextContext') 'the text around the caret is never found again'
+        $iRid = $script:StructWinText.IndexOf('(Get-ElementRuntimeId $el) -eq')
+        $iCtx = $script:StructWinText.IndexOf('Select-TextContext $el $item')
+        Expect ($iRid -ge 0) 'the element id is never compared'
+        Expect ($iCtx -gt $iRid) ('order ' + $iRid + '/' + $iCtx)
+        # the warm-up opens the same window with no target of its own: a selection saved there
+        # landed in the slot of a real open right after it
+        Expect ($script:StructPickerText -match 'if \(-not \$Warm\) \{') 'the warm-up saves a selection'
+      }
+
       It 'decides to hand the foreground back before the panel hides' {
         # Hiding the panel is what takes its activation away, and the Deactivate handler reads
         # that as a dismissal and clears the flag: asking after Hide() always answered no, so
@@ -2355,6 +2374,17 @@ try {
         Expect ((Get-WheelStep 30 0) -eq 8) ((Get-WheelStep 30 0) -as [string])
         Expect ((Get-WheelStep 2 0) -eq 1) ((Get-WheelStep 2 0) -as [string])
         Expect ((Get-WheelStep 30 2) -eq 2) ((Get-WheelStep 30 2) -as [string])
+      }
+
+      It 'reads a saved selection the same however the caller wrapped it' {
+        # Regression: the entries came back as one array holding the entries, so the restore
+        # loop matched nothing and answered 0 for every open - the paste went to the first
+        # character of a field whose element had been re-made (measured on a page that
+        # re-renders on blur). Both shapes have to be read the same way.
+        $one = @{ Kind = 'edit'; Hwnd = [IntPtr]::Zero; Start = 1; End = 1 }
+        Expect ((@(Get-SelectionItems @($one)).Count) -eq 1) 'a plain answer is not read'
+        Expect ((@(Get-SelectionItems @(, @($one))).Count) -eq 1) 'a wrapped answer is not read'
+        Expect ((@(Get-SelectionItems @()).Count) -eq 0) 'an empty answer is not empty'
       }
     }
 

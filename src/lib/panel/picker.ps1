@@ -68,10 +68,14 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     $script:PrevFocus = Save-TargetFocus $prev
     # the caret that control was showing: taking the foreground makes some editors drop their
     # selection, and then the paste would land at the start of the field instead of where the
-    # user was typing. Cloned ranges are put back just before the keys go out.
+    # user was typing. Cloned ranges are put back just before the keys go out. The warm-up opens
+    # and closes the same window to pay for the first fonts and palette, has no target of its
+    # own, and its answer would land in the same slot as a real open right after it.
     $script:SavedSel = @()
-    try { $script:SavedSel = @(Save-UiaSelection $prev $script:PrevFocus) } catch { $script:SavedSel = @() }
-    if ($script:SavedSel.Count -gt 0) { Write-Log ('selection saved: ' + $script:SavedSel.Count + ' range(s)') }
+    if (-not $Warm) {
+      try { $script:SavedSel = @(Save-UiaSelection $prev $script:PrevFocus) } catch { $script:SavedSel = @() }
+      if ($script:SavedSel.Count -gt 0) { Write-Log ('selection saved: ' + $script:SavedSel.Count + ' range(s)') }
+    }
     $script:Entries = @(Get-Records)
     if ($script:Entries.Count -eq 0) { Write-Log 'picker: empty (showing hint)' }
     $msRecords = [int]$swOpen.ElapsedMilliseconds
