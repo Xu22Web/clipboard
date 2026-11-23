@@ -129,12 +129,17 @@ function Show-Settings {
   $script:SetPending = @{}
   # the pages those staged values live on, which is what the page list marks
   $script:SetPendingGroups = @()
-  # the footer actions, in the order they are drawn; Primary is the one that carries the accent
-  $script:SetActions = @(
-    @{ Key = 'defaults'; Label = (Get-UiText 'settings.action.defaults'); Primary = $false },
-    @{ Key = 'discard'; Label = (Get-UiText 'settings.action.discard'); Primary = $false },
-    @{ Key = 'save'; Label = (Get-UiText 'settings.action.save'); Primary = $true }
-  )
+  # The footer actions, in the order they are drawn; Primary is the one that carries the accent.
+  # The labels are read again whenever the language can have changed: the window stays open after
+  # a save, so its buttons must not keep the words they were built with.
+  function Update-SettingsActions {
+    $script:SetActions = @(
+      @{ Key = 'defaults'; Label = (Get-UiText 'settings.action.defaults'); Primary = $false },
+      @{ Key = 'discard'; Label = (Get-UiText 'settings.action.discard'); Primary = $false },
+      @{ Key = 'save'; Label = (Get-UiText 'settings.action.save'); Primary = $true }
+    )
+  }
+  Update-SettingsActions
   $script:SetHotAction = -1
   # the chord line whose delete button is under the pointer, -1 for none
   $script:SetHotDelete = -1
@@ -317,12 +322,12 @@ function Show-Settings {
     if ($value -ceq $held) {
       if ($script:SetPending.ContainsKey($key)) { [void]$script:SetPending.Remove($key) }
       Refresh-Settings
-      Show-Message ($key + ': unchanged') $false
+      Show-Message (Get-UiText 'settings.msg.unchanged' @($key)) $false
       return $true
     }
     $script:SetPending[$key] = $value
     Refresh-Settings
-    Show-Message ($key + ': ' + $what + ', not saved yet') $false
+    Show-Message (Get-UiText 'settings.msg.staged' @($key, $what)) $false
     return $true
   }
 
@@ -350,6 +355,12 @@ function Show-Settings {
       $script:UiFamily = ''
       $script:FBody = $null
       [void](Initialize-PanelFonts)
+      # the rows pick the new words up in the refresh below; the two texts fixed when the window
+      # was built - the footer buttons and the title the shell shows - are read again here, so a
+      # switch takes effect without closing and reopening the window
+      Update-SettingsActions
+      $form.Text = (Get-UiText 'settings.window.title')
+      $form.AccessibleName = (Get-UiText 'settings.window.title')
     }
     Refresh-Settings
     $n = [int]$r.Count
