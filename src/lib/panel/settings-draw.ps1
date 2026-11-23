@@ -461,6 +461,13 @@ function Get-SettingsChordDeleteRect($layout, [int]$rowTop, [int]$index) {
   }
 }
 
+# The button that adds a chord line: the next free line of the chain, in the same 16 px box the
+# delete cross uses, so the two marks line up in one column. A full chain has no button - the
+# three lines are all the card holds - which is why the caller only asks for it while there is room.
+function Get-SettingsChordAddRect($layout, [int]$rowTop, [int]$index) {
+  return (Get-SettingsChordDeleteRect $layout $rowTop $index)
+}
+
 # A small cross, the same drawing the close button uses, for a line that can be removed.
 function Draw-SettingsCross($g, $pal, [int]$cx, [int]$cy, [int]$d, $colour) {
   if ($null -eq $g -or $null -eq $pal) { return }
@@ -473,6 +480,48 @@ function Draw-SettingsCross($g, $pal, [int]$cx, [int]$cy, [int]$d, $colour) {
   } finally { $pen.Dispose() }
 }
 
+# The add button of a chain, drawn the way the footer's secondary action is: the field colour,
+# its hairline edge, a 4 px radius and the hover wash layered over it. It sits in the same 16 px
+# box as the delete cross, so the two marks line up in one column.
+function Draw-SettingsPlus($g, $pal, $rect, [bool]$enabled, [bool]$hot = $false) {
+  if ($null -eq $g -or $null -eq $pal -or $null -eq $rect) { return }
+  $x = [int]$rect.Left
+  $y = [int]$rect.Top
+  $w = [int]$rect.Width
+  $h = [int]$rect.Height
+  $radius = [int](Px 4)
+  $fill = $pal['Field']
+  $edge = $pal['FieldBorder']
+  $ink = $pal['Dim']
+  if (-not $enabled) { $fill = $pal['Surface']; $edge = $pal['Border']; $ink = $pal['Faint'] }
+  elseif ($hot) { $ink = $pal['Text'] }
+  $path = New-RoundPath $x $y $w $h $radius
+  $brush = New-Object Drawing.SolidBrush $fill
+  try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
+  if ($hot -and $enabled) {
+    # the same wash the outlined footer actions take: a thin layer of the hover tint
+    $tint = Scale-Alpha $pal['HoverBg'] 1.0
+    if ($tint.A -gt 0) {
+      $over = New-RoundPath $x $y $w $h $radius
+      $ob = New-Object Drawing.SolidBrush $tint
+      try { $g.FillPath($ob, $over) } finally { $over.Dispose(); $ob.Dispose() }
+    }
+  }
+  $pen = New-Object Drawing.Pen $edge
+  $stroke = New-RoundPath $x $y $w $h $radius
+  try { $g.DrawPath($pen, $stroke) } finally { $stroke.Dispose(); $pen.Dispose() }
+  $cx = $x + [int]($w / 2)
+  $cy = $y + [int]($h / 2)
+  $d = Px 3
+  $ipen = New-Object Drawing.Pen $ink
+  $ipen.StartCap = [Drawing.Drawing2D.LineCap]::Round
+  $ipen.EndCap = [Drawing.Drawing2D.LineCap]::Round
+  try {
+    $g.DrawLine($ipen, ($cx - $d), $cy, ($cx + $d), $cy)
+    $g.DrawLine($ipen, $cx, ($cy - $d), $cx, ($cy + $d))
+  } finally { $ipen.Dispose() }
+}
+
 # One setting: the label and its help on the left, the control on the right, centred on the row.
 # That is the Fluent settings card - a name over a description, one control per card, and the
 # control holds the vertical middle of the card rather than the first line.
@@ -480,7 +529,7 @@ function Draw-SettingsCross($g, $pal, [int]$cx, [int]$cy, [int]$d, $colour) {
 # This column is not a list: nothing marks a row as current, because every row is its own control
 # and a filled or outlined row reads as "these are selected items". Hovering is the only fill. A
 # row that cannot take effect is greyed and says which setting owns it.
-function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [double]$toggleK, [bool]$armed = $false, $preview = @(), [bool]$editing = $false, [int]$hotDelete = -1) {
+function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [double]$toggleK, [bool]$armed = $false, $preview = @(), [bool]$editing = $false, [int]$hotDelete = -1, [int]$hotAdd = -1) {
   if ($null -eq $g -or $null -eq $row) { return }
   $enabled = $true
   if ($row.ContainsKey('Enabled')) { $enabled = [bool]$row.Enabled }
@@ -619,6 +668,14 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [d
       $keys = @($preview)
       $keys += [string][char]0x2026
       [void](Draw-SettingChord $g $pal ([int]$line.Right) ([int]$line.Top + [int]($line.Height / 2)) $keys $enabled $true)
+      return
+    }
+    # the plus is the row's one way into a recording: it sits on the next free line, in the same
+    # 16 px box the delete cross uses, and it is gone while a recording runs, so the row never
+    # offers a press that cannot do anything
+    if ($chords.Count -lt $maxLines) {
+      $add = Get-SettingsChordAddRect $layout $y $drawn
+      Draw-SettingsPlus $g $pal $add $enabled ($hotAdd -eq $drawn)
     }
     return
   }

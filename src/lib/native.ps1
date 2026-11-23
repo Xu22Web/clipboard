@@ -227,13 +227,6 @@ function Get-UiaCaretRect([IntPtr]$hwnd) {
 # every control that publishes a text pattern, while a plain Win32 edit control - Notepad, a
 # WinForms TextBox, several chat clients - publishes none and answers EM_GETSEL instead. The
 # focus handle is what decides which one is asked, and it is also what the second path needs.
-#
-# A cloned range is only good while the element it came from exists. A page that re-renders on
-# blur - the kind of node a Vue or React patch replaces - removes it, and the clone then points
-# into a tree that is no longer on screen: selecting it left the caret at the first character
-# of the new element, which is where the paste went (measured). Two things are saved for that
-# case: the element's runtime id, which is what tells a replaced element from the same one, and
-# the text around the caret, which a provider can find again in the new element.
 function Save-UiaSelection([IntPtr]$hwnd, [IntPtr]$focus = [IntPtr]::Zero) {
   if ($hwnd -eq [IntPtr]::Zero) { return @() }
   if ($focus -ne [IntPtr]::Zero) {
@@ -270,8 +263,8 @@ function Save-UiaSelection([IntPtr]$hwnd, [IntPtr]$focus = [IntPtr]::Zero) {
   return @()
 }
 
-# What one element answers for its selection: the clone, the id of the element it came from,
-# and the text around the caret. Empty when the element publishes no text or has no selection.
+# What one element answers for its selection: the clone. Empty when the element publishes no
+# text or has no selection.
 function Read-TextSelection($el) {
   if ($null -eq $el) { return @() }
   $pattern = $null
@@ -283,62 +276,12 @@ function Read-TextSelection($el) {
   if ($null -eq $pattern) { return @() }
   $saved = New-Object System.Collections.Generic.List[object]
   try {
-    $pid0 = [int]$el.Current.ProcessId
-    $rid = Get-ElementRuntimeId $el
     $tp = $el.GetCurrentPattern($pattern)
     foreach ($rg in @($tp.GetSelection())) {
-      if ($null -eq $rg) { continue }
-      $ctx = New-SelectionContext $tp $rg
-      $span = 0
-      try { $span = ([string]$rg.GetText(-1)).Length } catch { $span = 0 }
-      $saved.Add(@{
-        Kind = 'uia'; Range = $rg.Clone(); Pid = $pid0; Rid = $rid; Span = $span
-        Ctx = $ctx.Text; Lead = $ctx.Lead
-      })
+      if ($null -ne $rg) { $saved.Add(@{ Kind = 'uia'; Range = $rg.Clone() }) }
     }
   } catch { return @() }
   return $saved.ToArray()
-}
-
-# The characters around a selection, a short stretch each way, plus how many of them sit before
-# the caret. Reading the whole document instead would cost a text build per save (123 ms on a
-# 187 KB page) and the offsets it gives would have to be walked back one character at a time
-# (16 us each, 2.5 s for that page) - this is a few short moves and one short read.
-#
-# Both ends are clamped to the element's own document. A provider lets a range walk out of an
-# editable and into the page around it - the title text came back as part of the context -
-# and that text does not exist after the element is re-made, so the search would fail on a
-# context that was never in the element to begin with.
-function New-SelectionContext($tp, $range) {
-  $start = [Windows.Automation.Text.TextPatternRangeEndpoint]::Start
-  $end = [Windows.Automation.Text.TextPatternRangeEndpoint]::End
-  $char = [Windows.Automation.Text.TextUnit]::Character
-  $want = 24
-  $doc = $tp.DocumentRange
-  $r = $range.Clone()
-  $lead = 0
-  try { [void]$r.MoveEndpointByUnit($start, $char, -$want) } catch { return @{ Text = ''; Lead = 0 } }
-  try {
-    if ($r.CompareEndpoints($start, $doc, $start) -lt 0) { [void]$r.MoveEndpointByRange($start, $doc, $start) }
-  } catch { }
-  try {
-    $head = $r.Clone()
-    [void]$head.MoveEndpointByRange($end, $range, $start)
-    $lead = ([string]$head.GetText(-1)).Length
-  } catch { $lead = 0 }
-  try { [void]$r.MoveEndpointByUnit($end, $char, $want) } catch { }
-  try {
-    if ($r.CompareEndpoints($end, $doc, $end) -gt 0) { [void]$r.MoveEndpointByRange($end, $doc, $end) }
-  } catch { }
-  try { return @{ Text = [string]$r.GetText(-1); Lead = $lead } } catch { return @{ Text = ''; Lead = 0 } }
-}
-
-# The id a provider gives one element for as long as it exists. A page that re-renders hands
-# out a new one (measured: 42.8259810.4.5.1.1 before the blur, ...1.14 after), which is what
-# keeps a clone from being put back into a node that is gone.
-function Get-ElementRuntimeId($el) {
-  if ($null -eq $el) { return '' }
-  try { return (@($el.GetRuntimeId()) -join '.') } catch { return '' }
 }
 
 # One entry per saved selection. The answer is an array that callers wrap in @(), and an entry
@@ -351,41 +294,8 @@ function Get-SelectionItems($ranges) {
   return $out.ToArray()
 }
 
-# Put the caret back into a replaced element by finding the text that was around it. Searching
-# the document is one call (145 ms on a 187 KB page, against 2.5 s for walking to the offset),
-# and the selection it finds is collapsed where the caret was, extended by as much text as the
-# editor had selected. Answers false when the text is not there, which is the caller's cue to
-# put the clone back instead.
-function Select-TextContext($el, $item) {
-  if ($null -eq $el) { return $false }
-  $tp = $null
-  try {
-    foreach ($p in @($el.GetSupportedPatterns())) {
-      if ($p.ProgrammaticName -eq 'TextPatternIdentifiers.Pattern') { $tp = $el.GetCurrentPattern($p); break }
-    }
-  } catch { return $false }
-  if ($null -eq $tp) { return $false }
-  $start = [Windows.Automation.Text.TextPatternRangeEndpoint]::Start
-  $end = [Windows.Automation.Text.TextPatternRangeEndpoint]::End
-  $char = [Windows.Automation.Text.TextUnit]::Character
-  try {
-    $found = $tp.DocumentRange.FindText([string]$item.Ctx, $false, $false)
-    if ($null -eq $found) { return $false }
-    $lead = [int]$item.Lead
-    if ($lead -gt 0 -and $found.MoveEndpointByUnit($start, $char, $lead) -ne $lead) { return $false }
-    [void]$found.MoveEndpointByRange($end, $found, $start)
-    $span = [int]$item.Span
-    if ($span -gt 0) { [void]$found.MoveEndpointByUnit($end, $char, $span) }
-    $found.Select()
-    return $true
-  } catch { return $false }
-}
-
 # Put those selections back, which is also what places the caret again. Returns how many were
-# restored; an entry whose element or window is gone throws and is skipped. An element that is
-# still the same one gets its clone back, which is exact and costs nothing; one that a page
-# re-made gets the text around the caret found again. An element belonging to another program
-# is left alone: the keyboard is not where the paste is going.
+# restored; an entry whose element or window is gone throws and is skipped.
 function Restore-UiaSelection($ranges) {
   $done = 0
   foreach ($item in @(Get-SelectionItems $ranges)) {
@@ -393,20 +303,10 @@ function Restore-UiaSelection($ranges) {
     try {
       if ($item.Kind -eq 'edit') {
         if ([Cb.Win]::SetEditSelection($item.Hwnd, [int]$item.Start, [int]$item.End)) { $done++ }
-        continue
-      }
-      if ($null -eq $item.Range) { continue }
-      $el = $null
-      try { $el = [Windows.Automation.AutomationElement]::FocusedElement } catch { $el = $null }
-      if ($null -ne $el -and [int]$item.Pid -gt 0 -and [int]$el.Current.ProcessId -ne [int]$item.Pid) { continue }
-      if ($null -ne $el -and [string]$item.Rid -ne '' -and (Get-ElementRuntimeId $el) -eq [string]$item.Rid) {
+      } elseif ($null -ne $item.Range) {
         $item.Range.Select()
         $done++
-        continue
       }
-      if ([string]$item.Ctx -ne '' -and (Select-TextContext $el $item)) { $done++; continue }
-      $item.Range.Select()
-      $done++
     } catch { }
   }
   return $done

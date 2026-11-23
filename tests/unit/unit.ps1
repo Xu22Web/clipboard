@@ -696,20 +696,7 @@ try {
         Expect ($iBack -ge 0 -and $iKeys -gt $iBack) ('order ' + $iBack + '/' + $iKeys)
       }
 
-      It 'keeps the caret in a field that is re-made under it' {
-        # A page that re-renders on blur - a Vue or React patch replacing the node - removes the
-        # element the cloned range points at. Putting the clone back selected inside the removed
-        # tree while the caret stayed on the first character of the new element, which is where
-        # the paste went (measured). The element id tells the two cases apart, and the text
-        # around the caret is what a provider can find again in the new element.
-        Expect ($script:StructWinText -match 'function Read-TextSelection') 'the element selection is never read'
-        Expect ($script:StructWinText -match 'function Get-ElementRuntimeId') 'the element id is never read'
-        Expect ($script:StructWinText -match 'function New-SelectionContext') 'the text around the caret is never saved'
-        Expect ($script:StructWinText -match 'function Select-TextContext') 'the text around the caret is never found again'
-        $iRid = $script:StructWinText.IndexOf('(Get-ElementRuntimeId $el) -eq')
-        $iCtx = $script:StructWinText.IndexOf('Select-TextContext $el $item')
-        Expect ($iRid -ge 0) 'the element id is never compared'
-        Expect ($iCtx -gt $iRid) ('order ' + $iRid + '/' + $iCtx)
+      It 'a warm-up open saves no selection of its own' {
         # the warm-up opens the same window with no target of its own: a selection saved there
         # landed in the slot of a real open right after it
         Expect ($script:StructPickerText -match 'if \(-not \$Warm\) \{') 'the warm-up saves a selection'
@@ -2856,6 +2843,33 @@ try {
         Expect ($keys -eq 'Ctrl Alt V') $keys
         $again = (@(Get-SettingChordKeys 'Shift+Win+V') -join ' ')
         Expect ($again -eq 'Win Shift V') $again
+        # a punctuation key is drawn as the character it types, not the name the file uses; the
+        # comma is also the chain's separator, so it is the case a reader must not see as a name
+        Expect ((@(Get-SettingChordKeys 'Alt+BACKTICK') -join ' ') -eq 'Alt `') (@(Get-SettingChordKeys 'Alt+BACKTICK') -join ' ')
+        Expect ((@(Get-SettingChordKeys 'Ctrl+COMMA') -join ' ') -eq 'Ctrl ,') (@(Get-SettingChordKeys 'Ctrl+COMMA') -join ' ')
+      }
+
+      It 'a chain offers a plus on its next free line' {
+        # the row used to have no way in: the whole value column was a recording target, so a
+        # press beside the caps started one by accident. The plus sits on the line the chain can
+        # still hold, in the delete column, and only while there is room - three lines are all
+        # the card holds.
+        $layout = @{ ListRight = [int](Px 900) }
+        for ($i = 0; $i -lt 3; $i++) {
+          $line = Get-SettingsChordLineRect $layout 0 $i
+          $r = Get-SettingsChordAddRect $layout 0 $i
+          Expect ([int]$r.Width -gt 0) ('no plus at ' + $i)
+          Expect ([int]$r.Top -ge [int]$line.Top) ('the plus sits above its line at ' + $i)
+          $fits = (([int]$r.Top + [int]$r.Height) -le ([int]$line.Top + [int]$line.Height))
+          Expect $fits ('the plus overflows its line at ' + $i)
+        }
+        # the delete cross is checked before the plus, and the row's own action never starts a
+        # recording: a press on the caps or on the blank space of the column does nothing
+        $setText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\settings.ps1'))
+        $iDel = $setText.IndexOf('Get-ChordDeleteAt $row $rowTop $e.X $e.Y')
+        $iAdd = $setText.IndexOf('Get-ChordAddAt $row $rowTop $e.X $e.Y')
+        Expect ($iDel -ge 0) 'the delete cross is never checked'
+        Expect ($iAdd -gt $iDel) ('order ' + $iDel + '/' + $iAdd)
       }
 
       It 'a recorded chord is written in the spelling the parser reads' {

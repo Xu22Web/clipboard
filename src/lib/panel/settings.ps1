@@ -138,6 +138,8 @@ function Show-Settings {
   $script:SetHotAction = -1
   # the chord line whose delete button is under the pointer, -1 for none
   $script:SetHotDelete = -1
+  # the add button of a chain under the pointer, the index of the line it would fill, -1 for none
+  $script:SetHotAdd = -1
   # the row under the pointer, and whether the close button is: the only two hover states left
   $script:SetHover = -1
   $script:SetCloseHot = $false
@@ -420,6 +422,19 @@ function Show-Settings {
       if ($px -ge [int]$rc.Left -and $px -le ([int]$rc.Left + [int]$rc.Width) -and
         $py -ge [int]$rc.Top -and $py -le ([int]$rc.Top + [int]$rc.Height)) { return $i }
     }
+    return -1
+  }
+
+  # the plus of a chain is under the pointer, answering the index of the line it would fill. A
+  # chain that already holds three lines has no button, so there is nothing to answer.
+  function Get-ChordAddAt($row, [int]$rowTop, [int]$px, [int]$py) {
+    if ($null -eq $row) { return -1 }
+    if (-not ($row.ContainsKey('Chain') -and [bool]$row.Chain)) { return -1 }
+    $chords = @($row.Chords)
+    if ($chords.Count -ge 3) { return -1 }
+    $rc = Get-SettingsChordAddRect $script:SetLayout $rowTop $chords.Count
+    if ($px -ge [int]$rc.Left -and $px -le ([int]$rc.Left + [int]$rc.Width) -and
+      $py -ge [int]$rc.Top -and $py -le ([int]$rc.Top + [int]$rc.Height)) { return $chords.Count }
     return -1
   }
 
@@ -915,8 +930,9 @@ function Show-Settings {
           $armed = ($script:SetRecKey -and ($script:SetRecKey -eq [string]$row.Key))
           $editingRow = ($script:SetEditKey -and ($script:SetEditKey -eq [string]$row.Key))
           $hotDel = -1
-          if ($idx -eq $script:SetHover) { $hotDel = $script:SetHotDelete }
-          Draw-SettingsRow $g $pal $layout $row $x $rowTop $width $k $armed @($script:SetRecPreview) $editingRow $hotDel
+          $hotAdd = -1
+          if ($idx -eq $script:SetHover) { $hotDel = $script:SetHotDelete; $hotAdd = $script:SetHotAdd }
+          Draw-SettingsRow $g $pal $layout $row $x $rowTop $width $k $armed @($script:SetRecPreview) $editingRow $hotDel $hotAdd
         }
       } finally { $g.Restore($clipState) }
       $lane = Get-SettingsScrollLane $layout
@@ -1047,15 +1063,19 @@ function Show-Settings {
       # row repaints nothing.
       $script:SetHover = $idx
       $script:SetHotDelete = -1
+      $script:SetHotAdd = -1
     }
-    # a chord line's delete button is a target of its own
+    # a chord line's delete button and the chain's add button are targets of their own
     $hotDel = -1
+    $hotAdd = -1
     if ($idx -ge 0) {
       $rowTop = Get-SettingsRowTop $idx
       $hotDel = Get-ChordDeleteAt $script:SetRows[$idx] $rowTop $e.X $e.Y
+      $hotAdd = Get-ChordAddAt $script:SetRows[$idx] $rowTop $e.X $e.Y
     }
-    if ($hotDel -ne $script:SetHotDelete) {
+    if ($hotDel -ne $script:SetHotDelete -or $hotAdd -ne $script:SetHotAdd) {
       $script:SetHotDelete = $hotDel
+      $script:SetHotAdd = $hotAdd
       $band = Get-RowBandRect ([int]$script:SetHover)
       if ($band.IsEmpty) { $form.Invalidate() } else { $form.Invalidate($band) }
     }
@@ -1168,11 +1188,14 @@ function Show-Settings {
       $form.Invalidate()
       return
     }
-    # A chord line can be removed on its own: its delete button is a target inside the row, and
-    # it is checked before the row's own action, which would start a recording.
+    # A chain is a list with its own controls: the delete cross removes one line, and the plus on
+    # the next free line is the only way into a recording. A press on the caps or on the blank
+    # space of the column does nothing, so the row cannot start recording by accident.
     if ($row.ContainsKey('Chain') -and [bool]$row.Chain) {
       $on = Get-ChordDeleteAt $row $rowTop $e.X $e.Y
       if ($on -ge 0) { Remove-SettingChord $row $on; return }
+      if (-not $wasRec -and (Get-ChordAddAt $row $rowTop $e.X $e.Y) -ge 0) { Start-Record $row; return }
+      return
     }
     # every row is its own control: a click on a switch row flips it wherever it lands, a click
     # on a shortcut waits for a chord, a click on a value opens its list, and anything else is

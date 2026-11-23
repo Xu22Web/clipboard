@@ -131,7 +131,8 @@ function Get-SettingChordRemoved([string]$raw, [string]$chord) {
 
 # The keys of one chord, in the order Windows prints them - Win, Ctrl, Alt, Shift, then the key -
 # whatever order the file spells them in. "+" as the key itself is the one case the split cannot
-# see, so a trailing plus is taken before the parts are split.
+# see, so a trailing plus is taken before the parts are split. The key is the one a cap shows,
+# which is the character for a punctuation key (see Format-ChordKeyCap).
 function Get-SettingChordKeys([string]$chord) {
   $t = ([string]$chord).Trim()
   if (-not $t) { return @() }
@@ -155,8 +156,28 @@ function Get-SettingChordKeys([string]$chord) {
   foreach ($want in @('Win', 'Ctrl', 'Alt', 'Shift')) {
     foreach ($m in $mods) { if ($m -ieq $want) { $out += $want } }
   }
-  $out += $key
+  $out += (Format-ChordKeyCap $key)
   return $out
+}
+
+# How one key is printed on a cap: a punctuation key shows the character it types, which is what
+# a reader recognises, while the file keeps the name the parser reads. A comma and a semicolon
+# are the chain's own separators in the file, so they are printed here and never written back.
+function Format-ChordKeyCap([string]$name) {
+  switch (([string]$name).ToUpperInvariant()) {
+    'BACKTICK' { return '`' }
+    'MINUS' { return '-' }
+    'EQUALS' { return '=' }
+    'LBRACKET' { return '[' }
+    'RBRACKET' { return ']' }
+    'BACKSLASH' { return '\' }
+    'SEMICOLON' { return ';' }
+    'QUOTE' { return "'" }
+    'COMMA' { return ',' }
+    'PERIOD' { return '.' }
+    'SLASH' { return '/' }
+  }
+  return [string]$name
 }
 
 # The chord a recorded key makes, in the spelling the file uses: modifiers in the order the parser

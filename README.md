@@ -117,13 +117,13 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `Theme` / `PasteKeys` | 展开列表，点一项选中 |
 | `Plugins` | 多选列表，勾选后保持打开，显示 `All` 或 `n of m`；全不选会被拒绝（空值表示全部插件） |
 | `Hotkey` | 录制组合键，`Esc` 取消 |
-| `HotkeyFallbacks` | 逐条录制：点行录制新组合键加入链的末尾，每行右侧 `×` 删除该条；一条链最多三条，满三条后需先删一条再录制 |
+| `HotkeyFallbacks` | 逐条录制：点行末 `+` 录制新组合键加入链的末尾，录制中按 `Esc` 或点击别处取消并恢复 `+`；每行右侧 `×` 删除该条；一条链最多三条，满三条后不显示 `+`，需先删一条再录制 |
 | `DataDir` | 打开系统文件夹选择；历史不迁移，新目录从空开始 |
 | `Autostart` / `DesktopShortcut` | 只由 `install` 生效，说明行写明生效时机 |
 
 改动在 `Save` 之前只留在窗口内：已改的行左侧有强调色圆点，左侧分组栏在含未保存改动的页面右侧显示同样的圆点；值回到已存的写法时不记为改动（开关翻回、输入框进出都不留下标记）。条件不满足的设置（如 `MaxImageBytes` 需要 `CaptureImages`）变灰并说明原因。页脚按钮为 `Restore defaults`（可写键回到 schema 默认值，始终可用）、`Discard`（丢弃改动）、`Save`（一次写入 `clipboard.ini` 并应用）；后两个在无改动时禁用，与重置项之间留有较宽的间隔。`About` 页没有按钮。保存过的窗口关闭时常驻进程重启一次，新值随之生效；带未保存改动关闭会先确认。
 
-快捷键按 Win11 键帽显示，修饰键顺序为 Win、Ctrl、Alt、Shift；可录制字母、数字、`F1`–`F24`、`Insert` `Delete` `Home` `End` `PgUp` `PgDn` `Space` 以及标点，标点在文件里写作名字（`BACKTICK` `MINUS` `EQUALS` `LBRACKET` `RBRACKET` `BACKSLASH` `SEMICOLON` `QUOTE` `COMMA` `PERIOD` `SLASH`，也接受字面字符）；无修饰键的裸键只接受 `F1`–`F24`。滚轮滚动列表，右侧滚动条可拖动定位、点轨道翻页。最后一页 `About` 列出程序版本、数据格式、条目数、数据目录、设置文件与已加载插件，最后一行是仓库链接（强调色值 + 外链标记，点击用默认浏览器打开 `https://github.com/Xu22Web/clipboard`）。
+快捷键按 Win11 键帽显示，修饰键顺序为 Win、Ctrl、Alt、Shift；可录制字母、数字、`F1`–`F24`、`Insert` `Delete` `Home` `End` `PgUp` `PgDn` `Space` 以及标点，标点在文件里写作名字（`BACKTICK` `MINUS` `EQUALS` `LBRACKET` `RBRACKET` `BACKSLASH` `SEMICOLON` `QUOTE` `COMMA` `PERIOD` `SLASH`，也接受字面字符），键帽上显示该键的字符本身（如 `` ` ``、`-`、`,`）；无修饰键的裸键只接受 `F1`–`F24`。滚轮滚动列表，右侧滚动条可拖动定位、点轨道翻页。最后一页 `About` 列出程序版本、数据格式、条目数、数据目录、设置文件与已加载插件，最后一行是仓库链接（强调色值 + 外链标记，点击用默认浏览器打开 `https://github.com/Xu22Web/clipboard`）。
 
 ## 托盘菜单
 
