@@ -287,9 +287,13 @@ function Get-InkCentre($bmp, [int]$x0, [int]$x1, [int]$y0, [int]$y1) {
 
 # How far an icon has to move down to sit on the optical centre of the words beside it: both are
 # centred in the same box by the layout, so what is left is a property of the two fonts. Measured
-# once on a throw-away bitmap, with a sample that carries a cap and a descender.
-function Get-IconInkDrop($body, $icon) {
+# once on a throw-away bitmap, against a sample of the words this language actually writes - a
+# Latin sample leaves a CJK face a pixel or two off, because its glyphs fill their line box
+# differently, and guessing which face is which would be the wrong kind of special case.
+function Get-IconInkDrop($body, $icon, [string]$sample = '') {
   if ($null -eq $body -or $null -eq $icon) { return 0 }
+  $text = [string]$sample
+  if (-not $text) { $text = 'H' }
   $h = 40
   $bmp = New-Object Drawing.Bitmap 120, $h
   $g = [Drawing.Graphics]::FromImage($bmp)
@@ -298,7 +302,7 @@ function Get-IconInkDrop($body, $icon) {
   try {
     $g.Clear([Drawing.Color]::Black)
     $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
-    $g.DrawString('H', $body, $white, (New-Object Drawing.RectangleF 0, 0, 80, $h), $sf.None)
+    $g.DrawString($text, $body, $white, (New-Object Drawing.RectangleF 0, 0, 80, $h), $sf.Ellipsis)
     $textCentre = Get-InkCentre $bmp 0 79 0 ($h - 1)
     $g.Clear([Drawing.Color]::Black)
     $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::AntiAliasGridFit
@@ -554,7 +558,11 @@ function Initialize-PanelFonts {
     $script:FIconTiny = $script:FSmall
   }
   # one number for every icon in every surface: the distance between the ink of a line of body
-  # text and the ink of an icon in the same box
-  $script:IconDrop = [int][Math]::Round((Get-IconInkDrop $script:FBody $script:FIcon))
+  # text and the ink of an icon in the same box. The sample is the name the language file gives
+  # itself, so the measurement is made against the script this window really draws - a Latin
+  # sample would leave a CJK face a pixel or two off.
+  $sample = ''
+  if (Get-Command Get-UiTextName -ErrorAction SilentlyContinue) { $sample = [string](Get-UiTextName) }
+  $script:IconDrop = [int][Math]::Round((Get-IconInkDrop $script:FBody $script:FIcon $sample))
   return $true
 }

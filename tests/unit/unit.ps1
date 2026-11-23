@@ -2735,6 +2735,14 @@ try {
       # The window draws whatever these two files hand it, so what is checked here is that every
       # setting can reach it, that a key reads as words, and that a value the schema refuses is
       # refused before anything is written.
+      It 'every page carries an icon of its own' {
+        # a row without one would sit out of line with the rest, and the page list is the first
+        # thing the window shows: a new group has to say which glyph it wears
+        $fallback = Get-SettingsGroupGlyph 'no such group'
+        foreach ($name in @((Get-SettingGroupTable).Keys)) {
+          Expect ((Get-SettingsGroupGlyph ([string]$name)) -ne $fallback) ([string]$name + ' has no icon of its own')
+        }
+      }
       It 'every setting the schema declares reaches exactly one group' {
         $seen = @{}
         $twice = @()

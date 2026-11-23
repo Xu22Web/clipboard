@@ -109,7 +109,7 @@ One resident process per logon session: it holds the named mutex `Local\clipboar
 
 ## Settings window
 
-`clipboard settings` opens the settings window; the tray menu's `Settings...` opens it inside the resident process instead of starting a new one, and `About...` opens the same window on the `About` page. One window per session: another request brings the open window forward instead of opening a second one. While the window is open, the hotkey and a tray click only bring it forward. It is pointer-driven: a group on the left, one control per row on the right, and `✕` or `Esc` to close. The footer shows the result of the last action on the left and three buttons on the right. The window shows the tray icon in the taskbar and Alt-Tab, not the PowerShell host icon.
+`clipboard settings` opens the settings window; the tray menu's `Settings...` opens it inside the resident process instead of starting a new one, and `About...` opens the same window on the `About` page. One window per session: another request brings the open window forward instead of opening a second one. While the window is open, the hotkey and a tray click only bring it forward. It is pointer-driven: a page on the left, each one drawn as an icon and its name, one control per row on the right, and `✕` or `Esc` to close. The footer shows the result of the last action on the left and three buttons on the right. The window shows the tray icon in the taskbar and Alt-Tab, not the PowerShell host icon.
 
 ![settings window](docs/en/screenshot-settings.png)
 

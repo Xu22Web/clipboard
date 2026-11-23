@@ -105,6 +105,29 @@ function Get-SettingsBlend($from, $to, [double]$k) {
     [int][Math]::Round([double]$from.B + ([double]$to.B - [double]$from.B) * $k))
 }
 
+# The glyph a page's row carries, from the same icon face the panel and the tray use (Segoe
+# Fluent Icons, MDL2 on Win10). The mapping is by the schema's group name - the identity the
+# language file uses too - and a group nobody mapped still gets a glyph, because a row without
+# one would sit out of line with the rest.
+function Get-SettingsGroupGlyph([string]$name) {
+  $map = @{
+    Clipboard  = 0xE8C8
+    Paste      = 0xE77F
+    Hotkey     = 0xE765
+    History    = 0xE81C
+    Panel      = 0xE71D
+    Compact    = 0xE73F
+    Appearance = 0xE790
+    Startup    = 0xE7E8
+    Plugins    = 0xE8F1
+    Storage    = 0xE8B7
+    Other      = 0xE712
+    About      = 0xE946
+  }
+  if ($name -and $map.ContainsKey($name)) { return [string][char]$map[$name] }
+  return [string][char]0xE712
+}
+
 # The left column: one line per group. The selected one is tinted and carries a 3 px accent
 # bar, and the bar is inset by the corner radius so it never cuts a rounded corner off - the
 # two shapes are drawn on the same path instead of one square bar over a round edge. A page with
@@ -119,6 +142,12 @@ function Draw-SettingsSide($g, $pal, $layout, $groups, [int]$selected, $pendingG
   $y = [int]$layout.HeadHeight
   $radius = [int]$layout.Radius
   $barW = Px $script:Metric['SelBarWidth']
+  # the icon column borrows the panel row's own numbers: the same 10 px from the item edge, the
+  # same 20 px slot, and the word starting where the panel starts it (38) - an icon and a word
+  # spaced differently here than in the history list would read as two different controls
+  $iconX = Px $script:Metric['IconX']
+  $iconBox = Px $script:Metric['IconSlot']
+  $textGap = Px $script:Metric['TextGap']
   for ($i = 0; $i -lt @($groups).Count; $i++) {
     $top = $y + ($i * $rowH)
     if ($top + $rowH -gt [int]$layout.ListBottom) { break }
@@ -133,8 +162,22 @@ function Draw-SettingsSide($g, $pal, $layout, $groups, [int]$selected, $pendingG
     }
     $ink = $pal['Dim']
     if ($isSel) { $ink = $pal['Text'] }
+    # The glyph sits in its own square on the row's line and takes the word's ink: the accent bar
+    # already says which page is current, and a second accent here (the icon) would read as two
+    # markers for one state. Draw-UiGlyph carries the measured drop that puts an icon on the
+    # optical centre of the words next to it, so the two line up at every DPI.
+    $gx = [int]($x + $iconX)
+    # The box is the text's own rectangle - same top, same height, same string format - and the
+    # glyph is moved by IconDrop, the one number measured from the two fonts actually in use.
+    # That is what makes the pair line up in any language: a per-font nudge here would be a
+    # measurement of whichever face it was tuned on (the Latin one), and a CJK face has a taller
+    # line box, so the same nudge lands wrong there.
+    $gy = [int]$top
+    $gb = New-Object Drawing.RectangleF -ArgumentList @([single]$gx, [single]$gy, [single]$iconBox, [single]$rowH)
+    Draw-UiGlyph $g (Get-SettingsGroupGlyph ([string]$groups[$i])) $script:FIcon (Get-Brush $ink) $gb $sf.Center
+    $textLeft = [int]($x + $textGap)
     $box = New-Object Drawing.RectangleF -ArgumentList @(
-      [single]($x + (Px 14)), [single]$top, [single]($w - (Px 20)), [single]$rowH)
+      [single]$textLeft, [single]$top, [single]($x + $w - (Px 20) - $textLeft), [single]$rowH)
     $groupKey = 'settings.group.' + [string]$groups[$i]
     $groupName = [string]$groups[$i]
     $groupWord = Get-UiTextOr $groupKey $groupName

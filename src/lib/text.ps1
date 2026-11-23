@@ -150,3 +150,11 @@ function Get-UiTextCode {
   Initialize-TextLoaded
   return $script:TextCode
 }
+
+# The name the language file calls itself. Used where a measurement has to stand for the words on
+# screen - the ink of the script, not of the alphabet.
+function Get-UiTextName {
+  Initialize-TextLoaded
+  if ($script:TextMeta.ContainsKey('name') -and [string]$script:TextMeta['name']) { return [string]$script:TextMeta['name'] }
+  return $script:TextCode
+}
