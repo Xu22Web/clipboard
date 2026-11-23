@@ -83,7 +83,12 @@ function Get-TrayGlyphs {
     History = [string]$script:Glyphs.History
     Rows = [string][char]0xE7C3
     Pause = [string][char]0xE769
-    Clear = [string]$script:Glyphs.Clear
+    # The broom, not a cross: at the menu's 12 pt the only thin crosses (E711 Cancel, E894 Clear)
+    # ink 11 px where every other icon inks 16, and the cross that does ink 16 (E8BB ChromeClose)
+    # is the thick title-bar one - measured, it carried 84 ink pixels against the trash can's 84
+    # and the pencil's 60, and read as a bigger, bolder icon beside them. EA99 inks 16 x 15 with
+    # 56, the same weight as the rest.
+    Clear = [string][char]0xEA99
     Settings = [string][char]0xE713
     Edit = [string][char]0xE70F
     Folder = [string][char]0xE8B7

@@ -1153,7 +1153,8 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       Copy   = [string][char]0xE8C8
       Edit   = [string][char]0xE70F
       Delete = [string][char]0xE74D
-      Clear  = [string]$script:Glyphs.Clear
+      # one code point for both menus: the tray menu's own table is the one that decides it
+      Clear  = [string](Get-TrayGlyphs).Clear
     }
     # The rows are rebuilt for the row under the pointer, in one helper: the menu hides the
     # actions that do not apply and names each plugin over its own group, and rebuilding is what
