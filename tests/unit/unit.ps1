@@ -1110,6 +1110,18 @@ try {
         Expect ($afterWrite['MaxItems'] -eq '13') ('MaxItems=' + $afterWrite['MaxItems'])
       }
 
+      It 'a new flat key lands with the flat keys, not inside the last section' {
+        # appending it would put it inside the last [section], where it reads as that section's
+        # key: the value is written, never found again, and every save adds another copy
+        [IO.File]::WriteAllLines($script:UnitCfg, @('Theme=win11-dark', '', '# plugins', '[item-marks]', 'MaxPins=50'), $Utf8)
+        [void](Set-IniKey 'Language' 'zh-CN')
+        $kv = Read-Ini
+        Expect ($kv['Language'] -eq 'zh-CN') ('Language=' + [string]$kv['Language'])
+        Expect (-not $kv.ContainsKey('item-marks.Language')) ''
+        $text = [IO.File]::ReadAllText($script:UnitCfg)
+        Expect ($text.IndexOf('Language=') -lt $text.IndexOf('[item-marks]')) $text.Trim()
+      }
+
       It 'a repeated key keeps the last value, in file order' {
         # the file order is what the command list is drawn from
         $parsed = Read-IniDoc @('[pkg]', 'B=1', 'A=2', 'B=3')
@@ -3383,6 +3395,17 @@ try {
 
     # ------------------------------------------------------------ config schema
     Describe 'config values' {
+      It 'the report names every key the schema has' {
+        # a key missing here is invisible in `clipboard config` and reads as an empty value in
+        # `config set`, which is how a saved language looked like it was never applied
+        $report = Get-ConfigReport
+        $missing = @()
+        foreach ($k in @((Get-SchemaProperties $script:SettingsSchema).Keys)) {
+          if (-not $report.Contains([string]$k)) { $missing += $k }
+        }
+        Expect ($missing.Count -eq 0) ($missing -join ', ')
+      }
+
       It 'a value is converted to what the schema asks for' {
         Expect ((Convert-IniValue 'ShowTime' 'on').Value -eq '1') ''
         Expect ((Convert-IniValue 'Autostart' 'off').Value -eq '0') ''

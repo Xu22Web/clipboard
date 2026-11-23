@@ -107,6 +107,7 @@ function Get-ConfigReport {
     NoPaste           = [string][int][bool]$script:NoPaste
     Balloon           = [string][int][bool]$script:ShowBalloon
     Theme             = [string]$script:Theme
+    Language          = [string]$script:Language
     ExcludePattern    = [string]$script:ExcludePattern
     WindowWidth       = [string]$script:WinWidth
     Rows              = [string]$script:Rows

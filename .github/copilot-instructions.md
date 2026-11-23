@@ -53,6 +53,7 @@
 - `*.ps1` / `*.cmd` 必须纯 ASCII（Windows PowerShell 5.1 按 GBK 解码无 BOM 的 UTF-8）
 - 模块按职责划分，不按行数：一个文件只做一件事、只依赖下层；新增逻辑优先放进已有的职责模块，只有明显属于另一个职责时才新建文件，也不要为缩短文件而拆散同一个职责
 - 新增模块要同步四处：`src\clipboard.ps1` 的模块表、`tests\unit\unit.ps1` 的 `$requiredLib`、README 的文件树、README 的模块清单段落
+- 新增设置键要同步四处：`schema\clipboard.ps1`、`config-template.ps1` 的模板布局、`config.ps1` 的 `Get-ConfigReport` 表、语言包的 `settings.key` / `settings.desc`（漏掉报表的键在 `clipboard config` 里看不见，在 `config set` 里回显为空）
 - 两参数调用的实参不要一个写括号表达式、另一个写强制转换（如 `f ('a.' + $x) ([string]$x)`）：压缩器会粘成非法语法、`cli build` 直接失败。先把两个实参都赋给变量再调用
 
 ## 测试

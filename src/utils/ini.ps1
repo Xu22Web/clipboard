@@ -150,7 +150,22 @@ function Set-IniDocValue($doc, [string]$key, [string]$value) {
     if ($cur.Count -gt 0 -and $cur[$cur.Count - 1].Trim()) { $block = @('') + $block }
     return (Insert-IniDocLines $doc $cur.Count $block)
   }
-  return (Insert-IniDocLines $doc @($doc.Lines).Count @($key + '=' + $value))
+  # A new flat key joins the flat keys, which end where the first [section] starts. Appending it
+  # to the end of the file would put it inside the last section, and there it reads as that
+  # section's key - the setting is written, never found again, and every save adds another copy.
+  # The blank and comment lines that introduce the sections stay below it.
+  $lines = @($doc.Lines)
+  $at = $lines.Count
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ([string]$lines[$i].Trim() -match '^\[') { $at = $i; break }
+  }
+  while ($at -gt 0) {
+    $above = [string]$lines[$at - 1]
+    $t = $above.Trim()
+    if ($t -eq '' -or $t.StartsWith('#') -or $t.StartsWith(';')) { $at--; continue }
+    break
+  }
+  return (Insert-IniDocLines $doc $at @($key + '=' + $value))
 }
 
 # every key under a group ("item-marks"), or every key when the prefix is empty
