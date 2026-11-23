@@ -1382,7 +1382,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
             }
             $mkBrush = Get-Brush $mkColor
             $mkRect = New-Object Drawing.RectangleF -ArgumentList @([single]$slots[$mi], [single]$r.Y, [single](Px $m['MarkGlyphWidth']), [single]$r.Height)
-            $g.DrawString([string]$mk.Glyph, $fIconSmall, $mkBrush, $mkRect, $sfCenter)
+            Draw-UiGlyph $g ([string]$mk.Glyph) $fIconSmall $mkBrush $mkRect $sfCenter
           }
         }
 
@@ -1404,7 +1404,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
           }
           $glyphBrush = Get-Brush $glyphColor
           $glyphRect = New-Object Drawing.RectangleF -ArgumentList @([single]($r.X + (Px $m['IconX'])), [single]$r.Y, [single](Px $m['IconSlot']), [single]$r.Height)
-          $g.DrawString($rowGlyph, $fIcon, $glyphBrush, $glyphRect, $sfCenter)
+          Draw-UiGlyph $g $rowGlyph $fIcon $glyphBrush $glyphRect $sfCenter
           $textX = $r.X + (Px $m['TextGap'])
         }
 

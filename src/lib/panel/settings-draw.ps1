@@ -364,11 +364,13 @@ function Draw-SettingsPathField($g, $pal, $rect, [string]$path, [bool]$enabled) 
   if (-not $enabled) { $ink = $pal['Faint'] }
   $glyphLeft = $x + (Px 8)
   $glyphW = (Px 16)
-  $font = $script:FIconSmall
+  # the slot is 16 px, so the icon is the 16 px face: a smaller one in a 16 px slot reads as a
+  # different weight from every other icon in the window
+  $font = $script:FIcon
   if ($null -ne $font) {
     $sf = New-PickerStringFormats
     $gb = New-Object Drawing.RectangleF -ArgumentList @([single]$glyphLeft, [single]$y, [single]$glyphW, [single]$h)
-    $g.DrawString([string][char]0xE8B7, $font, (Get-Brush $ink), $gb, $sf.Center)
+    Draw-UiGlyph $g ([string][char]0xE8B7) $font (Get-Brush $ink) $gb $sf.Center
   } else { $glyphW = 0 }
   $textLeft = $glyphLeft + $glyphW + (Px 6)
   $room = $x + $w - (Px 8) - $textLeft
@@ -611,7 +613,7 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [d
     if ($script:IconFamily) {
       $markBox = New-Object Drawing.RectangleF -ArgumentList @(
         [single]($ctrl.Left + $ctrl.Width - $mark), [single]$ctrl.Top, [single]$mark, [single]$ctrl.Height)
-      $g.DrawString([string][char]0xE8A7, $script:FIconTiny, (Get-Brush $pal['Accent']), $markBox, $sf.Center)
+      Draw-UiGlyph $g ([string][char]0xE8A7) $script:FIconTiny (Get-Brush $pal['Accent']) $markBox $sf.Center
     }
     return
   }

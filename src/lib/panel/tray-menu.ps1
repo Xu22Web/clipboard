@@ -71,6 +71,9 @@ function New-TrayMenuSkin([int]$Width = 0) {
   $layout = Get-TrayMenuLayout
   if ($Width -gt 0) { $layout.Width = $Width }
   foreach ($k in @($layout.Keys)) { $skin.$k = [int]$layout[$k] }
+  # the same number the panel uses: it measures the body font against the icon font, and both
+  # surfaces set their icons out of those two
+  $skin.IconDrop = [int]$script:IconDrop
   return $skin
 }
 

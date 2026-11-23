@@ -250,6 +250,68 @@ function Draw-RowThumb($g, $bmp, [int]$x, [int]$y, [int]$side) {
   }
 }
 
+# An icon glyph is one colour, so it is drawn with grayscale anti-aliasing: these surfaces
+# rasterise their text with ClearType, which splits a 1 px stroke into coloured subpixels and
+# leaves a 16 px icon looking heavier than the rest. The glyph keeps whatever layout box the
+# caller gives it - Segoe Fluent Icons hands every glyph the same advance and line box, so
+# centring the box centres every icon without a measurement of its own. The box is moved down by
+# the measured difference between the two inks: a text line's ink sits below the middle of its
+# box and an icon's ink sits above its own, so side by side the icon reads high.
+function Draw-UiGlyph($g, [string]$glyph, $font, $brush, $rect, $fmt) {
+  if ($null -eq $g -or $null -eq $font -or -not $glyph) { return }
+  $dy = [int]$script:IconDrop
+  if ($dy -ne 0) {
+    $rect = New-Object Drawing.RectangleF -ArgumentList @([single]$rect.X, [single]($rect.Y + $dy), [single]$rect.Width, [single]$rect.Height)
+  }
+  $was = $g.TextRenderingHint
+  $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+  try { $g.DrawString($glyph, $font, $brush, $rect, $fmt) }
+  finally { $g.TextRenderingHint = $was }
+}
+
+# Where ink sits inside the box it was drawn in. Used twice: to find the difference between the
+# two fonts, and never to move one glyph on its own.
+function Get-InkCentre($bmp, [int]$x0, [int]$x1, [int]$y0, [int]$y1) {
+  $lo = -1; $hi = -1
+  for ($y = $y0; $y -le $y1; $y++) {
+    $hit = $false
+    for ($x = $x0; $x -le $x1; $x++) {
+      $p = $bmp.GetPixel($x, $y)
+      if (($p.R + $p.G + $p.B) -gt 60) { $hit = $true; break }
+    }
+    if ($hit) { if ($lo -lt 0) { $lo = $y }; $hi = $y }
+  }
+  if ($lo -lt 0) { return (($y0 + $y1 + 1) / 2) }
+  return (($lo + $hi + 1) / 2)
+}
+
+# How far an icon has to move down to sit on the optical centre of the words beside it: both are
+# centred in the same box by the layout, so what is left is a property of the two fonts. Measured
+# once on a throw-away bitmap, with a sample that carries a cap and a descender.
+function Get-IconInkDrop($body, $icon) {
+  if ($null -eq $body -or $null -eq $icon) { return 0 }
+  $h = 40
+  $bmp = New-Object Drawing.Bitmap 120, $h
+  $g = [Drawing.Graphics]::FromImage($bmp)
+  $sf = New-PickerStringFormats
+  $white = New-Object Drawing.SolidBrush ([Drawing.Color]::White)
+  try {
+    $g.Clear([Drawing.Color]::Black)
+    $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+    $g.DrawString('H', $body, $white, (New-Object Drawing.RectangleF 0, 0, 80, $h), $sf.None)
+    $textCentre = Get-InkCentre $bmp 0 79 0 ($h - 1)
+    $g.Clear([Drawing.Color]::Black)
+    $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+    $g.DrawString([string][char]0xE721, $icon, $white, (New-Object Drawing.RectangleF 80, 0, 20, $h), $sf.Center)
+    $iconCentre = Get-InkCentre $bmp 80 99 0 ($h - 1)
+    return ($textCentre - $iconCentre)
+  } catch { return 0 } finally {
+    $white.Dispose()
+    $g.Dispose()
+    $bmp.Dispose()
+  }
+}
+
 # The icon of the empty state, centred on the given width. A glyph may paint outside its line
 # box - the history arrow reaches above it - and DrawString into a rectangle clips whatever
 # leaves the rectangle, which cut the top off that icon (measured: 277 ink pixels instead of
@@ -261,7 +323,10 @@ function Draw-EmptyGlyph($g, [string]$glyph, $font, $brush, [int]$width, [int]$t
   $sz = $g.MeasureString($glyph, $font, [int]::MaxValue, $fmt)
   $x = [int](($width - $sz.Width) / 2)
   if ($x -lt 0) { $x = 0 }
-  $g.DrawString($glyph, $font, $brush, (New-Object Drawing.PointF -ArgumentList @([single]$x, [single]$top)), $fmt)
+  $was = $g.TextRenderingHint
+  $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+  try { $g.DrawString($glyph, $font, $brush, (New-Object Drawing.PointF -ArgumentList @([single]$x, [single]$top)), $fmt) }
+  finally { $g.TextRenderingHint = $was }
   return ([int][Math]::Ceiling($sz.Height) + $gap)
 }
 
@@ -485,5 +550,8 @@ function Initialize-PanelFonts {
     $script:FIconBig = $script:FTitle
     $script:FIconTiny = $script:FSmall
   }
+  # one number for every icon in every surface: the distance between the ink of a line of body
+  # text and the ink of an icon in the same box
+  $script:IconDrop = [int][Math]::Round((Get-IconInkDrop $script:FBody $script:FIcon))
   return $true
 }

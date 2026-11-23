@@ -71,8 +71,10 @@ $rsChar = [string][char]30
 $usChar = [string][char]31
 $utf8 = New-Object System.Text.UTF8Encoding $false
 # The copy answers to names of its own: a resident that is already running keeps its windows
-# and its hotkey, and this tool cannot photograph the real history by accident.
-$shotPrefix = 'Local\clipboard.shot.'
+# and its hotkey, and this tool cannot photograph the real history by accident. The suffix is
+# per run, not per tool: a run that crashed left its resident holding the mutex, and every later
+# run then started a copy that saw "already running" and died before its window appeared.
+$shotPrefix = 'Local\clipboard.shot.' + [guid]::NewGuid().ToString('N').Substring(0, 6) + '.'
 
 $partNames = @('all', 'panel', 'compact', 'preview', 'tray', 'settings')
 $parts = @(($Part -split ',') | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ })
@@ -150,7 +152,7 @@ function New-ShotBox([string]$themeName, [switch]$Compact) {
   if (Test-Path -LiteralPath $pkg) { Copy-Item -LiteralPath $pkg -Destination $box -Force }
   $basePs = Join-Path $box 'lib\base.ps1'
   $text = [IO.File]::ReadAllText($basePs, $utf8)
-  [IO.File]::WriteAllText($basePs, $text.Replace('Local\clipboard.', 'Local\clipboard.shot.'), $utf8)
+  [IO.File]::WriteAllText($basePs, $text.Replace('Local\clipboard.', $shotPrefix), $utf8)
   $ini = "Theme=$themeName`r`nRows=10`r`nWindowWidth=700`r`n"
   if ($Compact) { $ini += "CompactMode=1`r`n" }
   [IO.File]::WriteAllText((Join-Path $box 'clipboard.ini'), $ini, $utf8)

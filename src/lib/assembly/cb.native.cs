@@ -1565,6 +1565,10 @@ namespace Cb {
     public int Gap = 8;
     public int Top = 4;
     public int Bottom = 4;
+    // how far an icon moves down to sit on the optical centre of the words beside it: a text
+    // line's ink sits below the middle of its box and an icon's ink above its own. Filled in from
+    // one measurement by lib\panel\tray-menu.ps1, not per glyph.
+    public int IconDrop = 0;
     public int SeparatorInset = 9;
     // MenuFlyoutSeparator is a 1 px rectangle with a -4,1,-4,1 padding, so the row it occupies is
     // 3 px: one pixel of air above the line and one below it
@@ -1715,7 +1719,7 @@ namespace Cb {
         try {
           using (System.Drawing.SolidBrush br = new System.Drawing.SolidBrush(gc)) {
             g.DrawString(Glyph, Skin.Glyph, br,
-              new System.Drawing.RectangleF(x, (b.Height - Skin.GlyphBox) / 2f, Skin.GlyphBox, Skin.GlyphBox), GlyphFmt);
+              new System.Drawing.RectangleF(x, ((b.Height - Skin.GlyphBox) / 2f) + Skin.IconDrop, Skin.GlyphBox, Skin.GlyphBox), GlyphFmt);
           }
         } finally { g.TextRenderingHint = ghint; }
       }
