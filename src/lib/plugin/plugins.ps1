@@ -75,8 +75,8 @@ $script:PluginThemeValues = @{}  # '<plugin>.<Key>' -> effective value
 $script:PluginTimers = @{}       # 'tick:<plugin>' -> last run (epoch seconds)
 $script:PluginInitDone = $false
 
-# every plugin file on disk, loaded or not: this is what Plugins=* resolves to, so a new
-# plugin file is picked up without editing clipboard.ini
+# every plugin file on disk, loaded or not: this is what a bare Plugins= means, so a new plugin
+# file is picked up without editing clipboard.ini
 function Get-AllPluginNames([string]$Dir) {
   if (-not $Dir) { return @() }
   try {
