@@ -2558,6 +2558,20 @@ try {
         Expect ((Get-QuickKeyIndex (Get-QuickKeyOffset 0) 0 20 10) -eq 9) ''
         Expect ((Get-QuickKeyIndex (Get-QuickKeyOffset 1) 4 20 10) -eq 4) ''
       }
+
+      It 'the frozen rows keep the first digits' {
+        # a pinned row never scrolls, so it holds the first numbers on screen and the scrolling
+        # part carries on from there - the caps on the rows and the footer's Ctrl+1-9,0 are one
+        # run, not two, and a row that scrolled out answers none
+        Expect ((Get-VisibleRowOffset 0 5 3) -eq 0) ''
+        Expect ((Get-VisibleRowOffset 2 5 3) -eq 2) ''
+        Expect ((Get-VisibleRowOffset 3 5 3) -eq -1) ''
+        Expect ((Get-VisibleRowOffset 5 5 3) -eq 3) ''
+        Expect ((Get-QuickKeyIndex 0 5 20 10 3) -eq 0) ''
+        Expect ((Get-QuickKeyIndex 2 5 20 10 3) -eq 2) ''
+        Expect ((Get-QuickKeyIndex 3 5 20 10 3) -eq 5) ''
+        Expect ((Get-QuickKeyIndex 9 5 20 10 3) -eq 11) ''
+      }
     }
 
     Describe 'picker bounds' {

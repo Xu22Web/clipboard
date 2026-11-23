@@ -89,14 +89,29 @@ function Get-WheelStep([int]$visibleRows, [int]$fixed) {
   return $step
 }
 
-# virtual index behind a Ctrl+<digit> press. Digits follow the visible window, not the
-# absolute position in the list (uTools style), so they stay stable while scrolling.
-function Get-QuickKeyIndex([int]$offset, [int]$topIndex, [int]$count, [int]$rows) {
+# virtual index behind a Ctrl+<digit> press. Digits follow the screen, the frozen block first:
+# a pinned row keeps its own index, and a scrolling row is the top of the scroll window plus the
+# distance past the pinned count. So a digit means the same row on screen before and after a
+# scroll, and the pinned rows hold 1..N the way the footer's Ctrl+1-9,0 says they do.
+function Get-QuickKeyIndex([int]$offset, [int]$topIndex, [int]$count, [int]$rows, [int]$pinned = 0) {
   if ($offset -lt 0 -or $offset -gt 9) { return -1 }
   if ($rows -gt 0 -and $offset -ge $rows) { return -1 }
-  $i = $topIndex + $offset
+  if ($pinned -lt 0) { $pinned = 0 }
+  $i = $offset
+  if ($offset -ge $pinned) { $i = $topIndex + ($offset - $pinned) }
   if ($i -lt 0 -or $i -ge $count) { return -1 }
   return $i
+}
+
+# The row's place on screen, counted from the top with the frozen block first: a pinned row
+# answers its own index, a scrolling row answers the pinned count plus its distance from the top
+# of the scroll window, and a row that has scrolled out of view answers -1.
+function Get-VisibleRowOffset([int]$index, [int]$topIndex, [int]$pinned) {
+  if ($index -lt 0) { return -1 }
+  if ($pinned -lt 0) { $pinned = 0 }
+  if ($index -lt $pinned) { return $index }
+  if ($index -lt $topIndex) { return -1 }
+  return $pinned + ($index - $topIndex)
 }
 
 # key cap caption for a visible row: the first nine rows read 1..9 and the tenth reads 0,

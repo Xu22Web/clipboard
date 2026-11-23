@@ -1364,7 +1364,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
         $timeX = $capX - $(if ($timeW -gt 0) { Px $m['TimeGap'] } else { 0 }) - $timeW
         $markR = $timeX - (Px $m['MarkGap']) - (Px $m['MarkSlot'])
         $markL = $markR - (Px $m['MarkGap2']) - (Px $m['MarkSlot'])
-        $offset = $e.Index - $lst.TopIndex
+        $offset = Get-VisibleRowOffset $e.Index $lst.TopIndex $lst.PinnedCount
         $showCap = ($offset -ge 0 -and $offset -le 9 -and $offset -lt (Get-Rows) -and -not $script:Confirm)
 
         if ($timeW -gt 0) {
@@ -1576,7 +1576,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
           $n = $code
           if ($n -ge 96) { $n = $n - 96 } else { $n = $n - 48 }
           Flush-List
-          $idx = Get-QuickKeyIndex (Get-QuickKeyOffset $n) $lst.TopIndex $script:Filtered.Count (Get-Rows)
+          $idx = Get-QuickKeyIndex (Get-QuickKeyOffset $n) $lst.TopIndex $script:Filtered.Count (Get-Rows) $lst.PinnedCount
           if ($idx -ge 0) { Use-Index $idx } else { Set-Foot 'No entry at that number' ([int]$script:Timing['FootBrief']) }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.Control -and $e.KeyCode -eq 'Z') {
