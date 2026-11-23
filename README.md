@@ -292,7 +292,7 @@ Every read validates the whole file: unknown keys, a wrong type or range, a them
 | `NoPaste` | `0` | `1` = clipboard only, never paste |
 | `Balloon` | `1` | `1` = tray balloon on startup |
 | `Theme` | `win11-dark` | theme name = the `.ini` file name under `themes/`, aliases are not accepted |
-| `Language` | `en` | words and font family = the `.ini` file name under `lang/` (`en` / `zh-CN`); English unless switched by hand. Plugin names and command names come from the plugin and do not change with the language; a mark's word may be named by the language file and falls back to the plugin's own word |
+| `Language` | `en` | words and font family = the `.ini` file name under `lang/` (`en` / `zh-CN`); English unless switched by hand, and the window shows each language under the name its file gives itself. Plugin names and command names come from the plugin and do not change with the language; a mark's word may be named by the language file and falls back to the plugin's own word |
 | `ExcludePattern` | empty | a regular expression; matching text is never stored |
 | `WindowWidth` | `700` | panel width (96 dpi baseline, scaled by the system DPI) |
 | `Rows` | `10` | visible rows, the only source of the panel height: rows × row height + header + footer + frame, capped by the work area |

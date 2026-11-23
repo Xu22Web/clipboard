@@ -606,7 +606,7 @@ function Show-Settings {
     $dd.ClientSize = New-Object Drawing.Size -ArgumentList @([int]$rect.Width, [int]$rect.Height)
     $dd.Left = $form.Left + [int]$rect.Left
     $dd.Top = $form.Top + [int]$rect.Top
-    $dd.Tag = @{ Choices = $choices; Key = [string]$row.Key }
+    $dd.Tag = @{ Choices = $choices; Labels = @($row.ChoiceLabels); Key = [string]$row.Key }
     Update-PanelRegion $dd
     $dd.Add_Paint({
       param($s, $e)
@@ -624,6 +624,7 @@ function Show-Settings {
         Draw-PanelFrame $g $cw $ch $p['Border'] (Get-WindowRadius) $p['Field']
         $sf = New-PickerStringFormats
         $list = @($s.Tag.Choices)
+        $words = @($s.Tag.Labels)
         $itemH = Px 30
         $bandH = [int]($itemH - (Px 2))
         $multi = [bool]$script:SetDropMulti
@@ -648,6 +649,10 @@ function Show-Settings {
           $textLeft = Px 12
           if ($multi) { $textLeft = Px 34 }
           $text = [string]$list[$i]
+          # what the row says is drawn, what the file holds is written: a language is picked by
+          # the name it calls itself, and the code behind it never has to be read
+          $shownText = $text
+          if ($words.Count -eq $list.Count) { $shownText = [string]$words[$i] }
           if ($multi) {
             # The tick is centred on the band the name is centred in, one pixel up: a 16 px box
             # on the band's centre leaves its bottom edge below the text baseline (measured on
@@ -664,7 +669,7 @@ function Show-Settings {
           }
           $tb = New-Object Drawing.RectangleF -ArgumentList @(
             [single]$textLeft, [single]$top, [single]($cw - $textLeft - (Px 12)), [single]$bandH)
-          $g.DrawString($text, $script:FBody, (Get-Brush $ink), $tb, $sf.Ellipsis)
+          $g.DrawString($shownText, $script:FBody, (Get-Brush $ink), $tb, $sf.Ellipsis)
         }
       } catch { Write-Log ('settings drop paint: ' + $_.Exception.Message) }
     })

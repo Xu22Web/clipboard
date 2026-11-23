@@ -255,6 +255,29 @@ function Convert-SettingNumberInput($schema, [string]$key, [string]$text, [doubl
   return (Convert-SettingInput $schema $key ([string]$v))
 }
 
+# The words a list of values is drawn with, in the same order. A value the user should not have
+# to read as a code - the language codes are file names - is shown as what that language calls
+# itself; every other value keeps its own text. The mapping is only used when every value is a
+# language on disk, so a value that merely looks like one is never renamed.
+function Get-SettingChoiceLabels($schema, [string]$key, $values) {
+  $out = @()
+  $vals = @($values)
+  if ($vals.Count -eq 0) { return $out }
+  $spec = Get-SchemaProperty $schema $key
+  if ($null -eq $spec -or -not $spec.Contains('Type')) { return $out }
+  # only an enum states its whole domain in the schema: a theme or plugin list names files the
+  # user wrote, and those keep the name they were given
+  if ([string]$spec['Type'] -cne 'enum') { return $out }
+  if (-not (Get-Command Get-LanguageList -ErrorAction SilentlyContinue)) { return $out }
+  $map = @{}
+  try {
+    foreach ($l in @(Get-LanguageList)) { $map[[string]$l.Code] = [string]$l.Name }
+  } catch { return $out }
+  foreach ($v in $vals) { if (-not $map.ContainsKey([string]$v)) { return @() } }
+  foreach ($v in $vals) { $out += $map[[string]$v] }
+  return $out
+}
+
 # The values a setting offers as a list, or an empty array when it is typed. A list is only
 # for a value whose whole domain is small and known at run time: the themes on disk, the three
 # paste chords that cover every target anyone meets, and the plugin files on disk. Everything

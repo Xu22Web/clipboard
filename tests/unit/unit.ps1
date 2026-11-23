@@ -3507,6 +3507,16 @@ try {
         Expect (($extra.Count -eq 0) -and ($gone.Count -eq 0)) (($extra -join ',') + ' / ' + ($gone -join ','))
       }
 
+      It 'a language is offered under the name it calls itself' {
+        # the stored value is a code, which is also a file name: the row and its list draw the
+        # name the language file gives itself, so nobody has to pick by reading a code
+        $langs = @(Get-LanguageList)
+        $codes = @($langs | ForEach-Object { $_.Code })
+        $labels = @(Get-SettingChoiceLabels $script:SettingsSchema 'Language' $codes)
+        $wanted = @($langs | ForEach-Object { $_.Name })
+        Expect (($labels -join ',') -eq ($wanted -join ',')) ($labels -join ',')
+      }
+
       It 'a language names the family it needs, and the base names none' {
         [void](Initialize-Text 'zh-CN')
         Expect ((Get-UiText 'menu.paste') -ne 'menu.paste') (Get-UiText 'menu.paste')

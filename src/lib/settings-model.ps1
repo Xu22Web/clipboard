@@ -301,6 +301,16 @@ function Get-SettingsRows($schema, [string]$group, $pending = $null) {
         $why = Get-UiTextOr ('why.' + [string]$owner.Key) ([string]$owner.Why)
       }
     }
+    $choices = @(Get-SettingChoices $schema $key)
+    $choicesShown = @(Get-SettingChoiceLabels $schema $key $choices)
+    $text = Format-SettingText $schema $key $raw
+    # a value drawn with a word of its own (a language) shows that word here as well, so the row
+    # and the list it opens never disagree about what is selected
+    if ($choicesShown.Count -eq $choices.Count -and $choices.Count -gt 0) {
+      for ($ci = 0; $ci -lt $choices.Count; $ci++) {
+        if ([string]$choices[$ci] -ieq [string]$raw) { $text = [string]$choicesShown[$ci] }
+      }
+    }
     $rows.Add(@{
       Key     = $key
       Group   = $group
@@ -324,9 +334,11 @@ function Get-SettingsRows($schema, [string]$group, $pending = $null) {
       Number  = [string]$view.Number
       Unit    = [string]$view.Unit
       Scale   = [double]$view.Scale
-      Text    = Format-SettingText $schema $key $raw
+      Text    = $text
       Help    = Get-SettingHelp $schema $key
-      Choices = @(Get-SettingChoices $schema $key)
+      Choices = @($choices)
+      # the words the open list draws, same order as Choices
+      ChoiceLabels = @($choicesShown)
       # a shortcut row draws its value as key caps instead of a string
       Chords  = @(Get-SettingChordList $schema $key $raw)
       Enabled = $enabled
