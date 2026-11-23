@@ -269,6 +269,9 @@ try {
   # says how the file is rewritten, and the path it keeps in the package is the one it had
   # under src\. A new kind of file is a row there, never a branch here.
   $ascii = New-Object System.Text.ASCIIEncoding
+  # an ini can carry words outside ASCII, so it is written as UTF-8 with a BOM - the form the
+  # program reads its language files in; the other text handlers keep their plain encoding
+  $utf8Bom = New-Object System.Text.UTF8Encoding $true
   $before = 0
   $after = 0
   $rows = New-Object System.Collections.Generic.List[object]
@@ -324,10 +327,9 @@ try {
         [IO.File]::WriteAllText($target, $text, $ascii)
       }
       'ini' {
-        if ($minify) {
-          $text = (Compress-Ini ([IO.File]::ReadAllText($f))).TrimEnd() + "`r`n"
-          [IO.File]::WriteAllText($target, $text, $ascii)
-        } else { Copy-Item -LiteralPath $f -Destination $target -Force }
+        $text = [IO.File]::ReadAllText($f)
+        if ($minify) { $text = (Compress-Ini $text).TrimEnd() + "`r`n" }
+        [IO.File]::WriteAllText($target, $text, $utf8Bom)
       }
       default { Copy-Item -LiteralPath $f -Destination $target -Force }
     }

@@ -43,7 +43,7 @@ jobs:
         run: |
           @('OutDir=dist', 'BaseUrl=.', 'Minify=1', 'Rename=1', 'Verify=1',
             'Overwrite=1', 'Zip=1',
-            'Includes=src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,scripts/**.bat',
+            'Includes=src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat',
             'Excludes=') |
             Set-Content -LiteralPath build-release.ini -Encoding ascii
           .\cli.ps1 build -Config build-release.ini

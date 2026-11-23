@@ -30,8 +30,8 @@ $buildCfg = Join-Path $tmpRoot 'build-test.ini'
 # the package is this one list, and the cases that trim it override this key. The assembly
 # sources are in the list because a package cannot start without that product or its source;
 # the client stays out of the default list so most cases skip a compile.
-$allFiles = 'Includes=src/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,scripts/**.bat'
-$withClient = 'Includes=src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,scripts/**.bat'
+$allFiles = 'Includes=src/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat'
+$withClient = 'Includes=src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat'
 $buildDefaults = @('BaseUrl=.', 'Minify=1', 'Rename=1', 'Verify=0', 'Overwrite=1', 'Zip=0', $allFiles, 'Excludes=')
 function Write-BuildCfg([string]$outDir, [string[]]$override) {
   $lines = @('OutDir=' + $outDir) + $buildDefaults
@@ -178,6 +178,18 @@ Describe 'int' {
     It 'package keeps plugins and themes' {
       if (-not (Test-Built $script:pkgDir $script:bout)) { return }
       Expect ((Test-Path -LiteralPath (Join-Path $script:pkgDir 'plugins\item-marks.ps1')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'themes\win11-dark.ini'))) 'plugins and themes have to travel'
+    }
+    # a language file is the one ini whose values are not ASCII: written with the plain encoder
+    # it ships a page of "?", which a Chinese window would draw as its own name
+    It 'a language file keeps its words in the package' {
+      if (-not (Test-Built $script:pkgDir $script:bout)) { return }
+      $langFile = Join-Path $script:pkgDir 'lang\zh-CN.ini'
+      if (-not (Test-Path -LiteralPath $langFile)) { Expect $false 'the language file has to travel'; return }
+      $name = ''
+      foreach ($line in [IO.File]::ReadAllLines($langFile, [Text.Encoding]::UTF8)) {
+        if ($line -match '^\s*name\s*=\s*(.+)$') { $name = $Matches[1].Trim() }
+      }
+      Expect ($name.Length -gt 0 -and $name -notmatch '\?') ('[' + $name + ']')
     }
     It 'package leaves history, tooling and metadata out' {
       if (-not (Test-Built $script:pkgDir $script:bout)) { return }
