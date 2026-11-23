@@ -16,13 +16,15 @@
 # still needs no reload, so on its own it does not ask the window for one on close.
 function Save-SettingsValues($pending) {
   if ($null -eq $pending -or $pending.Count -eq 0) { return @{ Ok = $true; Error = ''; Count = 0 } }
-  if (-not (Get-Command Set-IniKey -ErrorAction SilentlyContinue)) { return @{ Ok = $false; Error = 'the settings file is not loaded'; Count = 0 } }
+  if (-not (Get-Command Set-IniKey -ErrorAction SilentlyContinue)) { return @{ Ok = $false; Error = (Get-UiText 'settings.msg.noIni'); Count = 0 } }
   $written = 0
   $reload = $false
   foreach ($k in @($pending.Keys)) {
     $key = [string]$k
     if (-not (Set-IniKey $key ([string]$pending[$k]))) {
-      return @{ Ok = $false; Error = 'could not write ' + $key + ' to clipboard.ini'; Count = $written }
+      $label = Get-SettingLabel $key
+      if (-not $label) { $label = $key }
+      return @{ Ok = $false; Error = (Get-UiText 'settings.msg.writeFailed' @($label)); Count = $written }
     }
     $written++
     # A language is read by the panel and the tray when they next open (Sync-UiLanguage), so on its

@@ -264,7 +264,7 @@ function Show-Settings {
   }
 
   function Show-RowRefused($row) {
-    $why = 'this setting is not in effect'
+    $why = Get-UiTextOr 'why.generic' 'this setting is not in effect'
     if ($row.ContainsKey('Why') -and $row.Why) { $why = [string]$row.Why }
     Show-Message ([string]$row.Label + ': ' + $why) $true
   }
@@ -316,18 +316,22 @@ function Show-Settings {
   function Stage-Setting([string]$key, [string]$value, [string]$what) {
     if (-not $key) { return $false }
     $value = [string]$value
+    # the footer names the row the way the window does: the key is an identity for the file, not
+    # a word to read (a Chinese window would otherwise say PasteTyping in the middle of a sentence)
+    $label = Get-SettingLabel $key
+    if (-not $label) { $label = $key }
     # A value the file already holds is not a change: flipping a switch back, or picking the
     # value that is already set, leaves nothing staged and no dot behind.
     $held = [string](Get-SettingRaw $schema $key)
     if ($value -ceq $held) {
       if ($script:SetPending.ContainsKey($key)) { [void]$script:SetPending.Remove($key) }
       Refresh-Settings
-      Show-Message (Get-UiText 'settings.msg.unchanged' @($key)) $false
+      Show-Message (Get-UiText 'settings.msg.unchanged' @($label)) $false
       return $true
     }
     $script:SetPending[$key] = $value
     Refresh-Settings
-    Show-Message (Get-UiText 'settings.msg.staged' @($key, $what)) $false
+    Show-Message (Get-UiText 'settings.msg.staged' @($label, $what)) $false
     return $true
   }
 
@@ -483,9 +487,12 @@ function Show-Settings {
     else { $r = Convert-SettingInput $schema $key ([string]$box.Text) }
     if (-not $r.Ok) {
       # the field is what the refusal is about, so the field is what turns red - not whatever
-      # message happened to be in the footer a moment ago
+      # message happened to be in the footer a moment ago. The row is named the way the window
+      # names it; the reason comes from the schema and stays as it is.
       $script:SetEditBad = $true
-      Show-Message ($key + ': ' + [string]$r.Error) $true
+      $editLabel = Get-SettingLabel $key
+      if (-not $editLabel) { $editLabel = $key }
+      Show-Message (Get-UiText 'settings.msg.rejected' @($editLabel, [string]$r.Error)) $true
       return
     }
     $what = Get-UiText 'settings.msg.setTo' @([string]$r.Value)
@@ -576,8 +583,10 @@ function Show-Settings {
     if (-not $key) { return }
     $raw = Get-DropRaw
     $next = Get-SettingListToggled $raw $name
-    if ($null -eq $next) {
-      Show-Message (Get-UiText 'settings.msg.listNeedsOne' @($key)) $true
+    if (-not $next) {
+      $listLabel = Get-SettingLabel $key
+      if (-not $listLabel) { $listLabel = $key }
+      Show-Message (Get-UiText 'settings.msg.listNeedsOne' @($listLabel)) $true
       return
     }
     $tickNote = Get-UiText 'settings.msg.unticked' @($name)
