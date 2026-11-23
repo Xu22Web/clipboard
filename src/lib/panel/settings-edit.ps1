@@ -25,7 +25,10 @@ function Save-SettingsValues($pending) {
       return @{ Ok = $false; Error = 'could not write ' + $key + ' to clipboard.ini'; Count = $written }
     }
     $written++
-    if (-not (Test-SchemaInstallOnly $script:SettingsSchema $key)) { $reload = $true }
+    # A language is read by the panel and the tray when they next open (Sync-UiLanguage), so on its
+    # own it needs no restart; an install-only key has nothing to reload either. Every other key
+    # still asks the window for one reload on close.
+    if (-not (Test-SchemaInstallOnly $script:SettingsSchema $key) -and $key -cne 'Language') { $reload = $true }
   }
   try { Apply-Config } catch { return @{ Ok = $false; Error = [string]$_.Exception.Message; Count = $written } }
   if ($reload) { $script:SettingsDirty = $true }

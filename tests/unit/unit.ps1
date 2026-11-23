@@ -3530,14 +3530,32 @@ try {
         Expect (($extra.Count -eq 0) -and ($gone.Count -eq 0)) (($extra -join ',') + ' / ' + ($gone -join ','))
       }
 
-      It 'a language is offered under the name it calls itself' {
-        # the stored value is a code, which is also a file name: the row and its list draw the
+      It 'a language is offered under the name it calls itself' {        # the stored value is a code, which is also a file name: the row and its list draw the
         # name the language file gives itself, so nobody has to pick by reading a code
         $langs = @(Get-LanguageList)
         $codes = @($langs | ForEach-Object { $_.Code })
         $labels = @(Get-SettingChoiceLabels $script:SettingsSchema 'Language' $codes)
         $wanted = @($langs | ForEach-Object { $_.Name })
         Expect (($labels -join ',') -eq ($wanted -join ',')) ($labels -join ',')
+      }
+
+      It 'the words follow the file without a reload' {
+        # a settings window in a process of its own writes the code; the panel and the tray read
+        # it when they open, so no process has to restart for a word
+        $before = ''
+        if (Test-Path -LiteralPath $IniPath) { $before = [IO.File]::ReadAllText($IniPath) }
+        try {
+          [IO.File]::WriteAllLines($IniPath, @('Language=zh-CN'), $Utf8)
+          Expect ((Sync-UiLanguage) -eq $true) 'the code in the file was not picked up'
+          Expect ((Get-UiText 'menu.paste') -ne 'Paste') (Get-UiText 'menu.paste')
+          [IO.File]::WriteAllLines($IniPath, @('Language=en'), $Utf8)
+          Expect ((Sync-UiLanguage) -eq $true) 'the code in the file was not picked up'
+          Expect ((Get-UiText 'menu.paste') -eq 'Paste') (Get-UiText 'menu.paste')
+          Expect ((Sync-UiLanguage) -eq $false) 'an unchanged code reloaded the words anyway'
+        } finally {
+          if ($before) { [IO.File]::WriteAllText($IniPath, $before, (New-Object Text.UTF8Encoding $false)) }
+          [void](Sync-UiLanguage)
+        }
       }
 
       It 'a language names the family it needs, and the base names none' {

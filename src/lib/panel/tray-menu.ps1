@@ -195,6 +195,22 @@ function New-TrayMenuPlacer {
 function Update-TrayMenu {
   param($Menu, [int]$Entries = -1, [string]$Hotkey = '', [bool]$Paused = $false, [bool]$Compact = $false)
   if ($null -eq $Menu) { return }
+  # The row words are read every time the menu opens. A language can be saved while the resident
+  # keeps running (a settings window in its own process, or one opened from this tray), and a menu
+  # built before that must not keep the old words: re-labelling the rows is enough, the rows, the
+  # glyphs and the skin stay as they are.
+  $words = @(
+    @('Show', 'menu.showHistory'), @('Compact', 'menu.compact'), @('Pause', 'menu.pause'),
+    @('Clear', 'menu.clearHistory'), @('Settings', 'menu.settings'),
+    @('EditFile', 'menu.editFile'), @('Folder', 'menu.openFolder'),
+    @('Restart', 'menu.restart'), @('About', 'menu.about'), @('Exit', 'menu.exit')
+  )
+  foreach ($w in $words) {
+    try {
+      $row = $Menu[[string]$w[0]]
+      if ($null -ne $row) { $row.Text = (Get-UiText ([string]$w[1])) }
+    } catch { }
+  }
   try {
     if ($Entries -ge 0) {
       $Menu.Header.Hint = (Get-UiTextCount 'menu.entries' $Entries)

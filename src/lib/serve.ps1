@@ -177,7 +177,11 @@ function Invoke-ServeOnce {
           Show-Picker -Tray
         } catch { Write-Log ('tray open: ' + $_.Exception.Message) }
       })
-    $dm = New-TrayMenu (New-TrayMenuSkin)
+    # the skin and the hotkey that took effect outlive this call: an opening menu re-reads its
+    # words, and a language may name another font family, so both stay reachable from the handler
+    $script:TraySkin = New-TrayMenuSkin
+    $script:TrayHot = $eff
+    $dm = New-TrayMenu $script:TraySkin
 
     # The menu is built once and read every time it opens: the count on its header, the hotkey
     # and the two switches come from the Opening handler, so they never go stale while the tray
@@ -275,6 +279,23 @@ function Invoke-ServeOnce {
 
     $dm.Menu.Add_Opening({
         try {
+          # A language saved in another process (a settings window of its own, or a `config set`)
+          # has to reach the menu that is about to open and the tray tip, without restarting the
+          # resident: only the words and, if the language names one, the font family change.
+          $langChanged = $false
+          if (Get-Command Sync-UiLanguage -ErrorAction SilentlyContinue) { $langChanged = [bool](Sync-UiLanguage) }
+          if ($langChanged) {
+            $script:UiFamily = ''
+            $script:FBody = $null
+            [void](Initialize-PanelFonts)
+            try { $script:Tray.Text = (Get-UiText 'app.tooltip' @([string]$script:TrayHot)) } catch { }
+          }
+          # the rows draw with the skin's faces, so a language that names its own family reaches
+          # them without rebuilding the menu or the rows
+          if ($null -ne $script:TraySkin -and $null -ne $script:FBody -and -not [object]::ReferenceEquals($script:TraySkin.Body, $script:FBody)) {
+            $script:TraySkin.Body = $script:FBody
+            $script:TraySkin.Small = $script:FSmall
+          }
           $entries = -1
           try { $entries = @(Get-Records).Count } catch { $entries = -1 }
           Update-TrayMenu $dm -Entries $entries -Hotkey $eff -Paused (Test-Path -LiteralPath $Paused) -Compact ([bool]$script:CompactMode)

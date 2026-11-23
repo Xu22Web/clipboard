@@ -77,6 +77,27 @@ function Apply-Config {
   if (-not $SkipTheme) { Apply-Theme -SkipColors:$NoColors }
 }
 
+# The words follow the file even in a process that has not reloaded them. A settings window may
+# save a language in another process - `clipboard settings` is its own process, the resident is
+# the one that draws the panel and the tray - so the surfaces read the code before they open.
+# One key is cheap (the ini parse is cached by file version) and the language files are read
+# again only when the code really changed; $true says it did, so the caller can rebuild its faces.
+function Sync-UiLanguage {
+  $want = ''
+  try {
+    $map = Read-Ini
+    if ($map.ContainsKey('Language')) { $want = ([string]$map['Language']).Trim() }
+  } catch { return $false }
+  if (-not $want) { $want = 'en' }
+  # the enum accepts a code spelled in another case; the schema is where that is decided
+  $r = Convert-IniValue 'Language' $want
+  if ($r.Ok -and [string]$r.Value) { $want = [string]$r.Value }
+  if ($want -eq [string]$script:Language) { return $false }
+  $script:Language = $want
+  [void](Initialize-Text $want)
+  return $true
+}
+
 # effective values of every key, in schema order
 function Get-ConfigReport {
   # DataDir is a location, not a number: the report carries the resolved absolute path, the

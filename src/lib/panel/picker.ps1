@@ -16,6 +16,14 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     [void](Ring-SettingsAsk)
     return
   }
+  # A settings window in another process may have saved a language since this process started:
+  # the panel is drawn from the words in force when it opens, so read the code first, and rebuild
+  # the faces when it changed - a language may name its own font family. Nothing restarts.
+  if ((Get-Command Sync-UiLanguage -ErrorAction SilentlyContinue) -and (Sync-UiLanguage)) {
+    $script:UiFamily = ''
+    $script:FBody = $null
+    [void](Initialize-PanelFonts)
+  }
   $script:PickerOpen = $true
   $script:PickerClose = $false
   # how long the window takes to appear: one line per open, so a slow start can be told
