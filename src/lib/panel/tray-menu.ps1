@@ -173,6 +173,22 @@ function New-TrayMenu {
   return $items
 }
 
+# Where a menu whose rows are rebuilt per opening has to place itself. Its final size only exists
+# once it has opened, and the system then pushes a tall menu inside the work area instead of
+# flipping it (measured: pointer at y=622, menu 482..1031 on a 1032 px work area). The rule is
+# Get-MenuPlacement in lib/panel/picker-geom.ps1, the same arithmetic the panel places itself with;
+# this only hands it the pointer, the size and the screen the pointer is on, so every menu that
+# needs it shares one implementation and one test.
+function New-TrayMenuPlacer {
+  return [System.Func[System.Drawing.Point, System.Drawing.Size, System.Drawing.Point]]{
+    param($ptr, $size)
+    $area = Get-AreaAt ([Windows.Forms.Screen]::AllScreens | ForEach-Object { $_.WorkingArea }) $null ([int]$ptr.X) ([int]$ptr.Y)
+    if ($null -eq $area) { return $ptr }
+    $p = Get-MenuPlacement $area ([int]$ptr.X) ([int]$ptr.Y) ([int]$size.Width) ([int]$size.Height)
+    return (New-Object System.Drawing.Point ([int]$p.Left), ([int]$p.Top))
+  }
+}
+
 # What changes between two openings of the same menu: the count on the header, the hotkey that
 # actually took effect, and the two switches. One call so the Opening handler in serve.ps1 stays
 # a few lines, and so a new row that shows state has one place to be updated.

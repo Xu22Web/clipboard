@@ -1143,6 +1143,10 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     # not open a window drawn in the system colours.
     $cmSkin = New-TrayMenuSkin (Px 252)
     $cm = New-Object Cb.TrayMenu -ArgumentList $cmSkin
+    # Rows are rebuilt per opening, so the menu only knows its final height once it has opened: it
+    # places itself, or it comes up covering the pointer on the rows near the bottom edge. The rule
+    # and its wiring are shared with any other menu that has to place itself (New-TrayMenuPlacer).
+    $cm.Placer = New-TrayMenuPlacer
     # The popup must not take the foreground: that deactivates the window the user came from,
     # and Explorer's address bar / search box collapse - the paste then lands in the file view.
     [void]$cm.Handle

@@ -2690,6 +2690,32 @@ try {
         $p = Get-CompactPlacement 6 40 92 520 $area 2200 300 20 3
         Expect ($p.Left -eq 2200) ($p.Left -as [string])
       }
+
+      It 'a menu opens down from the pointer while it fits' {
+        # the row menu measures 252 x 549 px on the machine this was taken from
+        $m = Get-MenuPlacement $script:PickerFallbackArea 810 302 252 549
+        Expect (($m.Left -eq 810) -and ($m.Top -eq 302)) (($m.Left -as [string]) + ',' + ($m.Top -as [string]))
+      }
+
+      It 'a menu crossing the bottom edge opens above the pointer' {
+        # 622 + 549 = 1171 crosses the 1032 px work area of that machine, where the system only
+        # pushed the menu up and left the pointer 140 px inside it, on the row that opened it
+        $low = [pscustomobject]@{ Left = 0; Top = 0; Width = 1920; Height = 1032 }
+        $m = Get-MenuPlacement $low 810 622 252 549
+        Expect (($m.Left -eq 810) -and ($m.Top -eq 73) -and (($m.Top + 549) -eq 622)) (($m.Left -as [string]) + ',' + ($m.Top -as [string]))
+      }
+
+      It 'a menu crossing the right edge opens to the left of the pointer' {
+        # 1800 + 252 crosses 1920, so the menu ends where the pointer is
+        $m = Get-MenuPlacement $script:PickerFallbackArea 1800 300 252 549
+        Expect (($m.Left -eq 1548) -and ($m.Top -eq 300)) (($m.Left -as [string]) + ',' + ($m.Top -as [string]))
+      }
+
+      It 'a menu taller than the work area keeps its top edge on screen' {
+        # neither side can hold it: the flip is kept and then clamped, not run off the top
+        $m = Get-MenuPlacement $script:PickerFallbackArea 400 900 252 1200
+        Expect ($m.Top -eq 0) ($m.Top -as [string])
+      }
     }
 
     Describe 'settings window model' {

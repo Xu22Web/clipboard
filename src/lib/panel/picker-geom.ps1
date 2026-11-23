@@ -241,6 +241,21 @@ function Get-CompactPlacement([int]$rows, [int]$rowHeight, [int]$chrome, [int]$w
   return @{ Rows = [int]$useRows; Width = [int]$w; Height = [int]$h; Left = [int]$p.Left; Top = [int]$p.Top }
 }
 
+# Where a menu goes for one pointer: downward from it while the menu fits, above it when it
+# does not, then left of it when the right edge would be crossed, and finally inside the work area.
+# The tray menu is placed by the system because its size is known before it opens; a menu whose
+# rows are rebuilt per opening only knows its final height once it has opened, and the system then
+# pushes it inside the work area instead of flipping it - measured: pointer at y=622, menu 482..1031
+# on a 1032 px work area, the pointer landing 140 px inside the menu, on the row that opened it.
+function Get-MenuPlacement($area, [int]$x, [int]$y, [int]$w, [int]$h) {
+  if ($null -eq $area) { return @{ Left = $x; Top = $y } }
+  $top = $y
+  if (($y + $h) -gt ([int]$area.Top + [int]$area.Height)) { $top = $y - $h }
+  $left = $x
+  if (($x + $w) -gt ([int]$area.Left + [int]$area.Width)) { $left = $x - $w }
+  return (Get-ClampedPoint $area $left $top $w $h)
+}
+
 # which characters of one label match the search tokens (for the highlight pass)
 function Get-HitMarks([string]$text, [string[]]$tokens) {
   $n = $text.Length
