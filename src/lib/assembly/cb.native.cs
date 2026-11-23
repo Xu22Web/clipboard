@@ -1596,6 +1596,7 @@ namespace Cb {
 
     static readonly System.Drawing.StringFormat LeftFmt = MakeFormat(System.Drawing.StringAlignment.Near, false);
     static readonly System.Drawing.StringFormat RightFmt = MakeFormat(System.Drawing.StringAlignment.Far, false);
+    static readonly System.Drawing.StringFormat GlyphFmt = MakeFormat(System.Drawing.StringAlignment.Center, true);
 
     static System.Drawing.StringFormat MakeFormat(System.Drawing.StringAlignment a, bool noTrim) {
       System.Drawing.StringFormat f = new System.Drawing.StringFormat();
@@ -1633,69 +1634,83 @@ namespace Cb {
       return p;
     }
 
-    // One glyph out of an icon font is not the same shape as the next: measured on the drawn menu,
-    // E8C8 (copy) inks 16 x 16 inside the box, E70F (the pencil) inks 18 x 16 and spills a pixel
-    // into the label, and ClearType fringes a 1 px stroke in colour, which reads as a heavier
-    // icon. So a glyph is rasterised once - grayscale anti-aliasing, six times the box, the
-    // font's own outlines rather than its hinting - and kept as a white tile whose ink is scaled
-    // to fill the box and centred on that ink. Every row then draws the same optical square, and
-    // the colour matrix at paint time tints one bitmap instead of one per ink.
-    static readonly System.Collections.Generic.Dictionary<string, System.Drawing.Bitmap> GlyphTiles =
-      new System.Collections.Generic.Dictionary<string, System.Drawing.Bitmap>();
+    // An icon glyph at one font size is not the same ink as the next: measured on the drawn menu at
+    // 12 pt, E8C8 (copy) inks 16 x 16 inside a 16 px box while E70F (the pencil) inks 18 px wide and
+    // spills a pixel into the label, and ClearType fringes a 1 px stroke in colour. Scaling a larger
+    // render down fixes the size but softens the strokes and cuts the last of their anti-aliasing,
+    // which reads as a clipped icon. So each glyph is measured once, at the largest quarter-point
+    // size whose ink still fits the box, and drawn at that size with its ink centred on the box:
+    // the font's own hinted outlines, one optical square for every row.
+    sealed class GlyphFit {
+      public System.Drawing.Font Font;
+      public float Dx, Dy;
+    }
 
-    static System.Drawing.Bitmap GetGlyphTile(string glyph, System.Drawing.Font font, int box) {
-      if (box <= 0 || string.IsNullOrEmpty(glyph) || font == null) { return null; }
-      string key = glyph + "|" + font.FontFamily.Name + "|" + font.Size + "|" + font.Style + "|" + box;
-      System.Drawing.Bitmap tile = null;
-      lock (GlyphTiles) {
-        if (GlyphTiles.TryGetValue(key, out tile)) { return tile; }
-        tile = BuildGlyphTile(glyph, font, box);
-        GlyphTiles[key] = tile;
-        return tile;
+    static readonly System.Collections.Generic.Dictionary<string, GlyphFit> GlyphFits =
+      new System.Collections.Generic.Dictionary<string, GlyphFit>();
+
+    static GlyphFit GetGlyphFit(string glyph, System.Drawing.Font face, int box, float dpi) {
+      if (string.IsNullOrEmpty(glyph) || face == null || box <= 2) { return null; }
+      if (dpi <= 0f) { dpi = 96f; }
+      string key = glyph + "|" + face.FontFamily.Name + "|" + face.Style + "|" + box + "|" + dpi.ToString("0.#");
+      lock (GlyphFits) {
+        GlyphFit hit = null;
+        if (GlyphFits.TryGetValue(key, out hit)) { return hit; }
+        hit = BuildGlyphFit(glyph, face, box, dpi);
+        GlyphFits[key] = hit;
+        return hit;
       }
     }
 
-    static System.Drawing.Bitmap BuildGlyphTile(string glyph, System.Drawing.Font font, int box) {
-      int big = box * 6;
-      System.Drawing.Bitmap src = new System.Drawing.Bitmap(big, big, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-      try {
-        using (System.Drawing.Graphics g = System.Drawing.Graphics.FromImage(src)) {
-          g.Clear(System.Drawing.Color.Transparent);
-          g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
-          g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-          // 96 dpi: one point is 4/3 of a pixel, so the em is the box times six
-          using (System.Drawing.Font f = new System.Drawing.Font(font.FontFamily, big * 0.75f, font.Style, System.Drawing.GraphicsUnit.Point))
-          using (System.Drawing.SolidBrush br = new System.Drawing.SolidBrush(System.Drawing.Color.White))
-          using (System.Drawing.StringFormat fmt = MakeFormat(System.Drawing.StringAlignment.Center, true)) {
-            g.DrawString(glyph, f, br, new System.Drawing.RectangleF(0, 0, big, big), fmt);
+    // The probe draws each candidate exactly the way the row draws it, in a box of the same size,
+    // and keeps the largest one whose ink fits: ink is read off the pixels because a glyph's layout
+    // box says nothing about where its strokes end. The probe carries the screen's dpi because a
+    // point size is not a pixel size: measured at 96 dpi and drawn at 120, every glyph would come
+    // out a quarter larger than the box it was fitted to.
+    static GlyphFit BuildGlyphFit(string glyph, System.Drawing.Font face, int box, float dpi) {
+      GlyphFit best = null;
+      int bestInk = -1;
+      // the bitmap is given the screen's dpi before a Graphics is taken from it: a point size is not
+      // a pixel size, and a probe left at 96 dpi fits a glyph that comes out a quarter too large at
+      // 120 and gets cut by the box it was fitted to
+      using (System.Drawing.Bitmap probe = new System.Drawing.Bitmap(box, box, System.Drawing.Imaging.PixelFormat.Format32bppArgb)) {
+        try { probe.SetResolution(dpi, dpi); } catch { }
+        using (System.Drawing.Graphics g = System.Drawing.Graphics.FromImage(probe))
+        using (System.Drawing.SolidBrush white = new System.Drawing.SolidBrush(System.Drawing.Color.White)) {
+          g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+          for (float pt = 6f; pt <= 15f; pt += 0.25f) {
+            System.Drawing.Font f = new System.Drawing.Font(face.FontFamily, pt, face.Style, System.Drawing.GraphicsUnit.Point);
+            g.Clear(System.Drawing.Color.Transparent);
+            g.DrawString(glyph, f, white, new System.Drawing.RectangleF(0, 0, box, box), GlyphFmt);
+            int x0 = box, y0 = box, x1 = -1, y1 = -1;
+            for (int y = 0; y < box; y++) {
+              for (int x = 0; x < box; x++) {
+                if (probe.GetPixel(x, y).A <= 8) { continue; }
+                if (x < x0) { x0 = x; }
+                if (x > x1) { x1 = x; }
+                if (y < y0) { y0 = y; }
+                if (y > y1) { y1 = y; }
+              }
+            }
+            if (x1 < x0 || y1 < y0) { f.Dispose(); continue; }
+            int ink = System.Math.Max(x1 - x0 + 1, y1 - y0 + 1);
+            // one pixel of air on every side: a glyph that reaches the edge of its box loses the last
+            // of its anti-aliasing and reads as cut off
+            if (ink > box - 1 || ink <= bestInk) { f.Dispose(); continue; }
+            if (best != null) { best.Font.Dispose(); }
+            best = new GlyphFit();
+            best.Font = f;
+            bestInk = ink;
+            best.Dx = (box / 2f) - ((x0 + x1 + 1) / 2f);
+            best.Dy = (box / 2f) - ((y0 + y1 + 1) / 2f);
           }
         }
-        int x0 = big, y0 = big, x1 = -1, y1 = -1;
-        for (int y = 0; y < big; y++) {
-          for (int x = 0; x < big; x++) {
-            if (src.GetPixel(x, y).A <= 8) { continue; }
-            if (x < x0) { x0 = x; }
-            if (x > x1) { x1 = x; }
-            if (y < y0) { y0 = y; }
-            if (y > y1) { y1 = y; }
-          }
-        }
-        if (x1 < x0 || y1 < y0) { return null; }
-        System.Drawing.Rectangle ink = System.Drawing.Rectangle.FromLTRB(x0, y0, x1 + 1, y1 + 1);
-        // one pixel of the box stays clear on every side, so no glyph can touch the edge of its
-        // column or spill over the label
-        float scale = (box - 1) / (float)System.Math.Max(ink.Width, ink.Height);
-        float w = ink.Width * scale, h = ink.Height * scale;
-        System.Drawing.Bitmap tile = new System.Drawing.Bitmap(box, box, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        using (System.Drawing.Graphics tg = System.Drawing.Graphics.FromImage(tile)) {
-          tg.Clear(System.Drawing.Color.Transparent);
-          tg.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-          tg.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
-          tg.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
-          tg.DrawImage(src, new System.Drawing.RectangleF((box - w) / 2f, (box - h) / 2f, w, h), ink, System.Drawing.GraphicsUnit.Pixel);
-        }
-        return tile;
-      } finally { src.Dispose(); }
+      }
+      if (best == null) {
+        best = new GlyphFit();
+        best.Font = face;
+      }
+      return best;
     }
 
     public TrayItem(string label, TraySkin skin) : base(label) {
@@ -1765,20 +1780,18 @@ namespace Cb {
         if (!Enabled) { gc = Skin.Faint; }
         else if (GlyphInk.A > 0) { gc = GlyphInk; }
         else if (IsHeader) { gc = Skin.Accent; }
-        System.Drawing.Bitmap tile = GetGlyphTile(Glyph, Skin.Glyph, Skin.GlyphBox);
-        if (tile != null) {
-          int size = Skin.GlyphBox;
-          using (System.Drawing.Imaging.ImageAttributes ia = new System.Drawing.Imaging.ImageAttributes()) {
-            // the tile is white ink on transparent: scaling the channels paints it in this row's
-            // colour without a second bitmap per colour
-            System.Drawing.Imaging.ColorMatrix cm = new System.Drawing.Imaging.ColorMatrix();
-            cm.Matrix00 = gc.R / 255f;
-            cm.Matrix11 = gc.G / 255f;
-            cm.Matrix22 = gc.B / 255f;
-            ia.SetColorMatrix(cm);
-            g.DrawImage(tile, new System.Drawing.Rectangle(x, (b.Height - size) / 2, size, size),
-              0, 0, tile.Width, tile.Height, System.Drawing.GraphicsUnit.Pixel, ia);
-          }
+        GlyphFit fit = GetGlyphFit(Glyph, Skin.Glyph, Skin.GlyphBox, g.DpiY);
+        if (fit != null) {
+          // a glyph is one colour, so it is drawn with grayscale anti-aliasing: ClearType splits
+          // the stroke into coloured subpixels, which on a 1 px stroke reads as a heavier icon
+          System.Drawing.Text.TextRenderingHint ghint = g.TextRenderingHint;
+          g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+          try {
+            using (System.Drawing.SolidBrush br = new System.Drawing.SolidBrush(gc)) {
+              g.DrawString(Glyph, fit.Font, br,
+                new System.Drawing.RectangleF(x + fit.Dx, ((b.Height - Skin.GlyphBox) / 2f) + fit.Dy, Skin.GlyphBox, Skin.GlyphBox), GlyphFmt);
+            }
+          } finally { g.TextRenderingHint = ghint; }
         }
       }
       int labelX = x + Skin.GlyphBox + Skin.Gap;
