@@ -1137,140 +1137,134 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       else { Set-Foot 'History cleared' ([int]$script:Timing['FootInfo']) }
     }
 
-    $cm = New-Object Windows.Forms.ContextMenuStrip
-    $cm.Font = $fBody
-    $cm.ShowImageMargin = $false
+    # The row menu is the tray menu's twin: the same skin, the same rounded rows and the same
+    # hairline separators. lib/panel/tray-menu.ps1 owns the layout and the row helpers, and
+    # Cb.TrayMenu paints it (lib/assembly/cb.native.cs), so a right click beside the panel does
+    # not open a window drawn in the system colours.
+    $cmSkin = New-TrayMenuSkin (Px 252)
+    $cm = New-Object Cb.TrayMenu -ArgumentList $cmSkin
     # The popup must not take the foreground: that deactivates the window the user came from,
     # and Explorer's address bar / search box collapse - the paste then lands in the file view.
     [void]$cm.Handle
     [void][Cb.Win]::SetWindowLong($cm.Handle, -20, ([Cb.Win]::GetWindowLong($cm.Handle, -20) -bor 0x08000000))
-    # Without visual styles the default renderer paints separators invisibly; the
-    # professional renderer draws real divider lines between the plugin groups.
-    try { $cm.Renderer = New-Object Windows.Forms.ToolStripProfessionalRenderer } catch { }
-    # a group header is a grey, non-clickable line naming the plugin that owns the items
-    $groupFont = $null
-    try { $groupFont = New-Object Drawing.Font($fBody.FontFamily, [Math]::Max(7, $fBody.Size - 1)) } catch { $groupFont = $null }
-    $m1 = $cm.Items.Add('Paste'); $m1.ShortcutKeyDisplayString = 'Enter'
-    $m1.Add_Click({ Use-Index $lst.SelectedIndex })
-    $m2 = $cm.Items.Add('Copy only'); $m2.ShortcutKeyDisplayString = 'Ctrl+Enter'
-    $m2.Add_Click({ Use-Index $lst.SelectedIndex -NoInject })
-    $m7 = $cm.Items.Add('Edit'); $m7.ShortcutKeyDisplayString = 'F2'
-    $m7.Add_Click({ Begin-RowEdit })
-    $m5 = $cm.Items.Add('Delete'); $m5.ShortcutKeyDisplayString = 'Del'
-    $m5.Add_Click({ try { Del-Index $lst.SelectedIndex } catch { } })
-    [void]$cm.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
-    $m6 = $cm.Items.Add('Clear history')
-    $m6.Add_Click({ Request-Clear })
+    # the glyphs the panel already draws with (Segoe Fluent Icons, Segoe MDL2 Assets as fallback)
+    $menuGlyph = @{
+      Paste  = [string][char]0xE77F
+      Copy   = [string][char]0xE8C8
+      Edit   = [string][char]0xE70F
+      Delete = [string][char]0xE74D
+      Clear  = [string]$script:Glyphs.Clear
+    }
+    # The rows are rebuilt for the row under the pointer, in one helper: the menu hides the
+    # actions that do not apply and names each plugin over its own group, and rebuilding is what
+    # keeps the strip's layout right - a row that was hidden once never gets its place back.
+    function Fill-RowMenu($cur) {
+      $has = ($null -ne $cur)
+      foreach ($old in @($cm.Items)) { try { $old.Dispose() } catch { } }
+      $cm.Items.Clear()
 
-    # plugin actions: appended after the built-in ones, hidden unless their Test passes. Items
-    # stay grouped per plugin: a header names it and a separator closes the previous group.
-    $pluginItems = New-Object System.Collections.Generic.List[object]
-    $groupHeads = New-Object System.Collections.Generic.List[object]
-    try {
-      if (Get-Command Get-PluginActions -ErrorAction SilentlyContinue) {
-        $actions = @(Get-PluginActions)
-        if ($actions.Count -gt 0) {
-          [void]$cm.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
-          $lastOwner = ''
-          foreach ($act in $actions) {
-            $owner = [string]$act['Plugin']
-            if ($owner -ne $lastOwner) {
-              if ($lastOwner) { [void]$cm.Items.Add((New-Object Windows.Forms.ToolStripSeparator)) }
-              $groupItem = $cm.Items.Add($owner)
-              $groupItem.Enabled = $false
-              if ($null -ne $groupFont) { $groupItem.Font = $groupFont }
-              $groupHeads.Add(@{ Item = $groupItem; Owner = $owner; Index = ($cm.Items.Count - 1) })
-              $lastOwner = $owner
-            }
-            $item = $cm.Items.Add((Get-ActionText $act $null))
-            if ($act.ContainsKey('Key')) { $item.ShortcutKeyDisplayString = [string]$act['Key'] }
-            $item.Tag = $act
-            $item.Add_Click([System.EventHandler]{
-                param($sn, $ev)
-                try {
-                  $a = $sn.Tag
-                  if ($null -eq $a -or $lst.SelectedIndex -lt 0) { return }
-                  if ($lst.SelectedIndex -ge $script:Filtered.Count) { return }
-                  # a returned string is a note for the footer (a refused pin, for one)
-                  $note = (& $a['Invoke'] $script:Filtered[$lst.SelectedIndex]); if ($note) { Set-Foot ([string]$note) ([int]$script:Timing['FootMessage']) }
-                  $script:Entries = @(Get-Records)
-                  # After = 'paste': the action put its result on the clipboard and wants
-                  # it pasted into the window the picker came from (transform does this)
-                  if ($a.ContainsKey('After') -and [string]$a['After'] -eq 'paste') { Paste-Clip }
-                  else { Update-List $txt.Text }
-                } catch { Write-Log ('plugin action failed: ' + $_.Exception.Message) }
-              })
-            $pluginItems.Add(@{ Item = $item; Owner = $owner; Index = ($cm.Items.Count - 1) })
+      $paste = New-TrayMenuRow -Skin $cmSkin -Label 'Paste' -Glyph $menuGlyph.Paste
+      $paste.Hint = 'Enter'
+      $paste.Enabled = $has
+      # the primary action carries the accent on its glyph, the way a Fluent menu marks the one
+      # row a press is usually meant for
+      $paste.GlyphInk = $cmSkin.Accent
+      $paste.Add_Click({ Use-Index $lst.SelectedIndex })
+      [void]$cm.Items.Add($paste)
+
+      $copy = New-TrayMenuRow -Skin $cmSkin -Label 'Copy only' -Glyph $menuGlyph.Copy
+      $copy.Hint = 'Ctrl+Enter'
+      $copy.Enabled = $has
+      $copy.Add_Click({ Use-Index $lst.SelectedIndex -NoInject })
+      [void]$cm.Items.Add($copy)
+
+      # a picture, a file list and a formatted entry have nothing the editor can show
+      $editable = ($has -and (Test-RowEditable $cur))
+      if ($editable) {
+        $edit = New-TrayMenuRow -Skin $cmSkin -Label 'Edit' -Glyph $menuGlyph.Edit
+        $edit.Hint = 'F2'
+        $edit.Add_Click({ Begin-RowEdit })
+        [void]$cm.Items.Add($edit)
+      }
+
+      $del = New-TrayMenuRow -Skin $cmSkin -Label 'Delete' -Glyph $menuGlyph.Delete
+      $del.Hint = 'Del'
+      $del.Enabled = $has
+      # a removal warns in the same token the panel uses for a refusal
+      $del.GlyphInk = $cmSkin.Warn
+      $del.Ink = $cmSkin.Warn
+      $del.Add_Click({ try { Del-Index $lst.SelectedIndex } catch { } })
+      [void]$cm.Items.Add($del)
+
+      $clear = New-TrayMenuRow -Skin $cmSkin -Label 'Clear history' -Glyph $menuGlyph.Clear
+      $clear.Enabled = ($script:Entries.Count -gt 0)
+      $clear.GlyphInk = $cmSkin.Warn
+      $clear.Ink = $cmSkin.Warn
+      # the destructive row starts its own block: a separator row, not a line inside the row, so
+      # the air above the line and below it is the same as everywhere else in the menu
+      [void](Add-TrayMenuSeparator $cm $cmSkin)
+      [void]$cm.Items.Add($clear)
+      $clear.Add_Click({ Request-Clear })
+
+      # plugin actions: one group per plugin, in load order, with a header that names it. Only
+      # the actions whose Test passes for this row are built, so nothing has to be hidden later.
+      $picked = New-Object System.Collections.Generic.List[object]
+      try {
+        if ($has -and (Get-Command Get-PluginActions -ErrorAction SilentlyContinue)) {
+          foreach ($act in @(Get-PluginActions)) {
+            if (-not (Test-PluginAction $act $cur)) { continue }
+            [void]$picked.Add($act)
           }
         }
-      }
-    } catch { Write-Log ('plugin menu failed: ' + $_.Exception.Message) }
+      } catch { Write-Log ('plugin menu failed: ' + $_.Exception.Message) }
 
-    # right click acts on the row under the cursor, never on a stale selection
+      $seen = New-Object System.Collections.Generic.List[string]
+      foreach ($act in $picked) {
+        $owner = [string]$act['Plugin']
+        if (-not $seen.Contains($owner)) {
+          [void]$seen.Add($owner)
+          # every plugin block starts with a line, the way the built-in block before it does
+          [void](Add-TrayMenuSeparator $cm $cmSkin)
+          $cap = New-TrayMenuRow -Skin $cmSkin -Label $owner -Caption
+          [void]$cm.Items.Add($cap)
+        }
+        $row = New-TrayMenuRow -Skin $cmSkin -Label (Get-ActionText $act $cur)
+        if ($act.ContainsKey('Key')) { $row.Hint = [string]$act['Key'] }
+        $row.Tag = $act
+        $row.Add_Click([System.EventHandler]{
+            param($sn, $ev)
+            try {
+              $a = $sn.Tag
+              if ($null -eq $a -or $lst.SelectedIndex -lt 0) { return }
+              if ($lst.SelectedIndex -ge $script:Filtered.Count) { return }
+              # a returned string is a note for the footer (a refused pin, for one)
+              $note = (& $a['Invoke'] $script:Filtered[$lst.SelectedIndex]); if ($note) { Set-Foot ([string]$note) ([int]$script:Timing['FootMessage']) }
+              $script:Entries = @(Get-Records)
+              # After = 'paste': the action put its result on the clipboard and wants
+              # it pasted into the window the picker came from (transform does this)
+              if ($a.ContainsKey('After') -and [string]$a['After'] -eq 'paste') { Paste-Clip }
+              else { Update-List $txt.Text }
+            } catch { Write-Log ('plugin action failed: ' + $_.Exception.Message) }
+          })
+        [void]$cm.Items.Add($row)
+      }
+      $cm.Fit()
+    }
+    # a placeholder fill so the strip has its real height before the first open: the drop-down
+    # positions itself from the size it has then
+    Fill-RowMenu $null
+
+    # right click acts on the row under the cursor, never on a stale selection: the menu is built
+    # for that row every time it opens, so the actions that do not apply are never in it at all
     $cm.Add_Opening({
         try {
           $pt = $lst.PointToClient([Windows.Forms.Cursor]::Position)
           $i = $lst.IndexFromPoint($pt)
           if ($i -ge 0 -and $i -lt $script:Filtered.Count) { $lst.SelectedIndex = $i } else { $lst.SelectedIndex = -1 }
-          $has = ($lst.SelectedIndex -ge 0 -and $lst.SelectedIndex -lt $script:Filtered.Count)
-          $m1.Enabled = $has
-          $m2.Enabled = $has
-          $m5.Enabled = $has
-          $m6.Enabled = ($script:Entries.Count -gt 0)
           $cur = $null
-          if ($has) { $cur = $script:Filtered[$lst.SelectedIndex] }
-          # A drop-down that is still opening reports Visible=false for every item, so the
-          # layout is tracked here and applied afterwards instead of read back.
-          $keep = [bool[]]::new($cm.Items.Count)
-          for ($k = 0; $k -lt $keep.Length; $k++) {
-            $keep[$k] = ($cm.Items[$k] -isnot [Windows.Forms.ToolStripSeparator])
-          }
-          # a picture, a file list and a formatted entry have nothing the editor can show
-          $editable = ($null -ne $cur -and (Test-RowEditable $cur))
-          $m7.Visible = $editable
-          $m7.Enabled = $editable
-          $keep[[int]$cm.Items.IndexOf($m7)] = $editable
-          $ownerShown = @{}
-          foreach ($slot in $pluginItems) {
-            $it = $slot.Item
-            $show = $false
-            if ($null -ne $cur -and (Get-Command Test-PluginAction -ErrorAction SilentlyContinue)) {
-              $show = Test-PluginAction $it.Tag $cur
-            }
-            $it.Visible = $show
-            $it.Enabled = $show
-            $keep[$slot.Index] = $show
-            if ($show) {
-              # a plugin may compute its label per row: 'Pin to top' / 'Remove pin'
-              $it.Text = Get-ActionText $it.Tag $cur
-              $ownerShown[[string]$slot.Owner] = $true
-            }
-          }
-          # a header follows its group: when every item of a plugin is hidden the name goes
-          # away with them, and the separators around it collapse
-          foreach ($h in $groupHeads) {
-            $any = $ownerShown.ContainsKey([string]$h.Owner)
-            $h.Item.Visible = $any
-            $keep[$h.Index] = $any
-          }
-          # a separator needs an item on both sides and never sits back to back, or hiding
-          # every action of a plugin leaves an empty band between the neighbouring groups
-          $prevSep = $false
-          for ($k = 0; $k -lt $cm.Items.Count; $k++) {
-            $it = $cm.Items[$k]
-            if ($it -isnot [Windows.Forms.ToolStripSeparator]) {
-              if ($keep[$k]) { $prevSep = $false }
-              continue
-            }
-            $before = $false
-            for ($j = 0; $j -lt $k; $j++) { if ($keep[$j]) { $before = $true; break } }
-            $after = $false
-            for ($j = $k + 1; $j -lt $keep.Length; $j++) { if ($keep[$j]) { $after = $true; break } }
-            $show = ($before -and $after -and -not $prevSep)
-            $it.Visible = $show
-            if ($show) { $prevSep = $true }
-          }
-        } catch { }
+          if ($lst.SelectedIndex -ge 0 -and $lst.SelectedIndex -lt $script:Filtered.Count) { $cur = $script:Filtered[$lst.SelectedIndex] }
+          Fill-RowMenu $cur
+        } catch { Write-Log ('row menu failed: ' + $_.Exception.Message) }
       })
     $lst.ContextMenuStrip = $cm
     # the empty-state layer covers the list and swallows its right click
@@ -1745,7 +1739,6 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       try { Close-Preview $pv } catch { }
       try { $pvCfg.InkBrush.Dispose(); $pvCfg.DimBrush.Dispose() } catch { }
       try { $cm.Dispose() } catch { }
-      try { if ($null -ne $groupFont) { $groupFont.Dispose() } } catch { }
       # the row background brush is built per panel; without this it waited for the finalizer,
       # which is what made the GDI count climb by one on every open until a collection
       try { $bgBrush.Dispose() } catch { }
@@ -1872,9 +1865,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     Close-Preview $pv
     try { $pvCfg.InkBrush.Dispose(); $pvCfg.DimBrush.Dispose() } catch { }
     $cm.Dispose()
-    # GDI handles this panel owns: the row background brush, the group heading font, and the
-    # region the form paints with
-    try { if ($null -ne $groupFont) { $groupFont.Dispose() } } catch { }
+    # GDI handles this panel owns: the row background brush and the region the form paints with
     try { $bgBrush.Dispose() } catch { }
     try { $rgn = $form.Region; $form.Dispose(); if ($null -ne $rgn) { $rgn.Dispose() } } catch { }
   } catch {

@@ -11,31 +11,37 @@
 # from the panel palette, and the fonts are the panel's own, so a theme restyles all three
 # surfaces at once.
 
-# The measurements at the 96 dpi design size. A row is 28 px with a 10.5 pt label - tighter
-# than a settings row and tighter than the system menu this one replaces, which is what a menu
-# opened from the tray should be: the settings window is the place to be roomy. The menu is
-# 222 px, which still fits "Edit settings file..." beside its column.
+# The measurements follow the WinUI MenuFlyout template, at the 96 dpi design size: a row is
+# 32 px tall (MenuFlyoutThemeMinHeight), an icon is 16 px square, the row carries 12 px of padding
+# on both sides and 12 px between the icon and its label, and a separator is its own row - a 1 px
+# line with one pixel above it and one below (MenuFlyoutSeparatorHeight 1 inside a -4,1,-4,1
+# padding), reaching 4 px past the row padding on either side. Only the width is the tool's own:
+# the tray menu is 240 px so "Edit settings file..." still fits beside a hint or a switch.
 function Get-TrayMenuLayout {
   return @{
-    Width = (Px 222)
-    RowHeight = (Px 28)
+    Width = (Px 240)
+    RowHeight = (Px 32)
     Radius = (Get-WindowRadius)
     RowRadius = (Px 5)
-    PadLeft = (Px 9)
-    PadRight = (Px 11)
-    GlyphBox = (Px 18)
-    Gap = (Px 8)
+    PadLeft = (Px 12)
+    PadRight = (Px 12)
+    GlyphBox = (Px 16)
+    Gap = (Px 12)
     Top = (Px 4)
     Bottom = (Px 4)
-    SeparatorInset = (Px 9)
-    SeparatorGap = (Px 7)
+    # the line spans the row content box grown by the 4 px of that negative padding, so it keeps
+    # a visible margin at both ends and still lines up the same way in every menu
+    SeparatorInset = ((Px 12) - (Px 4))
+    SeparatorHeight = (Px 3)
     SwitchWidth = (Px 26)
     SwitchHeight = (Px 14)
   }
 }
 
 # Everything the C# side needs to draw one menu, resolved once from the palette and the fonts.
-function New-TrayMenuSkin {
+# $Width overrides the tray menu's own width: the row menu in the panel is a little wider, because
+# its labels and shortcut column are longer than the tray's.
+function New-TrayMenuSkin([int]$Width = 0) {
   $pal = Get-UiPalette
   [void](Initialize-PanelFonts)
   $skin = New-Object Cb.TraySkin
@@ -45,14 +51,25 @@ function New-TrayMenuSkin {
   $skin.Dim = $pal.Dim
   $skin.Faint = $pal.Faint
   $skin.Accent = $pal.Accent
+  $skin.Warn = $pal.Warn
   $skin.Hover = $pal.HoverBg
   $skin.Selected = $pal.SelBg
+  # DividerStrokeColorDefault, the token MenuFlyoutSeparatorBackground points at: #15FFFFFF over a
+  # dark surface and #0F000000 over a light one. It is not one alpha in both themes - the dark
+  # value is 8% white and the light one 6% black - which is why the surfaces use two.
+  $dark = ((0.299 * $pal.Surface.R) + (0.587 * $pal.Surface.G) + (0.114 * $pal.Surface.B)) -lt 128
+  $divider = if ($dark) { [Drawing.Color]::FromArgb(0x15, 255, 255, 255) } else { [Drawing.Color]::FromArgb(0x0F, 0, 0, 0) }
+  $skin.Separator = $divider
   $skin.Field = $pal.Field
   $skin.FieldBorder = $pal.FieldBorder
   $skin.Body = $script:FBody
   $skin.Small = $script:FSmall
-  $skin.Glyph = $script:FIconSmall
+  # MenuFlyoutItem's icon is a 16 px square. The icon face only names the family the glyph is cut
+  # from: Cb.TrayItem rasterises each glyph and fits its own ink to GlyphBox, so the drawn size is
+  # the skin's, not the font's
+  $skin.Glyph = $script:FIcon
   $layout = Get-TrayMenuLayout
+  if ($Width -gt 0) { $layout.Width = $Width }
   foreach ($k in @($layout.Keys)) { $skin.$k = [int]$layout[$k] }
   return $skin
 }
@@ -78,24 +95,29 @@ function Get-TrayGlyphs {
 
 # One row. A header is the same row without the hover state, not selectable at all - an arrow
 # key may not land on it - and with the accent on its glyph: it names the menu and carries the
-# count the old "17 entries" line used to spell out.
+# count the old "17 entries" line used to spell out. A caption is the quiet label over a group:
+# caption size, the faint ink, and one row shorter than an action.
 function New-TrayMenuRow {
-  param($Skin, [string]$Label, [string]$Glyph = '', [switch]$Switch, [switch]$Header)
+  param($Skin, [string]$Label, [string]$Glyph = '', [switch]$Switch, [switch]$Header, [switch]$Caption)
   $row = New-Object Cb.TrayItem -ArgumentList @($Label, $Skin)
   $row.Glyph = $Glyph
   $row.IsHeader = [bool]$Header
+  $row.IsCaption = [bool]$Caption
   $row.IsSwitch = [bool]$Switch
+  if ($Caption) { $row.Size = New-Object Drawing.Size ([int]$Skin.Width), ([int](Px 26)) }
   return $row
 }
 
+# A group boundary is a row that carries only a hairline: the system separator ignores the height
+# a caller gives it, so Add-TrayMenuSeparator adds a row of this menu instead and the line, the
+# air around it and its width are the same everywhere.
 function Add-TrayMenuSeparator {
   param($Menu, $Skin)
-  $sep = New-Object Windows.Forms.ToolStripSeparator
-  $sep.AutoSize = $false
-  $sep.Margin = New-Object Windows.Forms.Padding 0
-  $sep.Size = New-Object Drawing.Size ([int]$Skin.Width), ([int]$Skin.SeparatorGap)
-  [void]$Menu.Items.Add($sep)
-  return $sep
+  $row = New-Object Cb.TrayItem -ArgumentList @('', $Skin)
+  $row.IsSeparator = $true
+  $row.Size = New-Object Drawing.Size ([int]$Skin.Width), ([int]$Skin.SeparatorHeight)
+  [void]$Menu.Items.Add($row)
+  return $row
 }
 
 # The menu itself. The item order and the glyphs are the design; what each row does belongs to

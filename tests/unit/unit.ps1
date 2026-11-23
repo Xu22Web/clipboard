@@ -820,9 +820,23 @@ try {
         Expect ($script:StructPickerText -match '(?s)MenuClosedAt.{0,400}\$form\.Close\(\)') 'a click beside the menu leaves the panel open'
       }
 
-      It 'releases its menu font and form region' {
-        # per-open GDI handles: the group heading font and the rounded region the form paints with
-        Expect (($script:StructPickerText -match 'groupFont\.Dispose\(\)') -and ($script:StructDrawText -match 'function Update-PanelRegion')) 'GDI handles released nowhere'
+      It 'releases the handles it builds per open' {
+        # per-open GDI handles: the rounded region the form paints with. The row menu's rows and
+        # skin use the panel's shared fonts and are collected with the strip, so it no longer
+        # creates a font of its own per open.
+        Expect ($script:StructDrawText -match 'function Update-PanelRegion') 'the form region is released nowhere'
+        Expect ($script:StructPickerText -match '(?s)\$cm\.Dispose\(\)') 'the row menu is not disposed'
+      }
+
+      It 'the row menu is drawn by the tray menu s own class' {
+        # one skin, one row class and one separator helper for both menus: a right click beside
+        # the panel must not open a window in the system colours
+        Expect ($script:StructPickerText -match 'New-Object Cb\.TrayMenu') 'the row menu is a system menu'
+        Expect ($script:StructPickerText -match 'New-TrayMenuSkin') 'the row menu has no skin from the tray menu'
+        Expect (-not ($script:StructPickerText -match 'ToolStripProfessionalRenderer')) 'the row menu still uses the system renderer'
+        # a group boundary is a separator row, not a line drawn inside the row that follows it:
+        # the line has to sit in its own row or the air above and below it differs per group
+        Expect ($script:StructPickerText -match 'Add-TrayMenuSeparator') 'the row menu draws its group lines inside a row'
       }
 
       It 'shows a hover card, not a tooltip' {

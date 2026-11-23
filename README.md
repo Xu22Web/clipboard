@@ -173,7 +173,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `Del` / `Ctrl+Z` | 删除选中项 / 撤销上一次删除 |
 | `F2` | 就地编辑纯文本条目：面板换成编辑卡片，`Enter` 保存、`Shift+Enter` 换行、`Esc` 取消（改动过文本时需按两次 `Esc`）；保存失败时保留编辑内容并显示原因；图片、文件列表与带格式条目不响应 |
 | 双击一行 | 与 `Enter` 相同 |
-| 右键一行 | 打开右键菜单，作用于光标下的行（`Paste` / `Copy only` / `Edit` / `Delete` / `Clear history` 与插件项） |
+| 右键一行 | 打开右键菜单，作用于光标下的行（`Paste` / `Copy only` / `Edit` / `Delete` / `Clear history` 与插件项）；菜单与托盘菜单同一套自绘样式、随主题变化，`Paste` 用强调色图标，`Delete` 与 `Clear history` 用警告色，插件按组列出、组名是小字标题 |
 | `Ctrl+点击` / `Shift+点击` / `Ctrl+A` | 多选：逐个加减 / 取一段 / 全选当前结果 |
 | `Del`（多选） | 删除所有选中项；带保护标记的行保留并说明原因 |
 | `Ctrl+Enter`（多选） | 按列表顺序以换行拼接后复制 |

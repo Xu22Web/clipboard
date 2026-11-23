@@ -1538,10 +1538,15 @@ namespace Cb {
     public System.Drawing.Color Dim = System.Drawing.Color.FromArgb(170, 170, 170);
     public System.Drawing.Color Faint = System.Drawing.Color.FromArgb(138, 138, 138);
     public System.Drawing.Color Accent = System.Drawing.Color.FromArgb(96, 205, 255);
+    // the ink a destructive row and its glyph take: a remove is not the same weight as a paste
+    public System.Drawing.Color Warn = System.Drawing.Color.Empty;
     // hover and pressed come from the theme as translucent overlays; an empty colour means the
     // row does not light up at all
     public System.Drawing.Color Hover = System.Drawing.Color.Empty;
     public System.Drawing.Color Selected = System.Drawing.Color.Empty;
+    // the hairline between groups: the window border is far too faint for a line inside the
+    // surface, so the caller resolves a stronger token for it
+    public System.Drawing.Color Separator = System.Drawing.Color.Empty;
     // the switch: the field colour for the track that is off, the accent for the one that is on
     public System.Drawing.Color Field = System.Drawing.Color.Empty;
     public System.Drawing.Color FieldBorder = System.Drawing.Color.Empty;
@@ -1561,7 +1566,9 @@ namespace Cb {
     public int Top = 4;
     public int Bottom = 4;
     public int SeparatorInset = 9;
-    public int SeparatorGap = 7;
+    // MenuFlyoutSeparator is a 1 px rectangle with a -4,1,-4,1 padding, so the row it occupies is
+    // 3 px: one pixel of air above the line and one below it
+    public int SeparatorHeight = 3;
     public int SwitchWidth = 26;
     public int SwitchHeight = 14;
     // the highlight is inset from the edge, the way a panel row is: a row that touches the
@@ -1578,10 +1585,17 @@ namespace Cb {
     public string Hint = "";
     public bool IsHeader = false;
     public bool IsSwitch = false;
+    // A caption names the group under it in the quiet ink at caption size: it is a label, not a
+    // row, and the two inks below let one action stand out (the accent) or warn (the warn token)
+    public bool IsCaption = false;
+    // a row that only carries a hairline: the system separator keeps a height of its own, so the
+    // menu draws its own and gets the 1 px line and the air around it it asked for
+    public bool IsSeparator = false;
+    public System.Drawing.Color Ink = System.Drawing.Color.Empty;
+    public System.Drawing.Color GlyphInk = System.Drawing.Color.Empty;
 
     static readonly System.Drawing.StringFormat LeftFmt = MakeFormat(System.Drawing.StringAlignment.Near, false);
     static readonly System.Drawing.StringFormat RightFmt = MakeFormat(System.Drawing.StringAlignment.Far, false);
-    static readonly System.Drawing.StringFormat GlyphFmt = MakeFormat(System.Drawing.StringAlignment.Center, true);
 
     static System.Drawing.StringFormat MakeFormat(System.Drawing.StringAlignment a, bool noTrim) {
       System.Drawing.StringFormat f = new System.Drawing.StringFormat();
@@ -1619,6 +1633,71 @@ namespace Cb {
       return p;
     }
 
+    // One glyph out of an icon font is not the same shape as the next: measured on the drawn menu,
+    // E8C8 (copy) inks 16 x 16 inside the box, E70F (the pencil) inks 18 x 16 and spills a pixel
+    // into the label, and ClearType fringes a 1 px stroke in colour, which reads as a heavier
+    // icon. So a glyph is rasterised once - grayscale anti-aliasing, six times the box, the
+    // font's own outlines rather than its hinting - and kept as a white tile whose ink is scaled
+    // to fill the box and centred on that ink. Every row then draws the same optical square, and
+    // the colour matrix at paint time tints one bitmap instead of one per ink.
+    static readonly System.Collections.Generic.Dictionary<string, System.Drawing.Bitmap> GlyphTiles =
+      new System.Collections.Generic.Dictionary<string, System.Drawing.Bitmap>();
+
+    static System.Drawing.Bitmap GetGlyphTile(string glyph, System.Drawing.Font font, int box) {
+      if (box <= 0 || string.IsNullOrEmpty(glyph) || font == null) { return null; }
+      string key = glyph + "|" + font.FontFamily.Name + "|" + font.Size + "|" + font.Style + "|" + box;
+      System.Drawing.Bitmap tile = null;
+      lock (GlyphTiles) {
+        if (GlyphTiles.TryGetValue(key, out tile)) { return tile; }
+        tile = BuildGlyphTile(glyph, font, box);
+        GlyphTiles[key] = tile;
+        return tile;
+      }
+    }
+
+    static System.Drawing.Bitmap BuildGlyphTile(string glyph, System.Drawing.Font font, int box) {
+      int big = box * 6;
+      System.Drawing.Bitmap src = new System.Drawing.Bitmap(big, big, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+      try {
+        using (System.Drawing.Graphics g = System.Drawing.Graphics.FromImage(src)) {
+          g.Clear(System.Drawing.Color.Transparent);
+          g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+          g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+          // 96 dpi: one point is 4/3 of a pixel, so the em is the box times six
+          using (System.Drawing.Font f = new System.Drawing.Font(font.FontFamily, big * 0.75f, font.Style, System.Drawing.GraphicsUnit.Point))
+          using (System.Drawing.SolidBrush br = new System.Drawing.SolidBrush(System.Drawing.Color.White))
+          using (System.Drawing.StringFormat fmt = MakeFormat(System.Drawing.StringAlignment.Center, true)) {
+            g.DrawString(glyph, f, br, new System.Drawing.RectangleF(0, 0, big, big), fmt);
+          }
+        }
+        int x0 = big, y0 = big, x1 = -1, y1 = -1;
+        for (int y = 0; y < big; y++) {
+          for (int x = 0; x < big; x++) {
+            if (src.GetPixel(x, y).A <= 8) { continue; }
+            if (x < x0) { x0 = x; }
+            if (x > x1) { x1 = x; }
+            if (y < y0) { y0 = y; }
+            if (y > y1) { y1 = y; }
+          }
+        }
+        if (x1 < x0 || y1 < y0) { return null; }
+        System.Drawing.Rectangle ink = System.Drawing.Rectangle.FromLTRB(x0, y0, x1 + 1, y1 + 1);
+        // one pixel of the box stays clear on every side, so no glyph can touch the edge of its
+        // column or spill over the label
+        float scale = (box - 1) / (float)System.Math.Max(ink.Width, ink.Height);
+        float w = ink.Width * scale, h = ink.Height * scale;
+        System.Drawing.Bitmap tile = new System.Drawing.Bitmap(box, box, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using (System.Drawing.Graphics tg = System.Drawing.Graphics.FromImage(tile)) {
+          tg.Clear(System.Drawing.Color.Transparent);
+          tg.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+          tg.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+          tg.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+          tg.DrawImage(src, new System.Drawing.RectangleF((box - w) / 2f, (box - h) / 2f, w, h), ink, System.Drawing.GraphicsUnit.Pixel);
+        }
+        return tile;
+      } finally { src.Dispose(); }
+    }
+
     public TrayItem(string label, TraySkin skin) : base(label) {
       Skin = skin;
       AutoSize = false;
@@ -1637,7 +1716,7 @@ namespace Cb {
     // never lights it up. A click on it runs nothing and dismisses the menu the way any other
     // inert row does - ToolStripDropDown closes on an item click, and a title is not worth
     // holding the menu open for.
-    public override bool CanSelect { get { return IsHeader ? false : base.CanSelect; } }
+    public override bool CanSelect { get { return (IsHeader || IsCaption || IsSeparator) ? false : base.CanSelect; } }
 
     // the whole of one row: the background it lights up with, the glyph, the label and what the
     // right-hand column carries
@@ -1654,7 +1733,17 @@ namespace Cb {
 
     void PaintRow(System.Drawing.Graphics g) {
       System.Drawing.Rectangle b = new System.Drawing.Rectangle(System.Drawing.Point.Empty, Size);
-      bool hot = (Selected || Pressed) && Enabled && !IsHeader;
+      if (IsSeparator) {
+        // the hairline sits in the middle of the strip the row reserves for it, on a whole pixel:
+        // a line at half a pixel is drawn twice, a pixel wide each time, and reads as 2 px of grey
+        float mid = (Size.Height - 1) / 2f;
+        System.Drawing.Color hair = Skin.Separator.A > 0 ? Skin.Separator : Skin.Border;
+        using (System.Drawing.Pen pen = new System.Drawing.Pen(hair)) {
+          g.DrawLine(pen, Skin.SeparatorInset, mid, b.Width - 1 - Skin.SeparatorInset, mid);
+        }
+        return;
+      }
+      bool hot = (Selected || Pressed) && Enabled && !IsHeader && !IsCaption;
       if (hot) {
         System.Drawing.Color fill = Pressed ? Skin.Selected : Skin.Hover;
         if (fill.A > 0) {
@@ -1667,12 +1756,29 @@ namespace Cb {
         }
       }
       System.Drawing.Color ink = Enabled ? Skin.Text : Skin.Faint;
+      if (IsCaption) { ink = Skin.Dim; }
+      if (Ink.A > 0) { ink = Ink; }
+      if (!Enabled) { ink = Skin.Faint; }
       int x = Skin.PadLeft;
       if (Glyph.Length > 0 && Skin.Glyph != null) {
-        System.Drawing.Color gc = !Enabled ? Skin.Faint : (IsHeader ? Skin.Accent : Skin.Dim);
-        using (System.Drawing.SolidBrush br = new System.Drawing.SolidBrush(gc)) {
-          g.DrawString(Glyph, Skin.Glyph, br,
-            new System.Drawing.RectangleF(x, 0, Skin.GlyphBox, b.Height), GlyphFmt);
+        System.Drawing.Color gc = Skin.Dim;
+        if (!Enabled) { gc = Skin.Faint; }
+        else if (GlyphInk.A > 0) { gc = GlyphInk; }
+        else if (IsHeader) { gc = Skin.Accent; }
+        System.Drawing.Bitmap tile = GetGlyphTile(Glyph, Skin.Glyph, Skin.GlyphBox);
+        if (tile != null) {
+          int size = Skin.GlyphBox;
+          using (System.Drawing.Imaging.ImageAttributes ia = new System.Drawing.Imaging.ImageAttributes()) {
+            // the tile is white ink on transparent: scaling the channels paints it in this row's
+            // colour without a second bitmap per colour
+            System.Drawing.Imaging.ColorMatrix cm = new System.Drawing.Imaging.ColorMatrix();
+            cm.Matrix00 = gc.R / 255f;
+            cm.Matrix11 = gc.G / 255f;
+            cm.Matrix22 = gc.B / 255f;
+            ia.SetColorMatrix(cm);
+            g.DrawImage(tile, new System.Drawing.Rectangle(x, (b.Height - size) / 2, size, size),
+              0, 0, tile.Width, tile.Height, System.Drawing.GraphicsUnit.Pixel, ia);
+          }
         }
       }
       int labelX = x + Skin.GlyphBox + Skin.Gap;
@@ -1684,14 +1790,16 @@ namespace Cb {
       int labelRight = b.Width - Skin.PadRight - (rightW > 0 ? rightW + Skin.Gap : 0);
       int labelW = labelRight - labelX;
       if (labelW > 0) {
+        System.Drawing.Font face = (IsCaption && Skin.Small != null) ? Skin.Small : Skin.Body;
         using (System.Drawing.SolidBrush br = new System.Drawing.SolidBrush(ink)) {
-          g.DrawString(Text, Skin.Body, br,
+          g.DrawString(Text, face, br,
             new System.Drawing.RectangleF(labelX, 0, labelW, b.Height), LeftFmt);
         }
       }
       if (IsSwitch) { PaintSwitch(g, b); }
       else if (Hint.Length > 0 && Skin.Small != null) {
-        using (System.Drawing.SolidBrush br = new System.Drawing.SolidBrush(Skin.Faint)) {
+        // the keyboard accelerator is secondary text in WinUI, not the disabled ink
+        using (System.Drawing.SolidBrush br = new System.Drawing.SolidBrush(Skin.Dim)) {
           g.DrawString(Hint, Skin.Small, br,
             new System.Drawing.RectangleF(labelRight + Skin.Gap, 0, rightW, b.Height), RightFmt);
         }
@@ -1868,9 +1976,10 @@ namespace Cb {
       System.Drawing.Rectangle b = e.Item.Bounds;
       int y = b.Top + (b.Height / 2);
       int left = skin.SeparatorInset;
-      int right = e.ToolStrip.Width - skin.SeparatorInset;
+      int right = e.ToolStrip.Width - 1 - skin.SeparatorInset;
       if (right <= left) { return; }
-      using (System.Drawing.Pen pen = new System.Drawing.Pen(skin.Border)) {
+      System.Drawing.Color colour = skin.Separator.A > 0 ? skin.Separator : skin.Border;
+      using (System.Drawing.Pen pen = new System.Drawing.Pen(colour)) {
         e.Graphics.DrawLine(pen, left, y, right, y);
       }
     }
