@@ -24,7 +24,7 @@ function Get-SettingGroupTable {
     'Compact' = @('CompactMode', 'CompactWidth', 'CompactRows')
     # theme plus everything that only changes how the panel looks or animates; the keys that
     # move or size the window stay on Panel
-    'Appearance' = @('Theme', 'ShowTime', 'ShowTypeIcon', 'ShowThumbnails', 'Highlight', 'HighlightMaxBytes',
+    'Appearance' = @('Theme', 'Language', 'ShowTime', 'ShowTypeIcon', 'ShowThumbnails', 'Highlight', 'HighlightMaxBytes',
       'ShowNewlineMarker', 'PreviewHover', 'PreviewDelay', 'PreviewChars', 'Animations', 'DpiAware')
     'Startup' = @('Autostart', 'DesktopShortcut', 'Balloon')
     'Plugins' = @('Plugins')
@@ -58,7 +58,9 @@ function Get-SettingLabel([string]$key) {
   foreach ($pair in @(@('Html', 'HTML'), @('Rtf', 'RTF'), @('Dpi', 'DPI'), @('Url', 'URL'))) {
     $s = $s -creplace ('\b' + $pair[0] + '\b'), $pair[1]
   }
-  return ([string]$s[0]).ToUpperInvariant() + $s.Substring(1)
+  $derived = ([string]$s[0]).ToUpperInvariant() + $s.Substring(1)
+  $labelKey = 'settings.key.' + $key
+  return (Get-UiTextOr $labelKey $derived)
 }
 
 # What kind of editor a value needs. The schema types that need the same editor collapse into
@@ -117,8 +119,8 @@ function Format-SettingText($schema, [string]$key, [string]$raw) {
   $spec = Get-SchemaProperty $schema $key
   $kind = Get-SettingKind $spec
   if ($kind -eq 'bool') {
-    if ([string]$raw -eq '1') { return 'On' }
-    return 'Off'
+    if ([string]$raw -eq '1') { return (Get-UiText 'settings.value.on') }
+    return (Get-UiText 'settings.value.off')
   }
   # A list holds several names and the value column is one line wide, so it states the count
   # instead: which names are ticked is what opening the list shows.
@@ -130,7 +132,11 @@ function Format-SettingText($schema, [string]$key, [string]$raw) {
       # an empty field holds its hint, the same word every other kind shows: (auto) says the
       # position follows the screen rather than being zero
       $hint = ''
-      if ($null -ne $spec) { $hint = [string](Get-SchemaHint $schema $key) }
+      if ($null -ne $spec) {
+        $hintKey = 'settings.hint.' + $key
+        $hintRaw = [string](Get-SchemaHint $schema $key)
+        $hint = Get-UiTextOr $hintKey $hintRaw
+      }
       if ($hint) { return $hint }
       return '(empty)'
     }
@@ -139,9 +145,13 @@ function Format-SettingText($schema, [string]$key, [string]$raw) {
   }
   if ([string]$raw -eq '') {
     $hint = ''
-    if ($null -ne $spec) { $hint = [string](Get-SchemaHint $schema $key) }
+    if ($null -ne $spec) {
+      $hintKey = 'settings.hint.' + $key
+      $hintRaw = [string](Get-SchemaHint $schema $key)
+      $hint = Get-UiTextOr $hintKey $hintRaw
+    }
     if ($hint) { return $hint }
-    return '(empty)'
+    return (Get-UiText 'settings.value.empty')
   }
   return [string]$raw
 }
@@ -150,13 +160,13 @@ function Format-SettingText($schema, [string]$key, [string]$raw) {
 function Format-SettingListText([string]$raw, $choices) {
   $all = @($choices)
   $on = @(Split-SettingList $raw)
-  if ($all.Count -eq 0) { return ([string]$on.Count) + ' selected' }
+  if ($all.Count -eq 0) { return (Get-UiText 'settings.value.selected' @($on.Count)) }
   $hit = 0
   foreach ($n in $on) {
     foreach ($c in $all) { if ([string]$c -ieq [string]$n) { $hit++; break } }
   }
-  if ($hit -ge $all.Count) { return 'All' }
-  return ([string]$hit) + ' of ' + ([string]$all.Count)
+  if ($hit -ge $all.Count) { return (Get-UiText 'settings.value.all') }
+  return (Get-UiText 'settings.value.of' @($hit, $all.Count))
 }
 
 # The sentence under the value: the schema's own Description, plus the range an integer
@@ -169,15 +179,18 @@ function Get-SettingHelp($schema, [string]$key) {
   if ($spec.Contains('ReadOnly')) {
     # a row that opens a dialog is not read-only in the same sense: it is changed by picking, so
     # the line says what picking does instead of forbidding it
-    if ($spec.Contains('Pick')) { return ('Click to choose the folder; ' + [string]$spec['ReadOnly']) }
-    return ('Read-only - ' + [string]$spec['ReadOnly'])
+    if ($spec.Contains('Pick')) { return (Get-UiText 'settings.help.pick' @([string]$spec['ReadOnly'])) }
+    return (Get-UiText 'settings.help.readonly' @([string]$spec['ReadOnly']))
   }
   $d = ''
   if ($spec.Contains('Description')) { $d = [string]$spec['Description'] }
+  # the window quotes the language file; the schema line stays as it is, because it is also the
+  # comment `config init` writes into clipboard.ini and that file is English
+  $d = Get-UiTextOr ('settings.desc.' + $key) $d
   # A value only install acts on cannot be made to take effect by any reload: the shortcut it
   # controls is created or removed by `install`. The line says that first, because "why did the
   # tick do nothing" is the question a settings page has to answer.
-  if (Test-SchemaInstallOnly $schema $key) { $d = 'Takes effect on the next install. ' + $d }
+  if (Test-SchemaInstallOnly $schema $key) { $d = (Get-UiText 'settings.help.install' @($d)) }
   if ((Get-SettingKind $spec) -eq 'number') {
     $lo = $null
     $hi = $null
@@ -423,26 +436,31 @@ function Get-SettingAboutRows {
     'Plugins'       = 'loaded in this order; Plugins= picks them, an empty value means all of them'
   }
   foreach ($k in @($facts.Keys)) {
-    $label = [string]$k
+    # the fact name stays the identity - it is the row key and the word the schema knows - and
+    # only what the row says is translated
+    $name = [string]$k
+    $labelKey = 'settings.about.label.' + $name
+    $label = Get-UiTextOr $labelKey $name
     $text = [string]$facts[$k]
     $why = ''
-    if ($help.ContainsKey($label)) { $why = [string]$help[$label] }
-    if ($label -eq 'Version') { $text = 'version ' + $text }
-    if ($label -ceq 'Store Folder' -or $label -ceq 'Settings File') {
+    if ($help.ContainsKey($name)) { $why = [string]$help[$name] }
+    $why = Get-UiTextOr ('settings.about.' + $name) $why
+    if ($name -ceq 'Version') { $text = (Get-UiText 'settings.about.versionLine' @($text)) }
+    if ($name -ceq 'Store Folder' -or $name -ceq 'Settings File') {
       # the full path is the fact; the row shows the segment that names it
       if ($why) { $why = $text + '  -  ' + $why } else { $why = $text }
       $text = Get-SettingLeaf $text
     }
-    $rows.Add((New-SettingInfoRow ('About.' + $label) $label $text $why))
+    $rows.Add((New-SettingInfoRow ('About.' + $name) $label $text $why))
   }
   # the plugins are a list, and a list in the value column is cut at its head: the count is what
   # fits there, the names go in the sentence under it
   $names = @($script:PluginList)
-  $pText = 'none'
-  $pWhy = [string]$help['Plugins']
-  if ($names.Count -eq 1) { $pText = '1 loaded' } elseif ($names.Count -gt 1) { $pText = ([string]$names.Count) + ' loaded' }
+  $pText = (Get-UiText 'settings.about.none')
+  $pWhy = Get-UiTextOr 'settings.about.Plugins' ([string]$help['Plugins'])
+  if ($names.Count -eq 1) { $pText = (Get-UiText 'settings.about.loadedOne' @(1)) } elseif ($names.Count -gt 1) { $pText = (Get-UiText 'settings.about.loadedMany' @($names.Count)) }
   if ($names.Count -gt 0) { $pWhy = ($names -join ', ') + '  -  ' + $pWhy }
-  $rows.Add((New-SettingInfoRow 'About.Plugins' 'Plugins' $pText $pWhy))
+  $rows.Add((New-SettingInfoRow 'About.Plugins' (Get-UiText 'settings.about.label.Plugins') $pText $pWhy))
   # the one row on this page that leaves the window: the repository. It is a link, not a fact -
   # the value column carries the owner/name pair in the accent colour and the address in full is
   # the sentence under it, because a URL in the value column would be cut at its head.
@@ -450,7 +468,7 @@ function Get-SettingAboutRows {
   if ($url) {
     $short = ($url.TrimEnd('/') -replace '^(?i)https?://[^/]+/', '')
     if (-not $short) { $short = $url }
-    $link = New-SettingInfoRow 'About.Repository' 'Repository' $short ($url + '  -  the source, the releases and the issue tracker')
+    $link = New-SettingInfoRow 'About.Repository' (Get-UiText 'settings.about.label.Repository') $short (Get-UiText 'settings.about.repository' @($url))
     $link.Kind = 'link'
     $link.Locked = $false
     $link.Url = $url

@@ -135,7 +135,10 @@ function Draw-SettingsSide($g, $pal, $layout, $groups, [int]$selected, $pendingG
     if ($isSel) { $ink = $pal['Text'] }
     $box = New-Object Drawing.RectangleF -ArgumentList @(
       [single]($x + (Px 14)), [single]$top, [single]($w - (Px 20)), [single]$rowH)
-    $g.DrawString([string]$groups[$i], $script:FBody, (Get-Brush $ink), $box, $sf.Ellipsis)
+    $groupKey = 'settings.group.' + [string]$groups[$i]
+    $groupName = [string]$groups[$i]
+    $groupWord = Get-UiTextOr $groupKey $groupName
+    $g.DrawString($groupWord, $script:FBody, (Get-Brush $ink), $box, $sf.Ellipsis)
     if (@($pendingGroups) -contains [string]$groups[$i]) {
       $dot = [Math]::Max(4, (Px 5))
       $db = New-Object Drawing.SolidBrush $pal['Accent']

@@ -94,13 +94,13 @@ function Use-Drawing {
   }
 }
 
-# A sandbox is a throw-away copy of the tool (script + lib + plugins + themes): the
+# A sandbox is a throw-away copy of the tool (script + lib + plugins + themes + lang): the
 # settings file sits next to the script, so DataDir= and the store stay inside the sandbox.
 function New-Sandbox([string]$name) {
   $dir = Join-Path $tmpRoot $name
   New-Item -ItemType Directory -Path $dir -Force | Out-Null
   Copy-Item -LiteralPath $clipPs1 -Destination $dir -Force
-  foreach ($sub in @('lib', 'utils', 'schema', 'plugins', 'themes')) {
+  foreach ($sub in @('lib', 'utils', 'schema', 'plugins', 'themes', 'lang')) {
     $src = Join-Path $srcRoot $sub
     if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $dir -Recurse -Force }
   }
@@ -228,7 +228,7 @@ try {
       It 'every required module exists' {
         # the entry file names these by relative path; a package must carry all of them
         $requiredLib = @('lib\base', 'lib\native', 'lib\panel\focus', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
-          'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\panel\anim',
+          'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\text', 'lib\panel\anim',
           'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\panel\tray-menu', 'lib\serve', 'lib\shortcut',
           'lib\settings-model', 'lib\settings-types', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings',
           'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch',
@@ -731,7 +731,8 @@ try {
         Expect ($script:StructWinText -match 'public static bool IsElevated') 'elevation is never asked about'
         Expect ($rules -match 'function Test-ElevatedTarget') 'elevation is never compared with our own token'
         Expect ($script:StructPickerText -match 'Test-ElevatedTarget \$target') 'the paste path never asks whether the target is elevated'
-        Expect ($script:StructPickerText -match 'runs as administrator') 'a blocked paste says nothing to the user'
+        # the words themselves live in lang\en.ini; what the panel must do is name that key
+        Expect ($script:StructPickerText -match "Get-UiText 'panel\.foot\.copiedAdmin'") 'a blocked paste says nothing to the user'
       }
 
       It 'the caret is read in screen pixels' {
@@ -3420,6 +3421,99 @@ try {
         Expect ($def -ne '') $def
         $named = @($def -split ',')
         Expect (@($named | Where-Object { $onDisk -notcontains $_ }).Count -eq 0) $def
+      }
+    }
+
+    # -------------------------------------------------------------------- text
+    Describe 'language files' {
+      AfterAll { [void](Initialize-Text 'en') }
+
+      It 'a key no file carries comes back as itself' {
+        # an unfinished translation has to be visible, not blank and not an exception
+        Expect ((Get-UiText 'panel.noSuchKey') -eq 'panel.noSuchKey') (Get-UiText 'panel.noSuchKey')
+        Expect ((Get-UiTextOr 'panel.noSuchKey' 'plain') -eq 'plain') (Get-UiTextOr 'panel.noSuchKey' 'plain')
+      }
+
+      It 'a count picks the form the language has, with the number in it' {
+        # English has a separate singular; both forms carry what they were given
+        $one = Get-UiTextCount 'menu.entries' 1
+        $many = Get-UiTextCount 'menu.entries' 25
+        Expect ($one -ne $many) ($one + ' / ' + $many)
+        Expect (($one -match '1') -and ($many -match '25')) ($one + ' / ' + $many)
+      }
+
+      It 'every key of the base file is in each language' {
+        # en is the base and the fallback, so it is the smaller file: a translation may carry keys
+        # of its own (the settings window words), but it may not be missing one of these
+        $base = Read-TextFile 'en'
+        Expect ($null -ne $base) ''
+        foreach ($lang in @(Get-LanguageList)) {
+          if ($lang.Code -eq 'en') { continue }
+          $other = Read-TextFile $lang.Code
+          Expect ($null -ne $other) $lang.Code
+          $missing = @(@($base.Map.Keys) | Where-Object { -not $other.Map.ContainsKey($_) })
+          Expect ($missing.Count -eq 0) ($lang.Code + ': ' + ($missing -join ', '))
+        }
+      }
+
+      It 'a translation names every setting, group and unit the window draws' {
+        # the window falls back to a spelling derived from the key, which is English by nature:
+        # a language that means to be complete has to supply the words itself
+        $schema = $script:SettingsSchema
+        foreach ($lang in @(Get-LanguageList)) {
+          if ($lang.Code -eq 'en') { continue }
+          $t = Read-TextFile $lang.Code
+          $missing = New-Object System.Collections.Generic.List[string]
+          foreach ($k in @((Get-SchemaProperties $schema).Keys)) {
+            foreach ($prefix in @('settings.key.', 'settings.desc.')) {
+              if (-not $t.Map.ContainsKey($prefix + [string]$k)) { $missing.Add($prefix + [string]$k) }
+            }
+          }
+          foreach ($grp in @((Get-SettingGroupTable).Keys)) {
+            if (-not $t.Map.ContainsKey('settings.group.' + [string]$grp)) { $missing.Add('settings.group.' + [string]$grp) }
+          }
+          foreach ($k in @((Get-SchemaProperties $schema).Keys)) {
+            $spec = (Get-SchemaProperties $schema)[$k]
+            if ($null -eq $spec -or -not $spec.Contains('Unit')) { continue }
+            $u = [string]$spec['Unit']
+            if ($u -eq 'size') { continue }
+            if (-not $t.Map.ContainsKey('settings.unit.' + $u)) { $missing.Add('settings.unit.' + $u) }
+          }
+          Expect ($missing.Count -eq 0) ($lang.Code + ': ' + (@($missing | Select-Object -Unique) -join ', '))
+        }
+      }
+
+      It 'a translation keeps the placeholders of the base line' {
+        # a dropped {0} loses the number, a duplicated one throws at format time
+        $base = Read-TextFile 'en'
+        foreach ($lang in @(Get-LanguageList)) {
+          if ($lang.Code -eq 'en') { continue }
+          $other = Read-TextFile $lang.Code
+          foreach ($k in @($base.Map.Keys)) {
+            if (-not $other.Map.ContainsKey($k)) { continue }
+            $a = @([regex]::Matches([string]$base.Map[$k], '\{\d+\}') | ForEach-Object { $_.Value } | Sort-Object)
+            $b = @([regex]::Matches([string]$other.Map[$k], '\{\d+\}') | ForEach-Object { $_.Value } | Sort-Object)
+            Expect ((($a -join '') -eq ($b -join ''))) ($lang.Code + ' ' + $k + ': ' + ($a -join '') + ' vs ' + ($b -join ''))
+          }
+        }
+      }
+
+      It 'the language the window offers is the file on disk' {
+        # the schema lists the codes; the folder is the truth, so a new file has to be added there
+        $codes = @(Get-LanguageList | ForEach-Object { $_.Code })
+        $offered = @((Get-SchemaProperty $script:SettingsSchema 'Language')['Enum'])
+        $extra = @($codes | Where-Object { $offered -notcontains $_ })
+        $gone = @($offered | Where-Object { $codes -notcontains $_ })
+        Expect (($extra.Count -eq 0) -and ($gone.Count -eq 0)) (($extra -join ',') + ' / ' + ($gone -join ','))
+      }
+
+      It 'a language names the family it needs, and the base names none' {
+        [void](Initialize-Text 'zh-CN')
+        Expect ((Get-UiText 'menu.paste') -ne 'menu.paste') (Get-UiText 'menu.paste')
+        Expect ((Get-UiTextFont) -ne '') (Get-UiTextFont)
+        [void](Initialize-Text 'en')
+        Expect ((Get-UiTextFont) -eq '') (Get-UiTextFont)
+        Expect ((Get-UiText 'menu.paste') -ne 'menu.paste') (Get-UiText 'menu.paste')
       }
     }
 

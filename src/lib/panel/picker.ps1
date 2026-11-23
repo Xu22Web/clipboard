@@ -156,7 +156,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     # SWP_NOACTIVATE, which activates the panel; it is raised right after Show() instead.
     $form.ShowInTaskbar = $false
     $form.KeyPreview = $true
-    $form.Text = 'Clipboard history'
+    $form.Text = (Get-UiText 'panel.title')
     $form.AccessibleName = 'Clipboard history'
     # Where the panel opens is decided before any control exists, because both its size and its
     # place come out of the same question. Two shapes ask it differently:
@@ -353,7 +353,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     # the same left edge as the text the box will hold, so the caret of an empty field and the
     # hint next to it start at one line
     $ph.SetBounds((Px 38), (Px 10), ($box.Width - (Px 104)), (Px 22))
-    $ph.Text = 'Search clipboard history'
+    $ph.Text = (Get-UiText 'panel.search')
     $ph.Font = $fBody
     $ph.ForeColor = $ui.Faint
     $ph.BackColor = $ui.Field
@@ -910,7 +910,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       # never happened.
       if (Test-ElevatedTarget $target) {
         Write-Log 'paste skipped: the target window runs elevated'
-        Set-Foot 'Copied to the clipboard. That window runs as administrator - press Ctrl+V there' ([int]$script:Timing['FootMessage'])
+        Set-Foot (Get-UiText 'panel.foot.copiedAdmin') ([int]$script:Timing['FootMessage'])
         return
       }
       # the hotkey is usually still held when the panel opens: pasting now would send
@@ -934,7 +934,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       try {
         if (-not $hadFront -and -not (Take-Foreground $target)) {
           Write-Log 'paste skipped: the target window did not take the foreground'
-          Set-Foot 'Copied to the clipboard. The window did not come back to the front - press Ctrl+V there' ([int]$script:Timing['FootMessage'])
+          Set-Foot (Get-UiText 'panel.foot.copiedNoFocus') ([int]$script:Timing['FootMessage'])
           return
         }
         # the window is back but its caret may not be: give the control the keyboard again, and
@@ -1090,12 +1090,12 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       if ($removed -eq 'removed') { Write-Log ('deleted entry (' + $victim.Payload.Length + ' chars), left ' + $script:Entries.Count) }
       Update-List $txt.Text
       if ($script:Filtered.Count -gt 0) { $lst.SelectedIndex = [Math]::Min($idx, $script:Filtered.Count - 1) }
-      if ($script:UndoOn -and $removed -eq 'removed') { Set-Foot 'Deleted. Press Ctrl+Z to undo' ([int]$script:Timing['FootMessage']) }
+      if ($script:UndoOn -and $removed -eq 'removed') { Set-Foot (Get-UiText 'panel.foot.deleted') ([int]$script:Timing['FootMessage']) }
     }
 
     function Undo-Delete {
-      if (-not $script:UndoOn) { Set-Foot 'Undo is off. Set Undo=1 in clipboard.ini to enable it' ([int]$script:Timing['FootWarn']); return }
-      if ($null -eq $script:UndoRec) { Set-Foot 'Nothing to undo' ([int]$script:Timing['FootShort']); return }
+      if (-not $script:UndoOn) { Set-Foot (Get-UiText 'panel.foot.undoOff') ([int]$script:Timing['FootWarn']); return }
+      if ($null -eq $script:UndoRec) { Set-Foot (Get-UiText 'panel.foot.nothingToUndo') ([int]$script:Timing['FootShort']); return }
       $rec = $script:UndoRec
       $at = $script:UndoIdx
       $script:UndoRec = $null
@@ -1103,7 +1103,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       Write-Log ('undo restored (' + $rec.Payload.Length + ' chars) at ' + $at)
       $script:Entries = @(Get-Records)
       Update-List $txt.Text
-      Set-Foot 'Restored to its original position' ([int]$script:Timing['FootInfo'])
+      Set-Foot (Get-UiText 'panel.foot.restored') ([int]$script:Timing['FootInfo'])
     }
 
     function Cancel-Confirm {
@@ -1114,7 +1114,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     }
 
     function Request-Clear {
-      if ($script:Entries.Count -eq 0) { Set-Foot 'Nothing to clear' ([int]$script:Timing['FootShort']); return }
+      if ($script:Entries.Count -eq 0) { Set-Foot (Get-UiText 'panel.foot.nothingToClear') ([int]$script:Timing['FootShort']); return }
       $script:Confirm = $true
       $footTimer.Stop()
       $script:FootMode = 'confirm'
@@ -1133,8 +1133,8 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       Write-Log ('history cleared from the panel, left ' + $script:Entries.Count + ' rows')
       Update-List $txt.Text
       $kept = @(Get-MarkCountWords $script:Entries)
-      if ($kept.Count -gt 0) { Set-Foot ('History cleared, ' + ($kept -join ', ') + ' kept') ([int]$script:Timing['FootWarn']) }
-      else { Set-Foot 'History cleared' ([int]$script:Timing['FootInfo']) }
+      if ($kept.Count -gt 0) { Set-Foot (Get-UiText 'panel.foot.clearedKept' @($kept -join ', ')) ([int]$script:Timing['FootWarn']) }
+      else { Set-Foot (Get-UiText 'panel.foot.cleared') ([int]$script:Timing['FootInfo']) }
     }
 
     # The row menu is the tray menu's twin: the same skin, the same rounded rows and the same
@@ -1168,7 +1168,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       foreach ($old in @($cm.Items)) { try { $old.Dispose() } catch { } }
       $cm.Items.Clear()
 
-      $paste = New-TrayMenuRow -Skin $cmSkin -Label 'Paste' -Glyph $menuGlyph.Paste
+      $paste = New-TrayMenuRow -Skin $cmSkin -Label (Get-UiText 'menu.paste') -Glyph $menuGlyph.Paste
       $paste.Hint = 'Enter'
       $paste.Enabled = $has
       # the primary action carries the accent on its glyph, the way a Fluent menu marks the one
@@ -1177,7 +1177,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $paste.Add_Click({ Use-Index $lst.SelectedIndex })
       [void]$cm.Items.Add($paste)
 
-      $copy = New-TrayMenuRow -Skin $cmSkin -Label 'Copy only' -Glyph $menuGlyph.Copy
+      $copy = New-TrayMenuRow -Skin $cmSkin -Label (Get-UiText 'menu.copyOnly') -Glyph $menuGlyph.Copy
       $copy.Hint = 'Ctrl+Enter'
       $copy.Enabled = $has
       $copy.Add_Click({ Use-Index $lst.SelectedIndex -NoInject })
@@ -1186,13 +1186,13 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       # a picture, a file list and a formatted entry have nothing the editor can show
       $editable = ($has -and (Test-RowEditable $cur))
       if ($editable) {
-        $edit = New-TrayMenuRow -Skin $cmSkin -Label 'Edit' -Glyph $menuGlyph.Edit
+        $edit = New-TrayMenuRow -Skin $cmSkin -Label (Get-UiText 'menu.edit') -Glyph $menuGlyph.Edit
         $edit.Hint = 'F2'
         $edit.Add_Click({ Begin-RowEdit })
         [void]$cm.Items.Add($edit)
       }
 
-      $del = New-TrayMenuRow -Skin $cmSkin -Label 'Delete' -Glyph $menuGlyph.Delete
+      $del = New-TrayMenuRow -Skin $cmSkin -Label (Get-UiText 'menu.delete') -Glyph $menuGlyph.Delete
       $del.Hint = 'Del'
       $del.Enabled = $has
       # a removal warns in the same token the panel uses for a refusal
@@ -1201,7 +1201,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $del.Add_Click({ try { Del-Index $lst.SelectedIndex } catch { } })
       [void]$cm.Items.Add($del)
 
-      $clear = New-TrayMenuRow -Skin $cmSkin -Label 'Clear history' -Glyph $menuGlyph.Clear
+      $clear = New-TrayMenuRow -Skin $cmSkin -Label (Get-UiText 'menu.clearHistory') -Glyph $menuGlyph.Clear
       $clear.Enabled = ($script:Entries.Count -gt 0)
       $clear.GlyphInk = $cmSkin.Warn
       $clear.Ink = $cmSkin.Warn
@@ -1230,7 +1230,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
           [void]$seen.Add($owner)
           # every plugin block starts with a line, the way the built-in block before it does
           [void](Add-TrayMenuSeparator $cm $cmSkin)
-          $cap = New-TrayMenuRow -Skin $cmSkin -Label $owner -Caption
+          $cap = New-TrayMenuRow -Skin $cmSkin -Label (Get-UiTextOr ('plugin.caption.' + $owner) $owner) -Caption
           [void]$cm.Items.Add($cap)
         }
         $row = New-TrayMenuRow -Skin $cmSkin -Label (Get-ActionText $act $cur)
@@ -1569,14 +1569,14 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
           # a batch is copied as one text block; a single row keeps the original behaviour
           $batch = $(if ((Get-SelectionCount $script:Sel) -gt 1) { Invoke-SelectionCopy $script:Sel $script:Filtered } else { $null })
           if ($null -ne $batch) { Clear-Selection $script:Sel; Sync-Selection $script:Sel $lst; Set-Foot $batch.Note ([int]$script:Timing['FootInfo']) }
-          elseif ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex -NoInject } else { Set-Foot 'Nothing to copy' ([int]$script:Timing['FootShort']) }
+          elseif ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex -NoInject } else { Set-Foot (Get-UiText 'panel.foot.nothingToCopy') ([int]$script:Timing['FootShort']) }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.Control -and (($code -ge 48 -and $code -le 57) -or ($code -ge 96 -and $code -le 105))) {
           $n = $code
           if ($n -ge 96) { $n = $n - 96 } else { $n = $n - 48 }
           Flush-List
           $idx = Get-QuickKeyIndex (Get-QuickKeyOffset $n) $lst.TopIndex $script:Filtered.Count (Get-Rows) $lst.PinnedCount
-          if ($idx -ge 0) { Use-Index $idx } else { Set-Foot 'No entry at that number' ([int]$script:Timing['FootBrief']) }
+          if ($idx -ge 0) { Use-Index $idx } else { Set-Foot (Get-UiText 'panel.foot.noEntry') ([int]$script:Timing['FootBrief']) }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.Control -and $e.KeyCode -eq 'Z') {
           try { Undo-Delete } catch { Write-Log ('undo failed: ' + $_.Exception.Message) }
@@ -1618,7 +1618,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.KeyCode -eq 'Enter') {
           Flush-List
-          if ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex } else { Set-Foot 'Nothing to paste' ([int]$script:Timing['FootShort']) }
+          if ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex } else { Set-Foot (Get-UiText 'panel.foot.nothingToPaste') ([int]$script:Timing['FootShort']) }
           $e.Handled = $true; $e.SuppressKeyPress = $true
         } elseif ($e.KeyCode -eq 'Escape') {
           if ($txt.Text.Length -gt 0) {

@@ -286,8 +286,8 @@ function New-PreviewWindow($ps) {
   $w.FormBorderStyle = 'None'
   $w.StartPosition = 'Manual'
   $w.ShowInTaskbar = $false
-  $w.Text = 'clipboard preview'
-  $w.AccessibleName = 'clipboard preview'
+  $w.Text = (Get-UiText 'panel.preview.title')
+  $w.AccessibleName = (Get-UiText 'panel.preview.title')
   $w.Tag = $ps
   $w.Add_Paint({ param($s, $e) Invoke-PreviewPaint $s $e })
   $ps.Win = $w

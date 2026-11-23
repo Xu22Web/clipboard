@@ -67,7 +67,7 @@ $baseModules = @(
   'lib\base',
   'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\fileio',
   'utils\hotkey', 'utils\apprules',
-  'lib\native', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering', 'lib\config', 'lib\usage', 'lib\dispatch'
+  'lib\native', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering', 'lib\text', 'lib\config', 'lib\usage', 'lib\dispatch'
 )
 # one group per job: the files a job can reach, and nothing else. Storing an entry and getting
 # it back are one job - the capture pipeline (clip), the payload files (blobs), the image and

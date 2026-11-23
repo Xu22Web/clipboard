@@ -129,6 +129,9 @@ $script:Autostart = $true
 $script:DesktopShortcut = $true
 # Themes live in themes\<name>.ps1 and are picked by name; win11-dark is the default.
 $script:Theme = 'win11-dark'
+# The words the tool draws come from lang\<code>.ini; en is the base every language is laid over.
+# English unless the file says otherwise: the tool does not guess from the Windows UI language.
+$script:Language = 'en'
 $script:ThemeSchema = $null        # schema/theme.ps1, loaded by lib/themes.ps1 on first use
 $script:ThemePalette = $null      # resolved Drawing.Color table, $null = built-in fallback
 $script:ThemeFonts = @{}          # Body / Small / Tiny / Title / Icon / IconSmall / IconBig

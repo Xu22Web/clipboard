@@ -143,27 +143,27 @@ function New-TrayMenu {
   $items.Header = New-TrayMenuRow -Skin $Skin -Label 'clipboard' -Glyph $gl.Mark -Header
   [void]$menu.Items.Add($items.Header)
   [void](Add-TrayMenuSeparator $menu $Skin)
-  $items.Show = New-TrayMenuRow -Skin $Skin -Label 'Show history' -Glyph $gl.History
+  $items.Show = New-TrayMenuRow -Skin $Skin -Label (Get-UiText 'menu.showHistory') -Glyph $gl.History
   [void]$menu.Items.Add($items.Show)
-  $items.Compact = New-TrayMenuRow -Skin $Skin -Label 'Compact mode' -Glyph $gl.Rows -Switch
+  $items.Compact = New-TrayMenuRow -Skin $Skin -Label (Get-UiText 'menu.compact') -Glyph $gl.Rows -Switch
   [void]$menu.Items.Add($items.Compact)
-  $items.Pause = New-TrayMenuRow -Skin $Skin -Label 'Pause capture' -Glyph $gl.Pause -Switch
+  $items.Pause = New-TrayMenuRow -Skin $Skin -Label (Get-UiText 'menu.pause') -Glyph $gl.Pause -Switch
   [void]$menu.Items.Add($items.Pause)
-  $items.Clear = New-TrayMenuRow -Skin $Skin -Label 'Clear history...' -Glyph $gl.Clear
+  $items.Clear = New-TrayMenuRow -Skin $Skin -Label (Get-UiText 'menu.clearHistory') -Glyph $gl.Clear
   [void]$menu.Items.Add($items.Clear)
   [void](Add-TrayMenuSeparator $menu $Skin)
-  $items.Settings = New-TrayMenuRow -Skin $Skin -Label 'Settings...' -Glyph $gl.Settings
+  $items.Settings = New-TrayMenuRow -Skin $Skin -Label (Get-UiText 'menu.settings') -Glyph $gl.Settings
   [void]$menu.Items.Add($items.Settings)
-  $items.EditFile = New-TrayMenuRow -Skin $Skin -Label 'Edit settings file...' -Glyph $gl.Edit
+  $items.EditFile = New-TrayMenuRow -Skin $Skin -Label (Get-UiText 'menu.editFile') -Glyph $gl.Edit
   [void]$menu.Items.Add($items.EditFile)
-  $items.Folder = New-TrayMenuRow -Skin $Skin -Label 'Open data folder' -Glyph $gl.Folder
+  $items.Folder = New-TrayMenuRow -Skin $Skin -Label (Get-UiText 'menu.openFolder') -Glyph $gl.Folder
   [void]$menu.Items.Add($items.Folder)
-  $items.Restart = New-TrayMenuRow -Skin $Skin -Label 'Restart' -Glyph $gl.Restart
+  $items.Restart = New-TrayMenuRow -Skin $Skin -Label (Get-UiText 'menu.restart') -Glyph $gl.Restart
   [void]$menu.Items.Add($items.Restart)
-  $items.About = New-TrayMenuRow -Skin $Skin -Label 'About...' -Glyph $gl.Info
+  $items.About = New-TrayMenuRow -Skin $Skin -Label (Get-UiText 'menu.about') -Glyph $gl.Info
   [void]$menu.Items.Add($items.About)
   [void](Add-TrayMenuSeparator $menu $Skin)
-  $items.Exit = New-TrayMenuRow -Skin $Skin -Label 'Exit' -Glyph $gl.Exit
+  $items.Exit = New-TrayMenuRow -Skin $Skin -Label (Get-UiText 'menu.exit') -Glyph $gl.Exit
   [void]$menu.Items.Add($items.Exit)
   # the size is settled here rather than at the first open: the drop-down positions itself from
   # the size it has when it opens, and the one-row placeholder it is built with would put the
@@ -197,7 +197,7 @@ function Update-TrayMenu {
   if ($null -eq $Menu) { return }
   try {
     if ($Entries -ge 0) {
-      $Menu.Header.Hint = [string]$Entries + $(if ($Entries -eq 1) { ' entry' } else { ' entries' })
+      $Menu.Header.Hint = (Get-UiTextCount 'menu.entries' $Entries)
     }
   } catch { }
   try { if ($Hotkey) { $Menu.Show.Hint = $Hotkey } } catch { }

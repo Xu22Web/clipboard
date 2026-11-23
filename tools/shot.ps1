@@ -8,6 +8,7 @@
       cli shot -Theme light -Part panel one theme
       cli shot -Select 7                row to leave selected (1 = first row)
       cli shot -PreviewRow 5            row the hover card is taken from
+      cli shot -Language zh-CN          a language: docs\zh-cn\, and Chinese example rows
       cli shot -KeepBox                 keep the temporary sandbox for inspection
 
   Every shot is taken from a throw-away copy of src\: the store is seeded with example rows
@@ -17,7 +18,9 @@
   are captured. The real data folder, clipboard.ini and the real clipboard are never read.
 
   Files: screenshot-dark.png / screenshot-light.png (history panel), screenshot-compact.png,
-  screenshot-preview.png (hover card), screenshot-tray.png, screenshot-settings.png.
+  screenshot-preview.png (hover card), screenshot-tray.png, screenshot-settings.png. English
+  writes them to docs\, any other language to docs\<code>\ - the two sets are what the two
+  READMEs show.
 #>
 [CmdletBinding()]
 param(
@@ -26,6 +29,8 @@ param(
   [string]$Part = 'all',
   [int]$Select = 7,
   [int]$PreviewRow = 5,
+  # a language code from src\lang; empty keeps the program default (en)
+  [string]$Language = '',
   [switch]$KeepBox,
   # quiet keeps warnings and failures, silent keeps failures only
   [switch]$Quiet,
@@ -67,6 +72,12 @@ $root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 Set-LogLevelFrom -Quiet:$Quiet -Silent:$Silent
 $srcDir = Join-Path $root 'src'
 $docsDir = Join-Path $root 'docs'
+# a non-English set is its own folder, so a README in that language can point at it and the
+# English files keep the names they always had
+if ($Language -and $Language -ne 'en') {
+  $docsDir = Join-Path $docsDir $Language.ToLowerInvariant()
+  if (-not (Test-Path -LiteralPath $docsDir)) { New-Item -ItemType Directory -Path $docsDir -Force | Out-Null }
+}
 $rsChar = [string][char]30
 $usChar = [string][char]31
 $utf8 = New-Object System.Text.UTF8Encoding $false
@@ -144,7 +155,7 @@ function New-ShotBox([string]$themeName, [switch]$Compact) {
   foreach ($f in @('clipboard.ps1', 'clipboard.cmd')) {
     Copy-Item -LiteralPath (Join-Path $srcDir $f) -Destination $box -Force
   }
-  foreach ($d in @('lib', 'utils', 'schema', 'plugins', 'themes')) {
+  foreach ($d in @('lib', 'utils', 'schema', 'plugins', 'themes', 'lang')) {
     Copy-Item -LiteralPath (Join-Path $srcDir $d) -Destination $box -Recurse -Force
   }
   # the version comes from package.ini, so the footer of the screenshot shows the real number
@@ -154,6 +165,7 @@ function New-ShotBox([string]$themeName, [switch]$Compact) {
   $text = [IO.File]::ReadAllText($basePs, $utf8)
   [IO.File]::WriteAllText($basePs, $text.Replace('Local\clipboard.', $shotPrefix), $utf8)
   $ini = "Theme=$themeName`r`nRows=10`r`nWindowWidth=700`r`n"
+  if ($Language) { $ini += "Language=$Language`r`n" }
   if ($Compact) { $ini += "CompactMode=1`r`n" }
   [IO.File]::WriteAllText((Join-Path $box 'clipboard.ini'), $ini, $utf8)
   return $box
@@ -179,8 +191,33 @@ function Invoke-Sandbox([string]$box, [string[]]$cliArgs) {
 # --- example history -------------------------------------------------------------
 # One `put` first: the record it writes carries the same clock the panel uses for relative
 # times, so the seeded ages below are exact.
+# The example rows follow the language of the screenshot: a Chinese panel full of English
+# sentences reads as a translation nobody checked. The words live in the language file (they are
+# not ASCII, so they cannot live here), and "\\n" in one of them is a line break. The same reader
+# finds the window titles, so a window is waited for by the name the language gives it.
+function Get-LangWord([string]$box, [string]$Section, [string]$key) {
+  $code = if ($Language) { $Language } else { 'en' }
+  $path = Join-Path (Join-Path $box 'lang') ($code + '.ini')
+  if (-not (Test-Path -LiteralPath $path)) { return '' }
+  $sec = ''
+  foreach ($line in [IO.File]::ReadAllLines($path, $utf8)) {
+    $t = $line.Trim()
+    if ($t.StartsWith('[')) { $sec = $t.Trim('[', ']'); continue }
+    if ($sec -ne $Section -or $t.StartsWith(';') -or $t.StartsWith('#')) { continue }
+    $i = $t.IndexOf('=')
+    if ($i -lt 1) { continue }
+    if ($t.Substring(0, $i).Trim() -ne $key) { continue }
+    return ($t.Substring($i + 1).Trim() -replace '\\n', "`n")
+  }
+  return ''
+}
+
 function Set-Seed {
   param([string]$box)
+  # the rest - a URL, a path, a command, a JSON line, an address, a colour - is the same in both
+  # sets, so only the two prose rows are read from the language file
+  $releaseList = Get-LangWord $box 'sample' 'list'
+  $aboutText = Get-LangWord $box 'sample' 'about'
   [void](Invoke-Sandbox $box @('put', 'clock probe'))
   $storePath = Join-Path (Join-Path $box 'data') 'history.dat'
   $chunks = @([IO.File]::ReadAllText($storePath, $utf8) -split [regex]::Escape($rsChar))
@@ -190,11 +227,11 @@ function Set-Seed {
     @{ Age = 840; Flags = 't'; Text = 'C:\Users\alex\Documents\release-notes.md' }
     @{ Age = 2220; Flags = 't'; Text = 'Get-ChildItem -Path .\src -Recurse -Filter *.ps1 | Measure-Object' }
     @{ Age = 7200; Flags = 't'; Text = 'npm run build -- --outDir dist' }
-    @{ Age = 10800; Flags = 'ts'; Text = "release checklist`n- bump the version`n- run the full test suite`n- tag the release" }
+    @{ Age = 10800; Flags = 'ts'; Text = $releaseList }
     @{ Age = 18000; Flags = 't'; Text = '{"theme":"win11-dark","rows":10,"width":700}' }
     @{ Age = 28800; Flags = 't'; Text = 'alex@example.com' }
     @{ Age = 39600; Flags = 't'; Text = 'https://learn.microsoft.com/windows/apps/design/style/color' }
-    @{ Age = 50400; Flags = 't'; Text = 'Text, file lists, pictures and formatted text are captured from the clipboard.' }
+    @{ Age = 50400; Flags = 't'; Text = $aboutText }
     @{ Age = 61200; Flags = 't'; Text = '#5AC8FA' }
   )
   $sb = New-Object System.Text.StringBuilder
@@ -311,7 +348,9 @@ function Show-Panel($box, $child) {
     } catch { Wait-Pump 200 }
   }
   if (-not $shown) { throw 'the show event never appeared' }
-  $handle = Wait-Window -ProcId $child.Id -Title 'Clipboard history'
+  $panelTitle = Get-LangWord $box 'panel' 'title'
+  if (-not $panelTitle) { $panelTitle = 'Clipboard history' }
+  $handle = Wait-Window -ProcId $child.Id -Title $panelTitle
   if ($handle -eq [IntPtr]::Zero) {
     # the log says why the panel refused to open, which is the only place that says it
     $tail = ''
@@ -404,7 +443,9 @@ function Save-PreviewShot {
       $rect = Get-WindowRect $handle
       # the card follows a pointer that stops: no click, only the hover
       [void][Shot]::SetCursorPos(($rect.Left + 200), ($rect.Top + 68 + (40 * ($PreviewRow - 1)) + 20))
-      $card = Wait-Window -ProcId $child.Id -Title 'clipboard preview' -Tries 40
+      $cardTitle = Get-LangWord $box 'panel' 'preview.title'
+      if (-not $cardTitle) { $cardTitle = 'clipboard preview' }
+      $card = Wait-Window -ProcId $child.Id -Title $cardTitle -Tries 40
       if ($card -eq [IntPtr]::Zero) { Write-Warn 'the hover card did not appear' }
       else {
         [void](Wait-StableWindow $card)
@@ -440,9 +481,28 @@ function Save-SettingsShot {
   try {
     $child = Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -PassThru -ArgumentList @(
       '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', (Join-Path $box 'clipboard.ps1'), 'settings', 'Clipboard')
-    $handle = Wait-Window -ProcId $child.Id -Title 'Settings' -Tries 60 -Step 250
+    $setTitle = Get-LangWord $box 'settings' 'window.title'
+    if (-not $setTitle) { $setTitle = 'Settings' }
+    $handle = Wait-Window -ProcId $child.Id -Title $setTitle -Tries 60 -Step 250
     if ($handle -eq [IntPtr]::Zero) { throw 'the settings window never appeared' }
     Start-Sleep -Milliseconds 900
+    # CopyFromScreen reads whatever is on top, and a window that opened behind the editor would be
+    # photographed as the editor. SwitchToThisWindow alone is refused by the foreground lock when
+    # the click that started this came from elsewhere, so a click on the window's own header does
+    # the lifting - the same thing the panel shot does.
+    for ($k = 0; $k -lt 4; $k++) {
+      if ([Shot]::GetForegroundWindow() -eq $handle) { break }
+      $wr = Get-WindowRect $handle
+      [void][Shot]::SetCursorPos(($wr.Left + 40), ($wr.Top + 12))
+      Wait-Pump 80
+      [Shot]::mouse_event(0x0002, 0, 0, 0, [IntPtr]::Zero)
+      Wait-Pump 60
+      [Shot]::mouse_event(0x0004, 0, 0, 0, [IntPtr]::Zero)
+      Wait-Pump 300
+      [void][Shot]::SwitchToThisWindow($handle, $true)
+      Wait-Pump 300
+    }
+    Start-Sleep -Milliseconds 400
     Save-Window $handle 'screenshot-settings.png'
     [void][Shot]::PostMessage($handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
     for ($i = 0; $i -lt 20; $i++) {

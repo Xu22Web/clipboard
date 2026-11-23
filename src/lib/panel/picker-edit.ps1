@@ -189,7 +189,7 @@ function Begin-RowEdit {
     })
 
   $title = New-Object Windows.Forms.Label
-  $title.Text = 'Editing entry'
+  $title.Text = (Get-UiText 'panel.edit.title')
   $title.Font = $script:FSmall
   $title.ForeColor = $ctx.Ui.Text
   $title.BackColor = $ctx.Ui.Surface
@@ -302,7 +302,7 @@ function Request-RowEdit([bool]$save, $box) {
     $script:EditArm = 'cancel'
     # the panel footer is under the card, so the question has to be asked on the card itself:
     # a note in the footer would be painted behind the card and never seen
-    try { $script:EditRow.Err.Text = 'Press Esc again to discard the change' } catch { }
+    try { $script:EditRow.Err.Text = (Get-UiText 'panel.edit.discard') } catch { }
     return
   }
   Invoke-RowEditLater $true
@@ -338,7 +338,7 @@ function Complete-RowEdit([bool]$save) {
   # reason goes on the card's own error line instead of the footer
   $res = Update-RecordText $payload $text
   if (-not $res.Ok) {
-    try { $state.Err.Text = 'not saved: ' + [string]$res.Error } catch { }
+    try { $state.Err.Text = (Get-UiText 'panel.edit.notSaved' @([string]$res.Error)) } catch { }
     & $ctx.Note ('[!] ' + [string]$res.Error) ([int]$script:Timing['FootWarn'])
     return
   }

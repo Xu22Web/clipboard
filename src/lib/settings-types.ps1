@@ -228,6 +228,12 @@ function Get-SettingNumberView($schema, [string]$key, [string]$raw) {
   } elseif ($unit) {
     $view.Unit = $unit
   }
+  # the words beside a number are part of the language, the size abbreviations (B / KB / MB) are not
+  if ([string]$view.Unit -and $unit -ne 'size') {
+    $unitKey = 'settings.unit.' + [string]$view.Unit
+    $unitWord = [string]$view.Unit
+    $view.Unit = Get-UiTextOr $unitKey $unitWord
+  }
   $shown = $n / [double]$view.Scale
   $text = ([Math]::Round($shown, 3)).ToString([Globalization.CultureInfo]::InvariantCulture)
   if ($text.Contains('.')) { $text = $text.TrimEnd('0').TrimEnd('.') }

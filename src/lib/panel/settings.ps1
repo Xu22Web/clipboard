@@ -131,9 +131,9 @@ function Show-Settings {
   $script:SetPendingGroups = @()
   # the footer actions, in the order they are drawn; Primary is the one that carries the accent
   $script:SetActions = @(
-    @{ Key = 'defaults'; Label = 'Restore defaults'; Primary = $false },
-    @{ Key = 'discard'; Label = 'Discard'; Primary = $false },
-    @{ Key = 'save'; Label = 'Save'; Primary = $true }
+    @{ Key = 'defaults'; Label = (Get-UiText 'settings.action.defaults'); Primary = $false },
+    @{ Key = 'discard'; Label = (Get-UiText 'settings.action.discard'); Primary = $false },
+    @{ Key = 'save'; Label = (Get-UiText 'settings.action.save'); Primary = $true }
   )
   $script:SetHotAction = -1
   # the chord line whose delete button is under the pointer, -1 for none
@@ -343,6 +343,14 @@ function Show-Settings {
       [void](Initialize-PanelFonts)
       $script:SetPal = Get-UiPalette
     }
+    if ($pending.Contains('Language')) {
+      # a language may name its own font family, and the faces are built once per process: drop
+      # the resolved family so the next initialize reads the one this language asks for. The
+      # words themselves were reloaded by Apply-Config, which the save ran before this.
+      $script:UiFamily = ''
+      $script:FBody = $null
+      [void](Initialize-PanelFonts)
+    }
     Refresh-Settings
     $n = [int]$r.Count
     $said = ([string]$n) + ' setting'
@@ -356,14 +364,14 @@ function Show-Settings {
     if ($script:SetPending.Count -eq 0) { return }
     $script:SetPending = @{}
     Refresh-Settings
-    Show-Message 'changes discarded' $false
+    Show-Message (Get-UiText 'settings.msg.discarded') $false
   }
 
   # Restore defaults: staged like every other change, so the page shows what it would become
   # before anything is written.
   function Restore-SettingsDefaults {
     $next = Get-SettingDefaultStaging $schema $script:SetPending
-    if ($next.Count -eq 0) { Show-Message 'every value is already at its default' $false; return }
+    if ($next.Count -eq 0) { Show-Message (Get-UiText 'settings.msg.alreadyDefault') $false; return }
     foreach ($k in @($next.Keys)) { $script:SetPending[[string]$k] = [string]$next[$k] }
     Refresh-Settings
     $n = $next.Count
@@ -405,7 +413,7 @@ function Show-Settings {
     if ($index -lt 0 -or $index -ge $chords.Count) { return }
     $next = Get-SettingChordRemoved ([string]$row.Raw) ([string]$chords[$index])
     if ($null -eq $next) {
-      Show-Message 'keep at least one: a chain with no chord falls back to the default' $true
+      Show-Message (Get-UiText 'settings.msg.keepOneChord') $true
       return
     }
     [void](Stage-Setting ([string]$row.Key) $next ('removed ' + [string]$chords[$index]))
@@ -597,7 +605,7 @@ function Show-Settings {
     $dd.StartPosition = 'Manual'
     $dd.ShowInTaskbar = $false
     $dd.KeyPreview = $true
-    $dd.Text = 'Settings choices'
+    $dd.Text = (Get-UiText 'settings.choices.title')
     $dd.ClientSize = New-Object Drawing.Size -ArgumentList @([int]$rect.Width, [int]$rect.Height)
     $dd.Left = $form.Left + [int]$rect.Left
     $dd.Top = $form.Top + [int]$rect.Top
@@ -709,7 +717,7 @@ function Show-Settings {
     # three chord lines are all the card holds, and the schema refuses a longer chain: a fourth
     # recorded here would be written and then have nowhere to appear or be removed from
     if ($row.ContainsKey('Chain') -and [bool]$row.Chain -and @($row.Chords).Count -ge 3) {
-      Show-Message 'three chords fill this row: remove one first' $true
+      Show-Message (Get-UiText 'settings.msg.chainFull') $true
       return
     }
     End-Edit $true
@@ -726,7 +734,7 @@ function Show-Settings {
     $script:SetRecKey = ''
     $script:SetRecPreview = @()
     Stop-HotkeyRecord ([string]$script:StoreDir)
-    Show-Message 'recording cancelled' $false
+    Show-Message (Get-UiText 'settings.msg.recordingCancelled') $false
     $form.Invalidate()
   }
 
@@ -751,7 +759,7 @@ function Show-Settings {
     if ($null -eq $row) { return }
     $dlg = New-Object Windows.Forms.FolderBrowserDialog
     try {
-      $dlg.Description = 'Where the history and the media files live'
+      $dlg.Description = (Get-UiText 'settings.pick.folder')
       $dlg.ShowNewFolderButton = $true
       $cur = [string]$row.Raw
       if ($cur -and (Test-Path -LiteralPath $cur)) { $dlg.SelectedPath = $cur }
@@ -797,13 +805,13 @@ function Show-Settings {
     }
     $name = Get-ChordKeyName $e.KeyCode
     if (-not $name) {
-      Show-Message 'that key cannot be a hotkey: use a letter, a digit, F1-F24, a punctuation key, Insert, Delete, Home, End, PageUp, PageDown or Space' $true
+      Show-Message (Get-UiText 'settings.msg.hotkeyUnusable') $true
       return
     }
     $chord = Format-ChordValue (Test-ChordWinHeld) $e.Control $e.Alt $e.Shift $name
     if (-not (Test-ChordUsable $chord)) {
       # a bare letter would take that key away from every program
-      Show-Message 'a hotkey needs a modifier, or an F1-F24 key on its own' $true
+      Show-Message (Get-UiText 'settings.msg.hotkeyNeedsModifier') $true
       return
     }
     $key = [string]$script:SetRecKey
@@ -822,8 +830,8 @@ function Show-Settings {
   $form.StartPosition = 'Manual'
   $form.ShowInTaskbar = $true
   $form.KeyPreview = $true
-  $form.Text = 'Settings'
-  $form.AccessibleName = 'Settings'
+  $form.Text = (Get-UiText 'settings.window.title')
+  $form.AccessibleName = (Get-UiText 'settings.window.title')
   # The one mark the tool draws (lib\native.ps1): the same icon the tray shows, so the taskbar
   # button and Alt-Tab never carry a second drawing of it.
   $icon = New-AppIcon
@@ -897,7 +905,9 @@ function Show-Settings {
           $strip.Dispose()
         }
       } else {
-        Draw-SettingsChrome $g $pal $layout 'Settings' ([string]$groups[$script:SetGroup])
+        $headGroup = [string]$groups[$script:SetGroup]
+        $headKey = 'settings.group.' + $headGroup
+        Draw-SettingsChrome $g $pal $layout (Get-UiText 'settings.window.title') (Get-UiTextOr $headKey $headGroup)
         Draw-SettingsSide $g $pal $layout $groups $script:SetGroup $script:SetPendingGroups
       }
       $vis = Get-SettingsVisibleRows $layout
@@ -1201,7 +1211,7 @@ function Show-Settings {
     # on a shortcut waits for a chord, a click on a value opens its list, and anything else is
     # typed - there is no select-then-act step
     if ($row.ContainsKey('Record') -and $row.Record) {
-      if ($wasRec -ne [string]$row.Key) { Start-Record $row } else { Show-Message 'recording cancelled' $false }
+      if ($wasRec -ne [string]$row.Key) { Start-Record $row } else { Show-Message (Get-UiText 'settings.msg.recordingCancelled') $false }
       return
     }
     if ($row.Kind -eq 'bool') {

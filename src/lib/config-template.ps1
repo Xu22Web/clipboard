@@ -19,7 +19,7 @@ $script:IniTemplateLayout = [ordered]@{
     'MaxTextBytes', 'MaxTextTotalBytes', 'MaxMediaTotalBytes', 'BlobChars',
     'CaptureImages', 'MaxImageBytes', 'CaptureRich', 'MaxHtmlBytes', 'MaxRtfBytes',
     'RtfImagesUpToBytes', 'InlineImageUpToBytes', 'PasteRich', 'PasteFilesAsText', 'PasteTyping',
-    'AppRules', 'Interval', 'NoPaste', 'Balloon', 'Theme', 'ExcludePattern'
+    'AppRules', 'Interval', 'NoPaste', 'Balloon', 'Theme', 'Language', 'ExcludePattern'
   )
   'panel geometry (96 dpi baseline, scaled by the system DPI)' = @(
     'WindowWidth', 'Rows', 'CompactWidth', 'CompactRows',

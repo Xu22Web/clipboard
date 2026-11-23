@@ -289,6 +289,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `NoPaste` | `0` | `1` = 只写剪贴板，不自动粘贴 |
 | `Balloon` | `1` | `1` = 启动时弹托盘气泡 |
 | `Theme` | `win11-dark` | 主题名 = `themes/` 下的 `.ini` 文件名，不接受别名 |
+| `Language` | `en` | 界面文案与字体族的语言 = `lang/` 下的 `.ini` 文件名（`en` / `zh-CN`），默认英文，需手动切换 |
 | `ExcludePattern` | 空 | 正则，匹配到的文本不入库 |
 | `WindowWidth` | `700` | 面板宽度（96 dpi 基准，高 DPI 按比例缩放） |
 | `Rows` | `10` | 可见行数，面板高度的唯一来源：高度 = 行数 × 行高 + 头部 + 底栏 + 边框；受屏幕工作区限制 |
@@ -708,6 +709,7 @@ src/                    程序本体（打包只读这个目录）
   lib/blobs.ps1           大正文块：超过 BlobChars 的条目落成文件，行内只留引用
   lib/store.ps1           历史文件：CBHIST 格式、版本字段、加锁、追加 / 墓碑 / 折叠、裁剪
   lib/transfer.ps1        导入导出：记录 ↔ 文本行
+  lib/text.ps1            界面文案：读 lang\*.ini、按语言叠加、缺键回退 en
   lib/apprules.ps1        粘贴目标程序 → 粘贴方式
   lib/marks.ps1           标记的读写与含义查询
   lib/ordering.ps1        行序规则：排序标记置顶、粘性置顶的可冻结行数
@@ -751,6 +753,7 @@ src/                    程序本体（打包只读这个目录）
   lib/plugin/plugin-marks.ps1    标记含义
   plugins/*.ps1           插件（item-marks / entry-actions / transform / retention）
   themes/*.ini            主题（win11-dark / win11-light）
+  lang/*.ini              界面文案（en 为基准，覆盖叠加；含 [meta] 字体族）
 
   utils/ini.ps1           文本 → 文档与文档上的增删改查（纯函数，含按模板重写）
   utils/inifile.ps1       导入 ini 文件（按路径缓存）与写回单个键
@@ -787,7 +790,7 @@ flowchart TD
 
 除 `lib\themes.ps1` 与插件三件套外，模块缺失会报 `missing: …` 并以退出码 1 结束。
 
-模块按命令加载：`$baseModules` 是每条命令都需要的 18 个文件，六个可选组 `store` / `transfer` / `config` / `panel` / `panelgeom` / `settings` 由 `$commandGroups` 决定：
+模块按命令加载：`$baseModules` 是每条命令都需要的 19 个文件，六个可选组 `store` / `transfer` / `config` / `panel` / `panelgeom` / `settings` 由 `$commandGroups` 决定：
 
 | 命令 | 加载的可选组 |
 |---|---|

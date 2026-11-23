@@ -336,19 +336,19 @@ function Get-EmptyState($entries, $query, [string]$q, $glyphs) {
   $s = @{ Glyph = ''; Title = ''; Sub = '' }
   if (@($entries).Count -eq 0) {
     $s.Glyph = [string]$glyphs.History
-    $s.Title = 'Clipboard history is empty'
-    $s.Sub = 'Copy something and it will appear here'
+    $s.Title = (Get-UiText 'panel.empty.title.empty')
+    $s.Sub = (Get-UiText 'panel.empty.sub.empty')
     return $s
   }
   if ($null -eq $query -or $query.Count -eq 0) { return $s }
   $s.Glyph = [string]$glyphs.Search
   if ($query.Bad.Count -gt 0) {
-    $s.Title = 'The search was not understood'
+    $s.Title = (Get-UiText 'panel.empty.title.bad')
     $s.Sub = [string]$query.Bad[0]
     return $s
   }
-  $s.Title = 'No results for "' + ([string]$q).Trim() + '"'
-  $s.Sub = 'Try another keyword, or press Esc to clear the search'
+  $s.Title = (Get-UiText 'panel.empty.title.noResults' @(([string]$q).Trim()))
+  $s.Sub = (Get-UiText 'panel.empty.sub.noResults')
   return $s
 }
 
@@ -510,6 +510,9 @@ function Initialize-PanelFonts {
   if (-not $script:UiFamily) {
     $script:UiFamily = 'Tahoma'
     $wantFace = [string]$script:ThemeFace.Font
+    # a language may name the family it needs (a CJK language cannot use the Segoe faces); an
+    # explicit face in the theme still wins, because that is the user speaking
+    if (-not $wantFace -and (Get-Command Get-UiTextFont -ErrorAction SilentlyContinue)) { $wantFace = [string](Get-UiTextFont) }
     if ($wantFace -and (Test-Font $wantFace)) { $script:UiFamily = $wantFace }
     elseif (Test-Font 'Segoe UI Variable Text') { $script:UiFamily = 'Segoe UI Variable Text' }
     elseif (Test-Font 'Segoe UI') { $script:UiFamily = 'Segoe UI' }

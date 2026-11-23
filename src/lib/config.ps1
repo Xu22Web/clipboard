@@ -61,6 +61,9 @@ function Apply-Config {
     try { $onDisk = @(Get-AllPluginNames (Join-Path $Root 'plugins')) } catch { $onDisk = @() }
   }
   $script:PluginList = @(Resolve-PluginList ([string](Get-CfgValue 'Plugins')) $onDisk)
+  # The words follow Language: en.ini first, the chosen language laid over it. Called from here so
+  # a saved change and a `config set` reach the same place, and so no surface reads a file itself.
+  if (Get-Command Initialize-Text -ErrorAction SilentlyContinue) { [void](Initialize-Text ([string]$script:Language)) }
   # plugin settings are read from the same file, so they follow every reload
   if ($script:PluginSettings -and $script:PluginSettings.Count -gt 0 -and (Get-Command Apply-PluginSettings -ErrorAction SilentlyContinue)) {
     Apply-PluginSettings

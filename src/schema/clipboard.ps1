@@ -39,6 +39,7 @@
     NoPaste           = @{ Type = 'bool'; Ref = [ref]$script:NoPaste; Default = 0; Description = '1 = clipboard only, never inject a paste' }
     Balloon           = @{ Type = 'bool'; Ref = [ref]$script:ShowBalloon; Default = 1; Description = '1 = tray balloon on startup' }
     Theme             = @{ Type = 'theme'; Ref = [ref]$script:Theme; Default = 'win11-dark'; Description = 'theme name = the file in themes\ (win11-dark.ini / win11-light.ini)' }
+    Language          = @{ Type = 'enum'; Enum = @('en', 'zh-CN'); Ref = [ref]$script:Language; Default = 'en'; Description = 'words and font family: the file in lang\ without the .ini (en, zh-CN); English unless set' }
     ExcludePattern    = @{ Type = 'regex'; Ref = [ref]$script:ExcludePattern; Default = ''; Hint = '(none)'; Description = 'matching text is never saved' }
     WindowWidth       = @{ Type = 'int'; Unit = 'px'; Ref = [ref]$script:WinWidth; Default = 700; Minimum = 460; Maximum = 4000; Description = 'panel width (96 dpi baseline)' }
     Rows              = @{ Type = 'int'; Unit = 'rows'; Ref = [ref]$script:Rows; Default = 10; Minimum = 3; Maximum = 50; Description = 'visible rows; the height follows from it (rows x 40 + 110)' }
