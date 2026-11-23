@@ -552,7 +552,10 @@ function Draw-SettingsRow($g, $pal, $layout, $row, [int]$x, [int]$y, [int]$w, [d
   $helpText = [string]$row.Help
   if (-not $enabled) {
     $labelInk = $pal['Faint']
-    if ($row.ContainsKey('Why') -and $row.Why) { $helpText = 'Off because ' + [string]$row.Why }
+    if ($row.ContainsKey('Why') -and $row.Why) {
+      $reason = [string]$row.Why
+      $helpText = Get-UiText 'settings.help.off' @($reason)
+    }
   }
   $labelBox = New-Object Drawing.RectangleF -ArgumentList @(
     [single]($x + (Px 12)), [single]($y + (Px 8)), [single]$textW, [single](Px 22))

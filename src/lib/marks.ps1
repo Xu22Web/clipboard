@@ -54,6 +54,31 @@ function Get-MarkWord([string]$mark) {
   return $mark
 }
 
+# The same word for the window and the tray, which are spoken in the chosen language: the
+# language file may name the mark - the identity is the plugin plus the one character it
+# declared - and a mark nobody named keeps the plugin's own word. First letter upper-cased,
+# which a language without letter case leaves alone. Command line output keeps Get-MarkWord:
+# `clipboard list` and `clipboard marks` are not translated.
+function Get-MarkUiWord([string]$mark) {
+  $word = Get-MarkWord $mark
+  $info = Get-MarkInfo $mark
+  if ($info) { $word = Get-UiTextOr ('mark.' + [string]$info.Plugin + '.' + $mark) $word }
+  if ($word) { $word = $word.Substring(0, 1).ToUpperInvariant() + $word.Substring(1) }
+  return $word
+}
+
+# '3 pinned' / '3 条星标': one line per mark the rows carry, in declaration order
+function Get-MarkUiCount($records) {
+  $src = @($records)
+  $out = @()
+  foreach ($m in @(Get-MarkNames)) {
+    $c = 0
+    foreach ($r in $src) { if (Test-Mark $r $m) { $c++ } }
+    if ($c -gt 0) { $out += (Get-UiText 'panel.foot.markCount' @($c, (Get-MarkUiWord $m).ToLowerInvariant())) }
+  }
+  return $out
+}
+
 function Get-ProtectedMarks {
   if (Get-Command Get-PluginProtectedMarks -ErrorAction SilentlyContinue) {
     try { return @(Get-PluginProtectedMarks) } catch { }

@@ -157,7 +157,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     $form.ShowInTaskbar = $false
     $form.KeyPreview = $true
     $form.Text = (Get-UiText 'panel.title')
-    $form.AccessibleName = 'Clipboard history'
+    $form.AccessibleName = (Get-UiText 'panel.title')
     # Where the panel opens is decided before any control exists, because both its size and its
     # place come out of the same question. Two shapes ask it differently:
     #
@@ -209,7 +209,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     $lst.BackColor = $ui.Surface
     $lst.ForeColor = $ui.Text
     $lst.Font = $fBody
-    $lst.AccessibleName = 'Clipboard entries'
+    $lst.AccessibleName = (Get-UiText 'panel.accEntries')
 
     # The native scrollbar cannot be themed and ListBox has no property to hide it, so the list
     # sits in a clipping host and is made wider than it: the scrollbar lands outside the view.
@@ -343,7 +343,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     $txt.BackColor = $ui.Field
     $txt.ForeColor = $ui.Text
     $txt.Font = $fBody
-    $txt.AccessibleName = 'Search clipboard history'
+    $txt.AccessibleName = (Get-UiText 'panel.search')
     # Not a tab stop: a form gives the focus to its first tabbable control when it is shown,
     # and that would put the keyboard - and a caret - in the filter row for one frame before
     # the list takes it. The list is where the panel starts; the box is reached by typing.
@@ -373,7 +373,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     $clr.TextAlign = 'MiddleCenter'
     $clr.Cursor = 'Hand'
     $clr.Visible = $false
-    $clr.AccessibleName = 'Clear search'
+    $clr.AccessibleName = (Get-UiText 'panel.accClearSearch')
     $clr.Add_MouseEnter({ $clr.ForeColor = $ui.Text })
     $clr.Add_MouseLeave({ $clr.ForeColor = $ui.Dim })
 
@@ -385,7 +385,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     $caret.BackColor = $ui.Accent
     $caret.Cursor = 'IBeam'
     $caret.Visible = $false
-    $caret.AccessibleName = 'Search caret'
+    $caret.AccessibleName = (Get-UiText 'panel.accCaret')
     $caret.Add_Click({ $txt.Focus() })
 
     $line = New-Object Windows.Forms.Panel
@@ -1073,13 +1073,14 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
         # only the plugin that declared the mark knows how to remove it
         $pm = $removed.Substring(10)
         $info = Get-MarkInfo $pm
-        $word = Get-MarkWord $pm
-        $word = $word.Substring(0, 1).ToUpper() + $word.Substring(1)
+        $word = Get-MarkUiWord $pm
         if ($info -and $info.Unset) {
-          if ($info.Hint) { Set-Foot ($word + ' entry. Press ' + $info.Hint + ' to ' + $info.Unset + ' it first') ([int]$script:Timing['FootWarn']) }
-          else { Set-Foot ($word + ' entry. ' + $info.Unset + ' it first, then delete') ([int]$script:Timing['FootWarn']) }
+          $hint = [string]$info.Hint
+          $unset = [string]$info.Unset
+          if ($hint) { Set-Foot (Get-UiText 'panel.foot.markHint' @($word, $hint, $unset)) ([int]$script:Timing['FootWarn']) }
+          else { Set-Foot (Get-UiText 'panel.foot.markNoHint' @($word, $unset)) ([int]$script:Timing['FootWarn']) }
         } else {
-          Set-Foot ($word + ' entry. Load the plugin that owns the ' + $pm + ' mark first') ([int]$script:Timing['FootWarn'])
+          Set-Foot (Get-UiText 'panel.foot.markNoPlugin' @($word, $pm)) ([int]$script:Timing['FootWarn'])
         }
         return
       }
@@ -1118,8 +1119,8 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $script:Confirm = $true
       $footTimer.Stop()
       $script:FootMode = 'confirm'
-      if (@(Get-ClearKeepMarks).Count -gt 0) { $script:FootMsg = 'Delete the entries no mark keeps?   Enter to confirm, Esc to cancel' }
-      else { $script:FootMsg = 'Delete the entire history?   Enter to confirm, Esc to cancel' }
+      if (@(Get-ClearKeepMarks).Count -gt 0) { $script:FootMsg = Get-UiText 'panel.foot.confirmClearKept' }
+      else { $script:FootMsg = Get-UiText 'panel.foot.confirmClearAll' }
       $footL.Invalidate()
       $confirmTimer.Stop()
       $confirmTimer.Start()
@@ -1132,7 +1133,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $script:Entries = @(Get-Records)
       Write-Log ('history cleared from the panel, left ' + $script:Entries.Count + ' rows')
       Update-List $txt.Text
-      $kept = @(Get-MarkCountWords $script:Entries)
+      $kept = @(Get-MarkUiCount $script:Entries)
       if ($kept.Count -gt 0) { Set-Foot (Get-UiText 'panel.foot.clearedKept' @($kept -join ', ')) ([int]$script:Timing['FootWarn']) }
       else { Set-Foot (Get-UiText 'panel.foot.cleared') ([int]$script:Timing['FootInfo']) }
     }

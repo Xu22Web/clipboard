@@ -153,7 +153,7 @@ function Begin-RowEdit {
   $ctx = $script:EditorCtx
   $lst = $ctx.List
   $idx = [int]$lst.SelectedIndex
-  if ($idx -lt 0 -or $idx -ge @($script:Filtered).Count) { & $ctx.Note 'Nothing selected'; return }
+  if ($idx -lt 0 -or $idx -ge @($script:Filtered).Count) { & $ctx.Note (Get-UiText 'panel.foot.nothingSelected'); return }
   $rec = $script:Filtered[$idx]
   if ($null -eq $rec) { return }
   # A picture, a file list and a formatted entry have no F2 in the footer and no Edit in the
@@ -217,7 +217,7 @@ function Begin-RowEdit {
   $box.ForeColor = $ctx.Ui.Text
   $box.SetBounds($pad, (Px 48), ($cw - (2 * $pad)), ($ch - (Px 48) - (Px 78)))
   $box.Text = $payload
-  $box.AccessibleName = 'Edit the text of this entry'
+  $box.AccessibleName = (Get-UiText 'panel.edit.accText')
   $box.Add_KeyDown({
       param($s, $e)
       if ($e.KeyCode -eq [Windows.Forms.Keys]::Escape) {
@@ -331,7 +331,7 @@ function Complete-RowEdit([bool]$save) {
   $payload = [string]$state.Payload
   if (-not $save) {
     Close-RowEdit
-    & $ctx.Note 'Edit cancelled' ([int]$script:Timing['FootShort'])
+    & $ctx.Note (Get-UiText 'panel.foot.editCancelled') ([int]$script:Timing['FootShort'])
     return
   }
   # a refused save keeps the card open: what the user typed must not be thrown away, and the
@@ -361,6 +361,6 @@ function Complete-RowEdit([bool]$save) {
       elseif ($vis -gt 0 -and $hit -ge ($top + $vis)) { $ctx.List.TopIndex = ($hit - $vis + 1) }
     } catch { }
   }
-  if ($hit -lt 0) { & $ctx.Note 'Saved, but it no longer matches the search' ([int]$script:Timing['FootInfo']) }
-  else { & $ctx.Note 'Saved' ([int]$script:Timing['FootInfo']) }
+  if ($hit -lt 0) { & $ctx.Note (Get-UiText 'panel.foot.savedOffSearch') ([int]$script:Timing['FootInfo']) }
+  else { & $ctx.Note (Get-UiText 'panel.foot.saved') ([int]$script:Timing['FootInfo']) }
 }

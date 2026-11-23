@@ -30,12 +30,15 @@
 - 插件与主题说明页按语言分目录：`docs\<语言>\plugin\`、`docs\<语言>\theme\`，两种语言各一份；文件名在两边相同
 - 截图一处一套：`docs\en\`（`cli shot`）与 `docs\zh-cn\`（`cli shot -Language zh-CN`）。不要手放、复制或跨语言引用截图
 - 文档内文件的移动或改名要同时改两边 README、`tests\pkg\build.ps1` 的 docs 断言，并跑一次相对链接自检（链接目标必须存在）；跨目录引用要按新深度调整路径
+- 互链按语言分流：英文页指向 `README.md` 的锚点，中文页指向 `README.zh-CN.md` 的锚点；`docs\<语言>\` 的回链也指向同语言的那一份，锚点要落在该文件的真实标题上
 
 ## 多语言与文案
 
 - 界面文案一律经 `Get-UiText` / `Get-UiTextOr` / `Get-UiTextCount`（`src\lib\text.ps1`）；绘制、交互与设置代码里不得出现可见的英文或中文
 - 不用 `Get-Text`：那是读剪贴板文本的函数，后加载的 `lib\clip.ps1` 会覆盖同名函数
 - 语言包是数据，放在 `src\lang\<code>.ini`：`en.ini` 是基准，其他语言叠加在它之上；键 = `<界面>.<槽位>`，身份用 schema 键名、组名、单位名或插件 `Name`
+- 插件标记词用 `mark.<插件 Name>.<标记字符>`（缺键回退插件声明的 `Word`）；设置项的灰置原因用 `why.<owner Key>`，句子外壳是 `settings.help.off`
+- 面板与托盘的可见文案（含 `AccessibleName`、`MessageBox` 正文、底部提示）都走语言包；`Get-RowEditBlock` 返回的原因串只给测试看，保持英文
 - 新增或修改一条文案要同时改 `en.ini` 与每种在售语言（当前 `zh-CN.ini`）；不许只改一边
 - 键不能只有大小写不同（PowerShell 哈希表大小写不敏感）：`about.version` 与 `about.Version` 会互相覆盖
 - 占位符 `{0}` `{1}` 的数量与顺序在两种语言里必须一致；复数写 `<key>.one` / `<key>.other`，没有单复数区分的语言只写 `.other`

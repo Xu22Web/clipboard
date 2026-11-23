@@ -41,14 +41,16 @@ function Get-ClearPrompt($records) {
     foreach ($k in $keeps) { if ($marks.Contains([string]$k)) { $hit = [string]$k; break } }
     if (-not $hit) { continue }
     $stay++
-    $w = Get-MarkWord $hit
+    $w = Get-MarkUiWord $hit
     if ($words.Contains($w)) { $words[$w]++ } else { $words[$w] = 1 }
   }
   $gone = $recs.Count - $stay
-  $text = 'Delete ' + $gone + ' ' + $(if ($gone -eq 1) { 'entry' } else { 'entries' }) + ' from the history?'
+  $goneWord = Get-UiTextCount 'menu.entries' $gone
+  $text = Get-UiText 'tray.clearAsk' @($goneWord)
   if ($stay -gt 0) {
     $parts = @($words.Keys | Sort-Object | ForEach-Object { [string]$words[$_] + ' ' + [string]$_ })
-    $text += "`n`n" + $stay + ' ' + $(if ($stay -eq 1) { 'entry stays' } else { 'entries stay' }) + ' (' + ($parts -join ', ') + ').'
+    $stayWord = Get-UiTextCount 'menu.entries' $stay
+    $text += "`n`n" + (Get-UiText 'tray.clearStay' @($stayWord, ($parts -join ', ')))
   }
   return @{ Text = $text; Gone = $gone; Stay = $stay }
 }
@@ -210,7 +212,8 @@ function Invoke-ServeOnce {
         try {
           $prompt = Get-ClearPrompt @(Get-Records)
           if ([int]$prompt.Gone -le 0) {
-            [void][Windows.Forms.MessageBox]::Show('Nothing to delete: every entry is kept by a mark.', 'clipboard', [Windows.Forms.MessageBoxButtons]::OK, [Windows.Forms.MessageBoxIcon]::Information)
+            $noDelete = Get-UiText 'tray.nothingToDelete'
+            [void][Windows.Forms.MessageBox]::Show($noDelete, 'clipboard', [Windows.Forms.MessageBoxButtons]::OK, [Windows.Forms.MessageBoxIcon]::Information)
             return
           }
           $r = [Windows.Forms.MessageBox]::Show($prompt.Text, 'clipboard', [Windows.Forms.MessageBoxButtons]::YesNo, [Windows.Forms.MessageBoxIcon]::Question)

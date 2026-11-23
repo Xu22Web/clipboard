@@ -24,7 +24,7 @@ A missing, empty or misspelled `Theme` falls back here.
 | `BadgeBg` / `BadgeText` | `#10FFFFFF` / `#C8C8C8` |
 | `KeyCapBg` / `KeyCapBorder` | `#0CFFFFFF` / `#1CFFFFFF` |
 | `Mark` / `Warn` | `#FFC86E` / `#FF99A4` |
-| font family | empty = automatic (`Segoe UI Variable Text` → `Segoe UI`; icons `Segoe Fluent Icons` → `Segoe MDL2 Assets`) |
+| font family | empty = the language file's family, then automatic (`Segoe UI Variable Text` → `Segoe UI`; icons `Segoe Fluent Icons` → `Segoe MDL2 Assets`) |
 | point sizes | Body 10.5 / Small 9 / Tiny 9 / Title 13 / Icon 12 / IconSmall 10 / IconBig 24 |
 | `[item-marks]` | `StarColor=#FFC86E` (the star matches the default mark colour), `EmphasisInk=#9FDDFF` / `EmphasisFill=#3360CDFF` (a light accent ink on a 20 % blue fill) |
 

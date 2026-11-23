@@ -1,6 +1,6 @@
 # win11-dark —— Windows 11 Fluent 深色（默认）
 
-[← 主说明](../../../README.md) · [主题格式](../../../README.md#主题)
+[← 主说明](../../../README.zh-CN.md) · [主题格式](../../../README.zh-CN.md#主题)
 
 默认主题，也是界面的**参考布局**：行高、栏高、字体与圆角都以它为准，其余主题在它之上换色。
 
@@ -24,7 +24,7 @@ Theme=win11-dark
 | `BadgeBg` / `BadgeText` | `#10FFFFFF` / `#C8C8C8` |
 | `KeyCapBg` / `KeyCapBorder` | `#0CFFFFFF` / `#1CFFFFFF` |
 | `Mark` / `Warn` | `#FFC86E` / `#FF99A4` |
-| 字体族 | 空 = 自动（`Segoe UI Variable Text` → `Segoe UI`；图标 `Segoe Fluent Icons` → `Segoe MDL2 Assets`） |
+| 字体族 | 空 = 先取语言包的字体族，再回退 `Segoe UI Variable Text` → `Segoe UI`（图标 `Segoe Fluent Icons` → `Segoe MDL2 Assets`） |
 | 字号 | Body 10.5 / Small 9 / Tiny 9 / Title 13 / Icon 12 / IconSmall 10 / IconBig 24 |
 | `[item-marks]` | `StarColor=#FFC86E`（星标与默认标记色一致）、`EmphasisInk=#9FDDFF` / `EmphasisFill=#3360CDFF`（强调色浅色 + 20% 蓝底） |
 
@@ -33,5 +33,5 @@ Theme=win11-dark
 ## 修改方式
 
 - 调整少量颜色：将 `themes\win11-dark.ini` 复制为 `themes\<名称>.ini`，修改 `name=` 与对应 token，再把 `Theme=` 指向新文件；不建议直接修改默认主题，升级时会被覆盖。
-- token 名单与 `[fonts]` / `[metrics]` / `[<插件名>]` 段的写法：见 [主说明的主题一节](../../../README.md#主题)。
+- token 名单与 `[fonts]` / `[metrics]` / `[<插件名>]` 段的写法：见 [主说明的主题一节](../../../README.zh-CN.md#主题)。
 - 切换主题后需重启常驻进程生效（`clipboard config set Theme <name>` 会自动重启）。

@@ -131,13 +131,13 @@ function Set-FrameCornerRegion($ctl, [int]$radius, [string]$corners = 'top') {
 }
 
 # The keys the in-place editor answers. One list, used by the panel footer and by the editor
-# card that covers it, so the two cannot spell the same action differently - and every action
-# is capitalised like the panel's own labels (Paste, Copy, Delete, Close).
+# card that covers it, so the two cannot spell the same action differently. The action words
+# come from the language file like every other word on screen; the key names do not.
 function Get-EditHints {
   $pairs = New-Object System.Collections.Generic.List[object]
-  $pairs.Add(@('Enter', 'Save'))
-  $pairs.Add(@('Shift+Enter', 'Newline'))
-  $pairs.Add(@('Esc', 'Cancel'))
+  $pairs.Add(@('Enter', (Get-UiText 'panel.chip.save')))
+  $pairs.Add(@('Shift+Enter', (Get-UiText 'panel.chip.newline')))
+  $pairs.Add(@('Esc', (Get-UiText 'panel.chip.cancel')))
   return $pairs.ToArray()
 }
 
@@ -157,31 +157,31 @@ function Get-PanelHints([int]$rows, [int]$selected, [bool]$editable, [int]$query
   if ($rows -le 0) {
     # the comma keeps the pair nested: a one-element array would be unrolled by the function
     # return and each string would then be read as a list of characters
-    return ,@(@('Esc', 'Close'))
+    return ,@(@('Esc', (Get-UiText 'panel.chip.close')))
   }
   if ($compact) {
     # the compact footer has no room for five pairs and no count label to share the row with:
     # pick and leave first, then the two extras that change something
     $pairs = New-Object System.Collections.Generic.List[object]
     if ($selected -gt 1) {
-      $pairs.Add(@('Ctrl+Enter', ('Copy ' + $selected.ToString())))
-      $pairs.Add(@('Del', ('Delete ' + $selected.ToString())))
+      $pairs.Add(@('Ctrl+Enter', (Get-UiText 'panel.chip.copyN' @($selected))))
+      $pairs.Add(@('Del', (Get-UiText 'panel.chip.deleteN' @($selected))))
     } else {
-      $pairs.Add(@('Enter', 'Paste'))
-      $pairs.Add(@('Ctrl+Enter', 'Copy'))
-      if ($editable) { $pairs.Add(@('F2', 'Edit')) }
+      $pairs.Add(@('Enter', (Get-UiText 'panel.chip.paste')))
+      $pairs.Add(@('Ctrl+Enter', (Get-UiText 'panel.chip.copy')))
+      if ($editable) { $pairs.Add(@('F2', (Get-UiText 'panel.chip.edit'))) }
     }
-    if ($queryLen -gt 0) { $pairs.Add(@('Esc', 'Clear')) } else { $pairs.Add(@('Esc', 'Close')) }
+    if ($queryLen -gt 0) { $pairs.Add(@('Esc', (Get-UiText 'panel.chip.clear'))) } else { $pairs.Add(@('Esc', (Get-UiText 'panel.chip.close'))) }
     return $pairs.ToArray()
   }
   $multi = ($selected -gt 1)
   # the count is worked out first: inside the array below, '+ [string]$selected' would be read
   # as a second pair element and the chip would come out as 'Copy' and '3' side by side
-  $copyLabel = 'Copy'
-  $delLabel = 'Delete'
+  $copyLabel = Get-UiText 'panel.chip.copy'
+  $delLabel = Get-UiText 'panel.chip.delete'
   if ($multi) {
-    $copyLabel = 'Copy ' + $selected.ToString()
-    $delLabel = 'Delete ' + $selected.ToString()
+    $copyLabel = Get-UiText 'panel.chip.copyN' @($selected)
+    $delLabel = Get-UiText 'panel.chip.deleteN' @($selected)
   }
   if ($ctrlHeld) {
     # Ctrl is held while these show; each chip spells the whole combination out, core ones
@@ -189,10 +189,10 @@ function Get-PanelHints([int]$rows, [int]$selected, [bool]$editable, [int]$query
     # a list, not "@(@(pair))": a one-element array of arrays is flattened by the array
     # subexpression, and the first chip then came out as two loose strings
     $pairs = New-Object System.Collections.Generic.List[object]
-    $pairs.Add(@('Ctrl+1-9,0', 'Pick'))
+    $pairs.Add(@('Ctrl+1-9,0', (Get-UiText 'panel.chip.pick')))
     $pairs.Add(@('Ctrl+Enter', $copyLabel))
     # undo is only worth a chip while the setting allows it
-    if ($undoOn) { $pairs.Add(@('Ctrl+Z', 'Undo')) }
+    if ($undoOn) { $pairs.Add(@('Ctrl+Z', (Get-UiText 'panel.chip.undo'))) }
     foreach ($pk in @($ctrlKeys)) {
       # the text is built first: inside one expression the comma binds to the right of the
       # "Ctrl+" + key addition, so the pair arrived as a single string "Ctrl+O Open" and the
@@ -207,13 +207,13 @@ function Get-PanelHints([int]$rows, [int]$selected, [bool]$editable, [int]$query
   if ($multi) {
     $out.Add(@('Ctrl+Enter', $copyLabel))
   } else {
-    $out.Add(@('Enter', 'Paste'))
+    $out.Add(@('Enter', (Get-UiText 'panel.chip.paste')))
     $out.Add(@('Ctrl+Enter', $copyLabel))
     # only a plain text row has anything the editor can show and write back
-    if ($editable) { $out.Add(@('F2', 'Edit')) }
+    if ($editable) { $out.Add(@('F2', (Get-UiText 'panel.chip.edit'))) }
   }
   $out.Add(@('Del', $delLabel))
-  if ($queryLen -gt 0) { $out.Add(@('Esc', 'Clear')) } else { $out.Add(@('Esc', 'Close')) }
+  if ($queryLen -gt 0) { $out.Add(@('Esc', (Get-UiText 'panel.chip.clear'))) } else { $out.Add(@('Esc', (Get-UiText 'panel.chip.close'))) }
   return $out.ToArray()
 }
 

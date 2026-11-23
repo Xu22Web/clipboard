@@ -1,6 +1,6 @@
 # item-marks —— 置顶 / 收藏 / 高亮
 
-[← 回到主说明](../../../README.md) · [插件契约](../../../README.md#插件)
+[← 回到主说明](../../../README.zh-CN.md) · [插件契约](../../../README.zh-CN.md#插件)
 
 三个互相独立的标记，一个插件承载：
 
@@ -64,7 +64,7 @@ $ clipboard del 1
 [!] starred entry, unstar it first: clipboard unstar 1
 ```
 
-面板里同样的操作显示为底部提示：`Starred entry. Press Ctrl+S to unstar it first`。
+面板里同样的操作显示为底部提示：`该条目已星标，先按 Ctrl+S 执行 unstar 再删除`（标记词由语言包命名，命令名与快捷键名保持英文）。
 
 ## 设置项（`clipboard.ini`）
 

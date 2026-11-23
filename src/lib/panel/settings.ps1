@@ -332,7 +332,7 @@ function Show-Settings {
     if ($script:SetPending.Count -eq 0) { return }
     $pending = $script:SetPending
     $r = Save-SettingsValues $pending
-    if (-not $r.Ok) { Show-Message ('save failed: ' + [string]$r.Error) $true; return }
+    if (-not $r.Ok) { Show-Message (Get-UiText 'settings.msg.saveFailed' @([string]$r.Error)) $true; return }
     $script:SetPending = @{}
     # the folder the window itself writes to moves with the store location it just saved
     if ($pending.Contains('DataDir')) { $script:StoreDir = [string]$pending['DataDir'] }
@@ -353,9 +353,7 @@ function Show-Settings {
     }
     Refresh-Settings
     $n = [int]$r.Count
-    $said = ([string]$n) + ' setting'
-    if ($n -ne 1) { $said = $said + 's' }
-    Show-Message ($said + ' saved') $false
+    Show-Message (Get-UiTextCount 'settings.msg.saved' $n) $false
   }
 
   # Discard: the file is the truth, so dropping the staged table is the whole action, and every
@@ -375,9 +373,7 @@ function Show-Settings {
     foreach ($k in @($next.Keys)) { $script:SetPending[[string]$k] = [string]$next[$k] }
     Refresh-Settings
     $n = $next.Count
-    $said = ([string]$n) + ' setting'
-    if ($n -ne 1) { $said = $said + 's' }
-    Show-Message ($said + ' back at the default, not saved yet') $false
+    Show-Message (Get-UiTextCount 'settings.msg.defaulted' $n) $false
   }
 
   # Which footer actions apply right now: the reset one always does, the other two only once
@@ -416,7 +412,8 @@ function Show-Settings {
       Show-Message (Get-UiText 'settings.msg.keepOneChord') $true
       return
     }
-    [void](Stage-Setting ([string]$row.Key) $next ('removed ' + [string]$chords[$index]))
+    $removedNote = Get-UiText 'settings.msg.removed' @([string]$chords[$index])
+    [void](Stage-Setting ([string]$row.Key) $next $removedNote)
   }
 
   # which chord line of a chain is under the pointer, -1 for none
@@ -480,11 +477,11 @@ function Show-Settings {
       Show-Message ($key + ': ' + [string]$r.Error) $true
       return
     }
-    $what = 'set to ' + [string]$r.Value
+    $what = Get-UiText 'settings.msg.setTo' @([string]$r.Value)
     if ($script:SetEditField.Number) {
       $said = ([string]$box.Text).Trim()
       if ($script:SetEditField.Unit) { $said = $said + ' ' + [string]$script:SetEditField.Unit }
-      $what = 'set to ' + $said
+      $what = Get-UiText 'settings.msg.setTo' @($said)
     }
     # Entering a field and leaving it again is not an edit: the committed value is compared with
     # the one the row shows, and an equal one closes the field without saying anything
@@ -569,12 +566,12 @@ function Show-Settings {
     $raw = Get-DropRaw
     $next = Get-SettingListToggled $raw $name
     if ($null -eq $next) {
-      Show-Message ('keep at least one: an empty ' + $key + ' means every one') $true
+      Show-Message (Get-UiText 'settings.msg.listNeedsOne' @($key)) $true
       return
     }
-    $what = 'unticked '
-    if (-not (Get-SettingListOn $raw $name)) { $what = 'ticked ' }
-    [void](Stage-Setting $key $next ($what + $name))
+    $tickNote = Get-UiText 'settings.msg.unticked' @($name)
+    if (-not (Get-SettingListOn $raw $name)) { $tickNote = Get-UiText 'settings.msg.ticked' @($name) }
+    [void](Stage-Setting $key $next $tickNote)
     if ($null -ne $script:SetDrop) { try { $script:SetDrop.Invalidate() } catch { } }
   }
 
@@ -688,7 +685,8 @@ function Show-Settings {
         Toggle-DropItem ([string]$list[$i])
         return
       }
-      [void](Stage-Setting ([string]$s.Tag.Key) ([string]$list[$i]) ('set to ' + [string]$list[$i]))
+      $pickNote = Get-UiText 'settings.msg.setTo' @([string]$list[$i])
+      [void](Stage-Setting ([string]$s.Tag.Key) ([string]$list[$i]) $pickNote)
       Close-Choices
     })
     $dd.Add_Deactivate({ Close-Choices })
@@ -705,7 +703,9 @@ function Show-Settings {
     if (-not (Test-RowEnabled $row)) { Show-RowRefused $row; return }
     $v = '1'
     if ([string]$row.Raw -eq '1') { $v = '0' }
-    [void](Stage-Setting ([string]$row.Key) $v ('turned ' + $(if ($v -eq '1') { 'on' } else { 'off' })))
+    $flipNote = Get-UiText 'settings.msg.turnedOff'
+    if ($v -eq '1') { $flipNote = Get-UiText 'settings.msg.turnedOn' }
+    [void](Stage-Setting ([string]$row.Key) $v $flipNote)
   }
 
   # A shortcut is recorded, not typed: a spelled-out chord is the one value that is easier to get
@@ -725,7 +725,8 @@ function Show-Settings {
     $script:SetRecPreview = @()
     [void](Start-HotkeyRecord ([string]$script:StoreDir))
     try { $form.Focus() } catch { }
-    Show-Message ('Press the keys for ' + [string]$row.Label + ', Esc to cancel') $false
+    $recLabel = [string]$row.Label
+    Show-Message (Get-UiText 'settings.msg.recording' @($recLabel)) $false
     $form.Invalidate()
   }
 
@@ -742,13 +743,14 @@ function Show-Settings {
   function Apply-RecordedChord([string]$chord) {
     if (-not $script:SetRecKey -or -not $chord) { return }
     if (-not (Test-ChordUsable $chord)) {
-      Show-Message ('that key cannot be used on its own: ' + $chord) $true
+      Show-Message (Get-UiText 'settings.msg.chordAlone' @($chord)) $true
       return
     }
     $key = [string]$script:SetRecKey
     $script:SetRecKey = ''
     $script:SetRecPreview = @()
-    [void](Stage-Setting $key (Get-RecordedValue $key $chord) ('set to ' + $chord))
+    $chordNote = Get-UiText 'settings.msg.setTo' @($chord)
+    [void](Stage-Setting $key (Get-RecordedValue $key $chord) $chordNote)
     $form.Invalidate()
   }
 
@@ -767,10 +769,11 @@ function Show-Settings {
       $picked = [string]$dlg.SelectedPath
       if (-not $picked) { return }
       # the folder is staged like any other value: the row shows it, and Save moves the store
-      if (-not (Stage-Setting ([string]$row.Key) $picked ('set to ' + $picked))) { return }
+      $pickedNote = Get-UiText 'settings.msg.setTo' @($picked)
+      if (-not (Stage-Setting ([string]$row.Key) $picked $pickedNote)) { return }
       $form.Invalidate()
     } catch {
-      Show-Message ('folder picker failed: ' + $_.Exception.Message) $true
+      Show-Message (Get-UiText 'settings.msg.pickFailed' @([string]$_.Exception.Message)) $true
     } finally { try { $dlg.Dispose() } catch { } }
   }
 
@@ -818,7 +821,8 @@ function Show-Settings {
     $script:SetRecKey = ''
     $script:SetRecPreview = @()
     Stop-HotkeyRecord ([string]$script:StoreDir)
-    [void](Stage-Setting $key (Get-RecordedValue $key $chord) ('set to ' + $chord))
+    $recNote = Get-UiText 'settings.msg.setTo' @($chord)
+    [void](Stage-Setting $key (Get-RecordedValue $key $chord) $recNote)
     $e.Handled = $true
     $e.SuppressKeyPress = $true
     $form.Invalidate()
@@ -1179,9 +1183,9 @@ function Show-Settings {
       if (-not $url) { return }
       try {
         Start-Process -FilePath $url
-        Show-Message ('opened ' + $url) $false
+        Show-Message (Get-UiText 'settings.msg.linkOpened' @($url)) $false
         Write-Log ('settings: opened ' + $url)
-      } catch { Show-Message ('could not open ' + $url) $true }
+      } catch { Show-Message (Get-UiText 'settings.msg.linkFailed' @($url)) $true }
       $form.Invalidate()
       return
     }
@@ -1305,7 +1309,9 @@ function Show-Settings {
     param($s, $e)
     if ($script:SetPending.Count -eq 0) { return }
     try {
-      $ans = [Windows.Forms.MessageBox]::Show($form, 'Close without saving? The changed values are dropped.', 'Settings',
+      $askText = Get-UiText 'settings.msg.closeUnsaved'
+      $askTitle = Get-UiText 'settings.window.title'
+      $ans = [Windows.Forms.MessageBox]::Show($form, $askText, $askTitle,
         [Windows.Forms.MessageBoxButtons]::YesNo, [Windows.Forms.MessageBoxIcon]::Warning,
         [Windows.Forms.MessageBoxDefaultButton]::Button2)
       if ($ans -ne [Windows.Forms.DialogResult]::Yes) { $e.Cancel = $true }

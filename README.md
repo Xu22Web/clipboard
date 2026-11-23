@@ -292,7 +292,7 @@ Every read validates the whole file: unknown keys, a wrong type or range, a them
 | `NoPaste` | `0` | `1` = clipboard only, never paste |
 | `Balloon` | `1` | `1` = tray balloon on startup |
 | `Theme` | `win11-dark` | theme name = the `.ini` file name under `themes/`, aliases are not accepted |
-| `Language` | `en` | words and font family = the `.ini` file name under `lang/` (`en` / `zh-CN`); English unless switched by hand |
+| `Language` | `en` | words and font family = the `.ini` file name under `lang/` (`en` / `zh-CN`); English unless switched by hand. Plugin names and command names come from the plugin and do not change with the language; a mark's word may be named by the language file and falls back to the plugin's own word |
 | `ExcludePattern` | empty | a regular expression; matching text is never stored |
 | `WindowWidth` | `700` | panel width (96 dpi baseline, scaled by the system DPI) |
 | `Rows` | `10` | visible rows, the only source of the panel height: rows × row height + header + footer + frame, capped by the work area |
@@ -364,9 +364,13 @@ A key spec:
 |---|---|
 | `Type` | `string` / `int` / `number` / `bool` / `list` / `enum` / `regex` / `color` / `hotkey` / `hotkeys` / `theme` / `apprule` / `any`; `hotkeys` is a chain of chords separated by `,` or `;`, each validated |
 | `Default` | the spelling the file is written with; `config init` writes it and a failed read falls back to it |
+| `Generated` | the default is a listing, not a constant: `plugin-list` = the names of the files in `plugins\`, in load order (`Plugins`, whose empty value also means all of them) |
+| `Hint` | what an empty value means, shown by `config` in place of the blank |
+| `Unit` | the unit a number is shown and typed in (`ms` / `px` / `rows` / `entries` / `chars` / `size`); `size` picks B, KB or MB itself |
 | `Minimum` / `Maximum` | bounds of an `int` / `number` |
 | `Enum` | the legal values of an `enum`; for a `list`, the tokens it accepts |
 | `Suggest` | values the settings window offers for the key (the list that opens); typing is not restricted to them |
+| `Pick` | the dialog the settings window opens instead of typing (`folder`) |
 | `ReadOnly` | a reason string: the window shows the value and refuses to edit it (used for `DataDir`, which would move the store) |
 | `Required` | `true` = an empty value is refused (`DataDir`) |
 | `InstallOnly` | `true` = only `install` acts on it; saving does not restart the resident and the window's help line says when it takes effect (`Autostart` / `DesktopShortcut`) |
@@ -454,7 +458,7 @@ Theme colours are not `clipboard.ini` keys and can only be changed in the theme 
 # a comment takes the whole line, starting with # or ;
 Name=my-theme
 Description=my colours
-# empty = automatic (Segoe UI Variable Text → Segoe UI)
+# empty = the language file's font family, then Segoe UI Variable Text → Segoe UI
 FontFamily=
 # empty = automatic (Segoe Fluent Icons → Segoe MDL2 Assets)
 IconFamily=
@@ -513,7 +517,7 @@ Every plugin is on by default: `Plugins=` lists the files under `plugins\` by na
 | [`transform`](docs/en/plugin/transform.md) | rewrite text before pasting: plain / upper / lower / camel / snake / kebab / title; the context menu lists `Transform as <mode>` for each `transform.Modes` entry | `Plugins=transform` |
 | [`retention`](docs/en/plugin/retention.md) | delete entries older than a number of days; a row with a protected mark is never cleaned | `Plugins=retention` |
 
-Commands, settings and theme keys of each plugin are in `docs\plugin\<plugin>.md`.
+Commands, settings and theme keys of each plugin are in `docs\<language>\plugin\<plugin>.md` (currently `docs\en\plugin\`).
 
 ```ini
 # the default: every plugin by name, in load order
@@ -534,6 +538,7 @@ A plugin is one `.ps1` file returning a hashtable.
 | `ContextMenu` | no | context-menu rows; each has `Label`, `Test` (hidden when it returns `$false`), `Invoke` and an optional `After = 'paste'` (paste once the action ends). A script block returning the same shape is accepted, so the rows can follow the plugin's settings. A string `Invoke` returns becomes the footer note |
 | `PanelKeys` | no | panel keys (`Key` / `Ctrl` / `Label` / `Test` / `Invoke`) that never override the base keys; a returned string lands in the footer |
 | `TypeGlyph` | no | `{ param($payload) ... }`, entry → row icon (nothing is drawn on an empty answer); the first plugin with a non-empty answer wins |
+| `QueryKinds` | no | extra `type:` names the plugin answers (`@{ code = { param($payload) ... } }`); the first declaration of a name wins |
 | `Tick` / `Transform` | no | a resident loop task (`@{ Seconds; Action }`, `Seconds` may be a script block) / the rewrite before pasting |
 | `RowDecor` | no | returns the mark glyph at the end of the row, plus the row's text and background colours |
 | `Marks` | no | `[ordered]@{ x = @{ Set; Unset; Word; Hint; Protected } }`, the mark letters this plugin uses |
@@ -566,6 +571,7 @@ Hooks by the moment they run:
 | once after loading | `Init` |
 | command line | `Commands` + `CommandHelp` + `CommandOrder` |
 | panel load / key | `PanelKeys`, `ContextMenu`, `RowDecor`, `TypeGlyph` |
+| search | `QueryKinds` |
 | before pasting | `Transform` |
 | resident loop | `Tick` |
 | settings and mark rules | `Properties`, `ThemeProperties`, `Marks` / `SortMark` / `StickyMark` / `StickyRows` / `ClearKeeps` |
@@ -805,7 +811,7 @@ Modules load per command: `$baseModules` holds the 19 files every command needs,
 | `settings` | `config` `settings` |
 | `serve`, `ui`, no argument | `store` `config` `panel` |
 
-So `version` parses 18 files and `list` 31, and only the `panel` group loads the panel; `-Library` (the tests) loads everything.
+So `version` parses the base modules only, `list` adds the `store` group, and only the `panel` group loads the panel; `-Library` (the tests) loads everything.
 
 The write location comes from `DataDir=`, `data` by default (a `data\` folder next to the script); `data dir` in `config` and `store file` in `status` show the resolved absolute path. Nothing is written to `%LOCALAPPDATA%` or another user folder: an unwritable location is an error and exit code 1. Nothing is written to the registry except by `install` (shortcuts) and `restore` (a registry entry).
 
@@ -889,7 +895,7 @@ The tool does not run as a Windows service: a service lives in Session 0, with n
 
 `powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run.ps1` works as well.
 
-One part is one file, one process and one sandbox. The worker count defaults to the number of logical processors and can be set by `[test] Workers` in `cli.ini` or by `-Workers`; `1` is serial. The whole suite is 497 items, 23 of them end to end.
+One part is one file, one process and one sandbox. The worker count defaults to the number of logical processors and can be set by `[test] Workers` in `cli.ini` or by `-Workers`; `1` is serial. Which groups a plain `cli test` runs comes from `[test] Groups` (`unit` / `integration` / `e2e`, all three by default). The number of items in a run comes from the `Test Files` / `Tests` lines at the end of `cli test` and is not pinned here.
 
 A command-line call inside a part goes through `tests\lib\cli-runner.ps1` by default: the part starts one child process and every command runs in its own runspace inside it, which saves an interpreter start per call. Commands involving plugin script blocks (`pin`, `star`, `highlight`, `transform`, `kind`, `list`…) still start a real child process, because a script block needs a real module scope.
 
@@ -952,7 +958,7 @@ The parts fall into three lanes: `unit` and `e2e` drive the real clipboard and e
 
 | Part | Where | Covers |
 |---|---|---|
-| structure | `tests/unit/unit.ps1` (always) | the layering contract: 55 required modules and 2 schema files are present, every module parses, no module carries `param()` or `$PSScriptRoot` / `$PSCommandPath`, no duplicate top-level function names, payload kinds only through the `base.ps1` predicates, row geometry only from the constant table, `$Root` computed once; in source mode also the toolchain files, the commands `package.ini` declares and the ini casing rules |
+| structure | `tests/unit/unit.ps1` (always) | the layering contract: the modules `$requiredLib` names and 2 schema files are present, every module parses, no module carries `param()` or `$PSScriptRoot` / `$PSCommandPath`, no duplicate top-level function names, payload kinds only through the `base.ps1` predicates, row geometry only from the constant table, `$Root` computed once; in source mode also the toolchain files, the commands `package.ini` declares and the ini casing rules |
 | unit | the same file, dot-sourced | pure functions and the store: hotkey parsing, entry words, ini reading, writing and validation, `Apply-Config`, records and version detection, the migration engine, picture and formatted-text codecs with media cleanup, CF_HTML parsing, a real clipboard round trip, marks and protection, panel geometry and hit tests, theme discovery and the `[metrics]` reset, the plugin allow-list |
 | command line | `tests/cli/*.ps1` (parallel) | every CLI capability (most commands run inside the part's process, plugin script-block commands in a child), including theme switching and the refusal of an unknown theme, the plugin allow-list, read-only commands not creating an ini, a setting passed to a command being refused by binding, and the `cli` command list |
 | packaging | `tests/pkg/build.ps1` | what goes into the package, `install.bat`, the version being a constant in the package, `Includes=` / `Excludes=` trimming, `Overwrite=0` refusing to overwrite, a manifest without an entry point failing, and exactly one of the compiled part and its source |
@@ -1013,7 +1019,7 @@ The `[build]` section of `cli.ini` (a top-level `build.OutDir=...` also works):
 | `Includes` | see below | the file list of the package, globs under `BaseUrl` like `[dev]`; required, and it has to contain `src/<Name>.ps1`, `.cmd` and `.sh` |
 | `Excludes` | empty | files to drop from the package, applied last |
 
-`Includes` defaults to `src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,scripts/**.bat`.
+`Includes` defaults to `src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat`.
 
 ```ini
 # a lean package: one theme, with the documents, no minify, no verify
@@ -1022,7 +1028,7 @@ Minify=0
 Rename=0
 Verify=0
 Overwrite=1
-Includes=src/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/win11-dark.ini,scripts/**.bat,README.md,LICENSE,docs/**/*
+Includes=src/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/win11-dark.ini,src/lang/en.ini,scripts/**.bat,README.md,LICENSE,docs/**/*
 Excludes=src/plugins/item-marks.ps1
 ```
 

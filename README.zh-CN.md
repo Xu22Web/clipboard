@@ -108,7 +108,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 ## 设置窗口
 
-`clipboard settings` 打开设置窗口；托盘菜单的 `Settings...` 在常驻进程内打开，不新起进程，`About...` 打开的是同一窗口的 `About` 页。窗口每会话只有一个：再有请求时已开的窗口前置并获得焦点，不会开出第二个。窗口打开期间，热键与托盘单击只把窗口前置，不打开历史面板。窗口只用指针操作：左侧点选分组，右侧每行一个控件，右上角 `✕` 或 `Esc` 关闭。页脚左侧显示最后一次操作的结果，右侧是三个按钮。窗口在任务栏与 Alt-Tab 中显示与托盘相同的图标，不沿用 PowerShell 宿主的图标。
+`clipboard settings` 打开设置窗口；托盘菜单的「设置…」在常驻进程内打开，不新起进程，「关于…」打开的是同一窗口的 `About` 页。窗口每会话只有一个：再有请求时已开的窗口前置并获得焦点，不会开出第二个。窗口打开期间，热键与托盘单击只把窗口前置，不打开历史面板。窗口只用指针操作：左侧点选分组，右侧每行一个控件，右上角 `✕` 或 `Esc` 关闭。页脚左侧显示最后一次操作的结果，右侧是三个按钮。窗口在任务栏与 Alt-Tab 中显示与托盘相同的图标，不沿用 PowerShell 宿主的图标。
 
 ![设置窗口](docs/zh-cn/screenshot-settings.png)
 
@@ -123,26 +123,26 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `DataDir` | 打开系统文件夹选择；历史不迁移，新目录从空开始 |
 | `Autostart` / `DesktopShortcut` | 只由 `install` 生效，说明行写明生效时机 |
 
-改动在 `Save` 之前只留在窗口内：已改的行左侧有强调色圆点，左侧分组栏在含未保存改动的页面右侧显示同样的圆点；值回到已存的写法时不记为改动（开关翻回、输入框进出都不留下标记）。条件不满足的设置（如 `MaxImageBytes` 需要 `CaptureImages`）变灰并说明原因。页脚按钮为 `Restore defaults`（可写键回到 schema 默认值，始终可用）、`Discard`（丢弃改动）、`Save`（一次写入 `clipboard.ini` 并应用）；后两个在无改动时禁用，与重置项之间留有较宽的间隔。`About` 页没有按钮。保存过的窗口关闭时常驻进程重启一次，新值随之生效；带未保存改动关闭会先确认。
+改动在「保存」之前只留在窗口内：已改的行左侧有强调色圆点，左侧分组栏在含未保存改动的页面右侧显示同样的圆点；值回到已存的写法时不记为改动（开关翻回、输入框进出都不留下标记）。条件不满足的设置（如 `MaxImageBytes` 需要 `CaptureImages`）变灰并说明原因。页脚按钮为「恢复默认」（可写键回到 schema 默认值，始终可用）、「放弃」（丢弃改动）、「保存」（一次写入 `clipboard.ini` 并应用）；后两个在无改动时禁用，与重置项之间留有较宽的间隔。`About` 页没有按钮。保存过的窗口关闭时常驻进程重启一次，新值随之生效；带未保存改动关闭会先确认。
 
 快捷键按 Win11 键帽显示，修饰键顺序为 Win、Ctrl、Alt、Shift；可录制字母、数字、`F1`–`F24`、`Insert` `Delete` `Home` `End` `PgUp` `PgDn` `Space` 以及标点，标点在文件里写作名字（`BACKTICK` `MINUS` `EQUALS` `LBRACKET` `RBRACKET` `BACKSLASH` `SEMICOLON` `QUOTE` `COMMA` `PERIOD` `SLASH`，也接受字面字符），键帽上显示该键的字符本身（如 `` ` ``、`-`、`,`）；无修饰键的裸键只接受 `F1`–`F24`。滚轮滚动列表，右侧滚动条可拖动定位、点轨道翻页。最后一页 `About` 列出程序版本、数据格式、条目数、数据目录、设置文件与已加载插件，最后一行是仓库链接（强调色值 + 外链标记，点击用默认浏览器打开 `https://github.com/Xu22Web/clipboard`）。
 
 ## 托盘菜单
 
-单击托盘图标打开历史面板，右键打开菜单。首行是程序名与当前条目数，`Show history` 旁是实际生效的热键。
+单击托盘图标打开历史面板，右键打开菜单。首行是程序名与当前条目数，「显示历史」旁是实际生效的热键。
 
 ![托盘菜单](docs/zh-cn/screenshot-tray.png)
 
 | 行 | 行为 |
 |---|---|
-| `Show history` | 打开历史面板，与单击图标相同 |
-| `Compact mode` / `Pause capture` | 开关，就地翻转；`Compact mode` 同时写入 `clipboard.ini`，下一次打开面板即为该形态 |
-| `Clear history...` | 确认后清空；受保护标记的行保留 |
-| `Settings...` / `About...` | 在常驻进程内打开设置窗口，后者停在 `About` 页，不新起进程 |
-| `Edit settings file...` | 用记事本打开 `clipboard.ini` |
-| `Open data folder` | 打开数据目录 |
-| `Restart` | 重建托盘图标与热键，进程不退出 |
-| `Exit` | 退出常驻进程 |
+| 显示历史 | 打开历史面板，与单击图标相同 |
+| 紧凑模式 / 暂停采集 | 开关，就地翻转；「紧凑模式」同时写入 `clipboard.ini`，下一次打开面板即为该形态 |
+| 清空历史… | 确认后清空；受保护标记的行保留 |
+| 设置… / 关于… | 在常驻进程内打开设置窗口，后者停在 `About` 页，不新起进程 |
+| 编辑设置文件… | 用记事本打开 `clipboard.ini` |
+| 打开数据文件夹 | 打开数据目录 |
+| 重启 | 重建托盘图标与热键，进程不退出 |
+| 退出 | 退出常驻进程 |
 
 菜单为自绘，配色与字体随主题。
 
@@ -175,7 +175,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `Del` / `Ctrl+Z` | 删除选中项 / 撤销上一次删除 |
 | `F2` | 就地编辑纯文本条目：面板换成编辑卡片，`Enter` 保存、`Shift+Enter` 换行、`Esc` 取消（改动过文本时需按两次 `Esc`）；保存失败时保留编辑内容并显示原因；图片、文件列表与带格式条目不响应 |
 | 双击一行 | 与 `Enter` 相同 |
-| 右键一行 | 打开右键菜单，作用于光标下的行（`Paste` / `Copy only` / `Edit` / `Delete` / `Clear history` 与插件项）；菜单与托盘菜单同一套自绘样式、随主题变化，`Paste` 用强调色图标，`Delete` 与 `Clear history` 用警告色，插件按组列出、组名是小字标题 |
+| 右键一行 | 打开右键菜单，作用于光标下的行（粘贴 / 仅复制 / 编辑 / 删除 / 清空历史 与插件项）；菜单与托盘菜单同一套自绘样式、随主题变化，粘贴用强调色图标，删除与清空历史用警告色，插件按组列出、组名是小字标题 |
 | `Ctrl+点击` / `Shift+点击` / `Ctrl+A` | 多选：逐个加减 / 取一段 / 全选当前结果 |
 | `Del`（多选） | 删除所有选中项；带保护标记的行保留并说明原因 |
 | `Ctrl+Enter`（多选） | 按列表顺序以换行拼接后复制 |
@@ -187,12 +187,12 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 | 状态 | 提示 |
 |---|---|
-| 纯文本行 | `Enter` Paste · `Ctrl+Enter` Copy · `F2` Edit · `Del` Delete · `Esc` Close |
+| 纯文本行 | `Enter` 粘贴 · `Ctrl+Enter` 复制 · `F2` 编辑 · `Del` 删除 · `Esc` 关闭 |
 | 图片 / 带格式行 | 同上，没有 `F2` |
 | 多选 | `Ctrl+Enter` Copy N · `Del` Delete N |
 | 按住 `Ctrl` | `Ctrl+1-9,0` Pick · `Ctrl+Enter` Copy · `Ctrl+Z` Undo（`Undo=1` 时）· 插件快捷键 |
-| 紧凑形态 | `Enter` Paste · `Ctrl+Enter` Copy · `Esc` Close（多选时换成 `Ctrl+Enter` Copy N · `Del` Delete N） |
-| 编辑中 | `Enter` Save · `Shift+Enter` Newline · `Esc` Cancel |
+| 紧凑形态 | `Enter` 粘贴 · `Ctrl+Enter` 复制 · `Esc` 关闭（多选时换成 `Ctrl+Enter` 复制 N · `Del` 删除 N） |
+| 编辑中 | `Enter` 保存 · `Shift+Enter` 换行 · `Esc` 取消 |
 
 删除、置顶、清空的结果与被拒绝的原因显示在同一行。
 
@@ -245,7 +245,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | 右侧计数与版本 | 显示 | 不显示 |
 | 位置 | 保存位置 → 光标所在显示器居中 | 插入符下方，放不下时在其上方；两侧都不够时减少行数 |
 
-窗口宽度固定，高度由行数得出，两者都在开窗时定下，面板不能拖动改变尺寸。形态由 `CompactMode` 选择，托盘菜单的 `Compact mode` 开关直接改写该键，下一次打开生效。
+窗口宽度固定，高度由行数得出，两者都在开窗时定下，面板不能拖动改变尺寸。形态由 `CompactMode` 选择，托盘菜单的「紧凑模式」开关直接改写该键，下一次打开生效。
 
 紧凑形态锚定插入符：读不到插入符时退到光标所在显示器居中；锚点高过两行时视为整块控件，上下两侧都放不下才覆盖它并保留其一行。面板左缘对齐锚点，与文本行留 4 px 间距；屏幕放不下时按较少的一行数重新定高。完整形态不读插入符。
 
@@ -257,7 +257,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 
 ## 配置
 
-程序启动时只读取脚本旁的 `clipboard.ini`，文件或某个键缺失时按内置默认值运行。只有 `config init` / `config set` / `config reset`、设置窗口的 `Save`、开启 `SaveWindowPos` 时的位置回写，以及托盘打开 `Compact mode` 开关时写入 `CompactMode`，会写入该文件。
+程序启动时只读取脚本旁的 `clipboard.ini`，文件或某个键缺失时按内置默认值运行。只有 `config init` / `config set` / `config reset`、设置窗口的「保存」、开启 `SaveWindowPos` 时的位置回写，以及托盘打开「紧凑模式」开关时写入 `CompactMode`，会写入该文件。
 
 读取时做一次全量校验：未知键、类型或范围不符、主题名不存在、枚举项非法，都在 `clipboard config` 顶部逐条列出，`status` 只给出计数（`[!] N value(s) need attention`）；出错项按默认值继续运行。
 
@@ -291,11 +291,11 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `NoPaste` | `0` | `1` = 只写剪贴板，不自动粘贴 |
 | `Balloon` | `1` | `1` = 启动时弹托盘气泡 |
 | `Theme` | `win11-dark` | 主题名 = `themes/` 下的 `.ini` 文件名，不接受别名 |
-| `Language` | `en` | 界面文案与字体族的语言 = `lang/` 下的 `.ini` 文件名（`en` / `zh-CN`），默认英文，需手动切换 |
+| `Language` | `en` | 界面文案与字体族的语言 = `lang/` 下的 `.ini` 文件名（`en` / `zh-CN`），默认英文，需手动切换；插件名与命令名由插件给出，不随语言变化；标记词可由语言包命名，缺键时用插件自己的词 |
 | `ExcludePattern` | 空 | 正则，匹配到的文本不入库 |
 | `WindowWidth` | `700` | 面板宽度（96 dpi 基准，高 DPI 按比例缩放） |
 | `Rows` | `10` | 可见行数，面板高度的唯一来源：高度 = 行数 × 行高 + 头部 + 底栏 + 边框；受屏幕工作区限制 |
-| `CompactMode` | `0` | `1` = 打开紧凑形态，`0` = 完整形态；托盘菜单的 `Compact mode` 开关改写该键 |
+| `CompactMode` | `0` | `1` = 打开紧凑形态，`0` = 完整形态；托盘菜单的「紧凑模式」开关改写该键 |
 | `CompactWidth` | `520` | 紧凑形态宽度（96 dpi 基准），最小 360 |
 | `CompactRows` | `6` | 紧凑形态可见行数 |
 | `WindowLeft` / `WindowTop` | 空 | 完整形态位置（96 dpi 基准）；空 = 居中于打开时鼠标所在的显示器；紧凑形态不使用 |
@@ -363,9 +363,13 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 |---|---|
 | `Type` | `string` / `int` / `number` / `bool` / `list` / `enum` / `regex` / `color` / `hotkey` / `hotkeys` / `theme` / `apprule` / `any`；`hotkeys` 是 `,` 或 `;` 分隔的组合键链，逐个校验 |
 | `Default` | 默认写法；`config init` 写它，读取失败时也回退到它 |
+| `Generated` | 默认值是列举而非常量：`plugin-list` = `plugins\` 下的文件名（按加载顺序），用于 `Plugins`（它的空值同样表示全部） |
+| `Hint` | 空值的含义，`config` 在空位处显示它 |
+| `Unit` | 数字显示与输入所用单位（`ms` / `px` / `rows` / `entries` / `chars` / `size`）；`size` 自行在 B、KB、MB 间选 |
 | `Minimum` / `Maximum` | `int` / `number` 的上下界 |
 | `Enum` | `enum` 的合法值；`list` 时是允许的 token |
 | `Suggest` | 设置窗口为该键提供的候选值（点开列表的快捷方式）；不限制可填内容 |
+| `Pick` | 设置窗口用对话框代替输入（`folder`） |
 | `ReadOnly` | 理由字符串：设置窗口只展示该值、拒绝编辑（用于会移动数据目录的 `DataDir`） |
 | `Required` | `true` = 不接受空值（`DataDir`） |
 | `InstallOnly` | `true` = 只有 `install` 会按该值建/删快捷方式；写入后不重启常驻进程，设置窗口在说明行注明生效时机（`Autostart` / `DesktopShortcut`） |
@@ -453,7 +457,7 @@ AppRules=windowsterminal.exe:plain;code.exe:rich;*:no-paste
 # 注释必须独占一行：# 或 ; 开头
 Name=my-theme
 Description=my colours
-# 空 = 自动（Segoe UI Variable Text → Segoe UI）
+# 空 = 语言包给出的字体族，再回退 Segoe UI Variable Text → Segoe UI
 FontFamily=
 # 空 = 自动（Segoe Fluent Icons → Segoe MDL2 Assets）
 IconFamily=
@@ -512,7 +516,7 @@ BadgeBg BadgeText KeyCapBg KeyCapBorder Mark Warn
 | [`transform`](docs/zh-cn/plugin/transform.md) | 粘贴前改写文本：纯文本 / 全大写 / 小写 / 驼峰 / 蛇形 / 烤肉串 / 标题式；右键按 `transform.Modes` 列出 `Transform as <模式>` | `Plugins=transform` |
 | [`retention`](docs/zh-cn/plugin/retention.md) | 按天数删除旧条目，受保护标记的行不清理 | `Plugins=retention` |
 
-各插件的命令、设置项与主题项见 `docs\plugin\<插件名>.md`。
+各插件的命令、设置项与主题项见 `docs\<语言>\plugin\<插件名>.md`（当前为 `docs\zh-cn\plugin\`）。
 
 ```ini
 # 默认值：全部插件逐名列出，顺序即加载顺序
@@ -533,6 +537,7 @@ Plugins=item-marks,entry-actions
 | `ContextMenu` | 否 | 右键菜单项数组；每项含 `Label`、`Test`（返回 `$false` 时不显示）、`Invoke`、可选的 `After = 'paste'`（动作结束后直接粘贴）。也可写成返回同构数组的脚本块，使项数跟随插件设置。`Invoke` 返回字符串时作为底部提示显示 |
 | `PanelKeys` | 否 | 面板按键数组（`Key` / `Ctrl` / `Label` / `Test` / `Invoke`），不覆盖基础按键；`Invoke` 返回的字符串显示在底部提示行 |
 | `TypeGlyph` | 否 | `{ param($payload) ... }`，条目 → 行图标（返回空则不画）；第一个给出非空值的插件胜出 |
+| `QueryKinds` | 否 | 插件额外提供的 `type:` 名字（`@{ code = { param($payload) ... } }`），同名以先声明者为准 |
 | `Tick` / `Transform` | 否 | 常驻循环任务（`@{ Seconds; Action }`，`Seconds` 可写脚本块）/ 粘贴前改写 |
 | `RowDecor` | 否 | 返回行尾标记字形与整行文字、背景色 |
 | `Marks` | 否 | `[ordered]@{ x = @{ Set; Unset; Word; Hint; Protected } }`，声明本插件使用的标记字符 |
@@ -565,6 +570,7 @@ Plugins=item-marks,entry-actions
 | 加载完成一次 | `Init` |
 | 命令行 | `Commands` + `CommandHelp` + `CommandOrder` |
 | 面板加载 / 按键 | `PanelKeys`、`ContextMenu`、`RowDecor`、`TypeGlyph` |
+| 搜索 | `QueryKinds` |
 | 粘贴前 | `Transform` |
 | 常驻循环 | `Tick` |
 | 配置与标记规则 | `Properties`、`ThemeProperties`、`Marks` / `SortMark` / `StickyMark` / `StickyRows` / `ClearKeeps` |
@@ -690,7 +696,7 @@ tests/unit/unit.ps1     结构与单元测试（进程内 dot-source）
 tests/cli/*.ps1         命令行分件
 tests/pkg/build.ps1     打包
 tests/e2e/*.ps1         真实常驻进程与命名管道
-docs/                   界面截图与插件、主题说明页
+docs/<语言>/             界面截图与插件、主题说明页（en、zh-cn）
 dist/                   打包产物（不入库）
 
 src/                    程序本体（打包只读这个目录）
@@ -804,7 +810,7 @@ flowchart TD
 | `settings` | `config` `settings` |
 | `serve`、`ui`、无参数 | `store` `config` `panel` |
 
-因此 `version` 解析 18 个文件，`list` 解析 31 个，只有 `panel` 组才加载面板；`-Library`（测试用）加载全部。
+因此 `version` 只解析基础模块，`list` 再加载 `store` 组，只有 `panel` 组才加载面板；`-Library`（测试用）加载全部。
 
 写入位置由 `DataDir=` 决定，默认 `data`（脚本旁的 `data\`）；`config` 的 `data dir` 与 `status` 的 `store file` 显示解析后的绝对路径。程序不写入 `%LOCALAPPDATA%` 或其它用户目录：位置不可写时报错并以退出码 1 结束。除 `install`（快捷方式）与 `restore`（注册表项）外不写注册表。
 
@@ -888,7 +894,7 @@ CBHIST RS <数据版本> RS <flags> US <epoch 秒> US <extra> US <payload> RS <f
 
 也可直接运行 `powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run.ps1`。
 
-一个分件对应一个文件、一个进程、一个沙箱。并发数取逻辑处理器数，可由 `cli.ini` 的 `[test] Workers` 或 `-Workers` 指定，`1` 为串行。全量 497 项，其中端到端 23 项。
+一个分件对应一个文件、一个进程、一个沙箱。并发数取逻辑处理器数，可由 `cli.ini` 的 `[test] Workers` 或 `-Workers` 指定，`1` 为串行；不带开关的 `cli test` 跑哪些组由 `[test] Groups` 决定（`unit` / `integration` / `e2e`，默认三组都跑）；每次运行的项数由 `cli test` 末尾的 `Test Files` / `Tests` 两行给出，不在文档里固定。
 
 分件内的命令行调用默认经 `tests\lib\cli-runner.ps1`：分件启动时拉起一个子进程，每条命令在其内的独立 runspace 中执行，省去每次解释器启动。插件脚本块相关的命令（`pin`、`star`、`highlight`、`transform`、`kind`、`list` 等）仍起真实子进程，因为脚本块需要真实的模块加载作用域。
 
@@ -951,7 +957,7 @@ Describe 'int' {
 
 | 分件 | 所在 | 覆盖内容 |
 |---|---|---|
-| 结构 | `tests/unit/unit.ps1`（总是执行） | 分层契约：55 个必需模块与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot` / `$PSCommandPath`、无重名顶层函数、载荷类型只通过 `base.ps1` 的谓词判断、行几何只从常量表读取、`$Root` 只算一次；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 大小写约定 |
+| 结构 | `tests/unit/unit.ps1`（总是执行） | 分层契约：`$requiredLib` 列出的必需模块与 2 个 schema 文件齐全、每个模块可解析、模块中不得出现 `param()` 与 `$PSScriptRoot` / `$PSCommandPath`、无重名顶层函数、载荷类型只通过 `base.ps1` 的谓词判断、行几何只从常量表读取、`$Root` 只算一次；源码模式还校验工具链文件齐全、`package.ini` 声明的命令与 ini 大小写约定 |
 | 单元 | 同上，dot-source 后逐函数 | 纯函数与存储层：热键解析、条目文案、ini 读写与校验、`Apply-Config`、记录读写与版本识别、迁移引擎、图片与富文本编解码与媒体回收、CF_HTML 解析、真实剪贴板往返、标记与保护规则、面板几何与命中计算、主题发现与 `[metrics]` 重置、插件白名单 |
 | 命令行 | `tests/cli/*.ps1`（并行） | 每条 CLI 能力验证（多数命令在分件进程内执行，插件脚本块相关的命令起子进程），含主题切换与非法主题名拒绝、插件白名单、只读命令不生成 ini、设置开关被参数绑定拒绝、`cli` 命令列表 |
 | 打包 | `tests/pkg/build.ps1` | 进包内容、`install.bat`、包内版本为常量、`Includes=` / `Excludes=` 裁剪、`Overwrite=0` 拒绝覆盖、清单缺少入口报错、编译产物与源码二者恰有其一 |
@@ -968,7 +974,7 @@ Describe 'int' {
 | `cli dev` | 停止残留常驻进程，启动 `src\clipboard.ps1 serve`，被加载的文件变化后重启；`dev` 退出时一并停掉它启动的常驻进程 |
 | `cli test` | 运行自测（开关见上一节） |
 | `cli bench` | 在临时副本里计时捕获、保存、解析与过滤 |
-| `cli shot` | 重新生成 `docs\screenshot-*.png`：历史面板深浅两套、紧凑形态、悬停预览卡、托盘菜单、设置窗口 |
+| `cli shot` | 重新生成 `docs\<语言>\screenshot-*.png`：历史面板深浅两套、紧凑形态、悬停预览卡、托盘菜单、设置窗口 |
 | `cli build` | 打包到 `dist\` |
 | `cli client` | 编译 `lib\client\client.cs` → `src\client.exe`（可选） |
 | `cli assembly` | 编译 `lib\assembly\*.cs` → `src\lib\assembly\clipboard.dll`（可选） |
@@ -1013,7 +1019,7 @@ cli build -Config other.ini     # 换一份配置
 | `Includes` | 见下 | 产物文件清单，相对 `BaseUrl` 的通配，语法同 `[dev]`；必须写出且必须含 `src/<Name>.ps1`、`.cmd`、`.sh` |
 | `Excludes` | 空 | 从产物中剔除的文件，最后执行 |
 
-`Includes` 默认 `src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,scripts/**.bat`。
+`Includes` 默认 `src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat`。
 
 ```ini
 # 精简包：一套主题 + 带文档，不压缩不验证
@@ -1022,7 +1028,7 @@ Minify=0
 Rename=0
 Verify=0
 Overwrite=1
-Includes=src/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/win11-dark.ini,scripts/**.bat,README.md,LICENSE,docs/**/*
+Includes=src/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/win11-dark.ini,src/lang/en.ini,scripts/**.bat,README.md,LICENSE,docs/**/*
 Excludes=src/plugins/item-marks.ps1
 ```
 

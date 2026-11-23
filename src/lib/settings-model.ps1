@@ -296,7 +296,9 @@ function Get-SettingsRows($schema, [string]$group, $pending = $null) {
       $owner = $dep[$key]
       if ((& $rawOf ([string]$owner.Key)) -ne [string]$owner.Value) {
         $enabled = $false
-        $why = [string]$owner.Why
+        # the reason is a sentence of the window, so the language file may word it - the identity
+        # is the key that owns the row - and a language with none keeps the table's own words
+        $why = Get-UiTextOr ('why.' + [string]$owner.Key) ([string]$owner.Why)
       }
     }
     $rows.Add(@{
