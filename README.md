@@ -312,7 +312,7 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `Animations` | `1` | `1` = 悬停、选中切换、滚动条与搜索框下划线带过渡，`0` = 全部瞬时 |
 | `Autostart` | `1` | `1` = `install` 创建登录自启快捷方式 |
 | `DesktopShortcut` | `1` | `1` = `install` 创建桌面快捷方式 |
-| `Plugins` | 全部插件 | 逗号分隔的插件文件名（不含 `.ps1`），顺序即加载顺序 |
+| `Plugins` | 全部插件（逐名） | 逗号分隔的插件文件名（不含 `.ps1`），顺序即加载顺序；空值表示 `plugins\` 下全部文件，`config init` 与“恢复默认”写入的是逐名清单 |
 
 补充规则：
 
@@ -500,7 +500,7 @@ BadgeBg BadgeText KeyCapBg KeyCapBorder Mark Warn
 
 ## 插件
 
-插件默认全部启用：`Plugins=` 逐名列出 `plugins\` 下的文件，顺序即加载顺序，未列出的文件不执行。加载靠前的插件在右键菜单中更靠前，并优先获得 `TypeGlyph` / `Transform` 这类只允许一个插件生效的钩子。
+插件默认全部启用：`Plugins=` 逐名列出 `plugins\` 下的文件，顺序即加载顺序，未列出的文件不执行；空值同样表示全部，但 `config init` 与设置窗口的“恢复默认”写入的是逐名清单。加载靠前的插件在右键菜单中更靠前，并优先获得 `TypeGlyph` / `Transform` 这类只允许一个插件生效的钩子。
 
 | 插件 | 功能 | 启用 |
 |---|---|---|
@@ -512,7 +512,7 @@ BadgeBg BadgeText KeyCapBg KeyCapBorder Mark Warn
 各插件的命令、设置项与主题项见 `docs\plugin\<插件名>.md`。
 
 ```ini
-# 默认值：全部插件逐个列出，顺序即加载顺序
+# 默认值：全部插件逐名列出，顺序即加载顺序
 Plugins=entry-actions,item-marks,retention,transform
 
 # 只启用部分插件

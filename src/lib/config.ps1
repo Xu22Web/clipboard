@@ -9,6 +9,17 @@
 # key: a key the schema does not describe is reported as unknown, which is what keeps
 # `config`, `config get` and `config set` consistent with each other.
 
+# The plugin allow-list a Plugins= value stands for. An empty value names every plugin on disk -
+# the state a fresh install starts in, and what a file written by an older version carries. A list
+# resolves to its names in the order it gives them, which is the load order; nothing here checks
+# that the names exist (Load-Plugins reports the ones that do not).
+function Resolve-PluginList([string]$raw, [string[]]$onDisk) {
+  $t = [string]$raw
+  if ($null -ne $t) { $t = $t.Trim() }
+  if ($t -eq '') { return @(@($onDisk) | ForEach-Object { [string]$_ } | Where-Object { $_ }) }
+  return @($t -split '[,;]' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
 function Apply-Config {
   param([switch]$NoColors, [switch]$SkipTheme)
   # One pass over the schema: reset every variable it points at to the declared default, then
@@ -42,16 +53,14 @@ function Apply-Config {
     elseif ($type -eq 'int') { $slot.Value = [int]$r.Value }
     else { $slot.Value = $r.Value }
   }
-  # Plugins= is a list with a fallback: an empty value means every plugin on disk
-  $v = Get-CfgValue 'Plugins'
-  $script:PluginList = @()
-  if ($null -ne $v -and ([string]$v).Trim() -ne '') {
-    $script:PluginList = @($v -split '[,;]' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-  } elseif (Get-Command Get-AllPluginNames -ErrorAction SilentlyContinue) {
-    # No Plugins= in the file yet: start from every plugin on disk, spelled out by name.
-    # A store without a plugins folder simply loads nothing.
-    try { $script:PluginList = @(Get-AllPluginNames (Join-Path $Root 'plugins')) } catch { $script:PluginList = @() }
+  # Plugins= is a list with a fallback: an empty value means every plugin on disk, which is what
+  # the shipped file spells out by name. An empty value is also what a file written by an older
+  # version carries, so it has to keep meaning the same thing.
+  $onDisk = @()
+  if (Get-Command Get-AllPluginNames -ErrorAction SilentlyContinue) {
+    try { $onDisk = @(Get-AllPluginNames (Join-Path $Root 'plugins')) } catch { $onDisk = @() }
   }
+  $script:PluginList = @(Resolve-PluginList ([string](Get-CfgValue 'Plugins')) $onDisk)
   # plugin settings are read from the same file, so they follow every reload
   if ($script:PluginSettings -and $script:PluginSettings.Count -gt 0 -and (Get-Command Apply-PluginSettings -ErrorAction SilentlyContinue)) {
     Apply-PluginSettings

@@ -19,6 +19,8 @@
 #   Type        required: string | int | number | bool | list | enum | regex | color |
 #               hotkey | hotkeys | theme | apprule | any
 #   Default     the value the file is written with; every reader falls back to it
+#   Generated   the default is a listing instead of a constant: 'plugin-list' = every file in
+#               plugins\, spelled out by name (Plugins, whose empty value also means them all)
 #   Hint        what an empty value means, shown by `config` in place of a blank
 #   Minimum     int / number lower bound
 #   Maximum     int / number upper bound
@@ -162,10 +164,24 @@ function Get-SchemaSection($schema, [string]$name) {
   return $null
 }
 
-# the declared default of one key, "" when the schema does not declare one
+# The value a key starts with: its declared default, or - for a key whose fresh value is a
+# listing rather than a constant - the listing the running install has. Plugins is the one such
+# key: an empty value already means "every file in plugins\", and the file itself always names
+# them, so `config init` and Restore defaults write the names instead of leaving a blank that a
+# reader has to resolve against the folder.
 function Get-SchemaDefault($schema, [string]$key) {
   $spec = Get-SchemaProperty $schema $key
-  if ($null -eq $spec -or -not $spec.Contains('Default')) { return '' }
+  if ($null -eq $spec) { return '' }
+  if ($spec.Contains('Generated')) {
+    $what = [string]$spec['Generated']
+    if ($what -eq 'plugin-list' -and (Get-Command Get-AllPluginNames -ErrorAction SilentlyContinue)) {
+      try {
+        $names = @(Get-AllPluginNames (Join-Path $Root 'plugins'))
+        if ($names.Count -gt 0) { return ($names -join ',') }
+      } catch { }
+    }
+  }
+  if (-not $spec.Contains('Default')) { return '' }
   return [string]$spec['Default']
 }
 

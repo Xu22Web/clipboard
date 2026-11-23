@@ -3402,6 +3402,25 @@ try {
         Expect (-not (Convert-IniValue 'Plugins' 'a b').Ok) ''
         Expect (-not (Convert-IniValue 'Nope' '1').Ok) ''
       }
+
+      It 'the plugin list is the names it gives, and an empty value is every plugin on disk' {
+        # a write never leaves a symbol behind: the file names the plugins it loads
+        Expect (((Resolve-PluginList 'item-marks; transform' @('a', 'b')) -join ',') -eq 'item-marks,transform') ((Resolve-PluginList 'item-marks; transform' @('a', 'b')) -join ',')
+        Expect (((Resolve-PluginList '' @('a', 'b')) -join ',') -eq 'a,b') ((Resolve-PluginList '' @('a', 'b')) -join ',')
+        Expect (((Resolve-PluginList '  ' @('a')) -join ',') -eq 'a') ((Resolve-PluginList '  ' @('a')) -join ',')
+        # and no shorthand is accepted in place of the names
+        Expect (-not (Convert-IniValue 'Plugins' '*').Ok) ((Convert-IniValue 'Plugins' '*').Error)
+      }
+
+      It 'the default of the plugin list names the plugins that are there' {
+        # Restore defaults puts back the value a fresh file carries: the names, not a blank that
+        # has to be resolved against the folder at read time
+        $def = [string](Get-SchemaDefault $script:SettingsSchema 'Plugins')
+        $onDisk = @(Get-AllPluginNames (Join-Path $Root 'plugins'))
+        Expect ($def -ne '') $def
+        $named = @($def -split ',')
+        Expect (@($named | Where-Object { $onDisk -notcontains $_ }).Count -eq 0) $def
+      }
     }
 
     # -------------------------------------------------------------------- themes
