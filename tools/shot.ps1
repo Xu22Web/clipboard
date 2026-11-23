@@ -18,9 +18,8 @@
   are captured. The real data folder, clipboard.ini and the real clipboard are never read.
 
   Files: screenshot-dark.png / screenshot-light.png (history panel), screenshot-compact.png,
-  screenshot-preview.png (hover card), screenshot-tray.png, screenshot-settings.png. English
-  writes them to docs\, any other language to docs\<code>\ - the two sets are what the two
-  READMEs show.
+  screenshot-preview.png (hover card), screenshot-tray.png, screenshot-settings.png. Each
+  language gets its own folder under docs\ (en, zh-CN), and the two READMEs show their own set.
 #>
 [CmdletBinding()]
 param(
@@ -72,12 +71,11 @@ $root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 Set-LogLevelFrom -Quiet:$Quiet -Silent:$Silent
 $srcDir = Join-Path $root 'src'
 $docsDir = Join-Path $root 'docs'
-# a non-English set is its own folder, so a README in that language can point at it and the
-# English files keep the names they always had
-if ($Language -and $Language -ne 'en') {
-  $docsDir = Join-Path $docsDir $Language.ToLowerInvariant()
-  if (-not (Test-Path -LiteralPath $docsDir)) { New-Item -ItemType Directory -Path $docsDir -Force | Out-Null }
-}
+# one folder per language, so each README points at its own set and neither run can overwrite
+# the other's files; English is just another language here
+$langDir = if ($Language) { $Language.ToLowerInvariant() } else { 'en' }
+$docsDir = Join-Path $docsDir $langDir
+if (-not (Test-Path -LiteralPath $docsDir)) { New-Item -ItemType Directory -Path $docsDir -Force | Out-Null }
 $rsChar = [string][char]30
 $usChar = [string][char]31
 $utf8 = New-Object System.Text.UTF8Encoding $false

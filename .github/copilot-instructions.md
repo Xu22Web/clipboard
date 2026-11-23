@@ -2,7 +2,7 @@
 
 ## 每次改动都要判断是否同步 README
 
-交付前先判断本次改动是否影响 `README.md`，并在回复末尾用一行说明结论（"README：已更新 X" 或 "README：无需改动"）。
+交付前先判断本次改动是否影响 `README.md`（英文）与 `README.zh-CN.md`（中文），并在回复末尾用一行说明结论（"README：已更新 X" 或 "README：无需改动"）；两份文档的章节与事实必须一致。
 
 必须同步：
 
@@ -24,11 +24,33 @@
 - 新增小节前先确认现有段落无法承载；预计超过约 40 行时优先并入现有表格或列表
 - 一致性：命令与配置表的取值必须与 `clipboard help`、`clipboard config`、`src\schema\clipboard.ps1` 相同
 
+## 文档与截图
+
+- 对外文档两份：`README.md`（英文，GitHub 默认显示）与 `README.zh-CN.md`（中文），顶部互相链接；改一处必须同步另一处，章节与事实保持一致
+- 插件与主题说明页按语言分目录：`docs\<语言>\plugin\`、`docs\<语言>\theme\`，两种语言各一份；文件名在两边相同
+- 截图一处一套：`docs\en\`（`cli shot`）与 `docs\zh-cn\`（`cli shot -Language zh-CN`）。不要手放、复制或跨语言引用截图
+- 文档内文件的移动或改名要同时改两边 README、`tests\pkg\build.ps1` 的 docs 断言，并跑一次相对链接自检（链接目标必须存在）；跨目录引用要按新深度调整路径
+
+## 多语言与文案
+
+- 界面文案一律经 `Get-UiText` / `Get-UiTextOr` / `Get-UiTextCount`（`src\lib\text.ps1`）；绘制、交互与设置代码里不得出现可见的英文或中文
+- 不用 `Get-Text`：那是读剪贴板文本的函数，后加载的 `lib\clip.ps1` 会覆盖同名函数
+- 语言包是数据，放在 `src\lang\<code>.ini`：`en.ini` 是基准，其他语言叠加在它之上；键 = `<界面>.<槽位>`，身份用 schema 键名、组名、单位名或插件 `Name`
+- 新增或修改一条文案要同时改 `en.ini` 与每种在售语言（当前 `zh-CN.ini`）；不许只改一边
+- 键不能只有大小写不同（PowerShell 哈希表大小写不敏感）：`about.version` 与 `about.Version` 会互相覆盖
+- 占位符 `{0}` `{1}` 的数量与顺序在两种语言里必须一致；复数写 `<key>.one` / `<key>.other`，没有单复数区分的语言只写 `.other`
+- `en.ini` 不必写设置项标题与说明：缺 `settings.key.<Key>` 时回退键名推导，缺 `settings.desc.<Key>` 时回退 schema 的 `Description`；译文语言两者都必须写（覆盖率用例守着）
+- 语言包 UTF-8 带 BOM，可写 `[meta] code` / `name` / `font`；`font` 是绘制字体族，CJK 语言必须给（Segoe 系列没有中日韩字形）
+- 新增语言：加 `src\lang\<code>.ini`、在 `schema\clipboard.ps1` 的 `Language` 枚举里登记、跑 `cli test -Unit`
+- 不翻译：CLI 输出、日志、`clipboard.ini` 模板注释（schema 的 `Description` 同时是模板注释，所以保持英文）、快捷键名
+- 文案改动必跑 `cli test -Unit`（基准包含、占位符一致、设置覆盖率三条用例）；改了可见界面还要重拍两套截图
+
 ## 代码
 
 - `*.ps1` / `*.cmd` 必须纯 ASCII（Windows PowerShell 5.1 按 GBK 解码无 BOM 的 UTF-8）
 - 模块按职责划分，不按行数：一个文件只做一件事、只依赖下层；新增逻辑优先放进已有的职责模块，只有明显属于另一个职责时才新建文件，也不要为缩短文件而拆散同一个职责
 - 新增模块要同步四处：`src\clipboard.ps1` 的模块表、`tests\unit\unit.ps1` 的 `$requiredLib`、README 的文件树、README 的模块清单段落
+- 两参数调用的实参不要一个写括号表达式、另一个写强制转换（如 `f ('a.' + $x) ([string]$x)`）：压缩器会粘成非法语法、`cli build` 直接失败。先把两个实参都赋给变量再调用
 
 ## 测试
 

@@ -284,7 +284,7 @@ Describe 'int' {
     }
     It 'a docs subfolder keeps its layout' {
       if (-not (Test-Built $script:pkgDir2 $script:bout2)) { return }
-      Expect ((Test-Path -LiteralPath (Join-Path $script:pkgDir2 'docs\plugin\transform.md')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir2 'docs\screenshot-dark.png'))) 'a docs subfolder has to keep its layout'
+      Expect ((Test-Path -LiteralPath (Join-Path $script:pkgDir2 'docs\zh-cn\plugin\transform.md')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir2 'docs\en\screenshot-dark.png'))) 'a docs subfolder has to keep its layout'
     }
   }
 
