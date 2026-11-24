@@ -733,6 +733,7 @@ src/                    the program (the only folder packaging reads)
   lib/config-template.ps1 the clipboard.ini that gets written: order, groups, rewrite, reset
   lib/settings-model.ps1  the rows of the settings window: groups, key to words, value and help
   lib/settings-types.ps1  the editor of each type: switches, chords, unit conversion, validation
+  lib/settings-vm.ps1     what a change means: staged values, a flipped switch, a chord, a ticked name
   lib/hotkey-record.ps1   handing a recording to the resident: two files, and the chords it holds
   lib/usage.ps1           the help output
   lib/dispatch.ps1        Invoke-Main: Initialize-Main (Apply-Config + plugins) -> Invoke-Dispatch

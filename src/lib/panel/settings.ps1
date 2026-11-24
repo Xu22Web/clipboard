@@ -328,22 +328,19 @@ function Show-Settings {
   # table and the footer says it is not saved yet.
   function Stage-Setting([string]$key, [string]$value, [string]$what) {
     if (-not $key) { return $false }
-    $value = [string]$value
+    # what the change means is decided in lib\settings-vm.ps1; the window repaints and words
+    # the message, and nothing else
+    $staged = Get-SettingStagedValue $script:SetPending $schema $key ([string]$value)
+    $script:SetPending = $staged.Pending
     # the footer names the row the way the window does: the key is an identity for the file, not
     # a word to read (a Chinese window would otherwise say PasteTyping in the middle of a sentence)
     $label = Get-SettingLabel $key
     if (-not $label) { $label = $key }
-    # A value the file already holds is not a change: flipping a switch back, or picking the
-    # value that is already set, leaves nothing staged and no dot behind.
-    $held = [string](Get-SettingRaw $schema $key)
-    if ($value -ceq $held) {
-      if ($script:SetPending.ContainsKey($key)) { [void]$script:SetPending.Remove($key) }
-      Refresh-Settings
+    Refresh-Settings
+    if (-not $staged.Changed) {
       Show-Message (Get-UiText 'settings.msg.unchanged' @($label)) $false
       return $true
     }
-    $script:SetPending[$key] = $value
-    Refresh-Settings
     Show-Message (Get-UiText 'settings.msg.staged' @($label, $what)) $false
     return $true
   }
@@ -353,12 +350,13 @@ function Show-Settings {
   function Save-Settings {
     if ($script:SetPending.Count -eq 0) { return }
     $pending = $script:SetPending
+    $plan = Get-SettingsSavePlan $pending
     $r = Save-SettingsValues $pending
     if (-not $r.Ok) { Show-Message (Get-UiText 'settings.msg.saveFailed' @([string]$r.Error)) $true; return }
     $script:SetPending = @{}
     # the folder the window itself writes to moves with the store location it just saved
-    if ($pending.Contains('DataDir')) { $script:StoreDir = [string]$pending['DataDir'] }
-    if ($pending.Contains('Theme')) {
+    if ($plan.HasDataDir) { $script:StoreDir = [string]$plan.DataDir }
+    if ($plan.Theme) {
       # a new theme has to reach the palette and the fonts before the next paint
       Apply-Theme
       $script:FBody = $null
@@ -368,7 +366,7 @@ function Show-Settings {
       # tray runs in the resident, so those objects are right here to be re-skinned
       if (Get-Command Update-TrayLook -ErrorAction SilentlyContinue) { Update-TrayLook }
     }
-    if ($pending.Contains('Language')) {
+    if ($plan.Language) {
       # a language may name its own font family, and the faces are built once per process: drop
       # the resolved family so the next initialize reads the one this language asks for. The
       # words themselves were reloaded by Apply-Config, which the save ran before this.
@@ -410,8 +408,10 @@ function Show-Settings {
   # Which footer actions apply right now: the reset one always does, the other two only once
   # something is staged, because saving or discarding nothing would do nothing
   function Test-SettingsActionOn([string]$key) {
-    if ($key -eq 'defaults') { return $true }
-    return ($script:SetPending.Count -gt 0)
+    $state = Get-SettingsActionState $script:SetPending
+    if ($key -eq 'defaults') { return [bool]$state.Defaults }
+    if ($key -eq 'save') { return [bool]$state.Save }
+    return [bool]$state.Discard
   }
 
   # one footer action, by the key the action table gives it
@@ -427,8 +427,7 @@ function Show-Settings {
   function Get-RecordedValue([string]$key, [string]$chord) {
     foreach ($r in @($script:SetRows)) {
       if ([string]$r.Key -ne $key) { continue }
-      if ($r.ContainsKey('Chain') -and [bool]$r.Chain) { return (Get-SettingChordAdded ([string]$r.Raw) $chord) }
-      return $chord
+      return (Get-SettingRecordValue $r $chord)
     }
     return $chord
   }
@@ -436,15 +435,13 @@ function Show-Settings {
   # One chord off a chain. The last one stays: a chain with nothing in it falls back to the
   # default list, so removing it has to be refused the way an empty Plugins= is.
   function Remove-SettingChord($row, [int]$index) {
-    $chords = @($row.Chords)
-    if ($index -lt 0 -or $index -ge $chords.Count) { return }
-    $next = Get-SettingChordRemoved ([string]$row.Raw) ([string]$chords[$index])
-    if ($null -eq $next) {
+    $drop = Get-SettingChordDrop $row $index
+    if (-not $drop.Ok) {
       Show-Message (Get-UiText 'settings.msg.keepOneChord') $true
       return
     }
-    $removedNote = Get-UiText 'settings.msg.removed' @([string]$chords[$index])
-    [void](Stage-Setting ([string]$row.Key) $next $removedNote)
+    $removedNote = Get-UiText 'settings.msg.removed' @([string]$drop.Removed)
+    [void](Stage-Setting ([string]$row.Key) $drop.Value $removedNote)
   }
 
   # which chord line of a chain is under the pointer, -1 for none
@@ -597,14 +594,14 @@ function Show-Settings {
     $key = ''
     if ($null -ne $script:SetDrop -and $null -ne $script:SetDrop.Tag) { $key = [string]$script:SetDrop.Tag.Key }
     if (-not $key) { return }
-    $raw = Get-DropRaw
-    $next = Get-SettingListToggled $raw $name
-    if (-not $next) {
+    $tick = Get-SettingListTick @{ Raw = (Get-DropRaw) } $name
+    if (-not $tick.Ok) {
       $listLabel = Get-SettingLabel $key
       if (-not $listLabel) { $listLabel = $key }
       Show-Message (Get-UiText 'settings.msg.listNeedsOne' @($listLabel)) $true
       return
     }
+    $next = [string]$tick.Value
     # the note names the item the way the list drew it, not the code the file stores
     $shown = $name
     try {
@@ -616,7 +613,7 @@ function Show-Settings {
       }
     } catch { }
     $tickNote = Get-UiText 'settings.msg.unticked' @($shown)
-    if (-not (Get-SettingListOn $raw $name)) { $tickNote = Get-UiText 'settings.msg.ticked' @($shown) }
+    if ($tick.Ticked) { $tickNote = Get-UiText 'settings.msg.ticked' @($shown) }
     [void](Stage-Setting $key $next $tickNote)
     if ($null -ne $script:SetDrop) { try { $script:SetDrop.Invalidate() } catch { } }
   }
@@ -752,8 +749,7 @@ function Show-Settings {
   function Flip-Row($row) {
     if ($null -eq $row) { return }
     if (-not (Test-RowEnabled $row)) { Show-RowRefused $row; return }
-    $v = '1'
-    if ([string]$row.Raw -eq '1') { $v = '0' }
+    $v = Get-SettingFlipValue $row
     $flipNote = Get-UiText 'settings.msg.turnedOff'
     if ($v -eq '1') { $flipNote = Get-UiText 'settings.msg.turnedOn' }
     [void](Stage-Setting ([string]$row.Key) $v $flipNote)

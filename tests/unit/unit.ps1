@@ -231,7 +231,7 @@ try {
           'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\text', 'lib\panel\anim',
           'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\panel\tray-menu', 'lib\serve', 'lib\shortcut',
           'lib\ui\layout', 'lib\ui\widgets',
-          'lib\settings-model', 'lib\settings-types', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings',
+          'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings',
           'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch',
           'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey',
           'utils\query-words', 'utils\transfer', 'utils\apprules', 'utils\fileio',
@@ -1050,6 +1050,63 @@ try {
         Expect ($laid[0].Left -eq 0 -and $laid[0].Width -eq 60) 'the fixed one'
         Expect ($laid[1].Left -eq 70 -and $laid[1].Width -eq 130) 'the automatic one takes the rest'
         Expect ($laid[1].Height -eq 40) 'a row stretches its children across the height'
+      }
+    }
+
+    # What a change means in the settings window is decided in lib\settings-vm.ps1, without the
+    # window: the staged table, the switch, the chord list and the multi-select all answer here.
+    Describe 'settings changes' {
+      It 'stages a value the file does not hold, and leaves nothing for the one it does' {
+        $held = [string](Get-SettingRaw $script:SettingsSchema 'ShowTime')
+        $staged = Get-SettingStagedValue @{} $script:SettingsSchema 'ShowTime' 'x'
+        Expect ($staged.Changed -and [string]$staged.Pending['ShowTime'] -eq 'x') 'a different value is staged'
+        $back = Get-SettingStagedValue $staged.Pending $script:SettingsSchema 'ShowTime' $held
+        Expect (-not $back.Changed) 'going back to the held value is not a change'
+        Expect (-not $back.Pending.ContainsKey('ShowTime')) 'and it leaves nothing staged'
+      }
+
+      It 'turns a switch from the value the row holds' {
+        Expect ((Get-SettingFlipValue @{ Raw = '1' }) -eq '0') 'on turns off'
+        Expect ((Get-SettingFlipValue @{ Raw = '0' }) -eq '1') 'off turns on'
+      }
+
+      It 'replaces a single hotkey and appends to a chain' {
+        Expect ((Get-SettingRecordValue @{ Raw = 'Ctrl+Alt+V'; Chain = $false } 'Ctrl+Alt+C') -eq 'Ctrl+Alt+C') 'a single setting takes the chord'
+        $chain = @{ Raw = 'Ctrl+Alt+V'; Chain = $true }
+        Expect ((Get-SettingRecordValue $chain 'Ctrl+Alt+C') -eq 'Ctrl+Alt+V, Ctrl+Alt+C') 'a chain gains it at the end'
+      }
+
+      It 'takes one chord off a chain and refuses the last one' {
+        $row = @{ Raw = 'Ctrl+Alt+V, Ctrl+Alt+C'; Chords = @('Ctrl+Alt+V', 'Ctrl+Alt+C') }
+        $drop = Get-SettingChordDrop $row 0
+        Expect ($drop.Ok -and $drop.Value -eq 'Ctrl+Alt+C' -and $drop.Removed -eq 'Ctrl+Alt+V') 'the first comes off and the rest stays'
+        $one = @{ Raw = 'Ctrl+Alt+V'; Chords = @('Ctrl+Alt+V') }
+        Expect (-not (Get-SettingChordDrop $one 0).Ok) 'the last one stays'
+      }
+
+      It 'ticks and unticks a name, and refuses an empty list' {
+        $two = @{ Raw = 'item-marks,transform' }
+        $off = Get-SettingListTick $two 'item-marks'
+        Expect ($off.Ok -and $off.Value -eq 'transform' -and -not $off.Ticked) 'unticking leaves the other one'
+        $on = Get-SettingListTick $two 'retention'
+        Expect ($on.Ok -and $on.Ticked -and $on.Value -eq 'item-marks,transform,retention') 'ticking adds it at the end'
+        Expect (-not (Get-SettingListTick @{ Raw = 'item-marks' } 'item-marks').Ok) 'the last name stays'
+      }
+
+      It 'wakes the footer actions only once something is staged' {
+        $idle = Get-SettingsActionState @{}
+        Expect ($idle.Defaults -and -not $idle.Save -and -not $idle.Discard) 'defaults is always there'
+        $busy = Get-SettingsActionState @{ ShowTime = '1'; Rows = '12' }
+        Expect ($busy.Save -and $busy.Discard -and $busy.Count -eq 2) 'save and discard follow the staged set'
+      }
+
+      It 'names what saving means for the window itself' {
+        $plan = Get-SettingsSavePlan @{ Theme = 'win11-light'; Language = 'zh-CN'; Rows = '12' }
+        Expect ($plan.Count -eq 3) 'three staged keys'
+        Expect ($plan.Theme -and $plan.Language) 'a theme and a language are followed'
+        Expect (-not $plan.HasDataDir) 'nothing moves without DataDir'
+        $moved = Get-SettingsSavePlan @{ DataDir = 'D:\clip' }
+        Expect ($moved.HasDataDir -and $moved.DataDir -eq 'D:\clip') 'the store folder travels with DataDir'
       }
     }
 
