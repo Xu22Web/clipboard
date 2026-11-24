@@ -48,8 +48,8 @@ cli              # 列出 package.ini 中的命令
 cli dev          # 启动常驻进程，被加载的文件变化后自动重启
 cli test         # 运行全部自测
 cli build        # 打包到 dist\clipboard-<version>\
-cli client       # 编译可选的原生客户端 src\client.exe
-cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
+cli client       # 编译可选的原生客户端 src\preload\client.exe
+cli assembly     # 编译可选的类型库 src\main\clipboard.dll
 cli bundle       # 按 cli.ini 构建一个入口（-Inspect 列出无法内联的模块）
 ```
 
@@ -637,9 +637,9 @@ clipboard config set entry-actions.Reveal 0
 
 ### 提前编译的产物（可选）
 
-`cli client` 与 `cli assembly` 用系统自带的 .NET Framework 编译器各产出一个可选文件：`client.exe` 与 `lib\assembly\clipboard.dll`。两者缺失时程序照常运行：缺 `client.exe` 回退到脚本客户端，缺 `clipboard.dll` 时按 `lib\assembly\*.cs` 现场编译。
+`cli client` 与 `cli assembly` 用系统自带的 .NET Framework 编译器各产出一个可选文件：`preload\client.exe` 与 `main\clipboard.dll`。两者缺失时程序照常运行：缺 `client.exe` 回退到脚本客户端，缺 `clipboard.dll` 时按 `src\main\*.cs` 现场编译。
 
-`client.exe` 只由 `clipboard.cmd` 在启动 PowerShell 之前调用（源码 `preload\client.cs`）：接管失败时以退出码 `100` 退回脚本，其它退出码原样透传。`clipboard.dll` 由 `lib\native.ps1` 载入，任一 `.cs` 比它新或文件缺失时不使用。两者都由 `cli build` 在清单含对应 `.cs` 时先编到 `src\` 下，再入包。
+`client.exe` 只由 `clipboard.cmd` 在启动 PowerShell 之前调用（源码 `preload\client.cs`）：接管失败时以退出码 `100` 退回脚本，其它退出码原样透传。`clipboard.dll` 由 `lib\native.ps1` 载入，任一 `.cs` 比它新或文件缺失时不使用。两者都由 `cli build` 在清单含对应 `.cs` 时先编到 `src\` 下，再按各自入口声明的路径入包。
 
 `status` 的 `resident` 行与 `config set` 之后的自动重启只认服务于当前数据目录的常驻进程（依据是它写在自身 `data\` 下的 `hotkey.txt`，退出时写成 `(stopped)`），另装一份或运行测试沙箱时不会误报。
 
@@ -678,8 +678,8 @@ cli.ini                 工具配置：[dev] 监听与轮询、[build] 打包选
 scripts/install.bat     安装脚本：config init → migrate → install（打包时复制到产物根目录）
 scripts/uninstall.bat   卸载脚本：stop → uninstall purge（同上）
 tools/build.ps1         打包脚本（按 cli.ini 的 [build] 段打包到 dist\clipboard-<version>\）
-tools/build-client.ps1  编译 client.exe（可选）
-tools/build-assembly.ps1 编译 lib\assembly\clipboard.dll（可选）
+tools/build-client.ps1  编译 preload\client.exe（可选）
+tools/build-assembly.ps1 编译 main\clipboard.dll（可选）
 tools/dev.ps1           开发运行：启动常驻并监视被加载的文件
 tools/test.ps1          自测入口（转发 tests\run.ps1 的开关）
 tools/bench.ps1         性能测量（捕获、保存、解析、过滤）
@@ -711,7 +711,6 @@ src/                    程序本体（打包只读这个目录）
   clipboard.ps1           入口：参数绑定 / $Root / 模块分组表 / 运行时路径 / 调用 Invoke-Main
   clipboard.ini           配置（不存在时用内置默认，config init 才生成）
   data/                   历史 / 日志 / 生效热键缓存 / 媒体（不入库）
-  client.exe              编译版客户端（不入库；cli client 生成）
   lib/base.ps1            常量、版本读取、记录格式、运行时标识、度量与全部默认值
   lib/native.ps1          平台层：P/Invoke、WinForms 类型、程序集加载、字体探测、DPI
   lib/theme-stub.ps1      内置配色与主题空实现
@@ -744,9 +743,8 @@ src/                    程序本体（打包只读这个目录）
   lib/dispatch.ps1        Invoke-Main：Initialize-Main（Apply-Config + 装配插件）→ Invoke-Dispatch
   lib/proxy.ps1           命令代理
   lib/ipc.ps1             Invoke-Ipc：窗口调用的通道，由通道表映射到函数
-  lib/assembly/clipboard.dll 类型库产物（不入库；cli assembly 生成）
 
-  preload/                编译版客户端：拼请求帧、打印应答（产物 src\client.exe 不入库）
+  preload/                编译版客户端，与它的源文件同目录（产物 preload\client.exe 不入库）
   preload/client.cs       这里只有这一个源文件
 
   ipc/channels.ini        哪些命令由常驻进程回答，lib\proxy.ps1 与 client.cs 都读它
@@ -757,6 +755,7 @@ src/                    程序本体（打包只读这个目录）
     history-store.ps1     历史：Rows / Count / IsEmpty / Refresh / Clear / Remove
 
   main/                  类型库：一个目录一件事，统一由 index.cs 决定编译集合
+  main/clipboard.dll      类型库产物（不入库；cli assembly 生成）
   main/index.cs           决定编译集合的 #part 清单：没人引用的源文件根本不参与编译
   main/search/search.cs     Cb.Search，搜索框使用的行过滤
   main/reactivity/          Cb.ReactiveBag、Cb.Reactive、Cb.ComputedCell：陷阱、批量写入的调度、派生值
@@ -1015,8 +1014,8 @@ Describe 'int' {
 | `cli bench` | 在临时副本里计时捕获、保存、解析与过滤 |
 | `cli shot` | 重新生成 `docs\<语言>\screenshot-*.png`：历史面板深浅两套、紧凑形态、悬停预览卡、托盘菜单、设置窗口 |
 | `cli build` | 打包到 `dist\` |
-| `cli client` | 编译 `preload\client.cs` → `src\client.exe`（可选） |
-| `cli assembly` | 编译 `src\main\index.cs` 的 `#part` 清单（加上尚未迁走的 `lib\assembly\*.cs`）→ `src\lib\assembly\clipboard.dll`（可选） |
+| `cli client` | 编译 `preload\client.cs` → `src\preload\client.exe`（可选） |
+| `cli assembly` | 编译 `src\main\index.cs` 的 `#part` 清单 → `src\main\clipboard.dll`（可选） |
 | `cli bundle` | 构建 `cli.ini` 声明的一个入口；`-All` 构建全部入口；`-Inspect` 列出哪些模块无法被内联及原因 |
 
 `cli.sh` / `cli.cmd` / `cli.ps1` 三个入口行为一致，均先把工作目录切到仓库根，再把余下参数追加到 `package.ini` 中对应的命令行。
@@ -1025,7 +1024,7 @@ Describe 'int' {
 
 - `BaseUrl`：两个通配的相对目录，`.` = 仓库根（默认），可写绝对路径。
 - `Includes` / `Excludes`：相对 `BaseUrl` 的通配，`*` 与 `?` 匹配单个文件名，`**` 递归；新增与删除也算变化，入口 dot-source 行指向的缺失文件会打印 `[!] missing:`。
-- 清单里的 `.cs` 在启动前编译一次，之后哪边变了只重编那一边：`src/lib/assembly/*.cs` → `src\lib\assembly\clipboard.dll`，`src/preload/*.cs` → `src\client.exe`；移出清单即不编译。编译前先停常驻进程，否则 dll 被占用。
+- 清单里的 `.cs` 在启动前编译一次，之后哪边变了只重编那一边：`src/main/*.cs` → `src\main\clipboard.dll`，`src/preload/*.cs` → `src\preload\client.exe`；移出清单即不编译。编译前先停常驻进程，否则 dll 被占用。
 - `Interval`：轮询间隔（毫秒，默认 600）。连续一个间隔无变化才重启，一次保存分多步写入只重启一次。
 
 `cli bench` 在 `%TEMP%` 下复制 `src\` 并把 `DataDir` 指向临时目录，可在常驻进程运行时测量捕获、保存、解析与过滤的耗时（`-Records` 改库规模，`-Json` / `-Out` 便于对比）；面板打开与粘贴注入需要真实桌面，不在其中。`cli shot` 把 `src\` 复制到 `%PUBLIC%`，写入示例历史后启动副本里的常驻进程，截取面板、托盘菜单与设置窗口。副本使用自己的命名对象（`Local\clipboard.shot.*`），已在运行的常驻进程不受影响，真实历史与配置不进入截图；`-Part` 选界面、`-Theme` 选主题、`-PreviewRow` 指定预览卡取自哪一行。
@@ -1038,7 +1037,7 @@ Describe 'int' {
 
 ## 打包分发
 
-`cli build` 调用 `tools\build.ps1`，产物写入 `dist\clipboard-<version>\`（版本取自 `package.ini`）。包内有 `renderer\app.ps1`、没有 `renderer\src\`：窗口层在那里就是一个文件，命令要开窗时 `clipboard.ps1` 一次 dot-source 读完它。留在包外的模块（基础层，以及 `status` 这类命令不画图也要用的两个）仍以自己的文件随包。
+`cli build` 调用 `tools\build.ps1`，产物写入 `dist\clipboard-<version>\`（版本取自 `package.ini`）。包内有 `renderer\app.ps1`，而合进它的那些模块不再随包：窗口层在那里就是一个文件，命令要开窗时 `clipboard.ps1` 一次 dot-source 读完它。留在包外的模块（基础层，以及 `status` 这类命令不画图也要用的几个）仍以自己的文件随包。两个 C# 产品的落点和窗口层同一规则：`main\clipboard.dll` 与 `preload\client.exe`，一个进程一个目录。
 
 `cli bundle` 是同一套工具链的另一半，与 `cli build` 互不依赖：它把多个模块合成**一个入口文件**，阶段由 `cli.ini` 中该入口的 `[product.<名称>]` 链声明（`resolve`、`treeshake`、`merge`、`render`、`verify`），实现放在 `tools\bundler\plugins\`。入口、插件链与复制清单都在 `cli.ini`，与 vite 项目把输入和插件写在 `vite.config` 中同一种分工。模块边界一律取自解析器节点而不是文本：产物按每条语句的 extent 逐条取出，最后重新解析并与参与合并的模块逐项比对。`cli bundle -Inspect` 会列出 `src\` 下每个文件能否被内联（带 `param` 块、`begin`/`process`/`end` 块或 `trap` 的模块无法粘进更大的脚本），以及哪些模块调用了无法追踪的名字。标了 `Ship=1` 的入口由 `cli build` 自己跑：先合并，再与旁边的文件用同一张表压缩与改名，所以包里窗口层是一个文件（`renderer\app.ps1`），它的模块不再随包复制。
 
@@ -1075,7 +1074,7 @@ cli build -Config other.ini     # 换一份配置
 | 入口键 | 说明 |
 |---|---|
 | `Product` | 用哪个 `[product.*]` 的链构建 |
-| `To` | 产物写到哪里，相对仓库根 |
+| `To` | 产物写到哪里，相对仓库根；C# 产品的 `To` 同时是它在包内的路径 |
 | `Kind` | `cs` = 编译 C# 而不是合并脚本，此时改用 `From` 与 `Target` |
 | `From` | 根源文件；它写的 `#part` 决定参与编译的文件，且不得指到该文件所在目录之外 |
 | `Target` | `library`（默认）或 `exe` |
@@ -1086,7 +1085,7 @@ cli build -Config other.ini     # 换一份配置
 
 `cli bundle -Entry <名称>` 构建一个入口，`-All` 构建全部。`cli client` 与 `cli assembly` 就是入口 `client` 与 `main`，`cli build` 也走同一个调用编译它们，所以编译器参数只有一处。
 
-`[copy] Includes` 默认 `src/**/*.ps1,src/preload/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,src/ipc/*.ini,scripts/**.bat`。
+`[copy] Includes` 默认 `src/**/*.ps1,src/preload/*.cs,src/main/**/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,src/ipc/*.ini,scripts/**.bat`。
 
 ```ini
 # 精简包：一套主题 + 带文档，不压缩不验证
@@ -1099,11 +1098,11 @@ Overwrite=1
 
 [copy]
 BaseUrl=.
-Includes=src/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/win11-dark.ini,src/lang/en.ini,scripts/**.bat,README.md,LICENSE,docs/**/*
+Includes=src/**/*.ps1,src/preload/*.cs,src/main/**/*.cs,src/*.cmd,src/*.sh,src/themes/win11-dark.ini,src/lang/en.ini,scripts/**.bat,README.md,LICENSE,docs/**/*
 Excludes=src/plugins/item-marks.ps1
 ```
 
-每个文件怎么处理只看 `tools\utils\pipeline.ps1` 的一张表：`.ps1` 压缩改名，`.cmd` / `.bat` 压缩，`.sh` 压缩，`.ini` 去注释与空行，其余原样复制；`src\preload` 下的 `.cs` 编成 `client.exe`，`src\lib\assembly` 下的 `.cs` 编成 `lib\assembly\clipboard.dll`，产物入包、源码不入，编译器不可用时改为源码入包。落点：`src\` 下保留原路径，`src\` 外保留相对仓库根的路径，`scripts\` 摊平到包根。
+每个文件怎么处理只看 `tools\utils\pipeline.ps1` 的一张表：`.ps1` 压缩改名，`.cmd` / `.bat` 压缩，`.sh` 压缩，`.ini` 去注释与空行，其余原样复制；`src\preload` 下的 `.cs` 编成 `preload\client.exe`，`src\main` 下的 `.cs` 编成 `main\clipboard.dll`，产物入包、源码不入，编译器不可用时改为源码入包。落点：`src\` 下保留原路径，`src\` 外保留相对仓库根的路径，`scripts\` 摊平到包根。
 
 产物中的 `.ps1` 删注释与缩进，`Rename=1` 时内部函数与局部变量改名；`.ini` 只剩键值（主题格式见[主题](#主题)）。每步后重新解析，出现语法错误即中止。
 

@@ -7,7 +7,7 @@
 // strings - the same rule Invoke-Query's plain path spells out.
 //
 // Compiled through src\main\index.cs; the namespace and the type name are unchanged, so nothing
-// that calls Cb.Search had to be touched when this moved out of lib\assembly\cb.native.cs.
+// that calls Cb.Search had to be touched when the library was split into one file per block.
 namespace Cb {
   public class Search {
     public const int HeadChars = 4096;

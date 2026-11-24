@@ -5,6 +5,6 @@ _*.ps1
 _*.txt
 src/data/
 src/clipboard.ini
-src/client.exe
-src/lib/assembly/clipboard.dll
+src/preload/client.exe
+src/main/clipboard.dll
 dist/

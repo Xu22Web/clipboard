@@ -5,7 +5,7 @@
 # the same 1 px frame and the same rounded rows, with a glyph column, a right-hand column for a
 # hint or a switch, and one row per action - the shape the settings window uses.
 #
-# The strip and its rows are C# (Cb.TrayMenu / Cb.TrayItem in lib\assembly\cb.native.cs) because
+# The strip and its rows are C# (Cb.TrayMenu / Cb.TrayItem in main\ui\tray-menu.cs) because
 # ToolStripItem paints itself through an override, which a script cannot supply. Everything
 # else stays here: the numbers go through Px() like every other pixel constant, the colours come
 # from the panel palette, and the fonts are the panel's own, so a theme restyles all three

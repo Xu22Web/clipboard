@@ -3,7 +3,7 @@
 # renderer\src\core\reactive.ps1 - the data half of the framework: a value you can watch, and an update that
 # is batched.
 #
-# The traps live in C# (Cb.ReactiveBag in lib\assembly\cb.native.cs): PowerShell has no property
+# The traps live in C# (Cb.ReactiveBag in main\reactivity\reactive-bag.cs): PowerShell has no property
 # traps, so a hashtable cannot be made to tell anyone it changed, while a DynamicObject can. What
 # this file adds is the vocabulary a surface uses, and the three rules that keep it from leaking:
 #

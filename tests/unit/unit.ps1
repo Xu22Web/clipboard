@@ -96,11 +96,12 @@ function Use-Drawing {
 
 # A sandbox is a throw-away copy of the tool (script + lib + plugins + themes + lang): the
 # settings file sits next to the script, so DataDir= and the store stay inside the sandbox.
+# main\ comes along because the type library lives there - the dll, or its sources.
 function New-Sandbox([string]$name) {
   $dir = Join-Path $tmpRoot $name
   New-Item -ItemType Directory -Path $dir -Force | Out-Null
   Copy-Item -LiteralPath $clipPs1 -Destination $dir -Force
-  foreach ($sub in @('lib', 'utils', 'schema', 'plugins', 'themes', 'lang', 'ipc', 'renderer')) {
+  foreach ($sub in @('lib', 'utils', 'schema', 'plugins', 'themes', 'lang', 'ipc', 'main', 'renderer')) {
     $src = Join-Path $srcRoot $sub
     if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $dir -Recurse -Force }
   }
@@ -659,12 +660,11 @@ try {
           [IO.File]::ReadAllText((Join-Path $script:StructWinPath 'picker-live.ps1'))
         $script:StructDrawText = [IO.File]::ReadAllText((Join-Path $script:StructWinPath 'picker-draw.ps1'))
         $winText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'native.ps1'))
-        # the platform C# is compiled from src\main (the #part list) plus whatever is still in
-        # lib\assembly, and a package ships only the compiled lib\assembly\clipboard.dll - so
-        # the check reads every C# source of the repository copy, whatever file holds it
-        foreach ($csDir in @('lib\assembly', 'main')) {
-          $csPath = Join-Path $defaultSource $csDir
-          if (-not (Test-Path -LiteralPath $csPath)) { continue }
+        # the platform C# is compiled from src\main (the #part list), and a package ships only
+        # the compiled main\clipboard.dll - so the check reads every C# source of the
+        # repository copy, whatever file holds it
+        $csPath = Join-Path $defaultSource 'main'
+        if (Test-Path -LiteralPath $csPath) {
           foreach ($csFile in @(Get-ChildItem -LiteralPath $csPath -Recurse -File -Filter '*.cs' | Sort-Object FullName)) {
             $winText += [IO.File]::ReadAllText($csFile.FullName)
           }

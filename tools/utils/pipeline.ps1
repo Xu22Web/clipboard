@@ -5,8 +5,8 @@
 # new file kind or a new special file is a row here and no new branch anywhere else.
 #
 # A path here is the one the file keeps in the package: "lib\base.ps1", "plugins\x.ps1",
-# "client.exe". The build maps a source file to that path, the watcher maps it to the path
-# under src\ - the same string for everything the program itself carries.
+# "preload\client.exe". The build maps a source file to that path, the watcher maps it to the
+# path under src\ - the same string for everything the program itself carries.
 
 # How a file is handled. The handlers are named after what they do, and 'product' is the only
 # one that needs the second table (a .cs outside a product folder is plain data).
@@ -26,12 +26,16 @@ $script:LibraryRules = @(
 # sources that belong to it, Entry the cli.ini entry that compiles it, Out where the product
 # lands in the package, Required whether a package without it cannot start.
 #
+# Out is read twice: as the package path and, under src\, as the path the compiler writes. One
+# string for both is why a product never needs a mapping table of its own - and why the two
+# names below are shaped like the folders Electron divides a program into.
+#
 # Entry names the compile command; this table never runs a compiler. `cli bundle -Entry <name>`
 # compiles it (tools\bundler\plugins\60-cs-compile.ps1), so the compiler and its flags live in
 # one place and neither the build nor the watcher knows what a .cs costs to build.
 $script:Products = @(
-  @{ Dir = 'preload'; Ext = '.cs'; Entry = 'client'; Out = 'client.exe'; Label = 'client.exe'; Required = $false }
-  @{ Dir = 'main'; Ext = '.cs'; Entry = 'main'; Out = 'lib\assembly\clipboard.dll'; Label = 'lib\assembly\clipboard.dll'; Required = $true }
+  @{ Dir = 'preload'; Ext = '.cs'; Entry = 'client'; Out = 'preload\client.exe'; Label = 'preload\client.exe'; Required = $false }
+  @{ Dir = 'main'; Ext = '.cs'; Entry = 'main'; Out = 'main\clipboard.dll'; Label = 'main\clipboard.dll'; Required = $true }
 )
 
 # Files outside src\ keep the shape they have under the repository root (docs\ stays docs\).
@@ -61,8 +65,7 @@ function Get-LibraryHandler([string]$rel) {
 }
 
 # the product a source file belongs to, or $null when it belongs to none. A product may name
-# more than one folder: the type library is built from lib\assembly and from main, and both
-# count as "this file is part of the product, not another file to copy".
+# more than one folder, so a tree that is being split across folders can still be one product.
 function Get-ProductFor([string]$rel) {
   $path = ([string]$rel) -replace '/', '\'
   foreach ($p in @($script:Products)) {

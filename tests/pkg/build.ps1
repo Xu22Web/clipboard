@@ -29,9 +29,9 @@ $buildCfg = Join-Path $tmpRoot 'build-test.ini'
 # so each case starts from the whole section and overrides what it tests.
 #
 # The include list itself is READ from cli.ini instead of being written again here. It is the one
-# fact that says what a package is, and a copy of it drifts the moment a folder moves: before
-# src\main existed this file carried four copies, and moving the type library out of lib\assembly
-# broke every one of them at once. The cases below then trim that list instead of restating it.
+# fact that says what a package is, and a copy of it drifts the moment a folder moves: this file
+# used to carry four copies of it, and moving the type library broke every one at once. The cases
+# below then trim that list instead of restating it.
 . (Join-Path $repoRoot 'tools\utils\ini.ps1')
 $repoIncludes = [string](Import-IniMap (Join-Path $repoRoot 'cli.ini'))['copy.Includes']
 if (-not $repoIncludes) { throw 'cli.ini has no [copy] Includes to test against' }
@@ -165,7 +165,7 @@ Describe 'int' {
     }
     It 'the compiled client in the package runs' {
       if (-not (Test-Built $script:pkgDir $script:bout)) { return }
-      $clientFile = Join-Path $script:pkgDir 'client.exe'
+      $clientFile = Join-Path $script:pkgDir 'preload\client.exe'
       if (-not (Test-Path -LiteralPath $clientFile)) {
         Skip-Test 'no C# compiler on this machine'
         return
@@ -179,7 +179,7 @@ Describe 'int' {
     # never neither: lib\native.ps1 needs one of the two to open the panel.
     It 'package carries the assembly or its source, never both' {
       if (-not (Test-Built $script:pkgDir $script:bout)) { return }
-      $asmDir = Join-Path $script:pkgDir 'lib\assembly'
+      $asmDir = Join-Path $script:pkgDir 'main'
       $asmFile = Join-Path $asmDir 'clipboard.dll'
       $asmSource = @(Get-ChildItem -LiteralPath $asmDir -Filter '*.cs' -File -ErrorAction SilentlyContinue)
       $asmBuilt = Test-Path -LiteralPath $asmFile

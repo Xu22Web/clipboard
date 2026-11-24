@@ -357,7 +357,7 @@ function Start-DevLoop {
     # the files come under the step they explain: printed before it, they landed after the line
     # that ended the previous restart and read as if they belonged to that one
     foreach ($c in $changes) { Write-Note $c }
-    # The resident holds lib\assembly\clipboard.dll open while it runs, so it has to be gone
+    # The resident holds main\clipboard.dll open while it runs, so it has to be gone
     # before the assembly can be rewritten: stop first, compile, then start again.
     Stop-Resident
     # A C# edit has to reach its product before the restart: only the product whose source
@@ -366,7 +366,7 @@ function Start-DevLoop {
     if ($csChanges.Count -gt 0) {
       $touched = @()
       foreach ($c in $csChanges) {
-        # the line reads "changed src\lib\assembly\cb.native.cs"; the table speaks "lib\assembly"
+        # the line reads "changed src\main\search\search.cs"; the table speaks "main"
         $full = Join-Path $root ($c -replace '^\S+\s+', '')
         $p = Get-ProductFor (Get-SourceRel $srcDir $full)
         if ($null -ne $p -and -not ($touched -contains $p)) { $touched += $p }

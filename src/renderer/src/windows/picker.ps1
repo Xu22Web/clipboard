@@ -993,7 +993,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
 
     # The row menu is the tray menu's twin: the same skin, the same rounded rows and the same
     # hairline separators. renderer/src/windows/tray-menu.ps1 owns the layout and the row helpers, and
-    # Cb.TrayMenu paints it (lib/assembly/cb.native.cs), so a right click beside the panel does
+    # Cb.TrayMenu paints it (main/ui/tray-menu.cs), so a right click beside the panel does
     # not open a window drawn in the system colours.
     $cmSkin = New-TrayMenuSkin (Px 252)
     $cm = New-Object Cb.TrayMenu -ArgumentList $cmSkin

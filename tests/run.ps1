@@ -232,16 +232,13 @@ New-Item -ItemType Directory -Path $tmpRoot -Force | Out-Null
 # file can never win.
 function Update-TestAssembly {
   if ($isPackaged) { return }
-  # the sources are the #part list's tree and whatever is still in lib\assembly: both are
-  # compiled into the dll, so both have to be able to mark it stale
+  # the sources are the #part list's tree: all of them are compiled into the dll, so all of them
+  # have to be able to mark it stale
   $cs = @()
-  foreach ($rel in @('src\lib\assembly', 'src\main')) {
-    $dir = Join-Path $repoRoot $rel
-    if (-not (Test-Path -LiteralPath $dir)) { continue }
-    $cs += @(Get-ChildItem -LiteralPath $dir -Recurse -File -Filter '*.cs')
-  }
+  $dir = Join-Path $repoRoot 'src\main'
+  if (Test-Path -LiteralPath $dir) { $cs += @(Get-ChildItem -LiteralPath $dir -Recurse -File -Filter '*.cs') }
   if ($cs.Count -eq 0) { return }
-  $asmDir = Join-Path $repoRoot 'src\lib\assembly'
+  $asmDir = Join-Path $repoRoot 'src\main'
   $dll = Join-Path $asmDir 'clipboard.dll'
   $stale = -not (Test-Path -LiteralPath $dll)
   if (-not $stale) {

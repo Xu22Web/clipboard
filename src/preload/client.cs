@@ -6,10 +6,10 @@
 // PowerShell client builds, and prints the answer.
 //
 // It is the only file here that builds an executable: cli.ini [entry.client] compiles it into
-// src\client.exe (via tools\bundler\plugins\60-cs-compile.ps1), while [entry.main] turns
-// src\main into lib\assembly\clipboard.dll.
+// src\preload\client.exe (via tools\bundler\plugins\60-cs-compile.ps1), while [entry.main]
+// turns src\main into main\clipboard.dll - one folder per process, as a package carries them.
 //
-// It is optional by design. clipboard.cmd only tries it when client.exe sits next to
+// It is optional by design. clipboard.cmd only tries it when preload\client.exe sits beside
 // clipboard.ps1, and it treats exit code 100 as "nothing happened, run PowerShell instead", so
 // a copy without the executable behaves exactly as it did before.
 //

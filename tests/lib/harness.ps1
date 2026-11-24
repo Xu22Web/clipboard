@@ -361,7 +361,8 @@ function New-Sandbox([string]$name) {
   $dir = Join-Path $script:Harness.TmpRoot $name
   New-Item -ItemType Directory -Path $dir -Force | Out-Null
   Copy-Item -LiteralPath $script:Harness.ClipPs1 -Destination $dir -Force
-  foreach ($sub in @('lib', 'utils', 'schema', 'plugins', 'themes', 'lang', 'ipc', 'renderer')) {
+  # main\ carries the type library - the compiled dll, or the sources the sandbox compiles
+  foreach ($sub in @('lib', 'utils', 'schema', 'plugins', 'themes', 'lang', 'ipc', 'main', 'renderer')) {
     $src = Join-Path $script:Harness.SrcRoot $sub
     if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $dir -Recurse -Force }
   }
@@ -391,7 +392,7 @@ function New-FakeSandbox([string]$name) {
 function Get-ClientExe {
   if ($null -ne $script:Harness.ClientExe) { return $script:Harness.ClientExe }
   $script:Harness.ClientExe = ''
-  $beside = Join-Path $script:Harness.SrcRoot 'client.exe'
+  $beside = Join-Path $script:Harness.SrcRoot 'preload\client.exe'
   if (Test-Path -LiteralPath $beside) { $script:Harness.ClientExe = $beside; return $beside }
   $builder = Join-Path $script:Harness.RepoRoot 'tools\build-client.ps1'
   $source = Join-Path $script:Harness.SrcRoot 'preload\client.cs'

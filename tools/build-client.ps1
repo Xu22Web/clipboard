@@ -1,12 +1,13 @@
 #Requires -Version 5.1
 <#
-  tools\build-client.ps1 - compile src\preload\client.cs into client.exe.
+  tools\build-client.ps1 - compile src\preload\client.cs into src\preload\client.exe.
 
   The client is an accelerator, never a requirement: clipboard.cmd runs it when the file sits
-  next to clipboard.ps1 and falls back to the PowerShell path when it is missing or exits 100.
-  A machine without the .NET Framework compiler loses about 1 s per command, not a feature.
+  in preload\ next to clipboard.ps1 and falls back to the PowerShell path when it is missing or
+  exits 100. A machine without the .NET Framework compiler loses about 1 s per command, not a
+  feature.
 
-      cli client                        write src\client.exe
+      cli client                        write src\preload\client.exe
       cli client -Out dist\client.exe    write it somewhere else
 
   The compiler and its flags are the bundler's client entry (cli.ini [entry.client], built by
@@ -14,8 +15,8 @@
   exists because the test suite compiles its own copy of the same file out of a temp src tree
   instead of the repository's.
 
-  The assembly (lib\assembly\clipboard.dll) is a separate product: tools\build-assembly.ps1
-  builds that one.
+  The assembly (main\clipboard.dll) is a separate product: tools\build-assembly.ps1 builds
+  that one.
 #>
 param(
   [string]$Source = '',

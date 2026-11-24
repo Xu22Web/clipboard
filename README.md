@@ -48,8 +48,8 @@ cli              # list the commands package.ini declares
 cli dev          # start the resident process, restart it when a loaded file changes
 cli test         # run every self test
 cli build        # package into dist\clipboard-<version>\
-cli client       # compile the optional native client src\client.exe
-cli assembly     # compile the optional type library src\lib\assembly\clipboard.dll
+cli client       # compile the optional native client src\preload\client.exe
+cli assembly     # compile the optional type library src\main\clipboard.dll
 cli bundle       # build one entry from cli.ini (-Inspect lists what cannot be inlined)
 ```
 
@@ -638,9 +638,9 @@ Between a window and the channel sits the store, and the panel takes the rows fr
 
 ### Precompiled parts (optional)
 
-`cli client` and `cli assembly` each produce one optional file with the .NET Framework compiler that ships with Windows: `client.exe` and `lib\assembly\clipboard.dll`. Without them the program still runs: no `client.exe` means the script client, no `clipboard.dll` means `lib\assembly\*.cs` is compiled on the spot.
+`cli client` and `cli assembly` each produce one optional file with the .NET Framework compiler that ships with Windows: `preload\client.exe` and `main\clipboard.dll`. Without them the program still runs: no `client.exe` means the script client, no `clipboard.dll` means `src\main\*.cs` is compiled on the spot.
 
-`client.exe` is called only by `clipboard.cmd`, before PowerShell starts (source `preload\client.cs`): when taking over fails it returns `100` to fall back to the script, and passes any other exit code through. `clipboard.dll` is loaded by `lib\native.ps1` and ignored when a `.cs` is newer or the file is missing. `cli build` compiles both into `src\` first when the manifest carries the matching `.cs`, then packages them.
+`client.exe` is called only by `clipboard.cmd`, before PowerShell starts (source `preload\client.cs`): when taking over fails it returns `100` to fall back to the script, and passes any other exit code through. `clipboard.dll` is loaded by `lib\native.ps1` and ignored when a `.cs` is newer or the file is missing. `cli build` compiles both into `src\` first when the manifest carries the matching `.cs`, then packages them at the paths their entries name.
 
 The `resident` line of `status`, and the restart after `config set`, only accept the resident serving the current data folder (judged by the `hotkey.txt` it writes into its own `data\`, `(stopped)` on exit), so a second install or a test sandbox is never mistaken for it.
 
@@ -679,8 +679,8 @@ cli.ini                 tool settings: [dev] watch and poll, [build] packaging, 
 scripts/install.bat     config init -> migrate -> install (copied to the package root)
 scripts/uninstall.bat   stop -> uninstall purge (same)
 tools/build.ps1         packaging, by the [build] section of cli.ini, into dist\clipboard-<version>\
-tools/build-client.ps1  compile client.exe (optional)
-tools/build-assembly.ps1 compile lib\assembly\clipboard.dll (optional)
+tools/build-client.ps1  compile preload\client.exe (optional)
+tools/build-assembly.ps1 compile main\clipboard.dll (optional)
 tools/dev.ps1           run the resident and restart it when a loaded file changes
 tools/test.ps1          the test entry point (forwards to tests\run.ps1)
 tools/bench.ps1         timing for capture, save, parse and filter
@@ -745,10 +745,9 @@ src/                    the program (the only folder packaging reads)
   lib/dispatch.ps1        Invoke-Main: Initialize-Main (Apply-Config + plugins) -> Invoke-Dispatch
   lib/proxy.ps1           the command proxy
   lib/ipc.ps1             Invoke-Ipc: the channel a window calls, mapped to a function by the table
-  lib/assembly/clipboard.dll the compiled library (not committed; cli assembly)
 
-  preload/                the compiled client: it builds the request frame and prints the answer
-  preload/client.cs       the only source here (not committed output: src\client.exe)
+  preload/                the compiled client, beside its source
+  preload/client.cs       the only source here (not committed output: preload\client.exe)
 
   ipc/channels.ini        which commands the resident answers, read by lib\proxy.ps1 and client.cs
 
@@ -758,6 +757,7 @@ src/                    the program (the only folder packaging reads)
     history-store.ps1     the history: Rows, Count, IsEmpty, Refresh, Clear, Remove
 
   main/                   the type library, one folder per job, compiled through index.cs
+  main/clipboard.dll      the compiled library (not committed; cli assembly)
   main/index.cs           the #part list that decides what is compiled: a source nothing reaches
                             is not compiled at all
   main/ui/win.cs            the win32 surface: entry points, the accessibility interface, the caret helpers
@@ -1020,8 +1020,8 @@ Everything runs in a sandbox copy under `%TEMP%` and never touches the repositor
 | `cli bench` | time capture, save, parse and filter in a temporary copy |
 | `cli shot` | regenerate the screenshots under `docs\<language>\`: both panel themes, the compact shape, the hover card, the tray menu, the settings window |
 | `cli build` | package into `dist\` |
-| `cli client` | compile `preload\client.cs` into `src\client.exe` (optional) |
-| `cli assembly` | compile the `#part` list in `src\main\index.cs` (plus the sources still in `lib\assembly`) into `src\lib\assembly\clipboard.dll` (optional) |
+| `cli client` | compile `preload\client.cs` into `src\preload\client.exe` (optional) |
+| `cli assembly` | compile the `#part` list in `src\main\index.cs` into `src\main\clipboard.dll` (optional) |
 | `cli bundle` | build one entry declared in `cli.ini`; `-All` builds every one of them; `-Inspect` lists the modules a bundle cannot inline and why |
 
 `cli.sh` / `cli.cmd` / `cli.ps1` behave the same: they change to the repository root and append the remaining arguments to the matching line of `package.ini`.
@@ -1030,7 +1030,7 @@ Everything runs in a sandbox copy under `%TEMP%` and never touches the repositor
 
 - `BaseUrl`: the folder the two glob lists are relative to, `.` = the repository root (the default); an absolute path works.
 - `Includes` / `Excludes`: globs under `BaseUrl`, with `*` and `?` for one name and `**` for recursion; a new or deleted file counts as a change, and a missing file a dot-source line points at prints `[!] missing:`.
-- A `.cs` in the manifest is compiled once before the start, and afterwards only the side that changed: `src/lib/assembly/*.cs` → `src\lib\assembly\clipboard.dll`, `src/preload/*.cs` → `src\client.exe`; taking it out of the list stops the compile. The resident is stopped before compiling, or the dll is locked.
+- A `.cs` in the manifest is compiled once before the start, and afterwards only the side that changed: `src/main/*.cs` → `src\main\clipboard.dll`, `src/preload/*.cs` → `src\preload\client.exe`; taking it out of the list stops the compile. The resident is stopped before compiling, or the dll is locked.
 - `Interval`: the poll interval in ms (600 by default). The restart waits for one quiet interval, so a save that writes in several steps restarts once.
 
 `cli bench` copies `src\` into `%TEMP%` and points `DataDir` at a temporary folder, so capture, save, parse and filter can be measured while a resident is running (`-Records` changes the store size, `-Json` / `-Out` make runs comparable); panel opening and paste injection need a real desktop and are not part of it. `cli shot` copies `src\` into `%PUBLIC%`, seeds an example history and starts the copy's resident to capture the panel, the tray menu and the settings window. The copy carries its own named objects (`Local\clipboard.shot.*`), so a resident already running is unaffected and neither the real history nor the real settings reach a screenshot; `-Part` picks the surface, `-Theme` the theme and `-PreviewRow` the row the card is taken from.
@@ -1043,7 +1043,7 @@ Every tool prints through `tools\utils\console.ps1`: `[..]` a step (cyan), `[ok]
 
 ## Packaging
 
-`cli build` runs `tools\build.ps1` and writes into `dist\clipboard-<version>\` (the version comes from `package.ini`). A package carries `renderer\app.ps1` and no `renderer\src\`: the window layer is one file there, and `clipboard.ps1` reads it with one dot-source when the command opens a window. The modules it leaves outside (the base layer, and the two a command like `status` needs without drawing) keep travelling as their own files.
+`cli build` runs `tools\build.ps1` and writes into `dist\clipboard-<version>\` (the version comes from `package.ini`). A package carries `renderer\app.ps1` and none of the modules it was built from: the window layer is one file there, and `clipboard.ps1` reads it with one dot-source when the command opens a window. The modules it leaves outside (the base layer, and the ones a command like `status` needs without drawing) keep travelling as their own files. The two C# products land the same way as the window layer: `main\clipboard.dll` and `preload\client.exe`, one folder per process.
 
 `cli bundle` is the second half of that tooling and is independent of it: it builds one *entry* - several modules as one file - with the stages named in that entry's `[product.<name>]` chain in `cli.ini` (`resolve`, `treeshake`, `merge`, `render`, `verify`) and the plugin files under `tools\bundler\plugins\`. The entries, the chains and the copy list all live in `cli.ini`, the way a vite project keeps its inputs and plugins in `vite.config`. A module boundary is always a parser node, never a line of text: a bundle is emitted statement by statement through each node's extent, then read back and compared with the modules it was built from. `cli bundle -Inspect` lists, for every file under `src\`, whether a bundle could inline it (a `param` block, a `begin`/`process`/`end` block or a `trap` cannot be glued into a larger script) and which modules call a name nothing can follow. `cli build` runs every entry marked `Ship=1` itself: the bundle is merged there, then minified and renamed by the same tables as the files beside it, so a package carries the window layer as one file (`renderer\app.ps1`) and leaves its modules out of the copy.
 
@@ -1080,7 +1080,7 @@ Two more sections of the same file belong to `cli bundle`, and to `cli build` wh
 | Entry key | Meaning |
 |---|---|
 | `Product` | the `[product.*]` whose chain builds it |
-| `To` | where the output is written, relative to the repository root |
+| `To` | where the output is written, relative to the repository root; a C# product's `To` is also the path it keeps in the package |
 | `Kind` | `cs` = compile C# instead of bundling scripts; the entry then uses `From` and `Target` |
 | `From` | the root source; its `#part` lines decide the file list, and a directive may not leave that file's folder |
 | `Target` | `library` (default) or `exe` |
@@ -1093,7 +1093,7 @@ Two more sections of the same file belong to `cli bundle`, and to `cli build` wh
 
 `cli bundle -Entry <name>` builds one entry and `-All` builds every one. `cli client` and `cli assembly` are entries `client` and `main` under their own names, and `cli build` compiles both through the same call, so no tool spells out a compiler flag of its own.
 
-`[copy] Includes` defaults to `src/**/*.ps1,src/preload/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,src/ipc/*.ini,scripts/**.bat`.
+`[copy] Includes` defaults to `src/**/*.ps1,src/preload/*.cs,src/main/**/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,src/ipc/*.ini,scripts/**.bat`.
 
 ```ini
 # a lean package: one theme, with the documents, no minify, no verify
@@ -1106,11 +1106,11 @@ Overwrite=1
 
 [copy]
 BaseUrl=.
-Includes=src/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/win11-dark.ini,src/lang/en.ini,scripts/**.bat,README.md,LICENSE,docs/**/*
+Includes=src/**/*.ps1,src/preload/*.cs,src/main/**/*.cs,src/*.cmd,src/*.sh,src/themes/win11-dark.ini,src/lang/en.ini,scripts/**.bat,README.md,LICENSE,docs/**/*
 Excludes=src/plugins/item-marks.ps1
 ```
 
-What happens to a file comes from one table in `tools\utils\pipeline.ps1`: `.ps1` is minified and renamed, `.cmd` / `.bat` minified, `.sh` minified, `.ini` stripped of comments and blank lines, everything else copied; a `.cs` under `src\preload` becomes `client.exe`, one under `src\lib\assembly` becomes `lib\assembly\clipboard.dll`, the compiled part goes into the package and its source does not, and without a compiler the source goes in instead. A file keeps its path under `src\`, keeps its repository-relative path outside `src\`, and `scripts\` is flattened to the package root.
+What happens to a file comes from one table in `tools\utils\pipeline.ps1`: `.ps1` is minified and renamed, `.cmd` / `.bat` minified, `.sh` minified, `.ini` stripped of comments and blank lines, everything else copied; a `.cs` under `src\preload` becomes `preload\client.exe`, one under `src\main` becomes `main\clipboard.dll`, the compiled part goes into the package and its source does not, and without a compiler the source goes in instead. A file keeps its path under `src\`, keeps its repository-relative path outside `src\`, and `scripts\` is flattened to the package root.
 
 A packaged `.ps1` loses its comments and indentation, and with `Rename=1` its internal functions and local variables are renamed; a `.ini` keeps key and value only (the theme format is in [themes](#themes)). Every step re-parses the result, and a syntax error stops the build.
 

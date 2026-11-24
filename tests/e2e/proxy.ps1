@@ -154,7 +154,10 @@ Describe 'e2e' {
     # machine that cannot build one skips this instead of failing.
     $client = Get-ClientExe
     if (-not $client) { Skip-Test 'no compiler and no prebuilt client.exe'; return }
-    Copy-Item -LiteralPath $client -Destination (Join-Path $dir 'client.exe') -Force
+    # the launcher looks for it in preload\, next to its own source: the sandbox has to match
+    $clientDir = Join-Path $dir 'preload'
+    if (-not (Test-Path -LiteralPath $clientDir)) { New-Item -ItemType Directory -Path $clientDir -Force | Out-Null }
+    Copy-Item -LiteralPath $client -Destination (Join-Path $clientDir 'client.exe') -Force
     Copy-Item -LiteralPath (Join-Path $script:Harness.SrcRoot 'clipboard.cmd') -Destination $dir -Force
     $script:line = '"' + (Join-Path $dir 'clipboard.cmd') + '" list'
     $o = (& cmd.exe '/c' $script:line 2>&1 | Out-String)
@@ -166,7 +169,7 @@ Describe 'e2e' {
     if ($script:skipAll) { Skip-Test $script:skipAll; return }
     if (-not $script:up) { Expect $false 'the resident did not come up'; return }
     if (-not (Test-Path -LiteralPath (Join-Path $dir 'clipboard.cmd'))) { Skip-Test 'the compiled client was not built here'; return }
-    Remove-Item -LiteralPath (Join-Path $dir 'client.exe') -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $dir 'preload\client.exe') -Force -ErrorAction SilentlyContinue
     $o = (& cmd.exe '/c' $script:line 2>&1 | Out-String)
     Expect-Match $o 'proxy-' $o.Trim()
   }
