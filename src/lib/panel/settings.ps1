@@ -133,6 +133,8 @@ function Show-Settings {
   # re-read the file; the reload itself happens on the way out, below
   $script:SettingsDirty = $false
   $script:SetRows = @()
+  # the rows of a page, kept by page and staged set: a page visited twice is not built twice
+  $script:SetRowCache = New-UiKeepAlive 6
   # the staged values: key -> file spelling, validated by the schema before it got here. The
   # window writes nothing until Save, so this table is what the rows, the switch positions and
   # the three footer actions all read.
@@ -249,7 +251,12 @@ function Show-Settings {
   }
 
   function Refresh-Settings {
-    $script:SetRows = @(Get-SettingsRows $schema $groups[$script:SetGroup] $script:SetPending)
+    # A page's rows are built from the schema and the staged set, so the same page with the same
+    # staged set is the same answer: leaving a page and coming back costs a lookup instead of a
+    # rebuild of every row on it (about 5 ms each on the busiest page).
+    $page = [string]$groups[$script:SetGroup]
+    $cacheKey = $page + '|' + (Get-SettingsPendingSignature $script:SetPending)
+    $script:SetRows = @(Get-UiKeepAlive $script:SetRowCache $cacheKey { Get-SettingsRows $schema $page $script:SetPending })
     # which pages carry a staged value, kept here so a paint does not walk the group table
     $script:SetPendingGroups = @(Get-SettingGroupsWithPending $schema $script:SetPending)
     # Every switch is told where its row now points - a staged flip travels there on the timer,

@@ -82,6 +82,17 @@ function Get-SettingsActionState($pending) {
   return @{ Save = ($n -gt 0); Discard = ($n -gt 0); Defaults = $true; Count = $n }
 }
 
+# A short fingerprint of the staged set: the pages' rows are built from it, so a page that
+# did not move can be taken from the cache instead of built again. The keys are sorted, so the
+# same set written in a different order is the same fingerprint.
+function Get-SettingsPendingSignature($pending) {
+  if ($null -eq $pending -or $pending.Count -eq 0) { return '' }
+  $keys = @($pending.Keys | ForEach-Object { [string]$_ } | Sort-Object)
+  $parts = @()
+  foreach ($k in $keys) { $parts += ($k + '=' + [string]$pending[$k]) }
+  return ($parts -join ';')
+}
+
 # What saving the staged set means for the window itself: the folder it writes to moves with
 # DataDir, a new theme has to reach the palette before the next paint, and a language may name
 # its own font family, so the faces are built again.

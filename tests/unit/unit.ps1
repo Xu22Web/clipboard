@@ -1108,6 +1108,16 @@ try {
         $moved = Get-SettingsSavePlan @{ DataDir = 'D:\clip' }
         Expect ($moved.HasDataDir -and $moved.DataDir -eq 'D:\clip') 'the store folder travels with DataDir'
       }
+
+      It 'fingerprints the staged set so a page that did not move can be reused' {
+        Expect ((Get-SettingsPendingSignature @{}) -eq '') 'nothing staged is one fingerprint'
+        $one = Get-SettingsPendingSignature @{ ShowTime = '1' }
+        $same = Get-SettingsPendingSignature @{ ShowTime = '1'; Rows = '10' }
+        Expect ($one -ne $same) 'a second key is a different set'
+        $loose = Get-SettingsPendingSignature @{ Rows = '10'; ShowTime = '1' }
+        Expect ($loose -eq $same) 'the order it was written in does not matter'
+        Expect ((Get-SettingsPendingSignature @{ ShowTime = '0' }) -ne $one) 'a changed value is a different set'
+      }
     }
 
     # The runtime a tree of drawn components needs (lib\ui\component.ps1): one state table with
