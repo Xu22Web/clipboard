@@ -290,8 +290,8 @@ cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
 | `Interval` | `300` | 剪贴板轮询间隔（毫秒） |
 | `NoPaste` | `0` | `1` = 只写剪贴板，不自动粘贴 |
 | `Balloon` | `1` | `1` = 启动时弹托盘气泡 |
-| `Theme` | `win11-dark` | 主题名 = `themes/` 下的 `.ini` 文件名，不接受别名。保存后已打开的窗口立即重绘，面板与托盘菜单（菜单行与通知区图标）在下次打开时重新读取，主题切换不重启常驻进程 |
-| `Language` | `en` | 界面文案与字体族的语言 = `lang/` 下的 `.ini` 文件名（`en` / `zh-CN`），默认英文，需手动切换；设置窗口按语言文件里的名字显示（`English` / `简体中文`）。保存后已打开的窗口立即切换（行、按钮、标题与字体），面板与托盘菜单在下次打开时重新读取，语言切换不重启常驻进程。插件名与命令名由插件给出，不随语言变化；标记词可由语言包命名，缺键时用插件自己的词 |
+| `Theme` | `win11-dark` | 主题名 = `themes/` 下的 `.ini` 文件名，不接受别名；窗口与下拉用语言包里的名字显示（`settings.choice.Theme.<文件名>`），缺失时用文件名。保存后已打开的窗口立即重绘，面板与托盘菜单（菜单行与通知区图标）在下次打开时重新读取，主题切换不重启常驻进程 |
+| `Language` | `en` | 界面文案与字体族的语言 = `lang/` 下的 `.ini` 文件名（`en` / `zh-CN`），默认英文，需手动切换；设置窗口按语言文件里的名字显示（`English` / `简体中文`）。保存后已打开的窗口立即切换（行、按钮、标题与字体），面板与托盘菜单在下次打开时重新读取，语言切换不重启常驻进程。插件文件名与命令名由插件给出，不随语言变化；设置窗口按右键菜单的分组名显示插件（`plugin.caption.<插件名>`），下拉与列表的取值也可由语言包命名（`settings.choice.<键>.<值>`），因此同一个模式、同一个插件在窗口与菜单里用同一个词；标记词同理，缺键时用插件自己的词 |
 | `ExcludePattern` | 空 | 正则，匹配到的文本不入库 |
 | `WindowWidth` | `700` | 面板宽度（96 dpi 基准，高 DPI 按比例缩放） |
 | `Rows` | `10` | 可见行数，面板高度的唯一来源：高度 = 行数 × 行高 + 头部 + 底栏 + 边框；受屏幕工作区限制 |
@@ -513,7 +513,7 @@ BadgeBg BadgeText KeyCapBg KeyCapBorder Mark Warn
 |---|---|---|
 | [`item-marks`](docs/zh-cn/plugin/item-marks.md) | 置顶 / 收藏 / 高亮：`pin` `unpin` `star` `unstar` `highlight` `unhighlight` `marks`，面板 `Ctrl+P` `Ctrl+S` `Ctrl+H`，右键三项。粘性置顶默认开启（置顶行冻结在列表顶部，受行数上限约束） | `Plugins=item-marks` |
 | [`entry-actions`](docs/zh-cn/plugin/entry-actions.md) | 类型分析与打开：`kind` / `kinds` 输出类型、格式与预览，`open` 按类型打开（链接 / 路径 / 文件列表 / 图片），面板 `Ctrl+O`；行图标由该插件提供 | `Plugins=entry-actions` |
-| [`transform`](docs/zh-cn/plugin/transform.md) | 粘贴前改写文本：纯文本 / 全大写 / 小写 / 驼峰 / 蛇形 / 烤肉串 / 标题式；右键按 `transform.Modes` 列出 `Transform as <模式>` | `Plugins=transform` |
+| [`transform`](docs/zh-cn/plugin/transform.md) | 粘贴前改写文本：纯文本 / 全大写 / 全小写 / 驼峰式 / 下划线式 / 短横线式 / 词首大写；右键按 `transform.Modes` 列出 `转换为 <模式>`（英文界面为 `Transform as <模式>`），同一模式在设置窗口与菜单里用同一个词 | `Plugins=transform` |
 | [`retention`](docs/zh-cn/plugin/retention.md) | 按天数删除旧条目，受保护标记的行不清理 | `Plugins=retention` |
 
 各插件的命令、设置项与主题项见 `docs\<语言>\plugin\<插件名>.md`（当前为 `docs\zh-cn\plugin\`）。
@@ -724,7 +724,7 @@ src/                    程序本体（打包只读这个目录）
   lib/migrate.ps1         数据格式迁移：检测版本、备份、逐级升级
   lib/modifiers.ps1       修饰键状态（真实键盘状态，不看线程队列）
   lib/entry.ps1           条目分类（text / files / image / empty）与条目文案
-  lib/query.ps1           搜索语法：字段含义、正则编译、类型判定、匹配
+  lib/query.ps1           搜索语法：字段含义、正则编译、类型判定、匹配（普通词由 Cb.Search 扫描）
   lib/select.ps1          批量选择：Ctrl/Shift 规则、批量复制与删除
   lib/serve.ps1           常驻进程：捕获循环、热键、托盘、崩溃重启
   lib/shortcut.ps1        开机自启与桌面快捷方式的安装与卸载
@@ -818,7 +818,7 @@ flowchart TD
 
 `data\clipboard.log`，UTF-8，一行一个事件（`MM-dd HH:mm:ss` 前缀），写失败不抛异常；超过 64 KB 时保留最新一半。
 
-只记录状态变化（捕获、首次渲染、粘贴、常驻启停、设置写入），不随轮询或悬停频率增长。前缀可直接检索：`capture:`、`picker:`、`card:`、`clipboard:`、`paste`、`tray`、`serve`、`store`、`theme`、`plugin`。
+只记录状态变化（捕获、首次渲染、粘贴、常驻启停、设置写入），不随轮询或悬停频率增长；面板里一次超过 40 ms 的过滤也记一行 `picker: filter`，用于定位输入卡顿。前缀可直接检索：`capture:`、`picker:`、`card:`、`clipboard:`、`paste`、`tray`、`serve`、`store`、`theme`、`plugin`。
 
 ### 历史文件格式
 

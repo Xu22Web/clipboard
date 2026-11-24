@@ -811,7 +811,14 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     $sbar.Add_SizeChanged({ Sync-Sb })
     $listHost.Add_Resize({ Size-List; Sync-Sb })
 
+    # The assembly answers the plain scan (Cb.Search). A run without it - the fallback that
+    # compiles the .cs at run time has the class too, so this is only for a stripped copy -
+    # keeps the readable path, which answers the same thing more slowly.
+    $script:SearchType = $null
+    try { $script:SearchType = [Cb.Search] } catch { $script:SearchType = $null }
+
     function Update-List([string]$q) {
+      $swUp = [Diagnostics.Stopwatch]::StartNew()
       $lst.BeginUpdate()
       try {
         # compiled in lib/query.ps1; highlight still works on plain words only
@@ -819,15 +826,29 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
         $tokens = @($query.Terms)
         $script:Tokens = $tokens
         # sticky pins: the plugin names the mark and the cap, the base decides how many rows
-        # actually fit - see Get-StickyPlan / Get-StickyTopRows in lib/ordering.ps1
+        # actually fit - see Get-StickyPlan / Get-StickyTopRows in lib/ordering.ps1. The
+        # runtime is there in every run that draws a panel, so the call is made directly: a
+        # missing command is the only case that means "no plan", and Get-Command per keystroke
+        # cost more than the call itself
         $plan = $null
-        if (Get-Command Get-PluginStickyPlan -ErrorAction SilentlyContinue) { $plan = Get-PluginStickyPlan (Get-Rows) }
+        try { $plan = Get-PluginStickyPlan (Get-Rows) } catch [System.Management.Automation.CommandNotFoundException] { $plan = $null }
         if ($null -eq $plan) { $plan = @{ Mark = ''; Max = 0 } }
-        $rows = @(Invoke-Query $script:Entries $query)
+        # The rows: plain words go to the assembly, where the scan costs no PowerShell loop at
+        # all; its heads are built once per store snapshot (a pin or a delete replaces the
+        # array), never per keystroke. Everything else keeps the readable path in lib\query.ps1.
+        if ($null -ne $script:SearchType -and $query.Bad.Count -eq 0 -and (Test-QueryPlain $query)) {
+          if (-not [object]::ReferenceEquals($script:QueryHeadsFor, $script:Entries)) {
+            $script:QueryHeads = New-QueryHeads $script:Entries
+            $script:QueryHeadsFor = $script:Entries
+          }
+          $rows = @([Cb.Search]::Pick($script:Entries, [Cb.Search]::Match($script:QueryHeads, [string[]]@($query.Terms), [string[]]@($query.Excludes))))
+        } else {
+          $rows = @(Invoke-Query $script:Entries $query)
+        }
         # the pins sort first, so the run of sticky rows at the top is what gets frozen
         $script:StickyTop = Get-StickyTopRows $rows $plan.Mark $plan.Max
-        $res = New-Object System.Collections.Generic.List[object]
-        $labs = New-Object System.Collections.Generic.List[string]
+        $res = [System.Collections.Generic.List[object]]::new()
+        $labs = [System.Collections.Generic.List[string]]::new()
         $mk = $(if ($script:ShowNewlineMarker) { 1 } else { 0 })
         foreach ($rec in $rows) {
           $res.Add($rec)
@@ -875,6 +896,10 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $lst.Invalidate()
       Sync-Sb
       Restore-Foot
+      # A filter that took long enough to feel leaves a line: the row count says whether the
+      # cost is the store or the list it fed, which is the first question a slow search asks
+      $msUp = [int]$swUp.Elapsed.TotalMilliseconds
+      if ($msUp -ge 40) { Write-Log ('picker: filter ' + $msUp + ' ms (' + $script:Labels.Count + ' of ' + @($script:Entries).Count + ' rows)') }
     }
 
     # The picker already put the text on the clipboard: hide it and paste into the window
@@ -1756,6 +1781,11 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     Size-List
     Sync-Sb
     Update-List ''
+    # A warm run has to warm the search as well: an empty line returns before the line is cut
+    # into tokens and before the scan runs, so the first keystrokes of a fresh process paid the
+    # JIT of both (measured at 60-110 ms each) and the panel felt frozen while it was typed in.
+    # Two real lines pay that here, where nobody is waiting for a character to appear.
+    if ($Warm) { Update-List 'a'; Update-List 'ab' }
     Update-PanelRegion $form
     $msBuild = [int]$swOpen.ElapsedMilliseconds
     $swOpen.Stop()

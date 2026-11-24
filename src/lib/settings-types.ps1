@@ -265,16 +265,38 @@ function Get-SettingChoiceLabels($schema, [string]$key, $values) {
   if ($vals.Count -eq 0) { return $out }
   $spec = Get-SchemaProperty $schema $key
   if ($null -eq $spec -or -not $spec.Contains('Type')) { return $out }
-  # only an enum states its whole domain in the schema: a theme or plugin list names files the
-  # user wrote, and those keep the name they were given
-  if ([string]$spec['Type'] -cne 'enum') { return $out }
-  if (-not (Get-Command Get-LanguageList -ErrorAction SilentlyContinue)) { return $out }
-  $map = @{}
-  try {
-    foreach ($l in @(Get-LanguageList)) { $map[[string]$l.Code] = [string]$l.Name }
-  } catch { return $out }
-  foreach ($v in $vals) { if (-not $map.ContainsKey([string]$v)) { return @() } }
-  foreach ($v in $vals) { $out += $map[[string]$v] }
+  # The plugin list is not an enum - its values are the files on disk - and a plugin is drawn
+  # under the same caption the right-click menu groups it by, so one plugin has one name.
+  if ([string]$spec['Generated'] -ceq 'plugin-list') {
+    foreach ($v in $vals) { $out += (Get-PluginCaption ([string]$v)) }
+    return $out
+  }
+  # Only a key whose values are a closed domain can be worded by a file: an enum states it in
+  # the schema, and a theme states it as the files under themes\. The plugin list names files
+  # the user wrote and is worded above, by its caption.
+  $kind = Get-SettingKind $spec
+  if (-not $spec.Contains('Enum') -and $kind -ne 'theme') { return $out }
+  # The words belong to the value, not to the key: transform.Modes offers what transform.Mode
+  # names, so Labels names that key and one set of entries words both rows.
+  $wordKey = [string]$key
+  if ($spec.Contains('Labels')) { $wordKey = [string]$spec['Labels'] }
+  # A language is the one enum whose values are files on disk, and it names itself (English,
+  # 简体中文) rather than being worded by a file. Every other value is a word the window shows -
+  # short and full are not English by accident - so a language file may name each one under
+  # settings.choice.<Key>.<value>; a value with no entry keeps the schema's own word, which is
+  # also what the file stores.
+  $langMap = @{}
+  if ($kind -eq 'choice' -and (Get-Command Get-LanguageList -ErrorAction SilentlyContinue)) {
+    try { foreach ($l in @(Get-LanguageList)) { $langMap[[string]$l.Code] = [string]$l.Name } } catch { $langMap = @{} }
+  }
+  $allLanguages = ($langMap.Count -gt 0)
+  foreach ($v in $vals) { if (-not $langMap.ContainsKey([string]$v)) { $allLanguages = $false; break } }
+  foreach ($v in $vals) {
+    $text = ''
+    if ($allLanguages) { $text = [string]$langMap[[string]$v] }
+    if (-not $text) { $text = Get-UiTextOr ('settings.choice.' + $wordKey + '.' + [string]$v) ([string]$v) }
+    $out += $text
+  }
   return $out
 }
 
@@ -315,6 +337,15 @@ function Get-SettingPluginNames {
   }
   if (@($names).Count -eq 0) { $names = @($script:PluginList) }
   return $names
+}
+
+# The word a plugin goes by in the window: the caption the right-click menu titles its group
+# with, so one plugin is never called two things. The file name stays the identity - it is what
+# Plugins= holds and what `config` prints - and a plugin no language names is shown as it is.
+function Get-PluginCaption([string]$name) {
+  $n = ([string]$name).Trim()
+  if (-not $n) { return '' }
+  return (Get-UiTextOr ('plugin.caption.' + $n) $n)
 }
 
 # The names a list setting holds, in the order the file spells them: that order is the plugin

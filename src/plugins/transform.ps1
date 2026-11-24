@@ -70,10 +70,16 @@
     if (-not $m) { $m = 'keep' }
     return $m
   }
-  # how a mode is spelled in the menu and in messages
+  # how a mode is spelled in the menu: the same entry the settings list is drawn with, so the
+  # two surfaces cannot name one mode differently; a language without it keeps the shape name,
+  # which is what the file stores
   ModeLabel   = {
     param($mode)
-    switch ([string]$mode) {
+    $m = [string]$mode
+    if (-not $m) { return '' }
+    $word = Get-UiTextOr ('settings.choice.transform.Mode.' + $m) ''
+    if ($word) { return $word }
+    switch ($m) {
       'text' { return 'plain text' }
       'upper' { return 'UPPER' }
       'lower' { return 'lower' }
@@ -81,7 +87,7 @@
       'snake' { return 'snake_case' }
       'kebab' { return 'kebab-case' }
       'title' { return 'Title Case' }
-      default { return [string]$mode }
+      default { return $m }
     }
   }
   # the modes the context menu offers: what transform.Modes lists, or just the configured
@@ -146,8 +152,8 @@
       # GetNewClosure binds this mode into the block, the loop variable changes each pass
       $mode = [string]$m
       $out += @{
-        # the mode name stays as it is: it is the shape the output takes (camelCase, snake_case),
-        # and only the sentence around it is a word this language owns
+        # the sentence is the window's and the mode name is the value's: ModeLabel words it,
+        # and the settings list draws the same entry
         Label  = { param($rec) Get-UiText 'plugin.transform.as' @([string](& (Get-PluginData 'transform' 'ModeLabel') $mode)) }.GetNewClosure()
         Test   = {
           param($rec)

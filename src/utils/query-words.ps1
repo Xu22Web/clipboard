@@ -5,9 +5,11 @@
 # to the end of the line instead of being an error.
 
 function Split-QueryText([string]$line) {
-  $out = New-Object System.Collections.Generic.List[string]
+  $out = [System.Collections.Generic.List[string]]::new()
   if ([string]::IsNullOrEmpty($line)) { return $out.ToArray() }
-  $sb = New-Object System.Text.StringBuilder
+  # A type literal costs a fraction of New-Object with a type name, and the panel cuts a line
+  # on every typed character, so this loop stays on the cheap side of that line.
+  $sb = [System.Text.StringBuilder]::new()
   $quoted = $false
   $have = $false
   foreach ($ch in $line.ToCharArray()) {
@@ -44,7 +46,7 @@ function Get-QueryPart([string]$raw) {
 
 # Split a comma separated value, trimming and dropping the empty parts ('a, b' -> a b).
 function Split-QueryValue([string]$value) {
-  $out = New-Object System.Collections.Generic.List[string]
+  $out = [System.Collections.Generic.List[string]]::new()
   foreach ($piece in @(([string]$value) -split ',')) {
     $p = $piece.Trim()
     if ($p) { $out.Add($p) }

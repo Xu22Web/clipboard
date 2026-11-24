@@ -2,7 +2,7 @@
 
 [← 回到主说明](../../../README.zh-CN.md) · [插件契约](../../../README.zh-CN.md#插件)
 
-选中条目按 `Enter` 粘贴时，先按指定模式改写内容：纯文本、全大写、全小写、驼峰、蛇形、烤肉串、标题式。用于将同一段内容粘贴到格式要求不同的位置（IDE / 终端 / 数据库）。
+选中条目按 `Enter` 粘贴时，先按指定模式改写内容：纯文本、全大写、全小写、驼峰式、下划线式、短横线式、词首大写。用于将同一段内容粘贴到格式要求不同的位置（IDE / 终端 / 数据库）。
 
 ## 启用
 
@@ -36,16 +36,16 @@ $ clipboard transform "1 snake"
 | `text` | 纯文本：换行与连续空格压成单个空格 | `Hello World demo` |
 | `upper` | 全大写 | `HELLO WORLD DEMO` |
 | `lower` | 全小写 | `hello world demo` |
-| `camel` | 驼峰 | `helloWorldDemo` |
-| `snake` | 蛇形 | `hello_world_demo` |
-| `kebab` | 烤肉串 | `hello-world-demo` |
-| `title` | 标题式 | `Hello World Demo` |
+| `camel` | 驼峰式 | `helloWorldDemo` |
+| `snake` | 下划线式 | `hello_world_demo` |
+| `kebab` | 短横线式 | `hello-world-demo` |
+| `title` | 词首大写 | `Hello World Demo` |
 
-驼峰 / 蛇形 / 烤肉串 / 标题式会先按空格、下划线、连字符以及小写→大写的边界切词，再按目标格式拼接。
+驼峰式 / 下划线式 / 短横线式 / 词首大写会先按空格、下划线、连字符以及小写→大写的边界切词，再按目标格式拼接。
 
 ## 右键菜单
 
-右键菜单中的每个配置模式各占一项：`Transform as snake_case`、`Transform as UPPER`……选择后按该模式改写并写入剪贴板，随后直接粘贴到原窗口，同时记入历史。项数由 `transform.Modes` 决定：
+右键菜单中的每个配置模式各占一项：中文界面写作 `转换为 下划线式`、`转换为 全部大写`，英文界面写作 `Transform as snake_case`、`Transform as UPPER`；模式词由语言包给出，设置窗口里同一个模式用同一个词。选择后按该模式改写并写入剪贴板，随后直接粘贴到原窗口，同时记入历史。项数由 `transform.Modes` 决定：
 
 ```ini
 # clipboard.ini：右键给这三个模式各开一项（顺序即菜单顺序）

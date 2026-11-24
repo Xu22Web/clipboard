@@ -605,8 +605,18 @@ function Show-Settings {
       Show-Message (Get-UiText 'settings.msg.listNeedsOne' @($listLabel)) $true
       return
     }
-    $tickNote = Get-UiText 'settings.msg.unticked' @($name)
-    if (-not (Get-SettingListOn $raw $name)) { $tickNote = Get-UiText 'settings.msg.ticked' @($name) }
+    # the note names the item the way the list drew it, not the code the file stores
+    $shown = $name
+    try {
+      $tag = $script:SetDrop.Tag
+      $list = @($tag.Choices)
+      $words = @($tag.Labels)
+      for ($i = 0; $i -lt $list.Count; $i++) {
+        if ([string]$list[$i] -ieq $name -and $i -lt $words.Count -and [string]$words[$i]) { $shown = [string]$words[$i] }
+      }
+    } catch { }
+    $tickNote = Get-UiText 'settings.msg.unticked' @($shown)
+    if (-not (Get-SettingListOn $raw $name)) { $tickNote = Get-UiText 'settings.msg.ticked' @($shown) }
     [void](Stage-Setting $key $next $tickNote)
     if ($null -ne $script:SetDrop) { try { $script:SetDrop.Invalidate() } catch { } }
   }

@@ -18,6 +18,13 @@
 # The kinds the base can tell apart for itself; anything else has to come from a plugin.
 function Get-QueryBaseTypes { return @('text', 'files', 'image', 'rich', 'any') }
 
+# The list never changes, and the panel asks for it on every typed character
+$script:QueryBaseNames = $null
+function Get-QueryBaseTypeNames {
+  if ($null -eq $script:QueryBaseNames) { $script:QueryBaseNames = @(Get-QueryBaseTypes) }
+  return $script:QueryBaseNames
+}
+
 # field name -> what it accepts, shown by the panel and by `clipboard list --help` style output
 function Get-QueryFields {
   return [ordered]@{
@@ -30,30 +37,37 @@ function Get-QueryFields {
   }
 }
 
+# Same for the field names: one resolution per process, not one per keystroke.
+$script:QueryFieldNames = $null
+function Get-QueryFieldNameList {
+  if ($null -eq $script:QueryFieldNames) { $script:QueryFieldNames = @((Get-QueryFields).Keys) }
+  return $script:QueryFieldNames
+}
+
 # A query is a bag of filters; an empty one matches everything. Count is how many filters
 # were given, which is what the panel uses to tell "no search" from "no results".
 function New-Query {
   param([string]$Line = '', [string[]]$Tokens = $null)
   $q = @{
     Line     = [string]$Line
-    Terms    = New-Object System.Collections.Generic.List[string]
-    Excludes = New-Object System.Collections.Generic.List[string]
-    Patterns = New-Object System.Collections.Generic.List[object]
-    Types    = New-Object System.Collections.Generic.List[object]
-    Marks    = New-Object System.Collections.Generic.List[object]
+    Terms    = [System.Collections.Generic.List[string]]::new()
+    Excludes = [System.Collections.Generic.List[string]]::new()
+    Patterns = [System.Collections.Generic.List[object]]::new()
+    Types    = [System.Collections.Generic.List[object]]::new()
+    Marks    = [System.Collections.Generic.List[object]]::new()
     Newer    = [long]0
     Older    = [long]0
-    Bad      = New-Object System.Collections.Generic.List[string]
+    Bad      = [System.Collections.Generic.List[string]]::new()
     Count    = 0
   }
   $raw = @()
   if ($null -ne $Tokens) { $raw = @($Tokens) } else { $raw = @(Split-QueryText $Line) }
-  $known = @(Get-QueryFields).Keys
-  $base = @(Get-QueryBaseTypes)
+  $known = Get-QueryFieldNameList
+  $base = Get-QueryBaseTypeNames
+  # A plugin module that is not loaded has no kinds: the call itself is the lookup, and a
+  # failure here means there is nothing to add - cheaper than asking Get-Command first
   $pluginKinds = @{}
-  if (Get-Command Get-PluginQueryKinds -ErrorAction SilentlyContinue) {
-    try { $pluginKinds = Get-PluginQueryKinds } catch { $pluginKinds = @{} }
-  }
+  try { $pluginKinds = Get-PluginQueryKinds } catch { $pluginKinds = @{} }
   foreach ($token in $raw) {
     if (-not $token) { continue }
     $p = Get-QueryPart ([string]$token)
@@ -187,6 +201,28 @@ function Test-QueryNarrow($old, $new) {
   return $true
 }
 
+# True when every filter in the query is a plain word or a -word: the case the panel can hand
+# to the assembly. Anything else - a type, a mark, a pattern, a date - needs Test-QueryRecord,
+# which is the readable version of all the rules.
+function Test-QueryPlain($query) {
+  return (($query.Types.Count -eq 0) -and ($query.Marks.Count -eq 0) -and
+          ($query.Patterns.Count -eq 0) -and
+          ([long]$query.Newer -le 0) -and ([long]$query.Older -le 0))
+}
+
+# The head of every payload, cut to the length a row can show: what the search reads. Built
+# once per store snapshot (a pin or a delete replaces the array), never per keystroke.
+function New-QueryHeads($entries) {
+  $rows = @($entries)
+  $heads = [string[]]::new($rows.Count)
+  for ($i = 0; $i -lt $rows.Count; $i++) {
+    $text = [string]$rows[$i].Payload
+    if ($text.Length -gt 4096) { $text = $text.Substring(0, 4096) }
+    $heads[$i] = $text
+  }
+  return $heads
+}
+
 # The rows the panel and the CLI show for one query. A query that could not be understood
 # matches nothing: answering with everything would hide the typo.
 #
@@ -214,10 +250,8 @@ function Invoke-Query($entries, $query) {
   # read inside it) was the whole cost at 300 rows. The common shape - plain words and
   # -exclusions - is spelled out here; a query carrying a filter falls back to the per record
   # test below, which is the readable version of the same rules.
-  $plain = (($query.Types.Count -eq 0) -and ($query.Marks.Count -eq 0) -and
-            ($query.Patterns.Count -eq 0) -and
-            ([long]$query.Newer -le 0) -and ([long]$query.Older -le 0))
-  $rows = New-Object System.Collections.Generic.List[object]
+  $plain = Test-QueryPlain $query
+  $rows = [System.Collections.Generic.List[object]]::new()
   if ($plain) {
     $terms = $query.Terms
     $excl = $query.Excludes

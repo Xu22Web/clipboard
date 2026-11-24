@@ -415,12 +415,26 @@ function Get-SettingAboutFacts {
   if (Get-Command Get-StoreVersion -ErrorAction SilentlyContinue) {
     try {
       $sv = Get-StoreVersion
+      $code = [string]$sv.Code
       $label = [string]$sv.Label
-      if ([string]$sv.Kind -eq 'current') { $label = 'data v' + [string]$sv.Version + ' (' + $label + ')' }
+      # A state the window words for itself: a missing, empty or unreadable file has no
+      # technical name, and an old or newer header means nothing without this build to compare
+      # it to, so each one says it in words instead of resting on the bare code. A template
+      # carries the header token ({0} = CBHIST vN); an entry with no placeholder is a word.
+      $tpl = Get-UiTextOr ('settings.about.format.' + $code) ''
+      if ($tpl) { $label = ($tpl -f $label) }
       $f['Data Format'] = $label
     } catch { }
     if (Get-Command Get-Records -ErrorAction SilentlyContinue) {
-      try { $f['Entries'] = ([string]@(Get-Records).Count) + ' kept' } catch { }
+      try {
+        $n = [string]@(Get-Records).Count
+        # the row states a count and the label says what is counted; a language file may put a
+        # unit word around the number
+        $line = $n
+        $tpl = Get-UiTextOr 'settings.about.entriesLine' ''
+        if ($tpl) { $line = ($tpl -f $n) }
+        $f['Entries'] = $line
+      } catch { }
     }
   }
   $f['Store Folder'] = [string]$script:StoreDir
@@ -476,7 +490,12 @@ function Get-SettingAboutRows {
   $pText = (Get-UiText 'settings.about.none')
   $pWhy = Get-UiTextOr 'settings.about.Plugins' ([string]$help['Plugins'])
   if ($names.Count -eq 1) { $pText = (Get-UiText 'settings.about.loadedOne' @(1)) } elseif ($names.Count -gt 1) { $pText = (Get-UiText 'settings.about.loadedMany' @($names.Count)) }
-  if ($names.Count -gt 0) { $pWhy = ($names -join ', ') + '  -  ' + $pWhy }
+  if ($names.Count -gt 0) {
+    # the sentence names each plugin the way the window and the right-click menu do: the file
+    # name is the identity, not a second name for the same plugin
+    $shown = @($names | ForEach-Object { Get-PluginCaption ([string]$_) })
+    $pWhy = ($shown -join ', ') + '  -  ' + $pWhy
+  }
   $rows.Add((New-SettingInfoRow 'About.Plugins' (Get-UiText 'settings.about.label.Plugins') $pText $pWhy))
   # the one row on this page that leaves the window: the repository. It is a link, not a fact -
   # the value column carries the owner/name pair in the accent colour and the address in full is

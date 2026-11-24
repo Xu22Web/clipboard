@@ -3223,6 +3223,26 @@ try {
         Expect ((@(Invoke-Query $qRows (New-Query -Line '"alpha t"')).Count) -eq 1) ''
       }
 
+      It 'the assembly answers a plain line as the readable path does' {
+        # The panel hands plain words to Cb.Search on every keystroke. A difference in either
+        # direction shows up as a row that is there, or missing, only while typing - so the two
+        # paths are held to the same answer, including the 4096 char head both of them read.
+        $search = $null
+        try { $search = [Cb.Search] } catch { $search = $null }
+        if ($null -eq $search) { Skip-Test 'the assembly is not built here'; return }
+        $inside = ('x' * 4090) + 'needle' + ('y' * 100)
+        $past = ('x' * 5000) + 'needle'
+        $rows = @($qRows) + @((New-Record $inside 5 ''), (New-Record $past 4 ''))
+        $heads = New-QueryHeads $rows
+        Expect ($heads.Count -eq $rows.Count) ([string]$heads.Count)
+        foreach ($line in @('', 'alpha', 'ALPHA', 'alpha -two', '"alpha t"', 'beta', 'zzz', '-alpha', 'needle', 'x')) {
+          $query = New-Query -Line $line
+          $want = @(Invoke-Query $rows $query | ForEach-Object { [array]::IndexOf($rows, $_) })
+          $got = @([Cb.Search]::Pick($rows, [Cb.Search]::Match($heads, [string[]]@($query.Terms), [string[]]@($query.Excludes))) | ForEach-Object { [array]::IndexOf($rows, $_) })
+          Expect (($got -join ',') -eq ($want -join ',')) ($line + ': ' + ($got -join ',') + ' vs ' + ($want -join ','))
+        }
+      }
+
       It 'a field keeps what it names' {
         $fileRow = New-Record ([char]1 + 'C:\a.txt') 10 ''
         Expect ((@(Invoke-Query $qRows (New-Query -Line 'type:text')).Count) -eq 3) ''
@@ -3560,6 +3580,19 @@ try {
         $labels = @(Get-SettingChoiceLabels $script:SettingsSchema 'Language' $codes)
         $wanted = @($langs | ForEach-Object { $_.Name })
         Expect (($labels -join ',') -eq ($wanted -join ',')) ($labels -join ',')
+      }
+
+      It 'a translation names every theme on disk' {
+        # The dropdown words a theme under settings.choice.Theme.<file name>; a theme no
+        # language names keeps its file name, so only the ones this repository ships are held
+        # to this - the file name stays the value either way.
+        foreach ($lang in @(Get-LanguageList)) {
+          if ($lang.Code -eq 'en') { continue }
+          $t = Read-TextFile $lang.Code
+          Expect ($null -ne $t) $lang.Code
+          $missing = @(Get-ThemeNames | Where-Object { -not $t.Map.ContainsKey('settings.choice.Theme.' + [string]$_) })
+          Expect ($missing.Count -eq 0) ($lang.Code + ': ' + ($missing -join ', '))
+        }
       }
 
       It 'the words follow the file without a reload' {
@@ -4030,6 +4063,37 @@ try {
         Expect ((Test-PluginAction $tActs[0] $tRow) -eq $true) ''
         [void](& $tActs[1]['Invoke'] $tRow)
         Expect ([string](@(Get-Records)[0].Payload) -eq 'hello-world-demo') ([string](@(Get-Records)[0].Payload))
+      }
+
+      It 'a mode goes by one word in the settings window and in the menu' {
+        # The dropdown words a value under settings.choice.<Key>.<value>, the list beside it
+        # borrows those words through Labels, and the context menu asks for the same entry -
+        # so a language cannot name one mode twice, and the mode is never left as its code.
+        [IO.File]::WriteAllLines($cfg, @('transform.Mode=keep', 'transform.Modes=text,snake'), $Utf8)
+        $script:IniCache = $null
+        Apply-PluginSettings
+        [void](Initialize-Text 'zh-CN')
+        try {
+          $modes = @((Get-SchemaProperty $script:SettingsSchema 'transform.Mode')['Enum'])
+          $one = @(Get-SettingChoiceLabels $script:SettingsSchema 'transform.Mode' $modes)
+          for ($i = 0; $i -lt $modes.Count; $i++) {
+            $m = [string]$modes[$i]
+            Expect ($one[$i] -cne $m) ($m + ' is still the code')
+            if ($m -eq 'keep') { continue }
+            $list = @(Get-SettingChoiceLabels $script:SettingsSchema 'transform.Modes' @($m))
+            Expect ($list[0] -ceq $one[$i]) ($m + ': ' + $list[0] + ' vs ' + $one[$i])
+          }
+          # the menu row carries that word, and a plugin is drawn under its menu caption
+          $row = [pscustomobject]@{ Payload = 'Hello World demo'; Marks = '' }
+          $acts = @(Get-PluginActions)
+          for ($i = 0; $i -lt $acts.Count; $i++) {
+            $text = [string](Get-ActionText $acts[$i] $row)
+            $m = @('text', 'snake')[$i]
+            Expect ($text.Contains([string]$one[[array]::IndexOf($modes, $m)])) $text
+          }
+          $captions = @(Get-SettingChoiceLabels $script:SettingsSchema 'Plugins' @('transform'))
+          Expect ($captions[0] -ceq (Get-UiText 'plugin.caption.transform')) $captions[0]
+        } finally { [void](Initialize-Text 'en') }
       }
 
       It 'an unknown Modes value falls back to every mode and is reported' {

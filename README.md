@@ -291,8 +291,8 @@ Every read validates the whole file: unknown keys, a wrong type or range, a them
 | `Interval` | `300` | clipboard poll interval in ms |
 | `NoPaste` | `0` | `1` = clipboard only, never paste |
 | `Balloon` | `1` | `1` = tray balloon on startup |
-| `Theme` | `win11-dark` | theme name = the `.ini` file name under `themes/`, aliases are not accepted. Saving it repaints the open window at once, and the panel and the tray menu (its rows and the mark in the notification area) read it again when they open, so a theme change never restarts the resident |
-| `Language` | `en` | words and font family = the `.ini` file name under `lang/` (`en` / `zh-CN`); English unless switched by hand, and the window shows each language under the name its file gives itself. Saving it re-draws the open window at once (rows, buttons, title and font), and the panel and the tray menu read the code again when they open, so a language change never restarts the resident. Plugin names and command names come from the plugin and do not change with the language; a mark's word may be named by the language file and falls back to the plugin's own word |
+| `Theme` | `win11-dark` | theme name = the `.ini` file name under `themes/`, aliases are not accepted; the window and its dropdown draw a theme with the language file's word (`settings.choice.Theme.<file name>`) and fall back to the file name. Saving it repaints the open window at once, and the panel and the tray menu (its rows and the mark in the notification area) read it again when they open, so a theme change never restarts the resident |
+| `Language` | `en` | words and font family = the `.ini` file name under `lang/` (`en` / `zh-CN`); English unless switched by hand, and the window shows each language under the name its file gives itself. Saving it re-draws the open window at once (rows, buttons, title and font), and the panel and the tray menu read the code again when they open, so a language change never restarts the resident. A plugin file name and a command name come from the plugin and do not change with the language, but the window draws a plugin under its context-menu caption (`plugin.caption.<name>`); a language file may also name the value a dropdown or a list offers (`settings.choice.<Key>.<value>`), which is how a mode or a plugin goes by one word in the window and in the menu; a mark's word works the same way and falls back to the plugin's own word |
 | `ExcludePattern` | empty | a regular expression; matching text is never stored |
 | `WindowWidth` | `700` | panel width (96 dpi baseline, scaled by the system DPI) |
 | `Rows` | `10` | visible rows, the only source of the panel height: rows × row height + header + footer + frame, capped by the work area |
@@ -514,7 +514,7 @@ Every plugin is on by default: `Plugins=` lists the files under `plugins\` by na
 |---|---|---|
 | [`item-marks`](docs/en/plugin/item-marks.md) | pin / star / highlight: `pin` `unpin` `star` `unstar` `highlight` `unhighlight` `marks`, panel `Ctrl+P` `Ctrl+S` `Ctrl+H`, three context-menu rows. Sticky pins are on by default (pinned rows freeze on top, bounded by the row limit) | `Plugins=item-marks` |
 | [`entry-actions`](docs/en/plugin/entry-actions.md) | type analysis and open: `kind` / `kinds` print the type, the format and a preview, `open` opens by type (link / path / file list / picture), panel `Ctrl+O`; the row icon comes from this plugin | `Plugins=entry-actions` |
-| [`transform`](docs/en/plugin/transform.md) | rewrite text before pasting: plain / upper / lower / camel / snake / kebab / title; the context menu lists `Transform as <mode>` for each `transform.Modes` entry | `Plugins=transform` |
+| [`transform`](docs/en/plugin/transform.md) | rewrite text before pasting: plain / upper / lower / camel / snake / kebab / title; the context menu lists `Transform as <mode>` for each `transform.Modes` entry, one word per mode in the settings window and in the menu | `Plugins=transform` |
 | [`retention`](docs/en/plugin/retention.md) | delete entries older than a number of days; a row with a protected mark is never cleaned | `Plugins=retention` |
 
 Commands, settings and theme keys of each plugin are in `docs\<language>\plugin\<plugin>.md` (currently `docs\en\plugin\`).
@@ -725,7 +725,7 @@ src/                    the program (the only folder packaging reads)
   lib/migrate.ps1         data format migration: detect the version, back up, step up
   lib/modifiers.ps1       modifier state (the real keyboard, not the thread queue)
   lib/entry.ps1           entry kinds (text / files / image / empty) and their words
-  lib/query.ps1           search syntax: fields, regular expressions, kind tests, matching
+  lib/query.ps1           search syntax: fields, regular expressions, kind tests, matching (plain words are scanned by Cb.Search)
   lib/select.ps1          multi-select: Ctrl/Shift rules, copying and deleting a batch
   lib/serve.ps1           the resident: capture loop, hotkey, tray, restart after a crash
   lib/shortcut.ps1        installing and removing the autostart and desktop shortcuts
@@ -819,7 +819,7 @@ The write location comes from `DataDir=`, `data` by default (a `data\` folder ne
 
 `data\clipboard.log`, UTF-8, one event per line with a `MM-dd HH:mm:ss` prefix; a failed write never throws, and above 64 KB the newest half is kept.
 
-Only state changes are logged (capture, first paint, paste, resident start and stop, a settings write), so the file does not grow with polling or hovering. The prefixes are searchable: `capture:`, `picker:`, `card:`, `clipboard:`, `paste`, `tray`, `serve`, `store`, `theme`, `plugin`.
+Only state changes are logged (capture, first paint, paste, resident start and stop, a settings write), so the file does not grow with polling or hovering; a filter in the panel that took 40 ms or more leaves one `picker: filter` line, which is where a slow search is looked for. The prefixes are searchable: `capture:`, `picker:`, `card:`, `clipboard:`, `paste`, `tray`, `serve`, `store`, `theme`, `plugin`.
 
 ### History file format
 

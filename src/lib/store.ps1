@@ -157,12 +157,14 @@ function Limit-Records($rows) {
 # What the file on disk carries, read from its first bytes only (the tag and the version
 # field are the first two RS-separated fields, so this stays cheap on a 4 MB store).
 #   Kind    none (no file) | current | old | newer | unknown
+#   Code    the same distinction as a bare word, for a surface that words its own sentences;
+#           Label is the English one the command line prints
 #   Version the layout version, -1 when the file is unrecognised
 #   Hint    only what this module can state on its own; what to do about it belongs to
 #           lib/migrate.ps1 (Get-StoreAdvice), which is the only place that knows the graph
 # A reader refuses anything but current; `migrate` acts on the rest.
 function Get-StoreVersion {
-  $o = [pscustomobject]@{ Kind = 'none'; Version = -1; Label = 'no history file'; Hint = '' }
+  $o = [pscustomobject]@{ Kind = 'none'; Code = 'none'; Version = -1; Label = 'no history file'; Hint = '' }
   # Every save asks this, and the answer can only change when the file does.
   $stamp = Get-StoreFileStamp $StoreFile
   if ($null -ne $script:GateCache -and $script:GateCache.Stamp -eq $stamp) { return $script:GateCache.Value }
@@ -172,7 +174,7 @@ function Get-StoreVersion {
   }
   $head = Read-StoreFileHead $StoreFile 64
   # an empty file holds no data, so it is free to write - not an unknown layout
-  if ([string]::IsNullOrEmpty($head)) { $o.Label = 'empty file'; return $o }
+  if ([string]::IsNullOrEmpty($head)) { $o.Code = 'empty'; $o.Label = 'empty file'; return $o }
   $ver = -1
   $cut = $head.IndexOf($RS)
   if ($cut -gt 0 -and $head.Substring(0, $cut) -ceq $TAG) {
@@ -186,16 +188,20 @@ function Get-StoreVersion {
   $o.Version = $ver
   if ($ver -eq $script:DataVersion) {
     $o.Kind = 'current'
+    $o.Code = 'current'
     $o.Label = 'CBHIST v' + $ver
   } elseif ($ver -gt $script:DataVersion) {
     $o.Kind = 'newer'
+    $o.Code = 'newer'
     $o.Label = 'CBHIST v' + $ver
     $o.Hint = 'written by a newer build - update this copy'
   } elseif ($ver -ge 0) {
     $o.Kind = 'old'
+    $o.Code = 'old'
     $o.Label = 'CBHIST v' + $ver
   } else {
     $o.Kind = 'unknown'
+    $o.Code = 'unknown'
     $o.Label = 'unrecognised layout'
   }
   $script:GateCache = @{ Stamp = $stamp; Value = $o }
