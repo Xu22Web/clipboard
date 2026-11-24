@@ -230,7 +230,7 @@ try {
         $requiredLib = @('lib\base', 'lib\native', 'lib\panel\focus', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
           'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\panel\picker-live', 'lib\text', 'lib\panel\anim',
           'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\panel\tray-menu', 'lib\serve', 'lib\shortcut',
-          'renderer\src\core\layout', 'renderer\src\core\widgets', 'renderer\src\core\component', 'renderer\src\core\framework', 'renderer\src\core\views', 'renderer\src\core\setup', 'renderer\src\core\reactive',
+          'renderer\src\core\draw', 'renderer\src\core\layout', 'renderer\src\core\widgets', 'renderer\src\core\component', 'renderer\src\core\framework', 'renderer\src\core\views', 'renderer\src\core\setup', 'renderer\src\core\reactive',
           'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings',
           'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch', 'lib\ipc',
           'renderer\src\store\define', 'renderer\src\store\history-store',

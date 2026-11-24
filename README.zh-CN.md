@@ -765,6 +765,7 @@ src/                    程序本体（打包只读这个目录）
   main/media/             Cb.Rtf 与 Cb.Rich：图片块，以及把文档排进设备上下文
 
   renderer/src/core/     两个自绘窗口共用的盒子与控件
+    draw.ps1             画笔缓存、按比例淡化的颜色、量字用的格式集
     layout.ps1           切盒子：内缩、纵向堆叠、横向分栏、滚动条滑块的尺寸与位置
     widgets.ps1          控件本身：开关、滚动条、两色之间的混色
     component.ps1        控件树的外围：store 与修订号、生命周期、常驻缓存、延后到达的槽位

@@ -70,10 +70,5 @@ function Invoke-AnimFrame($state, [double]$step) {
   return $mask
 }
 
-# the same colour at a fraction of its own alpha: a transition fades, it never recolours
-function Scale-Alpha($color, [double]$k) {
-  if ($null -eq $color) { return [Drawing.Color]::FromArgb(0, 0, 0, 0) }
-  if ($k -le 0) { return [Drawing.Color]::FromArgb(0, $color.R, $color.G, $color.B) }
-  if ($k -ge 1) { return $color }
-  return [Drawing.Color]::FromArgb([int][Math]::Round([double]$color.A * $k), $color.R, $color.G, $color.B)
-}
+# the same colour at a fraction of its own alpha (Scale-Alpha) lives in
+# renderer\src\core\draw.ps1: the framework needs it too, so it cannot sit in the panel.

@@ -1,3 +1,4 @@
+#@use renderer/src/core/draw
 # lib/panel/picker-draw.ps1 - the panel's reusable drawing pieces.
 #
 # Everything here takes a Graphics (or a window, for the one region helper) plus plain
@@ -217,16 +218,9 @@ function Get-PanelHints([int]$rows, [int]$selected, [bool]$editable, [int]$query
   return $out.ToArray()
 }
 
-# One brush per colour, kept for the process: the row painter runs on every scroll tick, so
-# a SolidBrush per glyph would churn GDI+ handles for nothing. A palette has a few dozen
-# colours at most, so this stays bounded; the brushes die with the process.
-function Get-Brush($color) {
-  if ($null -eq $script:UiBrushCache) { $script:UiBrushCache = @{} }
-  $k = $color.ToArgb()
-  $b = $script:UiBrushCache[$k]
-  if ($null -eq $b) { $b = New-Object Drawing.SolidBrush $color; $script:UiBrushCache[$k] = $b }
-  return $b
-}
+# One brush per colour, and the format set a measured label is drawn with, live in
+# renderer\src\core\draw.ps1: the framework needs them too, and a framework that depends on a
+# window is an edge pointing the wrong way.
 
 # A row thumbnail fills a square slot, keeping its aspect ratio. The bitmap belongs to the
 # media cache, so it is drawn here and never disposed here.
@@ -354,40 +348,6 @@ function Get-EmptyState($entries, $query, [string]$q, $glyphs) {
   $s.Title = (Get-UiText 'panel.empty.title.noResults' @(([string]$q).Trim()))
   $s.Sub = (Get-UiText 'panel.empty.sub.noResults')
   return $s
-}
-
-function New-PickerStringFormats {  if ($script:PickerSf) { return $script:PickerSf }
-  $none = New-Object Drawing.StringFormat
-  $none.Trimming = [Drawing.StringTrimming]::None
-  $none.FormatFlags = [Drawing.StringFormatFlags]::NoWrap
-  $none.HotkeyPrefix = [Drawing.Text.HotkeyPrefix]::None
-  $none.LineAlignment = [Drawing.StringAlignment]::Center
-
-  $right = $none.Clone()
-  $right.Alignment = [Drawing.StringAlignment]::Far
-
-  $center = $none.Clone()
-  $center.Alignment = [Drawing.StringAlignment]::Center
-
-  $ell = New-Object Drawing.StringFormat
-  $ell.Trimming = [Drawing.StringTrimming]::EllipsisCharacter
-  $ell.FormatFlags = [Drawing.StringFormatFlags]::NoWrap
-  $ell.HotkeyPrefix = [Drawing.Text.HotkeyPrefix]::None
-  $ell.LineAlignment = [Drawing.StringAlignment]::Center
-
-  $seg = [Drawing.StringFormat]::GenericTypographic.Clone()
-  $seg.FormatFlags = [Drawing.StringFormatFlags]::NoWrap -bor [Drawing.StringFormatFlags]::MeasureTrailingSpaces
-  $seg.HotkeyPrefix = [Drawing.Text.HotkeyPrefix]::None
-  $seg.LineAlignment = [Drawing.StringAlignment]::Center
-
-  $script:PickerSf = @{
-    None     = $none
-    Right    = $right
-    Center   = $center
-    Ellipsis = $ell
-    Seg      = $seg
-  }
-  return $script:PickerSf
 }
 
 # key caps: rounded chip with a 1 px stroke, action text beside it (Win11 hint style).

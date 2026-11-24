@@ -1,4 +1,4 @@
-#@use utils/dpi, lib/panel/anim, lib/panel/picker-draw
+#@use utils/dpi, renderer/src/core/draw
 #@export Get-UiBlend, Draw-UiToggle, Get-UiChipWidth, Draw-UiKeyChip, Draw-UiScrollbar, Draw-UiButton, Draw-UiIconButton, Draw-UiCross, Draw-UiPlus
 # renderer\src\core\widgets.ps1 - the controls the drawn windows share.
 #

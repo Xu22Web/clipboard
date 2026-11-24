@@ -768,6 +768,7 @@ src/                    the program (the only folder packaging reads)
   main/media/               Cb.Rtf and Cb.Rich: picture blocks, and a document laid into a device context
 
   renderer/src/core/      boxes and controls both drawn windows share
+    draw.ps1              the brush cache, the colour at a fraction of its alpha, the string formats
     layout.ps1            cutting a box: inset, stack, columns, a scrollbar's thumb
     widgets.ps1           the controls: a switch, a scrollbar, a colour between two others
     component.ps1         the tree around them: store and revision, lifecycle, keep-alive, a slot
