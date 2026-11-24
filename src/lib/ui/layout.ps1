@@ -30,14 +30,20 @@ function Get-UiInset($box, [int]$left, [int]$top = -1, [int]$right = -1, [int]$b
 }
 
 # The box cut into rows, top to bottom, each as wide as the box. A negative height means "what
-# is left", so a header and a footer can be named in pixels and the list between them in -1.
+# is left once the fixed rows below it have their share", so a header and a footer can be named
+# in pixels and the list between them in -1.
 function Get-UiStack($box, [int[]]$heights) {
   $out = @()
   if ($null -eq $box -or $null -eq $heights) { return $out }
   $top = [int]$box.Top
-  foreach ($one in $heights) {
-    $h = [int]$one
-    if ($h -lt 0) { $h = [Math]::Max(0, [int]$box.Bottom - $top) }
+  for ($i = 0; $i -lt $heights.Count; $i++) {
+    $h = [int]$heights[$i]
+    if ($h -lt 0) {
+      # everything named after this one still has to fit
+      $rest = 0
+      for ($j = $i + 1; $j -lt $heights.Count; $j++) { if ([int]$heights[$j] -gt 0) { $rest += [int]$heights[$j] } }
+      $h = [Math]::Max(0, ([int]$box.Bottom - $top) - $rest)
+    }
     $h = [Math]::Min($h, [Math]::Max(0, [int]$box.Bottom - $top))
     $out += (New-UiBox ([int]$box.Left) $top ([int]$box.Width) $h)
     $top += $h
@@ -46,14 +52,19 @@ function Get-UiStack($box, [int[]]$heights) {
 }
 
 # The box cut into columns, left to right, each as tall as the box. A negative width means
-# "what is left", the same way a height does in Get-UiStack.
+# "what is left once the fixed columns after it have their share", the same way a height does
+# in Get-UiStack.
 function Get-UiColumns($box, [int[]]$widths) {
   $out = @()
   if ($null -eq $box -or $null -eq $widths) { return $out }
   $left = [int]$box.Left
-  foreach ($one in $widths) {
-    $w = [int]$one
-    if ($w -lt 0) { $w = [Math]::Max(0, [int]$box.Right - $left) }
+  for ($i = 0; $i -lt $widths.Count; $i++) {
+    $w = [int]$widths[$i]
+    if ($w -lt 0) {
+      $rest = 0
+      for ($j = $i + 1; $j -lt $widths.Count; $j++) { if ([int]$widths[$j] -gt 0) { $rest += [int]$widths[$j] } }
+      $w = [Math]::Max(0, ([int]$box.Right - $left) - $rest)
+    }
     $w = [Math]::Min($w, [Math]::Max(0, [int]$box.Right - $left))
     $out += (New-UiBox $left ([int]$box.Top) $w ([int]$box.Height))
     $left += $w

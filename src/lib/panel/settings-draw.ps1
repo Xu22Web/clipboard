@@ -20,6 +20,22 @@ function Get-SettingsLayout([int]$w, [int]$h) {
   # the button plus the same air above and below it: 32 + 12 + 12, the command bar a Fluent dialog
   # uses, so the buttons are not a strip squeezed against the window edge.
   $footH = Px 56
+  # The window is cut into boxes the way CSS cuts one: a header off the top, a footer off the
+  # bottom, the body between them; inside the body the page list takes the left column and the
+  # rows the rest, with the thumb's lane taken off the right edge. Every number this function
+  # has always answered is read back out of those boxes, so a change of window size or padding
+  # moves them together instead of in five places at once.
+  $win = New-UiBox 0 0 $w $h
+  $bands = @(Get-UiStack $win @($headH, -1, $footH))
+  $head = $bands[0]
+  $body = $bands[1]
+  $foot = $bands[2]
+  $cols = @(Get-UiColumns (New-UiBox 0 ([int]$body.Top) $w ([int]$body.Height)) @($sideW, -1))
+  $side = $cols[0]
+  # the lane on the right belongs to the scrollbar: a Fluent list never draws its rows to the
+  # very edge and then has nowhere to put the thumb
+  $list = Get-UiInset $cols[1] $pad 0 ($pad + (Px 8)) 0
+  $lane = New-UiBox ([int]$list.Right) ([int]$list.Top) (Px 12) ([int]$list.Height)
   return @{
     Width     = $w
     Height    = $h
@@ -38,19 +54,24 @@ function Get-SettingsLayout([int]$w, [int]$h) {
     RowHeight = Px 80
     GroupHeight = Px 34
     CloseSize = Px 32
-    ListLeft  = $sideW + $pad
-    # the lane on the right belongs to the scrollbar: a Fluent list never draws its rows to the
-    # very edge and then has nowhere to put the thumb
-    ListRight = $w - $pad - (Px 8)
+    ListLeft  = [int]$list.Left
+    ListRight = [int]$list.Right
     # the lane the pointer can grab. The thumb is three pixels wide, a mouse is not, so the hit
     # area is twelve and the thumb stays centred in it - the same arrangement the panel uses.
-    SbLeft    = $w - $pad - (Px 8)
-    SbLane    = Px 12
-    ListTop   = $headH
-    ListBottom = $h - $footH
+    SbLeft    = [int]$list.Right
+    SbLane    = (Px 12)
+    ListTop   = [int]$list.Top
+    ListBottom = [int]$list.Bottom
     ToggleWidth = Px 40
     ToggleHeight = Px 20
     Radius    = Px 4
+    # the boxes the numbers come from, for anything that wants to place a child in one
+    Head      = $head
+    Body      = $body
+    Foot      = $foot
+    Side      = $side
+    List      = $list
+    SbBox     = $lane
   }
 }
 

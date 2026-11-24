@@ -980,8 +980,18 @@ try {
         Expect ($mixed.Left -eq 14 -and $mixed.Top -eq 20 -and $mixed.Width -eq 196 -and $mixed.Height -eq 94) 'left and bottom only'
       }
 
-      It 'sizes a thumb by the visible part and stops it at both ends of the lane' {
-        $top = Get-UiScrollMetrics 400 0.25 0 300 24
+      It 'lets the flexible band keep room for the bands named after it' {
+        # a header, a list that takes the rest, and a footer: the -1 has to leave the footer its
+        # pixels, or the footer gets nothing and the list runs to the window edge
+        $bands = @(Get-UiStack (New-UiBox 0 0 300 700) @(62, -1, 56))
+        Expect ($bands.Count -eq 3) 'three bands'
+        Expect ($bands[0].Height -eq 62 -and $bands[2].Height -eq 56) 'the named bands keep their height'
+        Expect ($bands[1].Top -eq 62 -and $bands[1].Bottom -eq 644) 'the middle one takes what is between them'
+        $cols = @(Get-UiColumns (New-UiBox 0 0 300 700) @(60, -1, 40))
+        Expect ($cols[1].Left -eq 60 -and $cols[1].Right -eq 260) 'and a column does the same across'
+      }
+
+      It 'sizes a thumb by the visible part and stops it at both ends of the lane' {        $top = Get-UiScrollMetrics 400 0.25 0 300 24
         Expect ($top.Len -eq 100 -and $top.Top -eq 0) 'a quarter shown at the top'
         $mid = Get-UiScrollMetrics 400 0.25 150 300 24
         Expect ($mid.Top -eq 150) 'half way down a lane with 300 px of travel'
@@ -1055,6 +1065,16 @@ try {
         Expect ($laid[0].Left -eq 0 -and $laid[0].Width -eq 60) 'the fixed one'
         Expect ($laid[1].Left -eq 70 -and $laid[1].Width -eq 130) 'the automatic one takes the rest'
         Expect ($laid[1].Height -eq 40) 'a row stretches its children across the height'
+      }
+
+      It 'cuts the settings window into the boxes its painting uses' {
+        $l = Get-SettingsLayout 780 700
+        Expect ($l.List.Left -eq $l.ListLeft -and $l.List.Right -eq $l.ListRight) 'the rows are placed by the list box'
+        Expect ($l.List.Top -eq $l.ListTop -and $l.List.Bottom -eq $l.ListBottom) 'the list runs between the header and the footer'
+        Expect ($l.ListLeft -eq ($l.SideWidth + $l.Pad)) 'the rows start after the page column and its pad'
+        Expect ($l.ListRight -eq ($l.Width - $l.Pad - (Px 8))) 'the rows stop short of the thumb lane'
+        Expect ($l.Head.Height -eq $l.HeadHeight -and $l.Foot.Height -eq $l.FootHeight) 'the bands are the header and the footer'
+        Expect ($l.SbBox.Left -eq $l.SbLeft -and $l.SbBox.Width -eq $l.SbLane) 'the lane is where the thumb is drawn'
       }
     }
 
