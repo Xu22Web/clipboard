@@ -1,5 +1,5 @@
 // src\main\reactivity\reactive-bag.cs - a data bag whose reads can be tracked and whose writes
-// can be announced (see lib\ui\reactive.ps1).
+// can be announced (see renderer\src\core\reactive.ps1).
 //
 // PowerShell has no property traps at all - a hashtable cannot be made to tell anyone it changed
 // - so this lives in the one place the language cannot reach, DynamicObject. Reads cost what a

@@ -1,6 +1,6 @@
 #@use lib/native
 #@export Initialize-UiReactive, New-UiReactive, Get-UiReactive, Set-UiReactive, Add-UiRender, Remove-UiRender, New-UiComputed, Invoke-UiFlush, Test-UiFlushPending, New-UiApp, Test-UiAppOpen, Set-UiAppSignal, Get-UiAppSignal, Add-UiAppEffect, Close-UiApp
-# lib/ui/reactive.ps1 - the data half of the framework: a value you can watch, and an update that
+# renderer\src\core\reactive.ps1 - the data half of the framework: a value you can watch, and an update that
 # is batched.
 #
 # The traps live in C# (Cb.ReactiveBag in lib\assembly\cb.native.cs): PowerShell has no property

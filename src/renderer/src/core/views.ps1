@@ -1,6 +1,6 @@
-#@use lib/ui/component, lib/ui/framework, lib/ui/widgets, utils/dpi
+#@use renderer/src/core/component, renderer/src/core/framework, renderer/src/core/widgets, utils/dpi
 #@export Register-UiView, Get-UiViewKind, New-UiView, Test-UiViewEnabled, Get-UiViewProp, Set-UiViewState, Test-UiViewState, Draw-UiView, Hit-UiViewList, Get-UiViewRect, Update-UiViewHot, Sync-UiViews
-# lib/ui/views.ps1 - a control as a record: what it is, what it holds, where it is, how it draws.
+# renderer\src\core\views.ps1 - a control as a record: what it is, what it holds, where it is, how it draws.
 #
 # component.ps1 gives a node a lifecycle, framework.ps1 gives a tree of them a patch. What was
 # still written out at every call site is the control itself: a rectangle, a hot flag, an edge

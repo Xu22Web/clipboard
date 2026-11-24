@@ -1,12 +1,12 @@
 #@use utils/dpi, lib/panel/anim, lib/panel/picker-draw
 #@export Get-UiBlend, Draw-UiToggle, Get-UiChipWidth, Draw-UiKeyChip, Draw-UiScrollbar, Draw-UiButton, Draw-UiIconButton, Draw-UiCross, Draw-UiPlus
-# lib/ui/widgets.ps1 - the controls the drawn windows share.
+# renderer\src\core\widgets.ps1 - the controls the drawn windows share.
 #
 # A widget is a rectangle plus a state, drawn by one function and hit-tested elsewhere against
 # the same rectangle. The settings window and the history panel grew their own copies of these
 # (a switch, a scrollbar, a row of key chips), and a copy that is fixed in one window is a bug
 # that stays in the other. What is shared here is only the drawing of a control at a place on
-# screen: where the place is comes from lib\ui\layout.ps1, and what the theme says comes from
+# screen: where the place is comes from renderer\src\core\layout.ps1, and what the theme says comes from
 # the palette the caller passes in.
 #
 # Every one of these takes a Graphics and leaves nothing open: brushes, pens and paths are
@@ -88,7 +88,7 @@ function Draw-UiKeyChip($g, [int]$x, [int]$y, [int]$w, [int]$h, [string]$text, $
 
 # A scrollbar thumb in its lane: no visible track, a rounded bar that widens and darkens as the
 # pointer comes near. $k is the hover ramp (0 at rest, 1 under the pointer), so every window
-# carrying one moves at the same speed. $lane is a box from lib\ui\layout.ps1 and $thumb is what
+# carrying one moves at the same speed. $lane is a box from renderer\src\core\layout.ps1 and $thumb is what
 # Get-UiScrollMetrics answered.
 function Draw-UiScrollbar($g, $pal, $lane, $thumb, [double]$k) {
   if ($null -eq $g -or $null -eq $pal -or $null -eq $lane -or $null -eq $thumb) { return }

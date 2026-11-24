@@ -1,5 +1,5 @@
 #@export New-UiBox, Get-UiInset, Get-UiStack, Get-UiColumns, Get-UiScrollMetrics, Get-UiNumber, Get-UiEdges, Get-UiBoxModel
-# lib/ui/layout.ps1 - boxes: the arithmetic both drawn windows share.
+# renderer\src\core\layout.ps1 - boxes: the arithmetic both drawn windows share.
 #
 # A window's furniture is placed by cutting rectangles: a header off the top, a footer off the
 # bottom, a lane off the right, then rows down whatever is left. The history panel and the

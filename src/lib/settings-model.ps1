@@ -1,4 +1,4 @@
-#@use lib/text, utils/schema, lib/config, lib/settings-types, lib/ui/component, lib/ui/framework, lib/store
+#@use lib/text, utils/schema, lib/config, lib/settings-types, renderer/src/core/component, renderer/src/core/framework, lib/store
 #@export Get-SettingGroupTable, Get-SettingLabel, Get-SettingKind, Get-SettingRaw, Format-SettingText, Format-SettingListText, Get-SettingHelp, Get-SettingEnabledBy, New-SettingControlKey, Get-SettingControlKeyParts, Get-SettingGroupKeys, Get-SettingsRows, New-SettingRowTree, Update-SettingRows, Get-SettingGroups, Get-SettingGroupsWithPending, New-SettingInfoRow, Get-SettingAboutFacts, Get-SettingLeaf, Get-SettingAboutRows
 # lib/settings-model.ps1 - the rows a settings window shows.
 #
@@ -393,7 +393,7 @@ function Get-SettingsRows($schema, [string]$group, $pending = $null, $only = $nu
 # Nothing is answered for About: its rows state facts rather than values, so there is nothing to
 # compare and the caller builds them.
 #
-# A page is a node tree (lib\ui\framework.ps1): one child per row, keyed by the setting key, with
+# A page is a node tree (renderer\src\core\framework.ps1): one child per row, keyed by the setting key, with
 # the row as the child's values. Which row actually changes is then the tree patch's question,
 # the same one every other surface asks, and this file only says which keys it wants and which
 # of them it had to build.

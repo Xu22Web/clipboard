@@ -6,7 +6,7 @@
   system does: an import list, an export list. The declarations are comment directives read from
   the token stream the parser produced, not from the raw text:
 
-      #@use lib/ui/layout
+      #@use renderer/src/core/layout
       #@export New-UiBox, Get-UiStack, Get-UiColumns
 
   A comment is deliberate. The declarations describe the *build*, not the program: the shipped

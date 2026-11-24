@@ -114,7 +114,7 @@ function Draw-SettingsChrome($g, $pal, $layout, [string]$title, [string]$subtitl
   } finally { $pen.Dispose() }
 }
 
-# A colour part way between two others lives in lib\ui\widgets.ps1 (Get-UiBlend), with the
+# A colour part way between two others lives in renderer\src\core\widgets.ps1 (Get-UiBlend), with the
 # switches and scrollbars it paints; the settings window keeps no copy of it.
 
 # The glyph a page's row carries, from the same icon face the panel and the tray use (Segoe
@@ -205,7 +205,7 @@ function Draw-SettingsSide($g, $pal, $layout, $groups, [int]$selected, $pendingG
 }
 
 # A Win11 switch: a pill track and a round knob. $k is how far the switch has travelled, so a
-# The switch itself is a shared widget (lib\ui\widgets.ps1, Draw-UiToggle), so the panel, the
+# The switch itself is a shared widget (renderer\src\core\widgets.ps1, Draw-UiToggle), so the panel, the
 # tray or a later surface can carry the same control; what stays here is where it is put.
 function Draw-SettingsToggle($g, $pal, [int]$x, [int]$y, [int]$w, [int]$h, [double]$k, [bool]$enabled = $true) {
   Draw-UiToggle $g $pal $x $y $w $h $k $enabled
@@ -790,7 +790,7 @@ function Get-SettingsActionRects($layout, $labels) {
 }
 
 # The footer is the window's own bar: what the last change did on the left and the actions on
-# the right. The actions themselves are view nodes drawn by lib\ui\views.ps1 - this bar draws only
+# the right. The actions themselves are view nodes drawn by renderer\src\core\views.ps1 - this bar draws only
 # what is not a control: the hairline that marks it off, and the message that sits beside the
 # buttons. $actions is only needed for where the buttons end, which is where the message stops.
 # The version and the item count are not here: they describe the program, not the page, and they
@@ -852,7 +852,7 @@ function Get-SettingsScrollThumb($layout, [int]$rows, [int]$visible, [int]$scrol
   $top = [int]$layout.ListTop
   $track = [int]$layout.ListBottom - $top
   if ($track -lt (Px 24)) { return $null }
-  # the same three numbers every scrollbar in the tool turns into a thumb (lib\ui\layout.ps1)
+  # the same three numbers every scrollbar in the tool turns into a thumb (renderer\src\core\layout.ps1)
   $span = [Math]::Max(1, ($rows * [int]$layout.RowHeight) - $track)
   $m = Get-UiScrollMetrics $track ($visible / [double]$rows) $scroll $span (Px 24)
   if ($null -eq $m) { return $null }

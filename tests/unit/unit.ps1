@@ -230,7 +230,7 @@ try {
         $requiredLib = @('lib\base', 'lib\native', 'lib\panel\focus', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
           'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\panel\picker-live', 'lib\text', 'lib\panel\anim',
           'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\panel\tray-menu', 'lib\serve', 'lib\shortcut',
-          'lib\ui\layout', 'lib\ui\widgets', 'lib\ui\component', 'lib\ui\framework', 'lib\ui\views', 'lib\ui\setup', 'lib\ui\reactive',
+          'renderer\src\core\layout', 'renderer\src\core\widgets', 'renderer\src\core\component', 'renderer\src\core\framework', 'renderer\src\core\views', 'renderer\src\core\setup', 'renderer\src\core\reactive',
           'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings',
           'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch', 'lib\ipc',
           'renderer\src\store\define', 'renderer\src\store\history-store',
@@ -566,10 +566,10 @@ try {
         It 'the bundler reads import and export declarations from tokens, not from text' {
           . (Join-Path $repoRoot 'tools\bundler\lib\ast.ps1')
           . (Join-Path $repoRoot 'tools\bundler\lib\surface.ps1')
-          $text = ('#@use lib/ui/layout' + "`r`n" + '#@export New-UiBox, Get-UiStack' + "`r`n" +
+          $text = ('#@use renderer/src/core/layout' + "`r`n" + '#@export New-UiBox, Get-UiStack' + "`r`n" +
             'function New-UiBox { }' + "`r`n" + 'Get-UiStack' + "`r`n" + '$note = "#@export NotAFunction"')
           $decl = Get-BundleDirectives (Get-BundleParse $text)
-          Expect ((@($decl.Uses) -join ',') -eq 'lib/ui/layout') (@($decl.Uses) -join ',')
+          Expect ((@($decl.Uses) -join ',') -eq 'renderer/src/core/layout') (@($decl.Uses) -join ',')
           Expect ((@($decl.Exports) -join ',') -eq 'New-UiBox,Get-UiStack') (@($decl.Exports) -join ',')
         }
 
@@ -1111,7 +1111,7 @@ try {
     }
 
     # The two drawn windows place their furniture by cutting boxes and filling them, and both
-    # scrollbars are the same three numbers (lib\ui\layout.ps1). These are the rules the
+    # scrollbars are the same three numbers (renderer\src\core\layout.ps1). These are the rules the
     # settings window and the panel lean on.
     Describe 'ui boxes' {
       It 'moves the edges of a box in' {
@@ -1455,7 +1455,7 @@ try {
       }
     }
 
-    # A surface is a keyed tree (lib\ui\framework.ps1): the patch below is what keeps a page or a
+    # A surface is a keyed tree (renderer\src\core\framework.ps1): the patch below is what keeps a page or a
     # list from being rebuilt to change one value, at any depth.
     Describe 'ui tree patch' {
       BeforeAll {
@@ -1599,7 +1599,7 @@ try {
       }
     }
 
-    # A control as a record (lib\ui\views.ps1): the kind decides how it draws, the node holds where
+    # A control as a record (renderer\src\core\views.ps1): the kind decides how it draws, the node holds where
     # it is and how it happens to be, and the hover is a diff that answers a rectangle - which is
     # what keeps a pointer crossing a footer button from repainting the window.
     Describe 'ui views' {
@@ -1721,7 +1721,7 @@ try {
       }
     }
 
-    # The data half (lib\ui\reactive.ps1 over Cb.ReactiveBag): a write queues what read it, a
+    # The data half (renderer\src\core\reactive.ps1 over Cb.ReactiveBag): a write queues what read it, a
     # flush runs each effect once, a derived value recomputes on access, and stopping an effect
     # gives back everything it held - which is the whole guard against a window that leaks.
     Describe 'ui reactive' {
@@ -1810,7 +1810,7 @@ try {
       }
     }
 
-    # A component declared the way <script setup> declares one (lib\ui\setup.ps1): props in, a
+    # A component declared the way <script setup> declares one (renderer\src\core\setup.ps1): props in, a
     # setup function that answers its bindings, hooks registered while it runs, and content the
     # owner supplies through a slot.
     Describe 'ui setup' {

@@ -11,7 +11,7 @@
 // #part line below, and delete the block from the old file. The type name is unchanged,
 // because every file declares the same namespace.
 //
-//   reactivity\  the bag with traps, the effects, the derived value   (lib\ui\reactive.ps1)
+//   reactivity\  the bag with traps, the effects, the derived value   (renderer\src\core\reactive.ps1)
 //   ipc\         the pipe server and the frame it speaks             (lib\serve.ps1)
 //   store\       the record format and the blobs beside it           (lib\store.ps1)
 //   clip\        reading and writing the clipboard itself            (lib\clip.ps1)

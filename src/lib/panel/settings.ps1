@@ -139,7 +139,7 @@ function Show-Settings {
   if ($null -eq $script:SetRowCache) { $script:SetRowCache = New-UiKeepAlive 12 }
   # the page whose rows are in $script:SetRows, so the next refresh can be a diff instead of a build
   $script:SetPage = ''
-  # that page's rows as a node tree (lib\ui\framework.ps1): the patch keeps the rows that did not
+  # that page's rows as a node tree (renderer\src\core\framework.ps1): the patch keeps the rows that did not
   # move and mounts only the ones that did, so a page is never rebuilt to change one value
   $script:SetPageNode = $null
   # the staged values: key -> file spelling, validated by the schema before it got here. The
@@ -160,11 +160,11 @@ function Show-Settings {
   }
   Update-SettingsActions
   # The window's own controls - the two caption buttons and the footer actions - are view nodes
-  # (lib\ui\views.ps1), kept on one parent so the patch can leave the ones that did not change
+  # (renderer\src\core\views.ps1), kept on one parent so the patch can leave the ones that did not change
   # alone. Their boxes come from the layout, their hover from the node's own state: a pointer
   # crossing Save repaints Save, not the window.
   #
-  # The parent is declared the way <script setup> declares a component (lib\ui\setup.ps1): it takes
+  # The parent is declared the way <script setup> declares a component (renderer\src\core\setup.ps1): it takes
   # its content from the window through a slot, so the button row does not know what the buttons
   # are, and the window does not have to call it whenever the set changes.
   $script:SetChromeFactory = New-UiSetupView 'chrome' @{ } {
@@ -377,7 +377,7 @@ function Show-Settings {
   }
 
   # The controls a row owns beyond its value - the delete cross of each chord line, and the plus
-  # that adds one - are view nodes (lib\ui\views.ps1). Only the rows on screen hold them, and
+  # that adds one - are view nodes (renderer\src\core\views.ps1). Only the rows on screen hold them, and
   # their geometry comes from the layout and the scroll offset, which is why this runs again
   # whenever either can have moved.
   function Update-SettingsRowHooks {
@@ -1106,7 +1106,7 @@ function Show-Settings {
   # row and switch corners look stepped.
   Update-PanelRegion $form
   $script:SetLayout = $layout
-  # The window's state as signals (lib\ui\reactive.ps1), and two effects that read them. A write
+  # The window's state as signals (renderer\src\core\reactive.ps1), and two effects that read them. A write
   # queues them instead of rebuilding on the spot, and one flush runs each once - so a handler
   # that stages five values rebuilds the footer once, and a message repaints the bar, not the page.
   $script:SetApp = New-UiApp @{ Page = ''; Pending = 0; Msg = ''; MsgErr = 0 }
@@ -1242,7 +1242,7 @@ function Show-Settings {
         Draw-SettingsValueField $g $pal $script:SetEditRect '' ([string]$script:SetEditField.Unit) $true $mode
       }
       if ($listOnly) { return }
-      # the caption buttons and the footer actions are view nodes (lib\ui\views.ps1): one walk
+      # the caption buttons and the footer actions are view nodes (renderer\src\core\views.ps1): one walk
       # draws them all, in the order the patch kept them
       [void](Render-UiTree $script:SetChrome { param($c) if ($c.Type -ne 'chrome') { [void](Draw-UiView $g $pal $c) } })
       # the footer is the window's own bar: the last change on the left, the actions on the right.
@@ -1320,7 +1320,7 @@ function Show-Settings {
       $script:SetSbHot = $hot
       $form.Invalidate()
     }
-    # The caption buttons and the footer actions are view nodes (lib\ui\views.ps1), so one diff
+    # The caption buttons and the footer actions are view nodes (renderer\src\core\views.ps1), so one diff
     # moves the hover and answers the rectangle that changed: crossing Save repaints Save instead
     # of the whole window, and a disabled action never takes the hover at all.
     $dirty = Update-UiViewHot $script:SetChrome.Children.ToArray() $e.X $e.Y $true

@@ -421,7 +421,7 @@ function Draw-KeyChips($g, [int]$x, [int]$cy, $pairs, $keyColor, $actionColor, [
     $chipW = Get-UiChipWidth $g $key $font (Px 14) $formats
     if (($x + $chipW + (Px 6) + $aw) -gt $limit) { return }
     $chipY = $cy - [int]($chipH / 2)
-    # the cap itself is a shared widget (lib\ui\widgets.ps1): the settings window draws a
+    # the cap itself is a shared widget (renderer\src\core\widgets.ps1): the settings window draws a
     # recorded chord with the same one
     Draw-UiKeyChip $g $x $chipY $chipW $chipH $key $font $ui $keyColor (Px $script:Metric['CapRadius']) $formats
     $x = $x + $chipW + (Px 6)

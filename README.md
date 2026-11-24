@@ -767,18 +767,20 @@ src/                    the program (the only folder packaging reads)
                             scheduler that batches a write, and the derived value
   main/media/               Cb.Rtf and Cb.Rich: picture blocks, and a document laid into a device context
 
-  lib/ui/                 boxes and controls both drawn windows share
-  lib/ui/layout.ps1         cutting a box: inset, stack, columns, a scrollbar's thumb
-  lib/ui/widgets.ps1        the controls: a switch, a scrollbar, a colour between two others
-  lib/ui/component.ps1      the tree around them: store and revision, lifecycle, keep-alive, a slot that arrives later
-  lib/ui/framework.ps1      what a surface is written as: a keyed tree, the patch that keeps only what changed,
-                            and the walk that draws it
-  lib/ui/views.ps1          a control as a record: a kind draws it, a box places it, a state says how it is,
-                            and a hover diff answers the rectangle that has to be repainted
-  lib/ui/reactive.ps1       the data half: signals with traps (Cb.ReactiveBag), effects, derived values,
-                            and one flush per batch of writes
-  lib/ui/setup.ps1          a control written as a declaration: props with defaults, the body that
-                            returns its bindings, ambient lifecycle hooks, and named slots a caller fills
+  renderer/src/core/      boxes and controls both drawn windows share
+    layout.ps1            cutting a box: inset, stack, columns, a scrollbar's thumb
+    widgets.ps1           the controls: a switch, a scrollbar, a colour between two others
+    component.ps1         the tree around them: store and revision, lifecycle, keep-alive, a slot
+                          that arrives later
+    framework.ps1         what a surface is written as: a keyed tree, the patch that keeps only what
+                          changed, and the walk that draws it
+    views.ps1             a control as a record: a kind draws it, a box places it, a state says how
+                          it is, and a hover diff answers the rectangle that has to be repainted
+    reactive.ps1          the data half: signals with traps (Cb.ReactiveBag), effects, derived
+                          values, and one flush per batch of writes
+    setup.ps1             a control written as a declaration: props with defaults, the body that
+                          returns its bindings, ambient lifecycle hooks, and named slots a caller
+                          fills
 
   lib/panel/              the panel stack, loaded only by commands that draw
   lib/panel/picker.ps1      the history panel: window, filter, list, keys, context menu, paste

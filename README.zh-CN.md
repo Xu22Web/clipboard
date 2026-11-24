@@ -764,17 +764,17 @@ src/                    程序本体（打包只读这个目录）
   main/ui/                窗体、行表面、托盘与托盘菜单
   main/media/             Cb.Rtf 与 Cb.Rich：图片块，以及把文档排进设备上下文
 
-  lib/ui/                两个自绘窗口共用的盒子与控件
-  lib/ui/layout.ps1        切盒子：内缩、纵向堆叠、横向分栏、滚动条滑块的尺寸与位置
-  lib/ui/widgets.ps1       控件本身：开关、滚动条、两色之间的混色
-  lib/ui/component.ps1     控件树的外围：store 与修订号、生命周期、常驻缓存、延后到达的槽位
-  lib/ui/framework.ps1     界面写成什么：带 key 的树、只改动变化处的 patch、以及遍历绘制
-  lib/ui/views.ps1         控件成了一条记录：kind 负责画、box 负责摆、state 表示当下状态，
-                           悬停是一次 diff，只答出需要重绘的那块矩形
-  lib/ui/reactive.ps1      数据这一半：带陷阱的信号（Cb.ReactiveBag）、effect、派生值，
-                           一批写入只 flush 一次
-  lib/ui/setup.ps1         控件写成一份声明：带默认值的 props、返回自身绑定的函数体、
-                           就地登记的挂载钩子，以及由调用方填充的具名插槽
+  renderer/src/core/     两个自绘窗口共用的盒子与控件
+    layout.ps1           切盒子：内缩、纵向堆叠、横向分栏、滚动条滑块的尺寸与位置
+    widgets.ps1          控件本身：开关、滚动条、两色之间的混色
+    component.ps1        控件树的外围：store 与修订号、生命周期、常驻缓存、延后到达的槽位
+    framework.ps1        界面写成什么：带 key 的树、只改动变化处的 patch、以及遍历绘制
+    views.ps1            控件成了一条记录：kind 负责画、box 负责摆、state 表示当下状态，
+                         悬停是一次 diff，只答出需要重绘的那块矩形
+    reactive.ps1         数据这一半：带陷阱的信号（Cb.ReactiveBag）、effect、派生值，
+                         一批写入只 flush 一次
+    setup.ps1            控件写成一份声明：带默认值的 props、返回自身绑定的函数体、
+                         就地登记的挂载钩子，以及由调用方填充的具名插槽
 
   lib/panel/              面板栈：只在绘制命令中加载
   lib/panel/picker.ps1      历史面板：窗体、过滤、列表、按键、右键菜单、粘贴

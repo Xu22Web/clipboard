@@ -1,5 +1,5 @@
 // src\main\reactivity\computed-cell.cs - a value derived from what a reader read (see
-// lib\ui\reactive.ps1's New-UiComputed).
+// renderer\src\core\reactive.ps1's New-UiComputed).
 //
 // Vue's computed: cached until one of the reads behind it moves. It recomputes on access, not on
 // the flush, so a value nobody looks at costs nothing, and it reports itself changed so whatever

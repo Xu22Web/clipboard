@@ -1,4 +1,4 @@
-// src\main\reactivity\reactive.cs - the scheduler behind the bag (see lib\ui\reactive.ps1).
+// src\main\reactivity\reactive.cs - the scheduler behind the bag (see renderer\src\core\reactive.ps1).
 //
 // Effects do not run where the write happens. A write enqueues the effects that read that key, a
 // flush runs each of them once, and a batch of writes costs one flush - the shape Vue's job queue
