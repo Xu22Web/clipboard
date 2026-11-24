@@ -27,10 +27,10 @@ function Save-SettingsValues($pending) {
       return @{ Ok = $false; Error = (Get-UiText 'settings.msg.writeFailed' @($label)); Count = $written }
     }
     $written++
-    # A language is read by the panel and the tray when they next open (Sync-UiLanguage), so on its
-    # own it needs no restart; an install-only key has nothing to reload either. Every other key
-    # still asks the window for one reload on close.
-    if (-not (Test-SchemaInstallOnly $script:SettingsSchema $key) -and $key -cne 'Language') { $reload = $true }
+    # A language and a theme are read by the panel and the tray when they next open (Sync-UiLanguage,
+    # Sync-UiTheme), so on their own they need no restart; an install-only key has nothing to reload
+    # either. Every other key still asks the window for one reload on close.
+    if (-not (Test-SchemaInstallOnly $script:SettingsSchema $key) -and $key -cne 'Language' -and $key -cne 'Theme') { $reload = $true }
   }
   try { Apply-Config } catch { return @{ Ok = $false; Error = [string]$_.Exception.Message; Count = $written } }
   if ($reload) { $script:SettingsDirty = $true }

@@ -24,6 +24,14 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     $script:FBody = $null
     [void](Initialize-PanelFonts)
   }
+  # The palette follows the file as well, and so does the family a theme names: a theme saved by a
+  # settings window in another process was drawn with the colours and faces this process started
+  # with. Reading it costs one ini key, and the faces are rebuilt only when it moved.
+  if ((Get-Command Sync-UiTheme -ErrorAction SilentlyContinue) -and (Sync-UiTheme)) {
+    $script:UiFamily = ''
+    $script:FBody = $null
+    [void](Initialize-PanelFonts)
+  }
   $script:PickerOpen = $true
   $script:PickerClose = $false
   # how long the window takes to appear: one line per open, so a slow start can be told

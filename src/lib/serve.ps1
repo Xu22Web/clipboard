@@ -4,10 +4,6 @@
 # The suppression state (LastSeq) lives here because the capture loop compares against it.
 # Writing to it is lib/clip.ps1's job - see Set-LastCapture there.
 
-# The text of the clear confirmation, and the two numbers behind it. It counts rows, not mark
-# names: the kept names are s and p whether or not a single entry carries them, so counting
-# names said "2 pinned entries stay" on a history that had no pinned entry at all.
-#   @{ Text; Gone; Stay }
 # The tray shows the one mark lib\native.ps1 draws, at the size the notification area asks for
 # (16 * dpi): a bitmap scaled up from 16 is what made it look soft at 125% and 150%.
 $script:TrayIcon = $null
@@ -29,6 +25,25 @@ function New-TrayIcon {
   return $script:TrayIcon
 }
 
+# A theme saved while the resident runs reaches the menu and the mark it already holds: the rows
+# carry the skin they were built with, and the icon is drawn from the palette's accent, so both
+# are rebuilt here. The menu object stays the one the tray owns - its rows keep their handlers.
+function Update-TrayLook {
+  if ($null -eq $script:TraySkin) { return }
+  $script:TraySkin = New-TrayMenuSkin
+  if ($null -ne $script:TrayMenuRef) {
+    try { $script:TrayMenuRef.ApplySkin($script:TraySkin) } catch { Write-Log ('tray skin: ' + $_.Exception.Message) }
+  }
+  try {
+    $icon = New-TrayIcon
+    if ($null -ne $icon -and $null -ne $script:Tray) { $script:Tray.Icon = $icon }
+  } catch { Write-Log ('tray icon: ' + $_.Exception.Message) }
+}
+
+# The text of the clear confirmation, and the two numbers behind it. It counts rows, not mark
+# names: the kept names are s and p whether or not a single entry carries them, so counting
+# names said "2 pinned entries stay" on a history that had no pinned entry at all.
+#   @{ Text; Gone; Stay }
 function Get-ClearPrompt($records) {
   $recs = @($records)
   $keeps = @(Get-ClearKeepMarks)
@@ -182,6 +197,9 @@ function Invoke-ServeOnce {
     $script:TraySkin = New-TrayMenuSkin
     $script:TrayHot = $eff
     $dm = New-TrayMenu $script:TraySkin
+    # the menu is replaced when its skin changes, and the settings window runs in this same
+    # process: it finds the one the tray holds here
+    $script:TrayMenuRef = $dm.Menu
 
     # The menu is built once and read every time it opens: the count on its header, the hotkey
     # and the two switches come from the Opening handler, so they never go stale while the tray
@@ -289,6 +307,16 @@ function Invoke-ServeOnce {
             $script:FBody = $null
             [void](Initialize-PanelFonts)
             try { $script:Tray.Text = (Get-UiText 'app.tooltip' @([string]$script:TrayHot)) } catch { }
+          }
+          # A theme saved elsewhere reaches the menu that is about to open: the rows carry the
+          # skin they were built with, so the whole menu is re-skinned rather than rebuilt.
+          $themeChanged = $false
+          if (Get-Command Sync-UiTheme -ErrorAction SilentlyContinue) { $themeChanged = [bool](Sync-UiTheme) }
+          if ($themeChanged) {
+            $script:UiFamily = ''
+            $script:FBody = $null
+            [void](Initialize-PanelFonts)
+            if (Get-Command Update-TrayLook -ErrorAction SilentlyContinue) { Update-TrayLook }
           }
           # the rows draw with the skin's faces, so a language that names its own family reaches
           # them without rebuilding the menu or the rows

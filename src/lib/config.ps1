@@ -98,6 +98,26 @@ function Sync-UiLanguage {
   return $true
 }
 
+# The palette follows the file the same way and for the same reason: a window in another process
+# may have saved a theme, and a surface draws from whatever palette was in force when this process
+# started. $true says it changed, so the caller repaints what it owns - a theme carries its own
+# colours, row heights and paddings, so a surface is rebuilt rather than nudged.
+function Sync-UiTheme {
+  $want = ''
+  try {
+    $map = Read-Ini
+    if ($map.ContainsKey('Theme')) { $want = ([string]$map['Theme']).Trim() }
+  } catch { return $false }
+  if (-not $want) { return $false }
+  # the schema decides which names exist: a name it cannot resolve leaves the theme in force
+  $r = Convert-IniValue 'Theme' $want
+  if ($r.Ok -and [string]$r.Value) { $want = [string]$r.Value }
+  if ($want -eq [string]$script:Theme) { return $false }
+  $script:Theme = $want
+  if (Get-Command Apply-Theme -ErrorAction SilentlyContinue) { Apply-Theme }
+  return $true
+}
+
 # effective values of every key, in schema order
 function Get-ConfigReport {
   # DataDir is a location, not a number: the report carries the resolved absolute path, the

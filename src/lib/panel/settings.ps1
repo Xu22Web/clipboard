@@ -361,6 +361,9 @@ function Show-Settings {
       $script:FBody = $null
       [void](Initialize-PanelFonts)
       $script:SetPal = Get-UiPalette
+      # the tray may hold a menu and a mark drawn with the old palette: a window opened from the
+      # tray runs in the resident, so those objects are right here to be re-skinned
+      if (Get-Command Update-TrayLook -ErrorAction SilentlyContinue) { Update-TrayLook }
     }
     if ($pending.Contains('Language')) {
       # a language may name its own font family, and the faces are built once per process: drop

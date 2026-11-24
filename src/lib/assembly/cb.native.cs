@@ -1829,6 +1829,22 @@ namespace Cb {
       Fit();
     }
 
+    // A theme saved while this menu exists has to reach the surface behind the rows and every row
+    // on it: one call swaps the skin instead of building the menu again, which would mean wiring
+    // the ten click handlers a second time. Fit() runs again because a theme carries its own row
+    // height and padding.
+    public void ApplySkin(TraySkin skin) {
+      if (skin == null) { return; }
+      Skin = skin;
+      Renderer = new TrayMenuRenderer(skin);
+      for (int n = 0; n < Items.Count; n++) {
+        TrayItem row = Items[n] as TrayItem;
+        if (row != null) { row.Skin = skin; }
+      }
+      Fit();
+      Invalidate();
+    }
+
     // the same ring the panel's frame is drawn with (lib/panel/picker-draw.ps1)
     public static void Frame(System.Drawing.Graphics g, int w, int h, int radius, System.Drawing.Color color) {
       if (w < 6 || h < 6) { return; }
