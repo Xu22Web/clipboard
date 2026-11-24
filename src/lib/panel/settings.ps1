@@ -61,20 +61,30 @@ function Show-Settings {
   Add-Native
   # One settings window per session. A second `clipboard settings`, or the tray entry while the
   # command line already opened it, brings that window forward instead of adding a copy beside it.
-  $script:SetLock = Open-SettingsLock
-  if ($null -eq $script:SetLock) {
+  #
+  # The page this request asked for stays where the open window's own loop can read it: the ring
+  # carries no payload. The tray entries open the window in this process, so this is the same
+  # scope; a request from another process only raises the window.
+  $script:SetWantGroup = [string]$Group
+  # The handle stays a local of this call. A request that finds the lock taken must not touch it:
+  # kept in one script variable, that request would clear it, and the window closing next would
+  # have nothing left to release - the name would outlive it and no window could open again.
+  $lock = Open-SettingsLock
+  if ($null -eq $lock) {
     # the open window creates its doorbell right after the lock, so a request landing in between
     # waits for it rather than going unanswered
     for ($i = 0; $i -lt 20; $i++) { if (Ring-SettingsAsk) { break }; Start-Sleep -Milliseconds 25 }
     Write-Log 'settings: a window is already open, asked it to come forward'
     return
   }
+  # the page below comes from the parameter itself, so nothing is left behind for the loop to apply
+  $script:SetWantGroup = ''
   $script:SetAsk = Open-SettingsAsk
   # the ways out of here before the window exists (a schema that cannot be read) take the lock
   # with them: left behind, it would keep the process from ever opening a window again
   $releaseSettings = {
     if ($null -ne $script:SetAsk) { try { $script:SetAsk.Dispose() } catch { }; $script:SetAsk = $null }
-    if ($null -ne $script:SetLock) { try { $script:SetLock.Dispose() } catch { }; $script:SetLock = $null }
+    if ($null -ne $lock) { try { $lock.Dispose() } catch { } }
   }
   # before the window exists, so the bar groups it on its own and shows its icon
   Set-AppId
@@ -1260,6 +1270,18 @@ function Show-Settings {
   function Raise-Settings {
     try {
       if ($null -eq $form -or $form.IsDisposed) { return }
+      # a request names the page it wants (the tray's About entry); the ring has no payload, so the
+      # name was left in this scope by Show-Settings and is spent here, on the window's own loop
+      $want = [string]$script:SetWantGroup
+      $script:SetWantGroup = ''
+      if ($want) {
+        $n = @($groups).Count
+        for ($g = 0; $g -lt $n; $g++) {
+          if (-not ([string]$groups[$g] -eq $want)) { continue }
+          if ($g -ne [int]$script:SetGroup) { Set-CurrentGroup $g }
+          break
+        }
+      }
       if ($form.WindowState -eq [Windows.Forms.FormWindowState]::Minimized) {
         $form.WindowState = [Windows.Forms.FormWindowState]::Normal
       }
