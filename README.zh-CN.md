@@ -749,6 +749,8 @@ src/                    程序本体（打包只读这个目录）
   lib/panel/              面板栈：只在绘制命令中加载
   lib/panel/picker.ps1      历史面板：窗体、过滤、列表、按键、右键菜单、粘贴
   lib/panel/picker-geom.ps1 面板纯计算：行数、数字快选、窗口位置、命中
+  lib/panel/picker-live.ps1 面板显示期间的行为：可见行数、滑块、插入符、搜索框与页脚；放在文件作用域，
+                           一次打开不再重新编译
   lib/panel/picker-draw.ps1 可复用绘制：按键胶囊、搜索命中着色
   lib/panel/picker-edit.ps1 就地编辑（F2）
   lib/panel/pinlist.ps1     自绘列表控件 Cb.PinList

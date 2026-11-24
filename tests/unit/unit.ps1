@@ -228,7 +228,7 @@ try {
       It 'every required module exists' {
         # the entry file names these by relative path; a package must carry all of them
         $requiredLib = @('lib\base', 'lib\native', 'lib\panel\focus', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
-          'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\text', 'lib\panel\anim',
+          'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\panel\picker-live', 'lib\text', 'lib\panel\anim',
           'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\panel\tray-menu', 'lib\serve', 'lib\shortcut',
           'lib\ui\layout', 'lib\ui\widgets', 'lib\ui\component',
           'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings',
@@ -510,7 +510,11 @@ try {
     # types. Closing hands the foreground back where it came from.
     Describe 'panel' {
       BeforeAll {
-        $script:StructPickerText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\picker.ps1'))
+        # the panel's behaviour is written in two files: the window itself, and the functions
+        # that run while it is up (picker-live.ps1). The checks below ask what the code does,
+        # not which of the two holds it.
+        $script:StructPickerText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\picker.ps1')) + "`n" +
+          [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\picker-live.ps1'))
         $script:StructDrawText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\picker-draw.ps1'))
         $winText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'native.ps1'))
         # the platform C# lives in lib\assembly (a package ships only the compiled
@@ -605,8 +609,9 @@ try {
         Expect ($script:StructPickerText -match '\$script:PanelPreset\.ShowTime') 'the time column ignores the preset'
         Expect ($script:StructPickerText -match '\$footR\.Visible = \[bool\]\$preset\.ShowFootRight') 'the corner count ignores the preset'
         # placing the label happens before Show(), where Visible is still false: the decision
-        # has to come from the preset or the count lands in the top left corner
-        Expect ($script:StructPickerText -match '(?s)function Layout-Chrome\s*\{.{0,1200}if \(\$preset\.ShowFootRight\)') 'the corner count is placed from Visible instead of the preset'
+        # has to come from the preset or the count lands in the top left corner. The window is
+        # the first part of the function, which now opens by binding the controls it works on.
+        Expect ($script:StructPickerText -match '(?s)function Layout-Chrome\s*\{.{0,1600}if \(\$preset\.ShowFootRight\)') 'the corner count is placed from Visible instead of the preset'
       }
 
       It 'the width is fixed: no drag grip and no saved width' {

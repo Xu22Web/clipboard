@@ -750,6 +750,8 @@ src/                    the program (the only folder packaging reads)
   lib/panel/              the panel stack, loaded only by commands that draw
   lib/panel/picker.ps1      the history panel: window, filter, list, keys, context menu, paste
   lib/panel/picker-geom.ps1 the panel's arithmetic: rows, quick keys, placement, hit tests
+  lib/panel/picker-live.ps1 rows on screen, the thumb, the caret and the chrome, at file scope so
+                           one open does not compile them again
   lib/panel/picker-draw.ps1 shared drawing: key caps, search hits
   lib/panel/picker-edit.ps1 the in-place editor (F2)
   lib/panel/pinlist.ps1     the self-drawn list control Cb.PinList
