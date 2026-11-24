@@ -307,11 +307,43 @@ function Show-Settings {
     $maxScroll = [Math]::Max(0, @($script:SetRows).Count - $vis)
     # the offset is a distance, so the clamp is one too, and it needs no visible-row count
     [void](Set-ScrollTo ([int]$script:SetScroll))
-    # the buttons say what the rows just said: which actions apply, and in which words
-    Update-SetChrome
+    # The buttons say what the rows just said. Writing the signals is what tells the render
+    # effect; it is not called from here, so every caller of a refresh gets the same single
+    # update and none of them has to remember it.
+    [void](Set-UiReactive $script:SetState 'Page' [string]$page)
+    [void](Set-UiReactive $script:SetState 'Pending' @($script:SetPending).Count)
+    Request-UiFlush
     # a different page or a different staged set changes which lines exist at all
     $script:SetCtlStamp = ''
     Update-SettingsControls
+  }
+
+  # The footer says two things - the words and whether they are a warning - so both are signals,
+  # and the effect that draws the band reads both. Nothing here calls Invalidate: the write
+  # queues the effect, and the effect repaints the bar instead of the window.
+  function Sync-SetMessage {
+    if ($null -eq $script:SetState) { return }
+    [void](Set-UiReactive $script:SetState 'Msg' ([string]$script:SetMsg))
+    [void](Set-UiReactive $script:SetState 'MsgErr' ([int]$script:SetMsgErr))
+    Request-UiFlush
+  }
+
+  # One flush per batch: the request that finds nothing scheduled posts one, and the posted one
+  # clears the mark first so a write made while it runs queues another. Before the window has a
+  # handle nothing can be posted - and nothing is on screen to be out of date - so it does
+  # nothing and the caller's own flush takes over.
+  function Request-UiFlush {
+    if ($script:SetFlushQueued) { return }
+    if (-not (Test-UiFlushPending)) { return }
+    $script:SetFlushQueued = $true
+    try {
+      [void]$form.BeginInvoke([Action]{
+          $script:SetFlushQueued = $false
+          try { [void](Invoke-UiFlush) } catch { }
+        })
+    } catch {
+      $script:SetFlushQueued = $false
+    }
   }
 
   # The controls a row owns beyond its value - the delete cross of each chord line, and the plus
@@ -474,13 +506,14 @@ function Show-Settings {
   function Clear-Message {
     $script:SetMsg = ''
     $script:SetMsgErr = $false
-    if (-not $form.IsDisposed) { $form.Invalidate() }
+    # the message is a signal (see the footer effect): writing it is what asks for the repaint
+    Sync-SetMessage
   }
 
   function Show-Message([string]$text, [bool]$bad) {
     $script:SetMsg = $text
     $script:SetMsgErr = $bad
-    $form.Invalidate()
+    Sync-SetMessage
     # a refusal is worth reading twice as long as a confirmation
     $ms = [int]$script:Timing['FootInfo']
     if ($bad) { $ms = [int]$script:Timing['FootWarn'] }
@@ -1045,7 +1078,30 @@ function Show-Settings {
   # row and switch corners look stepped.
   Update-PanelRegion $form
   $script:SetLayout = $layout
+  # The window's state as signals (lib\ui\reactive.ps1), and two effects that read them. A write
+  # queues them instead of rebuilding on the spot, and one flush runs each once - so a handler
+  # that stages five values rebuilds the footer once, and a message repaints the bar, not the page.
+  $script:SetState = New-UiReactive @{ Page = ''; Pending = 0; Msg = ''; MsgErr = 0 }
+  $script:SetFlushQueued = $false
+  $script:SetRender = Add-UiRender {
+    [void](Get-UiReactive $script:SetState 'Page' '')
+    [void](Get-UiReactive $script:SetState 'Pending' 0)
+    Update-SetChrome
+    $form.Invalidate()
+  }
+  $script:SetFootRender = Add-UiRender {
+    [void](Get-UiReactive $script:SetState 'Msg' '')
+    [void](Get-UiReactive $script:SetState 'MsgErr' 0)
+    if ($form.IsDisposed) { return }
+    $l = $script:SetLayout
+    if ($null -eq $l) { $form.Invalidate(); return }
+    $band = New-Object Drawing.Rectangle -ArgumentList @(
+      0, [int]$l.ListBottom, [int]$l.Width, [int]([int]$l.FootHeight + 1))
+    $form.Invalidate($band)
+  }
   Refresh-Settings
+  # nothing is on screen yet, so the first pass is run here rather than posted
+  [void](Invoke-UiFlush)
   $msRows = [int]$swOpen.ElapsedMilliseconds
   Write-Log ('settings: open ' + [string]$msRows + ' ms (base ' + [string]$msBase + ', theme+fonts ' + [string]$msTheme + ', rows ' + [string]$msRows + '), ' + [string]@($script:SetRows).Count + ' rows')
 
@@ -1539,6 +1595,13 @@ function Show-Settings {
     Stop-HotkeyRecord ([string]$script:StoreDir)
     Close-Choices
     End-Edit $true
+    # An effect holds a ScriptBlock, and that ScriptBlock holds this window: stopped here, or it
+    # would keep a disposed form alive for the rest of the session, one per open.
+    Remove-UiRender $script:SetRender
+    Remove-UiRender $script:SetFootRender
+    $script:SetRender = 0
+    $script:SetFootRender = 0
+    $script:SetState = $null
     # the row tree is the only thing this window mounts; taking it down releases whatever the rows
     # hold, so a window opened a hundred times leaves nothing behind
     if ($null -ne $script:SetPageNode) { Unmount-UiComponent $script:SetPageNode }
