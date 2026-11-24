@@ -252,6 +252,23 @@ function Get-SettingEnabledBy {
   }
 }
 
+# The keys a page names, in drawing order. Everything not named by the table belongs to Other,
+# and About has no keys at all because it states things instead of setting them.
+function Get-SettingGroupKeys($schema, [string]$group) {
+  $keys = @()
+  if ($group -ceq 'About') { return $keys }
+  $table = Get-SettingGroupTable
+  if ($table.Contains($group)) { return @($table[$group]) }
+  if ($group -cne 'Other') { return $keys }
+  $named = @{}
+  foreach ($g in @($table.Keys)) { foreach ($key in @($table[$g])) { $named[[string]$key] = $true } }
+  $props = Get-SchemaProperties $schema
+  if ($null -ne $props) {
+    foreach ($key in @($props.Keys)) { if (-not $named.ContainsKey([string]$key)) { $keys += [string]$key } }
+  }
+  return $keys
+}
+
 # One row per key of one group, in the order the group names them. Keys a group names but the
 # schema no longer has are skipped instead of drawing an editor that cannot write anything.
 #
@@ -259,22 +276,14 @@ function Get-SettingEnabledBy {
 # waiting to be written, so the page previews the change. A value that owns another row is read
 # from the same overlay, which is why unticking Capture pictures greys MaxImageBytes before
 # anything reaches the file.
-function Get-SettingsRows($schema, [string]$group, $pending = $null) {
+#
+# $only limits the build to a set of keys (key -> true), which is what lets one changed value
+# rebuild its own row and leave the rest of the page alone (Update-SettingRows).
+function Get-SettingsRows($schema, [string]$group, $pending = $null, $only = $null) {
   # About is not built from keys: it states what the program is, so it has rows of its own
   if ($group -ceq 'About') { return (Get-SettingAboutRows) }
   $rows = New-Object System.Collections.Generic.List[object]
-  $table = Get-SettingGroupTable
-  $keys = @()
-  if ($table.Contains($group)) {
-    $keys = @($table[$group])
-  } elseif ($group -ceq 'Other') {
-    $named = @{}
-    foreach ($g in @($table.Keys)) { foreach ($key in @($table[$g])) { $named[[string]$key] = $true } }
-    $props = Get-SchemaProperties $schema
-    if ($null -ne $props) {
-      foreach ($key in @($props.Keys)) { if (-not $named.ContainsKey([string]$key)) { $keys += [string]$key } }
-    }
-  }
+  $keys = @(Get-SettingGroupKeys $schema $group)
   # one read of one key, from the staged value when it has one
   $rawOf = {
     param([string]$k)
@@ -282,6 +291,7 @@ function Get-SettingsRows($schema, [string]$group, $pending = $null) {
     return (Get-SettingRaw $schema $k)
   }
   foreach ($key in $keys) {
+    if ($null -ne $only -and -not $only.Contains([string]$key)) { continue }
     $spec = Get-SchemaProperty $schema $key
     if ($null -eq $spec) { continue }
     $raw = & $rawOf $key
@@ -349,6 +359,56 @@ function Get-SettingsRows($schema, [string]$group, $pending = $null) {
     })
   }
   return $rows.ToArray()
+}
+
+# The rows of a page against the rows it showed a moment ago: the ones whose value did not move
+# are carried over as they are, and only the rest is built. One flipped switch rebuilds one row
+# instead of the thirteen a page may hold - and a row that names a switch as its owner is
+# rebuilt too, because whether it is greyed or lit is decided by a value that just changed.
+#
+# Nothing is answered for About: its rows state facts rather than values, so there is nothing to
+# compare and the caller builds them.
+function Update-SettingRows($schema, [string]$group, $oldRows, $pending = $null) {
+  if ($null -eq $schema -or $group -ceq 'About') { return $null }
+  $keys = @(Get-SettingGroupKeys $schema $group)
+  if ($keys.Count -eq 0) { return $null }
+  $held = @{}
+  foreach ($r in @($oldRows)) { if ($null -ne $r) { $held[[string]$r.Key] = $r } }
+  if ($held.Count -eq 0) { return $null }
+  $deps = Get-SettingEnabledBy
+  $build = @{}
+  foreach ($one in $keys) {
+    $key = [string]$one
+    $raw = [string](Get-SettingRaw $schema $key)
+    $staged = $false
+    if ($null -ne $pending -and $pending.Contains($key)) { $raw = [string]$pending[$key]; $staged = $true }
+    $enabled = $true
+    if ($deps.ContainsKey($key)) {
+      $owner = $deps[$key]
+      $ownerKey = [string]$owner.Key
+      $ownerRaw = [string](Get-SettingRaw $schema $ownerKey)
+      if ($null -ne $pending -and $pending.Contains($ownerKey)) { $ownerRaw = [string]$pending[$ownerKey] }
+      $enabled = ($ownerRaw -ceq [string]$owner.Value)
+    }
+    $keep = $false
+    if ($held.ContainsKey($key)) {
+      $old = $held[$key]
+      $keep = ([string]$old.Raw -ceq $raw) -and ([bool]$old.Pending -eq $staged) -and ([bool]$old.Enabled -eq $enabled)
+    }
+    if (-not $keep) { $build[$key] = $true }
+  }
+  $fresh = @{}
+  if ($build.Count -gt 0) {
+    foreach ($r in @(Get-SettingsRows $schema $group $pending $build)) { $fresh[[string]$r.Key] = $r }
+  }
+  $rows = New-Object System.Collections.Generic.List[object]
+  $reused = 0
+  foreach ($one in $keys) {
+    $key = [string]$one
+    if ($fresh.ContainsKey($key)) { $rows.Add($fresh[$key]); continue }
+    if ($held.ContainsKey($key)) { $rows.Add($held[$key]); $reused++ }
+  }
+  return @{ Rows = $rows.ToArray(); Built = $fresh.Count; Reused = $reused }
 }
 
 # The groups that actually have rows, in table order. A group whose keys all disappeared from

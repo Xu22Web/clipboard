@@ -1120,7 +1120,43 @@ try {
       }
     }
 
-    # The runtime a tree of drawn components needs (lib\ui\component.ps1): one state table with
+    # A page is diffed against the rows it showed, so a change rebuilds its own row and leaves the
+    # rest of the page alone (lib\settings-model.ps1).
+    Describe 'settings rows diff' {
+      It 'rebuilds only the rows whose value moved' {
+        $schema = $script:SettingsSchema
+        $old = @(Get-SettingsRows $schema 'Appearance')
+        $same = Update-SettingRows $schema 'Appearance' $old @{}
+        Expect ($same.Built -eq 0 -and $same.Reused -eq $old.Count) 'nothing moved, nothing built'
+        $held = [string](Get-SettingRaw $schema 'ShowTime')
+        $flip = $(if ($held -eq '1') { '0' } else { '1' })
+        $one = Update-SettingRows $schema 'Appearance' $old @{ ShowTime = $flip }
+        Expect ($one.Rows.Count -eq $old.Count) 'the page still holds every row'
+        Expect ($one.Built -eq 1) 'only the switch that changed is built'
+        $row = @($one.Rows | Where-Object { [string]$_.Key -eq 'ShowTime' })[0]
+        Expect ([string]$row.Raw -eq $flip -and [bool]$row.Pending) 'it shows the staged value'
+        $after = @($one.Rows | Where-Object { [string]$_.Key -eq 'Rows' })[0]
+        $before = @($old | Where-Object { [string]$_.Key -eq 'Rows' })[0]
+        Expect ([object]::ReferenceEquals($after, $before)) 'an unchanged row is the same object, not a copy'
+      }
+
+      It 'rebuilds the row a switch owns as well' {
+        $schema = $script:SettingsSchema
+        $old = @(Get-SettingsRows $schema 'Clipboard')
+        $held = [string](Get-SettingRaw $schema 'CaptureImages')
+        $flip = $(if ($held -eq '1') { '0' } else { '1' })
+        $step = Update-SettingRows $schema 'Clipboard' $old @{ CaptureImages = $flip }
+        Expect ($step.Built -eq 2) 'the switch and the row it owns'
+        $owned = @($step.Rows | Where-Object { [string]$_.Key -eq 'MaxImageBytes' })[0]
+        Expect ([bool]$owned.Enabled -eq ($flip -eq '1')) 'the owned row follows the switch'
+      }
+
+      It 'answers nothing for a page that states facts' {
+        Expect ($null -eq (Update-SettingRows $script:SettingsSchema 'About' @() @{})) 'About is built, not diffed'
+      }
+    }
+
+
     # a revision, a cache that outlives an open, a slot whose content arrives later, and the
     # mount / update / unmount that a surface hangs its resources on.
     Describe 'ui component runtime' {
@@ -1158,6 +1194,15 @@ try {
         Expect ($released.Count -eq 1 -and $released[0] -eq 'A') 'the first one went'
         Expect (-not (Test-UiKeepAliveHeld $cache 'a')) 'and it is no longer held'
         Expect ((Test-UiKeepAliveHeld $cache 'b') -and (Test-UiKeepAliveHeld $cache 'c')) 'the two newest stay'
+      }
+
+      It 'can be filled without going through the build' {
+        $asked = New-Object System.Collections.Generic.List[string]
+        $cache = New-UiKeepAlive 2
+        Set-UiKeepAliveValue $cache 'page' 'rows'
+        Expect (Test-UiKeepAliveHeld $cache 'page') 'the key is held'
+        $value = Get-UiKeepAlive $cache 'page' { $asked.Add('built'); 'other' }
+        Expect ($value -eq 'rows' -and $asked.Count -eq 0) 'asking returns it and builds nothing'
       }
 
       It 'draws a slot before its content arrives' {

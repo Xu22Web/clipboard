@@ -135,6 +135,8 @@ function Show-Settings {
   $script:SetRows = @()
   # the rows of a page, kept by page and staged set: a page visited twice is not built twice
   $script:SetRowCache = New-UiKeepAlive 6
+  # the page whose rows are in $script:SetRows, so the next refresh can be a diff instead of a build
+  $script:SetPage = ''
   # the staged values: key -> file spelling, validated by the schema before it got here. The
   # window writes nothing until Save, so this table is what the rows, the switch positions and
   # the three footer actions all read.
@@ -251,12 +253,22 @@ function Show-Settings {
   }
 
   function Refresh-Settings {
-    # A page's rows are built from the schema and the staged set, so the same page with the same
-    # staged set is the same answer: leaving a page and coming back costs a lookup instead of a
-    # rebuild of every row on it (about 5 ms each on the busiest page).
+    # A page's rows are built from the schema and the staged set. Two paths save the work: the
+    # same page re-entered comes from the cache, and a page that is already up is diffed against
+    # the rows it showed, so one flipped switch rebuilds its own row instead of the whole page.
     $page = [string]$groups[$script:SetGroup]
     $cacheKey = $page + '|' + (Get-SettingsPendingSignature $script:SetPending)
-    $script:SetRows = @(Get-UiKeepAlive $script:SetRowCache $cacheKey { Get-SettingsRows $schema $page $script:SetPending })
+    $step = $null
+    if ($page -ceq [string]$script:SetPage -and @($script:SetRows).Count -gt 0) {
+      $step = Update-SettingRows $schema $page $script:SetRows $script:SetPending
+    }
+    if ($null -ne $step) {
+      $script:SetRows = @($step.Rows)
+      Set-UiKeepAliveValue $script:SetRowCache $cacheKey $step.Rows
+    } else {
+      $script:SetRows = @(Get-UiKeepAlive $script:SetRowCache $cacheKey { Get-SettingsRows $schema $page $script:SetPending })
+      $script:SetPage = $page
+    }
     # which pages carry a staged value, kept here so a paint does not walk the group table
     $script:SetPendingGroups = @(Get-SettingGroupsWithPending $schema $script:SetPending)
     # Every switch is told where its row now points - a staged flip travels there on the timer,

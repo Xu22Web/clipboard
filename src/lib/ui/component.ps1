@@ -116,6 +116,18 @@ function Test-UiKeepAliveHeld($cache, [string]$key) {
   return $cache.Items.ContainsKey($key)
 }
 
+# Store a value the caller built itself - a diff of what was already there, say - without going
+# through the build script: the cache is then warm for the next caller that asks for it.
+function Set-UiKeepAliveValue($cache, [string]$key, $value) {
+  if ($null -eq $cache -or -not $key) { return }
+  $cache.Items[$key] = @{ Value = $value }
+  [void]$cache.Order.Remove($key)
+  $cache.Order.Add($key)
+  while ($cache.Order.Count -gt [int]$cache.Max) {
+    Remove-UiKeepAlive $cache ([string]$cache.Order[0])
+  }
+}
+
 # The value for a key, built once. A stale entry is released and built again; the oldest entry
 # goes when the cache is over its capacity, so a window that keeps growing cannot pile up.
 function Get-UiKeepAlive($cache, [string]$key, [scriptblock]$build, [scriptblock]$stale = $null) {
@@ -136,11 +148,7 @@ function Get-UiKeepAlive($cache, [string]$key, [scriptblock]$build, [scriptblock
   }
   $cache.Misses = [int]$cache.Misses + 1
   $value = & $build
-  $cache.Items[$key] = @{ Value = $value }
-  $cache.Order.Add($key)
-  while ($cache.Order.Count -gt [int]$cache.Max) {
-    Remove-UiKeepAlive $cache ([string]$cache.Order[0])
-  }
+  Set-UiKeepAliveValue $cache $key $value
   return $value
 }
 
