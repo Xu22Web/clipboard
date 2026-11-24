@@ -748,6 +748,8 @@ src/                    程序本体（打包只读这个目录）
   lib/ui/framework.ps1     界面写成什么：带 key 的树、只改动变化处的 patch、以及遍历绘制
   lib/ui/views.ps1         控件成了一条记录：kind 负责画、box 负责摆、state 表示当下状态，
                            悬停是一次 diff，只答出需要重绘的那块矩形
+  lib/ui/reactive.ps1      数据这一半：带陷阱的信号（Cb.ReactiveBag）、effect、派生值，
+                           一批写入只 flush 一次
 
   lib/panel/              面板栈：只在绘制命令中加载
   lib/panel/picker.ps1      历史面板：窗体、过滤、列表、按键、右键菜单、粘贴

@@ -165,10 +165,13 @@ function Show-Settings {
   # crossing Save repaints Save, not the window.
   $script:SetChrome = New-UiView 'chrome' '' @{ }
   [void](Mount-UiComponent $script:SetChrome)
-  # the chord line whose delete button is under the pointer, -1 for none
-  $script:SetHotDelete = -1
-  # the add button of a chain under the pointer, the index of the line it would fill, -1 for none
-  $script:SetHotAdd = -1
+  # the controls the rows own (a chord line's delete cross, the plus that adds one), kept apart
+  # from the rows themselves so a hover on one of them invalidates 16 x 16 and nothing else
+  $script:SetControls = New-UiView 'controls' '' @{ }
+  [void](Mount-UiComponent $script:SetControls)
+  # what the control list was last built for: a pointer move that changes none of it does not
+  # rebuild the list
+  $script:SetCtlStamp = ''
   # the row under the pointer: the controls in it paint their own hover
   $script:SetHover = -1
   # where the pointer grabbed the header: a window with no title bar is moved by its own header
@@ -284,26 +287,103 @@ function Show-Settings {
       if ($null -ne $script:SetPageNode) { Unmount-UiComponent $script:SetPageNode }
       $script:SetPageNode = New-SettingRowTree $script:SetRows
       $script:SetPage = $page
+      # A switch travels to where its row points on the timer. That is a reaction to the row's
+      # values, so it is attached to the row as its `updated` hook: a flip moves its own switch
+      # and no other row is walked. Only a page being built needs the first pass, because a
+      # switch that never moved has to start at the value the file holds.
+      Update-SettingsRowHooks
+      foreach ($row in @($script:SetRows)) {
+        if ($row.Kind -ne 'bool') { continue }
+        $k = [string]$row.Key
+        $v = 0.0
+        if ([string]$row.Raw -eq '1') { $v = 1.0 }
+        $script:SetToggleTarget[$k] = $v
+        if (-not $script:SetToggleK.ContainsKey($k)) { $script:SetToggleK[$k] = $v }
+      }
     }
     # which pages carry a staged value, kept here so a paint does not walk the group table
     $script:SetPendingGroups = @(Get-SettingGroupsWithPending $schema $script:SetPending)
-    # Every switch is told where its row now points - a staged flip travels there on the timer,
-    # and a discard travels back - while a switch that has never been drawn starts there instead
-    # of at zero.
-    foreach ($row in @($script:SetRows)) {
-      if ($row.Kind -ne 'bool') { continue }
-      $k = [string]$row.Key
-      $v = 0.0
-      if ([string]$row.Raw -eq '1') { $v = 1.0 }
-      $script:SetToggleTarget[$k] = $v
-      if (-not $script:SetToggleK.ContainsKey($k)) { $script:SetToggleK[$k] = $v }
-    }
     $vis = Get-SettingsVisibleRows $script:SetLayout
     $maxScroll = [Math]::Max(0, @($script:SetRows).Count - $vis)
     # the offset is a distance, so the clamp is one too, and it needs no visible-row count
     [void](Set-ScrollTo ([int]$script:SetScroll))
     # the buttons say what the rows just said: which actions apply, and in which words
     Update-SetChrome
+    # a different page or a different staged set changes which lines exist at all
+    $script:SetCtlStamp = ''
+    Update-SettingsControls
+  }
+
+  # The controls a row owns beyond its value - the delete cross of each chord line, and the plus
+  # that adds one - are view nodes (lib\ui\views.ps1). Only the rows on screen hold them, and
+  # their geometry comes from the layout and the scroll offset, which is why this runs again
+  # whenever either can have moved.
+  function Update-SettingsRowHooks {
+    # a row that carries a switch tells the animation where to travel when its value moves: the
+    # hook is the row's own reaction to new values, not a pass over every row on every refresh
+    if ($null -eq $script:SetPageNode) { return }
+    foreach ($node in $script:SetPageNode.Children.ToArray()) {
+      if ($node.Hooks.ContainsKey('updated')) { continue }
+      $props = $node.Props
+      if ($null -eq $props -or [string]$props.Kind -ne 'bool') { continue }
+      Add-UiHook $node 'updated' {
+        param($c, $old)
+        $k = [string]$c.Key
+        $v = 0.0
+        if ([string]$c.Props.Raw -eq '1') { $v = 1.0 }
+        $script:SetToggleTarget[$k] = $v
+        if (-not $script:SetToggleK.ContainsKey($k)) { $script:SetToggleK[$k] = $v }
+      }
+    }
+  }
+
+  function Update-SettingsControls {
+    $layout = $script:SetLayout
+    if ($null -eq $layout) { return }
+    $rows = @($script:SetRows)
+    $rowH = [int]$layout.RowHeight
+    $off = [int]$script:SetScroll
+    $first = 0
+    if ($rowH -gt 0) { $first = [int][Math]::Floor($off / [double]$rowH) }
+    $base = [int]$layout.ListTop - ($off - ($first * $rowH))
+    $vis = Get-SettingsVisibleRows $layout
+    $specs = New-Object System.Collections.Generic.List[object]
+    $boxes = @{}
+    for ($i = 0; $i -le $vis; $i++) {
+      $idx = $first + $i
+      if ($idx -ge $rows.Count) { break }
+      $row = $rows[$idx]
+      if (-not ($row.ContainsKey('Chain') -and [bool]$row.Chain)) { continue }
+      $rowTop = $base + ($i * $rowH)
+      # a row outside the band holds no controls: a node for a line nobody can see would be a
+      # press target with nothing under it
+      if (($rowTop + $rowH) -le [int]$layout.ListTop) { continue }
+      if ($rowTop -ge [int]$layout.ListBottom) { continue }
+      $chords = @()
+      if ($null -ne $row.Chords) { $chords = @($row.Chords) }
+      $maxLines = 3
+      $drawn = [Math]::Min($chords.Count, $maxLines)
+      $armed = ($script:SetRecKey -and ($script:SetRecKey -eq [string]$row.Key))
+      if ($armed -and $drawn -ge $maxLines) { $drawn = $maxLines - 1 }
+      $enabled = Test-RowEnabled $row
+      $key = [string]$row.Key
+      for ($n = 0; $n -lt $drawn; $n++) {
+        $id = New-SettingControlKey $key ('del' + $n)
+        $specs.Add(@{ Key = $id; Type = 'row-del'; Props = @{ Enabled = $enabled } })
+        $boxes[$id] = (Get-SettingsChordDeleteRect $layout $rowTop $n)
+      }
+      if (-not $armed -and $chords.Count -lt $maxLines) {
+        $id = New-SettingControlKey $key 'add'
+        $specs.Add(@{ Key = $id; Type = 'row-add'; Props = @{ Enabled = $enabled } })
+        $boxes[$id] = (Get-SettingsChordAddRect $layout $rowTop $drawn)
+      }
+    }
+    [void](Sync-UiViews $script:SetControls $specs.ToArray())
+    foreach ($node in $script:SetControls.Children.ToArray()) {
+      $id = [string]$node.Key
+      if (-not $boxes.ContainsKey($id)) { continue }
+      [void](Update-UiComponent $node $boxes[$id])
+    }
   }
 
   # The window's own controls as the patch sees them: two caption buttons that never change, and
@@ -343,6 +423,17 @@ function Show-Settings {
         }
       }
       [void](Update-UiComponent $node $box)
+      # What a control does travels with the control: the press path asks the node it hit, and a
+      # button with no handler is a button that does nothing, without the window keeping a second
+      # table of keys beside the ones it draws.
+      $what = [string]$node.Key
+      if ($what -ceq 'close') {
+        Add-UiHandler $node 'click' { param($p) $form.Close() }
+      } elseif ($what -ceq 'min') {
+        Add-UiHandler $node 'click' { param($p) $form.WindowState = [Windows.Forms.FormWindowState]::Minimized }
+      } else {
+        Add-UiHandler $node 'click' { param($p) Invoke-SettingsAction ([string]$p) }
+      }
     }
   }
 
@@ -519,33 +610,6 @@ function Show-Settings {
     }
     $removedNote = Get-UiText 'settings.msg.removed' @([string]$drop.Removed)
     [void](Stage-Setting ([string]$row.Key) $drop.Value $removedNote)
-  }
-
-  # which chord line of a chain is under the pointer, -1 for none
-  function Get-ChordDeleteAt($row, [int]$rowTop, [int]$px, [int]$py) {
-    if ($null -eq $row) { return -1 }
-    if (-not ($row.ContainsKey('Chain') -and [bool]$row.Chain)) { return -1 }
-    # every chord of a chain is drawn: the schema refuses more than the three lines a card holds
-    $drawn = @($row.Chords).Count
-    for ($i = 0; $i -lt $drawn; $i++) {
-      $rc = Get-SettingsChordDeleteRect $script:SetLayout $rowTop $i
-      if ($px -ge [int]$rc.Left -and $px -le ([int]$rc.Left + [int]$rc.Width) -and
-        $py -ge [int]$rc.Top -and $py -le ([int]$rc.Top + [int]$rc.Height)) { return $i }
-    }
-    return -1
-  }
-
-  # the plus of a chain is under the pointer, answering the index of the line it would fill. A
-  # chain that already holds three lines has no button, so there is nothing to answer.
-  function Get-ChordAddAt($row, [int]$rowTop, [int]$px, [int]$py) {
-    if ($null -eq $row) { return -1 }
-    if (-not ($row.ContainsKey('Chain') -and [bool]$row.Chain)) { return -1 }
-    $chords = @($row.Chords)
-    if ($chords.Count -ge 3) { return -1 }
-    $rc = Get-SettingsChordAddRect $script:SetLayout $rowTop $chords.Count
-    if ($px -ge [int]$rc.Left -and $px -le ([int]$rc.Left + [int]$rc.Width) -and
-      $py -ge [int]$rc.Top -and $py -le ([int]$rc.Top + [int]$rc.Height)) { return $chords.Count }
-    return -1
   }
 
   function End-Edit([bool]$cancel) {
@@ -1070,10 +1134,14 @@ function Show-Settings {
           }
           $armed = ($script:SetRecKey -and ($script:SetRecKey -eq [string]$row.Key))
           $editingRow = ($script:SetEditKey -and ($script:SetEditKey -eq [string]$row.Key))
-          $hotDel = -1
-          $hotAdd = -1
-          if ($idx -eq $script:SetHover) { $hotDel = $script:SetHotDelete; $hotAdd = $script:SetHotAdd }
-          Draw-SettingsRow $g $pal $layout $row $x $rowTop $width $k $armed @($script:SetRecPreview) $editingRow $hotDel $hotAdd
+          Draw-SettingsRow $g $pal $layout $row $x $rowTop $width $k $armed @($script:SetRecPreview) $editingRow
+        }
+        # The delete cross of a chord line and the plus that adds one are view nodes, drawn from
+        # the same list the hover and the press walk: what lights up under the pointer is what a
+        # press acts on, and neither is drawn twice.
+        foreach ($ctl in $script:SetControls.Children.ToArray()) {
+          if (-not $dirty.IntersectsWith((Get-UiViewRect $ctl))) { continue }
+          [void](Draw-UiView $g $pal $ctl)
         }
       } finally { $g.Restore($clipState) }
       $lane = Get-SettingsScrollLane $layout
@@ -1142,7 +1210,7 @@ function Show-Settings {
     }
     $dir = 1
     if ($e.Delta -gt 0) { $dir = -1 }
-    if (Set-ScrollTo ([int]$script:SetScroll + ($dir * $step))) { $form.Invalidate() }
+    if (Set-ScrollTo ([int]$script:SetScroll + ($dir * $step))) { Update-SettingsControls; $form.Invalidate() }
   })
 
   # The thumb follows the pointer by distance: the press point keeps its grip, and the offset is
@@ -1154,7 +1222,7 @@ function Show-Settings {
     $room = [int]$thumb.TrackLen - [int]$thumb.Len
     if ($room -le 0) { return }
     $v = [int][Math]::Round((($thumbTop - [int]$thumb.TrackTop) * [int]$thumb.Span) / [double]$room)
-    if (Set-ScrollTo $v) { $form.Invalidate() }
+    if (Set-ScrollTo $v) { Update-SettingsControls; $form.Invalidate() }
   }
 
   $form.Add_MouseMove({
@@ -1185,25 +1253,18 @@ function Show-Settings {
     if ($idx -ne $script:SetHover) {
       # A row does not light up under the pointer: only the control in it is a target, and a
       # control that needs a hover (the delete cross of a chord) paints its own. So a change of
-      # row repaints nothing.
+      # row repaints nothing by itself.
       $script:SetHover = $idx
-      $script:SetHotDelete = -1
-      $script:SetHotAdd = -1
     }
-    # a chord line's delete button and the chain's add button are targets of their own
-    $hotDel = -1
-    $hotAdd = -1
-    if ($idx -ge 0) {
-      $rowTop = Get-SettingsRowTop $idx
-      $hotDel = Get-ChordDeleteAt $script:SetRows[$idx] $rowTop $e.X $e.Y
-      $hotAdd = Get-ChordAddAt $script:SetRows[$idx] $rowTop $e.X $e.Y
+    # The controls the rows own are nodes too, so the hover is one diff that answers the two
+    # 16 x 16 boxes that changed - the row band is not repainted for a cross.
+    $stamp = ([string]$idx + '|' + [string]$script:SetScroll + '|' + [string]$script:SetRecKey + '|' + [string]$script:SetRows.Count)
+    if ($stamp -ne [string]$script:SetCtlStamp) {
+      $script:SetCtlStamp = $stamp
+      Update-SettingsControls
     }
-    if ($hotDel -ne $script:SetHotDelete -or $hotAdd -ne $script:SetHotAdd) {
-      $script:SetHotDelete = $hotDel
-      $script:SetHotAdd = $hotAdd
-      $band = Get-RowBandRect ([int]$script:SetHover)
-      if ($band.IsEmpty) { $form.Invalidate() } else { $form.Invalidate($band) }
-    }
+    $dirty = Update-UiViewHot $script:SetControls.Children.ToArray() $e.X $e.Y $true
+    if (-not $dirty.IsEmpty) { $form.Invalidate($dirty) }
   })
 
   $form.Add_MouseUp({
@@ -1252,10 +1313,8 @@ function Show-Settings {
     # and the footer actions below the list, where no row and no lane can be under them
     $hit = Hit-UiViewList $script:SetChrome.Children.ToArray() $e.X $e.Y $true
     if ($null -ne $hit) {
-      $what = [string]$hit.Key
-      if ($what -ceq 'close') { $form.Close(); return }
-      if ($what -ceq 'min') { $form.WindowState = [Windows.Forms.FormWindowState]::Minimized; return }
-      Invoke-SettingsAction $what
+      # the control answers for itself; an action passes its own key, the caption buttons need none
+      [void](Invoke-UiEmit $hit 'click' ([string]$hit.Key))
       return
     }
     # the scrollbar lane comes before the rows: it sits beside them, and a press on the thumb
@@ -1272,7 +1331,7 @@ function Show-Settings {
         $page = [int]$script:SetLayout.ListBottom - [int]$script:SetLayout.ListTop
         $to = [int]$script:SetScroll - $page
         if ($e.Y -gt [int]$thumb.Top) { $to = [int]$script:SetScroll + $page }
-        if (Set-ScrollTo $to) { $form.Invalidate() }
+        if (Set-ScrollTo $to) { Update-SettingsControls; $form.Invalidate() }
       }
       return
     }
@@ -1331,11 +1390,18 @@ function Show-Settings {
     }
     # A chain is a list with its own controls: the delete cross removes one line, and the plus on
     # the next free line is the only way into a recording. A press on the caps or on the blank
-    # space of the column does nothing, so the row cannot start recording by accident.
+    # space of the column does nothing, so the row cannot start recording by accident. Both
+    # controls are nodes, and the one the press lands on is the one that was drawn lit.
     if ($row.ContainsKey('Chain') -and [bool]$row.Chain) {
-      $on = Get-ChordDeleteAt $row $rowTop $e.X $e.Y
-      if ($on -ge 0) { Remove-SettingChord $row $on; return }
-      if (-not $wasRec -and (Get-ChordAddAt $row $rowTop $e.X $e.Y) -ge 0) { Start-Record $row; return }
+      $ctl = Hit-UiViewList $script:SetControls.Children.ToArray() $e.X $e.Y $true
+      if ($null -ne $ctl) {
+        $parts = Get-SettingControlKeyParts ([string]$ctl.Key)
+        if ($parts.What -eq 'add') {
+          if (-not $wasRec) { Start-Record $row }
+          return
+        }
+        if ($parts.Index -ge 0) { Remove-SettingChord $row ([int]$parts.Index) }
+      }
       return
     }
     # every row is its own control: a click on a switch row flips it wherever it lands, a click

@@ -44,7 +44,7 @@ function Add-Native {
   $csPath = Join-Path $Root 'lib\assembly\cb.native.cs'
   if (Test-Path -LiteralPath $csPath) { $cs = [IO.File]::ReadAllText($csPath) }
   if (-not $cs) { throw 'lib\assembly\clipboard.dll is missing and this copy carries no C# source' }
-  Add-Type -TypeDefinition $cs -ReferencedAssemblies System.Windows.Forms, System.Drawing -ErrorAction Stop
+  Add-Type -TypeDefinition $cs -ReferencedAssemblies System.Windows.Forms, System.Drawing, System.Core -ErrorAction Stop
   $script:NativeReady = $true
 }
 

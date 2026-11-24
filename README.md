@@ -750,6 +750,8 @@ src/                    the program (the only folder packaging reads)
                             and the walk that draws it
   lib/ui/views.ps1          a control as a record: a kind draws it, a box places it, a state says how it is,
                             and a hover diff answers the rectangle that has to be repainted
+  lib/ui/reactive.ps1       the data half: signals with traps (Cb.ReactiveBag), effects, derived values,
+                            and one flush per batch of writes
 
   lib/panel/              the panel stack, loaded only by commands that draw
   lib/panel/picker.ps1      the history panel: window, filter, list, keys, context menu, paste

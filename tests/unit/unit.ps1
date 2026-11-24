@@ -230,7 +230,7 @@ try {
         $requiredLib = @('lib\base', 'lib\native', 'lib\panel\focus', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
           'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\panel\picker-live', 'lib\text', 'lib\panel\anim',
           'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\panel\tray-menu', 'lib\serve', 'lib\shortcut',
-          'lib\ui\layout', 'lib\ui\widgets', 'lib\ui\component', 'lib\ui\framework', 'lib\ui\views',
+          'lib\ui\layout', 'lib\ui\widgets', 'lib\ui\component', 'lib\ui\framework', 'lib\ui\views', 'lib\ui\reactive',
           'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings',
           'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch',
           'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey',
@@ -1362,6 +1362,69 @@ try {
         Expect ($second.Children[0].Children.Count -eq 1) 'and the row no longer holds the other'
       }
 
+      It 'hands the replaced values to the updated hook' {
+        # the hook is a watch, not a notification: it runs with the new state in place and the
+        # old one in its hand, which is what lets a surface react to what moved
+        $page = New-UiComponent 'page'
+        [void](Mount-UiComponent $page)
+        [void](Sync-UiTree $page @(@{ Key = 'a'; Props = @{ Text = 'one' } }) $script:TreeKey $script:TreeMake)
+        # the accumulator is script scoped, the way a surface's hook talks to its own window state
+        # ($script:SetToggleTarget in the settings window): a hook runs from inside the patch, so
+        # it must not lean on a local of whatever happened to call the patch
+        $script:TreeSeen = New-Object System.Collections.Generic.List[string]
+        Add-UiHook $page.Children[0] 'updated' { param($c, $old) $script:TreeSeen.Add([string]$old.Text + '->' + [string]$c.Props.Text) }
+        [void](Sync-UiTree $page @(@{ Key = 'a'; Props = @{ Text = 'one' } }) $script:TreeKey $script:TreeMake)
+        Expect ($script:TreeSeen.Count -eq 0) 'a refresh that changed nothing does not call it'
+        [void](Sync-UiTree $page @(@{ Key = 'a'; Props = @{ Text = 'uno' } }) $script:TreeKey $script:TreeMake)
+        Expect (($script:TreeSeen.Count -eq 1) -and ($script:TreeSeen[0] -eq 'one->uno')) ('seen ' + ($script:TreeSeen -join ';'))
+      }
+
+      It 'moves a row that changed place without building it again' {
+        # a list whose order changed is not a list of new rows: the same three keys come back in
+        # another order, and every node is the one that was there before
+        $page = New-UiComponent 'page'
+        [void](Mount-UiComponent $page)
+        [void](Sync-UiTree $page @(
+            @{ Key = 'a'; Props = @{ Text = 'one' } }, @{ Key = 'b'; Props = @{ Text = 'two' } }, @{ Key = 'c'; Props = @{ Text = 'three' } }
+          ) $script:TreeKey $script:TreeMake)
+        $before = @{}
+        foreach ($n in $page.Children.ToArray()) { $before[[string]$n.Key] = $n }
+        $step = Sync-UiTree $page @(
+          @{ Key = 'c'; Props = @{ Text = 'three' } }, @{ Key = 'a'; Props = @{ Text = 'one' } }, @{ Key = 'b'; Props = @{ Text = 'two' } }
+        ) $script:TreeKey $script:TreeMake
+        Expect (($step.Reused -eq 3) -and ($step.Created -eq 0) -and ($step.Unmounted -eq 0)) 'nothing was built or dropped'
+        Expect (($page.Children.ToArray() | ForEach-Object { [string]$_.Key }) -join ',' -eq 'c,a,b') 'the order is the caller''s'
+        foreach ($n in $page.Children.ToArray()) { Expect ($before[[string]$n.Key] -eq $n) ('the ' + $n.Key + ' row is the same node') }
+      }
+
+      It 'takes down what the caller stopped asking for' {
+        # a row the page no longer names is not left behind: "if" here is the spec being absent,
+        # and the node it used to be is unmounted so what it held is released
+        $page = New-UiComponent 'page'
+        [void](Mount-UiComponent $page)
+        $step = Sync-UiTree $page @(
+            @{ Key = 'a'; Props = @{ } }, @{ Key = 'b'; Props = @{ } }
+          ) $script:TreeKey $script:TreeMake
+        $gone = $step.Children[1]
+        $after = Sync-UiTree $page @(@{ Key = 'a'; Props = @{ } }) $script:TreeKey $script:TreeMake
+        Expect ($after.Unmounted -eq 1) 'the row that is no longer wanted is taken down'
+        Expect (-not (Test-UiComponentAlive $gone)) 'and it is not alive any more'
+        Expect ($page.Children.Count -eq 1) 'the page holds only what was asked for'
+      }
+
+      It 'builds a second child for a key it is given twice' {
+        # one key cannot name two nodes: the second one is built with no key, so the first keeps
+        # the node it has instead of two children sharing one
+        $page = New-UiComponent 'page'
+        [void](Mount-UiComponent $page)
+        $step = Sync-UiTree $page @(
+            @{ Key = 'dup'; Props = @{ Text = 'one' } }, @{ Key = 'dup'; Props = @{ Text = 'two' } }
+          ) $script:TreeKey $script:TreeMake
+        Expect (($step.Created -eq 2) -and ($step.Reused -eq 0)) 'both are new'
+        Expect ($page.Children.Count -eq 2) 'the list keeps both children'
+        Expect ([string]$page.Children[0].Key -eq 'dup' -and [string]$page.Children[1].Key -eq '') 'only the first holds the key'
+      }
+
       It 'judges staleness by the fingerprint a surface hands it' {
         # a settings row carries labels and choice lists that cannot move while the page is up:
         # the surface says which fields matter, and a row whose only new field is a label is
@@ -1444,8 +1507,7 @@ try {
         Expect ($step.Children[0] -eq $save) 'the kept button is the same node, with its hover'
       }
 
-      It 'draws the kind it was given and nothing for a kind that is not there' {
-        $canvas = New-Object Drawing.Bitmap 60, 30
+      It 'draws the kind it was given and nothing for a kind that is not there' {        $canvas = New-Object Drawing.Bitmap 60, 30
         $gfx = [Drawing.Graphics]::FromImage($canvas)
         try {
           Register-UiView 'probe' { param($g, $pal, $node, $box) $script:ProbeDrawn = [int]$box.Width }
@@ -1458,6 +1520,133 @@ try {
           Expect (-not (Draw-UiView $gfx @{} $unknown)) 'an unknown kind draws nothing'
           Expect (-not (Draw-UiView $gfx @{} (New-UiView 'probe' 'r' @{ }))) 'a control with no box is not on screen'
         } finally { $gfx.Dispose(); $canvas.Dispose() }
+      }
+
+      It 'lights a remove cross only under the pointer' {
+        # the cross is quiet at rest and turns into a warning mark over a disc when the pointer
+        # is on it: the two states have to be visible, or a control nobody can see is a control
+        # nobody can aim at
+        $pal = @{
+          HoverBg = [Drawing.Color]::FromArgb(255, 60, 60, 60)
+          Dim     = [Drawing.Color]::FromArgb(255, 140, 140, 140)
+          Warn    = [Drawing.Color]::FromArgb(255, 220, 80, 80)
+        }
+        $n = New-UiView 'row-del' 'del0' @{ }
+        $n.Box = @{ Left = 2; Top = 2; Width = [int](Px 16); Height = [int](Px 16) }
+        $count = {
+          $canvas = New-Object Drawing.Bitmap ([int](Px 20)), ([int](Px 20))
+          $gfx = [Drawing.Graphics]::FromImage($canvas)
+          try {
+            $gfx.Clear([Drawing.Color]::FromArgb(255, 32, 32, 32))
+            [void](Draw-UiView $gfx $pal $n)
+            $warn = 0
+            for ($y = 0; $y -lt $canvas.Height; $y++) {
+              for ($x = 0; $x -lt $canvas.Width; $x++) {
+                if ($canvas.GetPixel($x, $y).ToArgb() -eq $pal['Warn'].ToArgb()) { $warn++ }
+              }
+            }
+            return $warn
+          } finally { $gfx.Dispose(); $canvas.Dispose() }
+        }
+        [void](Set-UiViewState $n 'Hot' $false)
+        Expect ((& $count) -eq 0) 'a quiet cross is drawn in the dim ink'
+        [void](Set-UiViewState $n 'Hot' $true)
+        Expect ((& $count) -gt 0) 'the hovered one is drawn in the warning ink'
+
+        # the plus is a control too, and an affordance nobody can see is a row with no way in:
+        # it fills its box with the field colour and edges it, so the box is not empty afterwards
+        $plusPal = @{
+          Field = [Drawing.Color]::FromArgb(255, 48, 48, 48); FieldBorder = [Drawing.Color]::FromArgb(255, 80, 80, 80)
+          Dim   = [Drawing.Color]::FromArgb(255, 140, 140, 140); Surface = [Drawing.Color]::FromArgb(255, 32, 32, 32)
+          Border = [Drawing.Color]::FromArgb(255, 70, 70, 70); Text = [Drawing.Color]::FromArgb(255, 240, 240, 240)
+          HoverBg = [Drawing.Color]::FromArgb(255, 60, 60, 60)
+        }
+        $plus = New-UiView 'row-add' 'add' @{ Enabled = $true }
+        $plus.Box = @{ Left = 2; Top = 2; Width = [int](Px 16); Height = [int](Px 16) }
+        $canvas = New-Object Drawing.Bitmap ([int](Px 20)), ([int](Px 20))
+        $gfx = [Drawing.Graphics]::FromImage($canvas)
+        try {
+          $gfx.Clear([Drawing.Color]::FromArgb(255, 32, 32, 32))
+          Expect (Draw-UiView $gfx $plusPal $plus) 'the plus is a registered kind'
+          $painted = 0
+          for ($y = 0; $y -lt $canvas.Height; $y++) {
+            for ($x = 0; $x -lt $canvas.Width; $x++) {
+              if ($canvas.GetPixel($x, $y).ToArgb() -ne [Drawing.Color]::FromArgb(255, 32, 32, 32).ToArgb()) { $painted++ }
+            }
+          }
+          Expect ($painted -gt 50) ('the plus painted ' + $painted + ' pixels')
+        } finally { $gfx.Dispose(); $canvas.Dispose() }
+      }
+    }
+
+    # The data half (lib\ui\reactive.ps1 over Cb.ReactiveBag): a write queues what read it, a
+    # flush runs each effect once, a derived value recomputes on access, and stopping an effect
+    # gives back everything it held - which is the whole guard against a window that leaks.
+    Describe 'ui reactive' {
+      BeforeEach {
+        Clear-UiRender
+        $script:ReactRuns = New-Object System.Collections.Generic.List[string]
+      }
+
+      AfterAll { Clear-UiRender }
+
+      It 'queues a write and runs the effect once per flush' {
+        $bag = New-UiReactive @{ Pending = 0 }
+        $id = Add-UiRender { $script:ReactRuns.Add('run:' + [string]$bag.Pending) }
+        Expect (($script:ReactRuns.Count -eq 1) -and ($script:ReactRuns[0] -eq 'run:0')) 'it runs when it is added'
+        Expect (-not (Invoke-UiFlush)) 'a read queues nothing'
+        [void](Set-UiReactive $bag 'Pending' 1)
+        Expect ($script:ReactRuns.Count -eq 1) 'the write does not run it where it happened'
+        Expect (Test-UiFlushPending) 'the write queued it'
+        Expect (Invoke-UiFlush) 'the flush has something to do'
+        Expect (($script:ReactRuns.Count -eq 2) -and ($script:ReactRuns[1] -eq 'run:1')) 'once, with the new value'
+        Remove-UiRender $id
+      }
+
+      It 'runs once for a batch and ignores a value nobody read' {
+        $bag = New-UiReactive @{ Pending = 0; Page = 'a' }
+        $id = Add-UiRender { $script:ReactRuns.Add('run'); [void]$bag.Pending }
+        [void](Set-UiReactive $bag 'Pending' 1)
+        [void](Set-UiReactive $bag 'Pending' 2)
+        [void](Set-UiReactive $bag 'Page' 'b')
+        [void](Invoke-UiFlush)
+        Expect ($script:ReactRuns.Count -eq 2) 'three writes, one run beside the first'
+        Expect (-not (Set-UiReactive $bag 'Pending' 2)) 'the same value is not a change'
+        Expect (-not (Invoke-UiFlush)) 'and it queues nothing'
+        Remove-UiRender $id
+      }
+
+      It 'recomputes a derived value on access, and only when a read moved' {
+        $bag = New-UiReactive @{ Pending = 2 }
+        $id = 0
+        $cell = New-UiComputed { $script:ReactRuns.Add('eval'); [int]$bag.Pending * 10 }
+        Expect ($cell.Value -eq 20) 'it computed once'
+        Expect ($cell.Value -eq 20) 'and a second read answers from the cache'
+        Expect ($script:ReactRuns.Count -eq 1) 'one evaluation, not two'
+        [void](Set-UiReactive $bag 'Pending' 3)
+        Expect ($cell.Dirty) 'the write marked it stale at once'
+        Expect ($script:ReactRuns.Count -eq 1) 'and nothing was computed yet'
+        [void](Invoke-UiFlush)
+        Expect ($cell.Value -eq 30) 'the read after the change recomputes'
+        Expect ($script:ReactRuns.Count -eq 2) 'one more evaluation'
+        $cell.Dispose()
+      }
+
+      It 'gives back what an effect held when it is stopped' {
+        $bag = New-UiReactive @{ Page = 'a'; Pending = 0 }
+        $ids = New-Object System.Collections.Generic.List[int]
+        for ($i = 0; $i -lt 3; $i++) {
+          $ids.Add((Add-UiRender { $script:ReactRuns.Add('x'); [void]$bag.Page }))
+        }
+        $stats = Get-UiReactiveStats
+        Expect (($stats.Effects -eq 3) -and ($stats.Targets -ge 1)) ('held ' + $stats.Effects + '/' + $stats.Targets)
+        foreach ($one in $ids) { Remove-UiRender $one }
+        [void](Set-UiReactive $bag 'Page' 'b')
+        [void](Invoke-UiFlush)
+        $stats = Get-UiReactiveStats
+        Expect ($stats.Effects -eq 0) 'no effect is left behind'
+        Expect ($stats.Targets -eq 0) 'and the bag holds no dependency any more'
+        Expect (-not (Test-UiFlushPending)) 'nothing is queued for it'
       }
     }
 
@@ -3437,13 +3626,15 @@ try {
           $fits = (([int]$r.Top + [int]$r.Height) -le ([int]$line.Top + [int]$line.Height))
           Expect $fits ('the plus overflows its line at ' + $i)
         }
-        # the delete cross is checked before the plus, and the row's own action never starts a
-        # recording: a press on the caps or on the blank space of the column does nothing
-        $setText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\settings.ps1'))
-        $iDel = $setText.IndexOf('Get-ChordDeleteAt $row $rowTop $e.X $e.Y')
-        $iAdd = $setText.IndexOf('Get-ChordAddAt $row $rowTop $e.X $e.Y')
-        Expect ($iDel -ge 0) 'the delete cross is never checked'
-        Expect ($iAdd -gt $iDel) ('order ' + $iDel + '/' + $iAdd)
+        # The plus and the cross are controls of their own, matched by key: the same line has to
+        # answer the same key on every refresh, and a press has to read back which line it hit.
+        $key = New-SettingControlKey 'HotkeyFallbacks' 'del2'
+        $parts = Get-SettingControlKeyParts $key
+        Expect ([string]$parts.Row -ceq 'HotkeyFallbacks') ('row ' + $parts.Row)
+        Expect ([int]$parts.Index -eq 2) ('index ' + $parts.Index)
+        $add = Get-SettingControlKeyParts (New-SettingControlKey 'HotkeyFallbacks' 'add')
+        Expect (([string]$add.What -ceq 'add') -and ([int]$add.Index -eq -1)) 'the plus is not a line'
+        Expect ([string](Get-SettingControlKeyParts 'NoHash').What -eq '') 'a row key is not a control'
       }
 
       It 'a recorded chord is written in the spelling the parser reads' {

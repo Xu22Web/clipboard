@@ -252,6 +252,28 @@ function Get-SettingEnabledBy {
   }
 }
 
+# The key of a control a row owns: "<row key>#<what>", where what is 'add' or 'del<index>'. The
+# shape has to be the same on every refresh - the patch matches controls by key, so the second
+# line of a chain must answer the key the first build gave it - and a press parses it back to
+# find out what was pressed. Both halves live here so they cannot drift apart.
+function New-SettingControlKey([string]$rowKey, [string]$what) {
+  return ([string]$rowKey + '#' + [string]$what)
+}
+
+function Get-SettingControlKeyParts([string]$key) {
+  $answer = @{ Row = [string]$key; What = ''; Index = -1 }
+  $cut = ([string]$key).LastIndexOf('#')
+  if ($cut -lt 0) { return $answer }
+  $answer.Row = ([string]$key).Substring(0, $cut)
+  $what = ([string]$key).Substring($cut + 1)
+  $answer.What = $what
+  if ($what.StartsWith('del') -and $what.Length -gt 3) {
+    $n = 0
+    if ([int]::TryParse($what.Substring(3), [ref]$n)) { $answer.Index = $n }
+  }
+  return $answer
+}
+
 # The keys a page names, in drawing order. Everything not named by the table belongs to Other,
 # and About has no keys at all because it states things instead of setting them.
 function Get-SettingGroupKeys($schema, [string]$group) {

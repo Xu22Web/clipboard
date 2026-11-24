@@ -45,7 +45,7 @@ if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path 
 
 $sw = Start-Step
 $cscArgs = @('-nologo', '-optimize+', '-target:library', ('-out:' + $Out),
-  '-r:System.Windows.Forms.dll', '-r:System.Drawing.dll') + $sources
+  '-r:System.Windows.Forms.dll', '-r:System.Drawing.dll', '-r:System.Core.dll') + $sources
 $output = & $csc @cscArgs 2>&1
 $code = $LASTEXITCODE
 if ($code -ne 0 -or -not (Test-Path -LiteralPath $Out)) {

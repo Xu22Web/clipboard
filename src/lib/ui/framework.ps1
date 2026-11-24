@@ -32,7 +32,11 @@ function Test-UiNodeStale($node, $props) {
 }
 
 # The whole tree under a parent, patched: children are matched by key, kept nodes are updated
-# when their values moved, and every kept node has its own children patched in turn.
+# when their values moved, and every kept node has its own children patched in turn. It is the
+# keyed list diff a surface needs: a key still in the tree keeps its node, wherever it moved to,
+# a key whose values moved is updated in place, a key that left is unmounted, and a key that
+# arrived is mounted where the caller put it. A spec the caller leaves out is gone - that is
+# what "if" means here, since a node that is not wanted is a node whose resources have to go.
 #
 #   specs       what the tree should hold: an array of @{ Key; Props; Children }
 #   keyOf       spec -> its key ('' means "no key": built every time and never matched)
@@ -49,11 +53,18 @@ function Sync-UiTree($parent, $specs, [scriptblock]$keyOf, [scriptblock]$create,
     $k = [string]$old.Key
     if ($k) { $held[$k] = $old }
   }
+  # a key that appears twice in one list cannot name one node: the second one is built fresh,
+  # with no key, rather than stealing the first one's node. A surface that forgot an index in a
+  # key gets a right answer and a node per refresh instead of two children sharing one.
+  $seen = @{}
   $order = New-Object System.Collections.Generic.List[object]
   $list = @()
   if ($null -ne $specs) { $list = @($specs) }
   foreach ($spec in $list) {
     $k = [string](& $keyOf $spec)
+    if ($k) {
+      if ($seen.ContainsKey($k)) { $k = '' } else { $seen[$k] = $true }
+    }
     $node = $null
     if ($k -and $held.ContainsKey($k)) {
       $node = $held[$k]
@@ -68,8 +79,11 @@ function Sync-UiTree($parent, $specs, [scriptblock]$keyOf, [scriptblock]$create,
         $stale = Test-UiNodeStale $node $props
       }
       if ($stale) {
+        # the hook runs after the values are in place and is handed what they replaced, which is
+        # what makes it a watch: the node already carries the new state when it is called
+        $oldProps = $node.Props
         $node.Props = Copy-UiTable $props
-        [void](Invoke-UiHook $node 'updated' $null)
+        [void](Invoke-UiHook $node 'updated' $oldProps)
         $answer.Updated++
       }
     } else {

@@ -175,3 +175,26 @@ Register-UiView 'icon' {
   param($g, $pal, $node, $box)
   Draw-UiIconButton $g $pal $box ([string](Get-UiViewProp $node 'Glyph' 'close')) (Test-UiViewEnabled $node) (Test-UiViewState $node 'Hot')
 }
+
+# The remove cross at the end of a line that can go. Quiet at rest, and under the pointer a disc
+# and the warning colour: a mark that stayed loud on every line would compete with the words.
+Register-UiView 'row-del' {
+  param($g, $pal, $node, $box)
+  $hot = Test-UiViewState $node 'Hot'
+  $cx = [int]$box.Left + [int]($box.Width / 2)
+  $cy = [int]$box.Top + [int]($box.Height / 2)
+  if ($hot) {
+    $disc = [int](Px 16)
+    $b = New-Object Drawing.SolidBrush $pal['HoverBg']
+    try { $g.FillEllipse($b, ($cx - [int]($disc / 2)), ($cy - [int]($disc / 2)), $disc, $disc) } finally { $b.Dispose() }
+  }
+  $cross = $pal['Dim']
+  if ($hot) { $cross = $pal['Warn'] }
+  Draw-UiCross $g $pal $cx $cy ([int](Px 3)) $cross
+}
+
+# The plus that adds a line to a list: the one way into it, and gone while there is no room.
+Register-UiView 'row-add' {
+  param($g, $pal, $node, $box)
+  Draw-UiPlus $g $pal $box (Test-UiViewEnabled $node) (Test-UiViewState $node 'Hot')
+}

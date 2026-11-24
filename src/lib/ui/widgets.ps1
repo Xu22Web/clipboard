@@ -144,8 +144,7 @@ function Draw-UiButton($g, $pal, $rect, [string]$label, [bool]$primary, [bool]$e
 # A caption button: a glyph on its own that gains a hover fill, the way a title bar's buttons do.
 # 'close' is the cross, 'min' the single rule; both are drawn with round caps so the stroke reads
 # as a Fluent icon rather than as two hairlines.
-function Draw-UiIconButton($g, $pal, $rect, [string]$glyph, [bool]$enabled, [bool]$hot) {
-  if ($null -eq $g -or $null -eq $pal -or $null -eq $rect) { return }
+function Draw-UiIconButton($g, $pal, $rect, [string]$glyph, [bool]$enabled, [bool]$hot) {  if ($null -eq $g -or $null -eq $pal -or $null -eq $rect) { return }
   $x = [int]$rect.Left
   $y = [int]$rect.Top
   $w = [int]$rect.Width
@@ -173,4 +172,60 @@ function Draw-UiIconButton($g, $pal, $rect, [string]$glyph, [bool]$enabled, [boo
       $g.DrawLine($pen, ($cx + $d), ($cy - $d), ($cx - $d), ($cy + $d))
     }
   } finally { $pen.Dispose() }
+}
+
+# A small cross on its own: the remove affordance of a line that can go, drawn with round caps so
+# two hairlines read as one glyph. What lights it up - a disc behind it and a warning colour - is
+# the caller's decision, because the same glyph marks a delete in one place and a close elsewhere.
+function Draw-UiCross($g, $pal, [int]$cx, [int]$cy, [int]$d, $colour) {
+  if ($null -eq $g -or $null -eq $pal) { return }
+  $pen = New-Object Drawing.Pen $colour
+  $pen.StartCap = [Drawing.Drawing2D.LineCap]::Round
+  $pen.EndCap = [Drawing.Drawing2D.LineCap]::Round
+  try {
+    $g.DrawLine($pen, ($cx - $d), ($cy - $d), ($cx + $d), ($cy + $d))
+    $g.DrawLine($pen, ($cx + $d), ($cy - $d), ($cx - $d), ($cy + $d))
+  } finally { $pen.Dispose() }
+}
+
+# A plus in a small box, drawn the way the footer's secondary action is: the field colour, its
+# hairline edge, a 4 px radius and the hover wash layered over it. A disabled plus keeps its
+# shape and loses its colour, so a row with nothing to add still shows where the button would be.
+function Draw-UiPlus($g, $pal, $rect, [bool]$enabled, [bool]$hot) {
+  if ($null -eq $g -or $null -eq $pal -or $null -eq $rect) { return }
+  $x = [int]$rect.Left
+  $y = [int]$rect.Top
+  $w = [int]$rect.Width
+  $h = [int]$rect.Height
+  $radius = [int](Px 4)
+  $fill = $pal['Field']
+  $edge = $pal['FieldBorder']
+  $ink = $pal['Dim']
+  if (-not $enabled) { $fill = $pal['Surface']; $edge = $pal['Border']; $ink = $pal['Faint'] }
+  elseif ($hot) { $ink = $pal['Text'] }
+  $path = New-RoundPath $x $y $w $h $radius
+  $brush = New-Object Drawing.SolidBrush $fill
+  try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
+  if ($hot -and $enabled) {
+    # the same wash the outlined footer actions take: a thin layer of the hover tint
+    $tint = Scale-Alpha $pal['HoverBg'] 1.0
+    if ($tint.A -gt 0) {
+      $over = New-RoundPath $x $y $w $h $radius
+      $ob = New-Object Drawing.SolidBrush $tint
+      try { $g.FillPath($ob, $over) } finally { $over.Dispose(); $ob.Dispose() }
+    }
+  }
+  $pen = New-Object Drawing.Pen $edge
+  $stroke = New-RoundPath $x $y $w $h $radius
+  try { $g.DrawPath($pen, $stroke) } finally { $stroke.Dispose(); $pen.Dispose() }
+  $cx = $x + [int]($w / 2)
+  $cy = $y + [int]($h / 2)
+  $d = [int](Px 3)
+  $ipen = New-Object Drawing.Pen $ink
+  $ipen.StartCap = [Drawing.Drawing2D.LineCap]::Round
+  $ipen.EndCap = [Drawing.Drawing2D.LineCap]::Round
+  try {
+    $g.DrawLine($ipen, ($cx - $d), $cy, ($cx + $d), $cy)
+    $g.DrawLine($ipen, $cx, ($cy - $d), $cx, ($cy + $d))
+  } finally { $ipen.Dispose() }
 }
