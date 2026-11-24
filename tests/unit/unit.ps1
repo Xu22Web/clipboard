@@ -1151,33 +1151,34 @@ try {
       It 'rebuilds only the rows whose value moved' {
         $schema = $script:SettingsSchema
         $old = @(Get-SettingsRows $schema 'Appearance')
-        $same = Update-SettingRows $schema 'Appearance' $old @{}
+        $page = New-SettingRowTree $old
+        $same = Update-SettingRows $schema 'Appearance' $page @{}
         Expect ($same.Built -eq 0 -and $same.Reused -eq $old.Count) 'nothing moved, nothing built'
+        $before = @($page.Children.ToArray() | Where-Object { [string]$_.Key -eq 'Rows' })[0].Props
         $held = [string](Get-SettingRaw $schema 'ShowTime')
         $flip = $(if ($held -eq '1') { '0' } else { '1' })
-        $one = Update-SettingRows $schema 'Appearance' $old @{ ShowTime = $flip }
+        $one = Update-SettingRows $schema 'Appearance' $page @{ ShowTime = $flip }
         Expect ($one.Rows.Count -eq $old.Count) 'the page still holds every row'
         Expect ($one.Built -eq 1) 'only the switch that changed is built'
         $row = @($one.Rows | Where-Object { [string]$_.Key -eq 'ShowTime' })[0]
         Expect ([string]$row.Raw -eq $flip -and [bool]$row.Pending) 'it shows the staged value'
         $after = @($one.Rows | Where-Object { [string]$_.Key -eq 'Rows' })[0]
-        $before = @($old | Where-Object { [string]$_.Key -eq 'Rows' })[0]
         Expect ([object]::ReferenceEquals($after, $before)) 'an unchanged row is the same object, not a copy'
       }
 
       It 'rebuilds the row a switch owns as well' {
         $schema = $script:SettingsSchema
-        $old = @(Get-SettingsRows $schema 'Clipboard')
+        $page = New-SettingRowTree @(Get-SettingsRows $schema 'Clipboard')
         $held = [string](Get-SettingRaw $schema 'CaptureImages')
         $flip = $(if ($held -eq '1') { '0' } else { '1' })
-        $step = Update-SettingRows $schema 'Clipboard' $old @{ CaptureImages = $flip }
+        $step = Update-SettingRows $schema 'Clipboard' $page @{ CaptureImages = $flip }
         Expect ($step.Built -eq 2) 'the switch and the row it owns'
         $owned = @($step.Rows | Where-Object { [string]$_.Key -eq 'MaxImageBytes' })[0]
         Expect ([bool]$owned.Enabled -eq ($flip -eq '1')) 'the owned row follows the switch'
       }
 
       It 'answers nothing for a page that states facts' {
-        Expect ($null -eq (Update-SettingRows $script:SettingsSchema 'About' @() @{})) 'About is built, not diffed'
+        Expect ($null -eq (Update-SettingRows $script:SettingsSchema 'About' (New-UiComponent 'page') @{})) 'About is built, not diffed'
       }
     }
 
@@ -1361,8 +1362,22 @@ try {
         Expect ($second.Children[0].Children.Count -eq 1) 'and the row no longer holds the other'
       }
 
-      It 'draws a parent before its children and skips what is unmounted' {
-        $seen = New-Object System.Collections.Generic.List[string]
+      It 'judges staleness by the fingerprint a surface hands it' {
+        # a settings row carries labels and choice lists that cannot move while the page is up:
+        # the surface says which fields matter, and a row whose only new field is a label is
+        # not updated, not re-copied and not re-drawn
+        $stamp = { param($r) [string]$r.Raw }
+        $page = New-UiComponent 'page'
+        [void](Mount-UiComponent $page)
+        [void](Sync-UiTree $page @(@{ Key = 'a'; Props = @{ Raw = '1'; Label = 'one' } }) $script:TreeKey $script:TreeMake $stamp)
+        $step = Sync-UiTree $page @(@{ Key = 'a'; Props = @{ Raw = '1'; Label = 'uno' } }) $script:TreeKey $script:TreeMake $stamp
+        Expect ($step.Reused -eq 1 -and $step.Updated -eq 0) 'the label alone does not make it stale'
+        $moved = Sync-UiTree $page @(@{ Key = 'a'; Props = @{ Raw = '0'; Label = 'uno' } }) $script:TreeKey $script:TreeMake $stamp
+        Expect ($moved.Updated -eq 1) 'a new value does'
+        Expect ([string]$page.Children[0].Props.Label -eq 'uno') 'and the node takes the new record with it'
+      }
+
+      It 'draws a parent before its children and skips what is unmounted' {        $seen = New-Object System.Collections.Generic.List[string]
         $page = New-UiComponent 'page'
         [void](Mount-UiComponent $page)
         [void](Sync-UiTree $page @(

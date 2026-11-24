@@ -368,12 +368,44 @@ function Get-SettingsRows($schema, [string]$group, $pending = $null, $only = $nu
 #
 # Nothing is answered for About: its rows state facts rather than values, so there is nothing to
 # compare and the caller builds them.
-function Update-SettingRows($schema, [string]$group, $oldRows, $pending = $null) {
+#
+# A page is a node tree (lib\ui\framework.ps1): one child per row, keyed by the setting key, with
+# the row as the child's values. Which row actually changes is then the tree patch's question,
+# the same one every other surface asks, and this file only says which keys it wants and which
+# of them it had to build.
+
+# Read once at load, not per call: PowerShell 5.1 compiles a ScriptBlock on its first call, and a
+# page refresh must not pay for that at every value change.
+$script:SettingRowKeyOf = { param($spec) [string]$spec['Key'] }
+$script:SettingRowMake = { param($spec) New-UiComponent 'row' $spec['Props'] }
+# What makes a row draw differently: its value, whether that value is staged, and whether the row
+# is lit. Comparing the whole record would also hash its labels, help lines and choice lists on
+# every refresh, and none of those can move while a page is up.
+$script:SettingRowStamp = { param($r) ([string]$r.Raw + '|' + [string]$r.Pending + '|' + [string]$r.Enabled) }
+
+# A page's rows as a fresh tree, for a page that was just built or came out of the row cache.
+function New-SettingRowTree($rows) {
+  $page = New-UiComponent 'page'
+  [void](Mount-UiComponent $page $null)
+  $specs = New-Object System.Collections.Generic.List[object]
+  foreach ($r in @($rows)) {
+    if ($null -eq $r) { continue }
+    $specs.Add(@{ Key = ([string]$r.Key); Props = $r })
+  }
+  [void](Sync-UiTree $page $specs.ToArray() $script:SettingRowKeyOf $script:SettingRowMake $script:SettingRowStamp)
+  return $page
+}
+
+function Update-SettingRows($schema, [string]$group, $page, $pending = $null) {
   if ($null -eq $schema -or $group -ceq 'About') { return $null }
+  if ($null -eq $page) { return $null }
   $keys = @(Get-SettingGroupKeys $schema $group)
   if ($keys.Count -eq 0) { return $null }
   $held = @{}
-  foreach ($r in @($oldRows)) { if ($null -ne $r) { $held[[string]$r.Key] = $r } }
+  foreach ($c in $page.Children.ToArray()) {
+    $k = [string]$c.Key
+    if ($k -and $null -ne $c.Props) { $held[$k] = $c.Props }
+  }
   if ($held.Count -eq 0) { return $null }
   $deps = Get-SettingEnabledBy
   $build = @{}
@@ -401,14 +433,18 @@ function Update-SettingRows($schema, [string]$group, $oldRows, $pending = $null)
   if ($build.Count -gt 0) {
     foreach ($r in @(Get-SettingsRows $schema $group $pending $build)) { $fresh[[string]$r.Key] = $r }
   }
-  $rows = New-Object System.Collections.Generic.List[object]
-  $reused = 0
+  # The spec of a row is the row itself: a row that did not move carries the same record, so its
+  # fingerprint matches what the page already holds and the patch leaves the node alone.
+  $specs = New-Object System.Collections.Generic.List[object]
   foreach ($one in $keys) {
     $key = [string]$one
-    if ($fresh.ContainsKey($key)) { $rows.Add($fresh[$key]); continue }
-    if ($held.ContainsKey($key)) { $rows.Add($held[$key]); $reused++ }
+    $r = $null
+    if ($fresh.ContainsKey($key)) { $r = $fresh[$key] } elseif ($held.ContainsKey($key)) { $r = $held[$key] }
+    if ($null -eq $r) { continue }
+    $specs.Add(@{ Key = $key; Props = $r })
   }
-  return @{ Rows = $rows.ToArray(); Built = $fresh.Count; Reused = $reused }
+  $patch = Sync-UiTree $page $specs.ToArray() $script:SettingRowKeyOf $script:SettingRowMake $script:SettingRowStamp
+  return @{ Rows = (Get-UiNodeValues $page); Built = ([int]$patch.Created + [int]$patch.Updated); Reused = [int]$patch.Reused }
 }
 
 # The groups that actually have rows, in table order. A group whose keys all disappeared from

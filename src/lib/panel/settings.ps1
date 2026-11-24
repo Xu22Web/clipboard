@@ -139,6 +139,9 @@ function Show-Settings {
   if ($null -eq $script:SetRowCache) { $script:SetRowCache = New-UiKeepAlive 12 }
   # the page whose rows are in $script:SetRows, so the next refresh can be a diff instead of a build
   $script:SetPage = ''
+  # that page's rows as a node tree (lib\ui\framework.ps1): the patch keeps the rows that did not
+  # move and mounts only the ones that did, so a page is never rebuilt to change one value
+  $script:SetPageNode = $null
   # the staged values: key -> file spelling, validated by the schema before it got here. The
   # window writes nothing until Save, so this table is what the rows, the switch positions and
   # the three footer actions all read.
@@ -265,14 +268,18 @@ function Show-Settings {
     try { if ($script:IniPath) { $stamp = Get-StoreFileStamp ([string]$script:IniPath) } } catch { $stamp = '' }
     $cacheKey = $page + '|' + (Get-SettingsPendingSignature $script:SetPending) + '|' + $stamp + '|' + [string]$script:Language
     $step = $null
-    if ($page -ceq [string]$script:SetPage -and @($script:SetRows).Count -gt 0) {
-      $step = Update-SettingRows $schema $page $script:SetRows $script:SetPending
+    if ($page -ceq [string]$script:SetPage -and $null -ne $script:SetPageNode -and $script:SetPageNode.Children.Count -gt 0) {
+      $step = Update-SettingRows $schema $page $script:SetPageNode $script:SetPending
     }
     if ($null -ne $step) {
       $script:SetRows = @($step.Rows)
       Set-UiKeepAliveValue $script:SetRowCache $cacheKey $step.Rows
     } else {
       $script:SetRows = @(Get-UiKeepAlive $script:SetRowCache $cacheKey { Get-SettingsRows $schema $page $script:SetPending })
+      # the tree for the page that was up is done with: its rows are released before the new
+      # page's nodes are made, so a page switch cannot leave a second tree behind
+      if ($null -ne $script:SetPageNode) { Unmount-UiComponent $script:SetPageNode }
+      $script:SetPageNode = New-SettingRowTree $script:SetRows
       $script:SetPage = $page
     }
     # which pages carry a staged value, kept here so a paint does not walk the group table
@@ -1463,6 +1470,11 @@ function Show-Settings {
     Stop-HotkeyRecord ([string]$script:StoreDir)
     Close-Choices
     End-Edit $true
+    # the row tree is the only thing this window mounts; taking it down releases whatever the rows
+    # hold, so a window opened a hundred times leaves nothing behind
+    if ($null -ne $script:SetPageNode) { Unmount-UiComponent $script:SetPageNode }
+    $script:SetPageNode = $null
+    $script:SetRows = @()
     try { $form.Dispose() } catch { }
     $script:SetWindow = $null
     & $releaseSettings

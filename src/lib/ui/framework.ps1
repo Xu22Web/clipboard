@@ -34,10 +34,14 @@ function Test-UiNodeStale($node, $props) {
 # The whole tree under a parent, patched: children are matched by key, kept nodes are updated
 # when their values moved, and every kept node has its own children patched in turn.
 #
-#   specs    what the tree should hold: an array of @{ Key; Props; Children }
-#   keyOf    spec -> its key ('' means "no key": built every time and never matched)
-#   create   spec -> a new node, unmounted; the surface decides its type and how it draws
-function Sync-UiTree($parent, $specs, [scriptblock]$keyOf, [scriptblock]$create) {
+#   specs       what the tree should hold: an array of @{ Key; Props; Children }
+#   keyOf       spec -> its key ('' means "no key": built every time and never matched)
+#   create      spec -> a new node, unmounted; the surface decides its type and how it draws
+#   fingerprint a node's values -> a string that is equal exactly when the node draws the same
+#               way. A surface whose values are large, or only partly relevant, passes one: a
+#               settings row is compared by its value, whether it is staged and whether it is
+#               lit, and nothing else it carries can change between two paints.
+function Sync-UiTree($parent, $specs, [scriptblock]$keyOf, [scriptblock]$create, [scriptblock]$fingerprint = $null) {
   $answer = @{ Reused = 0; Created = 0; Updated = 0; Unmounted = 0; Children = @() }
   if ($null -eq $parent -or $null -eq $keyOf -or $null -eq $create) { return $answer }
   $held = @{}
@@ -57,7 +61,13 @@ function Sync-UiTree($parent, $specs, [scriptblock]$keyOf, [scriptblock]$create)
       $answer.Reused++
       $props = $null
       if ($spec -is [System.Collections.IDictionary] -and $spec.Contains('Props')) { $props = $spec['Props'] }
-      if (Test-UiNodeStale $node $props) {
+      $stale = $true
+      if ($null -ne $fingerprint) {
+        $stale = ((& $fingerprint $props) -cne (& $fingerprint $node.Props))
+      } else {
+        $stale = Test-UiNodeStale $node $props
+      }
+      if ($stale) {
         $node.Props = Copy-UiTable $props
         [void](Invoke-UiHook $node 'updated' $null)
         $answer.Updated++
@@ -73,7 +83,7 @@ function Sync-UiTree($parent, $specs, [scriptblock]$keyOf, [scriptblock]$create)
     $kids = $null
     if ($spec -is [System.Collections.IDictionary] -and $spec.Contains('Children')) { $kids = $spec['Children'] }
     if ($null -ne $kids) {
-      $sub = Sync-UiTree $node $kids $keyOf $create
+      $sub = Sync-UiTree $node $kids $keyOf $create $fingerprint
       $answer.Reused += [int]$sub.Reused
       $answer.Created += [int]$sub.Created
       $answer.Updated += [int]$sub.Updated
@@ -111,4 +121,13 @@ function Get-UiTreeStats($patch) {
     Reused = [int]$patch.Reused; Created = [int]$patch.Created
     Updated = [int]$patch.Updated; Unmounted = [int]$patch.Unmounted
   }
+}
+
+# The values of a parent's children, in the order they are in: what a surface hands to the code
+# that draws and hit-tests, and what it passes back on the next patch.
+function Get-UiNodeValues($parent) {
+  $out = New-Object System.Collections.Generic.List[object]
+  if ($null -eq $parent) { return $out.ToArray() }
+  foreach ($child in $parent.Children.ToArray()) { $out.Add($child.Props) }
+  return $out.ToArray()
 }
