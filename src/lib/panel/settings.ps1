@@ -133,8 +133,10 @@ function Show-Settings {
   # re-read the file; the reload itself happens on the way out, below
   $script:SettingsDirty = $false
   $script:SetRows = @()
-  # the rows of a page, kept by page and staged set: a page visited twice is not built twice
-  $script:SetRowCache = New-UiKeepAlive 6
+  # The rows of a page are kept by page, staged set and the state of the file, and the cache
+  # outlives the window: opening the settings window a second time in one process used to build
+  # every row again, because the cache died with the first window.
+  if ($null -eq $script:SetRowCache) { $script:SetRowCache = New-UiKeepAlive 12 }
   # the page whose rows are in $script:SetRows, so the next refresh can be a diff instead of a build
   $script:SetPage = ''
   # the staged values: key -> file spelling, validated by the schema before it got here. The
@@ -257,7 +259,11 @@ function Show-Settings {
     # same page re-entered comes from the cache, and a page that is already up is diffed against
     # the rows it showed, so one flipped switch rebuilds its own row instead of the whole page.
     $page = [string]$groups[$script:SetGroup]
-    $cacheKey = $page + '|' + (Get-SettingsPendingSignature $script:SetPending)
+    # the file itself is part of the key: a value written by `clipboard config set` while this
+    # window was closed has to show up, so the cache cannot answer for an older file
+    $stamp = ''
+    try { if ($script:IniPath) { $stamp = Get-StoreFileStamp ([string]$script:IniPath) } } catch { $stamp = '' }
+    $cacheKey = $page + '|' + (Get-SettingsPendingSignature $script:SetPending) + '|' + $stamp + '|' + [string]$script:Language
     $step = $null
     if ($page -ceq [string]$script:SetPage -and @($script:SetRows).Count -gt 0) {
       $step = Update-SettingRows $schema $page $script:SetRows $script:SetPending
