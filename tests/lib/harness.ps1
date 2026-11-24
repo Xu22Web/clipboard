@@ -361,7 +361,7 @@ function New-Sandbox([string]$name) {
   $dir = Join-Path $script:Harness.TmpRoot $name
   New-Item -ItemType Directory -Path $dir -Force | Out-Null
   Copy-Item -LiteralPath $script:Harness.ClipPs1 -Destination $dir -Force
-  foreach ($sub in @('lib', 'utils', 'schema', 'plugins', 'themes', 'lang', 'ipc')) {
+  foreach ($sub in @('lib', 'utils', 'schema', 'plugins', 'themes', 'lang', 'ipc', 'renderer')) {
     $src = Join-Path $script:Harness.SrcRoot $sub
     if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $dir -Recurse -Force }
   }

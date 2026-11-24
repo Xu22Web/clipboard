@@ -103,7 +103,10 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       try { $script:SavedSel = @(Save-UiaSelection $prev $script:PrevFocus) } catch { $script:SavedSel = @() }
       if ($script:SavedSel.Count -gt 0) { Write-Log ('selection saved: ' + $script:SavedSel.Count + ' range(s)') }
     }
-    $script:Entries = @(Invoke-Ipc 'list')
+    # the rows arrive through the history store, which reads the channel once and keeps the
+    # array: the query caches below compare one read with the next by reference
+    $script:History = Use-UiStore 'history'
+    $script:Entries = @($script:History.Refresh())
     if ($script:Entries.Count -eq 0) { Write-Log 'picker: empty (showing hint)' }
     $msRecords = [int]$swOpen.ElapsedMilliseconds
 
@@ -936,7 +939,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       if ($removed -eq 'removed') {
         if ($script:UndoOn) { $script:UndoRec = $victim; $script:UndoIdx = $idx }
       }
-      $script:Entries = @(Invoke-Ipc 'list')
+      $script:Entries = @($script:History.Refresh())
       if ($removed -eq 'removed') { Write-Log ('deleted entry (' + $victim.Payload.Length + ' chars), left ' + $script:Entries.Count) }
       Update-List $txt.Text
       if ($script:Filtered.Count -gt 0) { $lst.SelectedIndex = [Math]::Min($idx, $script:Filtered.Count - 1) }
@@ -951,7 +954,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $script:UndoRec = $null
       [void](Restore-Record $rec $at)
       Write-Log ('undo restored (' + $rec.Payload.Length + ' chars) at ' + $at)
-      $script:Entries = @(Invoke-Ipc 'list')
+      $script:Entries = @($script:History.Refresh())
       Update-List $txt.Text
       Set-Foot (Get-UiText 'panel.foot.restored') ([int]$script:Timing['FootInfo'])
     }
@@ -979,7 +982,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $script:Confirm = $false
       $confirmTimer.Stop()
       Clear-Store (Get-ClearKeepMarks)
-      $script:Entries = @(Invoke-Ipc 'list')
+      $script:Entries = @($script:History.Refresh())
       Write-Log ('history cleared from the panel, left ' + $script:Entries.Count + ' rows')
       Update-List $txt.Text
       $kept = @(Get-MarkUiCount $script:Entries)
@@ -1094,7 +1097,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
               if ($lst.SelectedIndex -ge $script:Filtered.Count) { return }
               # a returned string is a note for the footer (a refused pin, for one)
               $note = (& $a['Invoke'] $script:Filtered[$lst.SelectedIndex]); if ($note) { Set-Foot ([string]$note) ([int]$script:Timing['FootMessage']) }
-              $script:Entries = @(Invoke-Ipc 'list')
+              $script:Entries = @($script:History.Refresh())
               # After = 'paste': the action put its result on the clipboard and wants
               # it pasted into the window the picker came from (transform does this)
               if ($a.ContainsKey('After') -and [string]$a['After'] -eq 'paste') { Paste-Clip }
@@ -1443,7 +1446,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
               $note = $null
               try { $note = & $pluginKey.Invoke $rec } catch { Write-Log ('plugin key failed: ' + $pluginKey.Plugin + ' - ' + $_.Exception.Message) }
               if ($note) { Set-Foot ([string]$note) ([int]$script:Timing['FootMessage']) }
-              $script:Entries = @(Invoke-Ipc 'list')
+              $script:Entries = @($script:History.Refresh())
               Update-List $txt.Text
             }
           }
@@ -1485,7 +1488,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
             # one write for the whole set, then the list rebuilds from the store
             $note = Invoke-SelectionDelete $script:Sel $script:Filtered
             Sync-Selection $script:Sel $lst
-            $script:Entries = @(Invoke-Ipc 'list')
+            $script:Entries = @($script:History.Refresh())
             Update-List $txt.Text
             if ($note) { Set-Foot $note ([int]$script:Timing['FootInfo']) }
           } else { try { Del-Index $lst.SelectedIndex } catch { Write-Log ('delete failed: ' + $_.Exception.Message) } }

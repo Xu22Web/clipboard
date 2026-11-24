@@ -634,6 +634,8 @@ Every command starts a PowerShell process, and most of that time goes into parsi
 
 A window does not call the store: it calls a channel, and `Handler=` in the same table says which function answers. `Invoke-Ipc 'list'` runs `Get-Records` in this process — one function call, no frame and no copy — and a name that is not a channel, or a channel without `Handler=`, throws instead of running something that happens to exist. That is the surface a panel is allowed to use; the panel's seven refreshes go through it, and a channel that has to answer a window is a row in this file rather than a function name buried in the drawing code.
 
+Between a window and the channel sits the store, and the panel takes the rows from it: `Use-UiStore 'history'` answers the one object that owns them, `Refresh` reads the channel and keeps the result, `Rows` hands that same array back without copying it (the query caches compare one read with the next by reference), and `Count` / `IsEmpty` are computed when they are read. A store is defined once, in `renderer\src\store\`, so a second window reads the same state instead of a copy.
+
 ### Precompiled parts (optional)
 
 `cli client` and `cli assembly` each produce one optional file with the .NET Framework compiler that ships with Windows: `client.exe` and `lib\assembly\clipboard.dll`. Without them the program still runs: no `client.exe` means the script client, no `clipboard.dll` means `lib\assembly\*.cs` is compiled on the spot.
@@ -749,6 +751,10 @@ src/                    the program (the only folder packaging reads)
   preload/client.cs       the only source here (not committed output: src\client.exe)
 
   ipc/channels.ini        which commands the resident answers, read by lib\proxy.ps1 and client.cs
+
+  renderer/src/store/     the state a window reads and writes
+    define.ps1            Define-UiStore / Use-UiStore: one object per store, getters and actions
+    history-store.ps1     the history: Rows, Count, IsEmpty, Refresh, Clear
 
   main/                   the type library, one folder per job, compiled through index.cs
   main/index.cs           the #part list that decides what is compiled: a source nothing reaches

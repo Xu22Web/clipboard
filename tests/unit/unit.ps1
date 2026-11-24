@@ -100,7 +100,7 @@ function New-Sandbox([string]$name) {
   $dir = Join-Path $tmpRoot $name
   New-Item -ItemType Directory -Path $dir -Force | Out-Null
   Copy-Item -LiteralPath $clipPs1 -Destination $dir -Force
-  foreach ($sub in @('lib', 'utils', 'schema', 'plugins', 'themes', 'lang', 'ipc')) {
+  foreach ($sub in @('lib', 'utils', 'schema', 'plugins', 'themes', 'lang', 'ipc', 'renderer')) {
     $src = Join-Path $srcRoot $sub
     if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $dir -Recurse -Force }
   }
@@ -233,6 +233,7 @@ try {
           'lib\ui\layout', 'lib\ui\widgets', 'lib\ui\component', 'lib\ui\framework', 'lib\ui\views', 'lib\ui\setup', 'lib\ui\reactive',
           'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings',
           'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch', 'lib\ipc',
+          'renderer\src\store\define', 'renderer\src\store\history-store',
           'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey',
           'utils\query-words', 'utils\transfer', 'utils\apprules', 'utils\fileio',
           'utils\hash', 'utils\cfhtml', 'utils\image',
@@ -2207,6 +2208,31 @@ try {
           try { [void](Invoke-Ipc $name) } catch { $refused++ }
         }
         Expect ($refused -eq 3) ([string]$refused + ' of 3 refused')
+      }
+
+      # a store is the one place that owns a piece of state: two callers get the same object,
+      # a getter is computed when it is read, and a watcher hears that the state moved
+      It 'a store owns its state and hands out one object' {
+        $history = Use-UiStore 'history'
+        Expect ([object]::ReferenceEquals($history, (Use-UiStore 'history'))) 'two callers got two stores'
+        $rows = @($history.Refresh())
+        Expect ($rows.Count -eq @(Get-Records).Count) ([string]$rows.Count + ' rows')
+        Expect ($history.Count -eq $rows.Count) ([string]$history.Count)
+        Expect (($history.IsEmpty) -eq ($rows.Count -eq 0)) 'the empty getter disagrees with the count'
+        # the row array is the stored one, not a copy: the panel compares reads by reference
+        Expect ([object]::ReferenceEquals($history.Rows, $history.Rows)) 'Rows answers a new array each read'
+        $heard = 0
+        $hook = $history.Subscribe({ param($changed) $script:StoreHeard++ })
+        $script:StoreHeard = 0
+        $history.Clear()
+        Expect ($script:StoreHeard -eq 1) ([string]$script:StoreHeard + ' changes heard')
+        $history.Refresh()
+        Expect ($script:StoreHeard -eq 2) ([string]$script:StoreHeard + ' changes heard')
+        $null = $hook
+        # a name nobody defined is a mistake in the caller, not a runtime condition
+        $threw = $false
+        try { [void](Use-UiStore 'nonesuch') } catch { $threw = $true }
+        Expect $threw 'an undefined store name was handed back'
       }
 
       Describe 'generic marks' {
