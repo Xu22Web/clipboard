@@ -1,10 +1,10 @@
-# Clipboard
+﻿# Clipboard
 
 [English](README.md) | 简体中文
 
 Windows 10 / 11 的剪贴板历史工具，纯 PowerShell 5.1 实现，无第三方依赖。提供全局热键、可搜索的历史面板与常驻捕获。
 
-程序由入口 `src\clipboard.ps1` 与 `src\lib\` 下的模块组成，分发时需整个目录一起复制。数据保存在脚本目录内，不依赖 Windows 剪贴板历史服务（`cbdhsvc`），不联网，不需要管理员权限。
+程序由入口 `src\clipboard.ps1` 与 `src\main\`、`src\preload\`、`src\renderer\`、`src\shared\` 下的模块组成，分发时需整个目录一起复制。数据保存在脚本目录内，不依赖 Windows 剪贴板历史服务（`cbdhsvc`），不联网，不需要管理员权限。
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -41,7 +41,7 @@ Windows 10 / 11 的剪贴板历史工具，纯 PowerShell 5.1 实现，无第三
 
 ## 快速开始
 
-可直接运行程序本体（`src\clipboard.ps1` + `src\lib\` / `utils\` / `schema\`），也可在仓库根用 `cli` 执行 `package.ini` 中声明的命令。
+可直接运行程序本体（`src\clipboard.ps1` + `src\main\` / `src\preload\` / `src\renderer\` / `src\shared\`），也可在仓库根用 `cli` 执行 `package.ini` 中声明的命令。
 
 ```powershell
 cli              # 列出 package.ini 中的命令
@@ -50,7 +50,7 @@ cli test         # 运行全部自测
 cli build        # 打包到 dist\clipboard-<version>\
 cli client       # 编译可选的原生客户端 src\preload\client.exe
 cli assembly     # 编译可选的类型库 src\main\clipboard.dll
-cli bundle       # 按 cli.ini 构建一个入口（-Inspect 列出无法内联的模块）
+cli bundle       # 按 builder.cli.config.ps1 构建一个入口（-Inspect 列出无法内联的模块）
 ```
 
 `cli` 有两个入口：`cli.sh`（Git Bash / MSYS，`./cli.sh`）与 `cli.cmd`（CMD，`cli`）；命令名不区分大小写，其余参数追加到 `package.ini` 对应行，例如 `cli test -Unit`、`cli build -Config other.ini`。
@@ -323,11 +323,11 @@ cli bundle       # 按 cli.ini 构建一个入口（-Inspect 列出无法内联�
 - `config set` 按上表类型与范围校验，写回时只改对应行；常驻进程运行时自动重启。`config get <key>` 同时显示生效值与 ini 原始值，`config` 每行标注来源（`<- ini` / `<- default`）。
 - 命令行只处理位置参数与 `list -Count N`；向命令传设置开关会因参数绑定失败被拒绝（如 `clipboard put hi -MaxItems 50`）。
 - `Rows` 同时约束置顶：粘性置顶最多占 `Rows - 1` 行，`item-marks.StickyRows` 超过该上限时 `config set` 拒绝，调小 `Rows` 时已设值自动下调。
-- 默认值只在 `src\schema\clipboard.ps1` 的 `Default` 中定义，值驱动的变量在 `src\lib\base.ps1`。
+- 默认值只在 `src\shared\schema\clipboard.ps1` 的 `Default` 中定义，值驱动的变量在 `src\main\utils\base.ps1`。
 
 ### INI 约定
 
-仓库内的 ini 使用同一套语法（`package.ini`、`cli.ini`、`clipboard.ini`、`themes\*.ini`）。程序侧由 `utils\ini.ps1`、`utils\inifile.ps1`、`utils\schema.ps1` 实现；工具侧（`tools\`）自带 `tools\utils\ini.ps1`（同一套解析规则）与 `tools\utils\schema.ps1`（校验 `cli.ini` 与 `package.ini`），不加载 `src\` 下的文件。两套校验器语义不同：程序侧缺键等于未设置、回退默认；工具侧缺键即错误。
+仓库内的 ini 使用同一套语法（`package.ini`、`builder.ini`、`clipboard.ini`、`themes\*.ini`）。程序侧由 `shared\utils\ini.ps1`、`shared\utils\inifile.ps1`、`shared\utils\schema.ps1` 实现；工具侧自带同一套解析（`packages\cli\utils\ini.ps1`），不加载 `src\` 下的文件。程序侧缺键等于未设置、回退默认；工具自己的 schema 则把缺键当错误。
 
 - 一行一个 `Key=Value`；`#` 或 `;` 开头整行为注释，不支持行尾注释（值中的 `#` 属于值本身，如 `Accent=#5AC8FA`）；值不加引号，两端空白被去掉；同一个键写两次以最后一次为准。
 - `[section]` 把后续键归入该段：`[scripts]` 下的 `Dev=...` 与顶层的 `scripts.Dev=...` 是同一个键。段头必须整行只有 `[名字]`。
@@ -337,11 +337,13 @@ cli bundle       # 按 cli.ini 构建一个入口（-Inspect 列出无法内联�
 | 文件 | 用途 | 段 |
 |---|---|---|
 | `package.ini` | 项目元数据与命令，`cli` 读取 | `[package]` 的 `Name` / `Version`，`[scripts]` 的命令名 |
-| `cli.ini` | 工具配置，`cli dev` / `cli build` / `cli test` / `cli bundle` 读取 | `[dev]` `[build]` `[copy]` `[test]` `[product.*]` `[entry.*]` |
+| `builder.cli.config.ps1` | `cli build` / `cli bundle` 构建什么：一张表一个目标 | `Input` / `Scan` / `Output` / `Plugins` / `External` / `Ship` 及压缩改名开关 |
+| `builder.ini` | 发布包里放什么：electron-builder 的三个键 | `Compression`、`[directories]`、`[files]` |
+| `test.config.ps1` | 测试跑哪些组 | `Test.Groups` / `Test.Exclude` / `Test.Workers` / `Test.Reporter` / `Test.Bail` / `Test.Serial` |
 | `clipboard.ini` | 程序设置，由 `config init` 生成 | 基础键不分组；插件键写在 `[<插件名>]` 段（平铺的 `<插件名>.<Key>` 仍可读） |
 | `themes\*.ini` | 主题定义 | `[palette]` `[fonts]` `[metrics]` `[<插件名>]` |
 | `schema\*.ps1` | `clipboard.ini` 与主题的 schema | — |
-| `schema\plugins\*.ps1` | 各插件的键表：`Properties` 进 `clipboard.ini` 的插件段，`ThemeProperties` 进主题 | — |
+| `shared\schema\plugins\*.ps1` | 各插件的键表：`Properties` 进 `clipboard.ini` 的插件段，`ThemeProperties` 进主题 | — |
 
 ### schema 文件
 
@@ -548,7 +550,7 @@ Plugins=item-marks,entry-actions
 | `ClearKeeps` | 否 | `clear` 默认保留的标记 |
 | `Init` | 否 | 每个进程执行一次的初始化 |
 
-插件文件不写 `Settings` / `ThemeSettings`：键表在 `schema\plugins\<插件名>.ps1`，加载时合并（见[插件自己的配置项](#插件自己的配置项)）。
+插件文件不写 `Settings` / `ThemeSettings`：键表在 `shared\schema\plugins\<插件名>.ps1`，加载时合并（见[插件自己的配置项](#插件自己的配置项)）。
 
 ### 标记（mark）
 
@@ -594,7 +596,7 @@ Plugins=item-marks,entry-actions
 
 ### 插件自己的配置项
 
-插件设置声明在 `schema\plugins\<插件名>.ps1` 的 `Properties` 中，加载时合并进设置 schema，与基础键共用校验与展示流程，键名为 `<插件名>.<Key>`。
+插件设置声明在 `shared\schema\plugins\<插件名>.ps1` 的 `Properties` 中，加载时合并进设置 schema，与基础键共用校验与展示流程，键名为 `<插件名>.<Key>`。
 
 ```ini
 Plugins=entry-actions
@@ -622,7 +624,7 @@ clipboard config set entry-actions.Reveal 0
 
 ## 命令代理
 
-每条命令都要启动一个 PowerShell 进程，其中大部分时间用于解析本程序；常驻进程已完成这部分解析。哪些命令可以改由常驻进程通过命名管道回答，只写在 `src\ipc\channels.ini`：一个内置命令一节 `[channel.<名称>]`，`Remote=1` 表示由常驻进程回答，`Remote=0` 表示由命令行自己执行；`[channels] Plugins=1` 让没有自己那一节的插件动词也能通过。`lib\proxy.ps1` 的两半都读它，`preload\client.cs` 也读它，所以不存在两份需要对齐的清单；文件缺失时什么都不放行，每条命令走慢路径，结果不变。
+每条命令都要启动一个 PowerShell 进程，其中大部分时间用于解析本程序；常驻进程已完成这部分解析。哪些命令可以改由常驻进程通过命名管道回答，只写在 `src\shared\ipc\channels.ini`：一个内置命令一节 `[channel.<名称>]`，`Remote=1` 表示由常驻进程回答，`Remote=0` 表示由命令行自己执行；`[channels] Plugins=1` 让没有自己那一节的插件动词也能通过。`main\utils\proxy.ps1` 的两半都读它，`preload\client.cs` 也读它，所以不存在两份需要对齐的清单；文件缺失时什么都不放行，每条命令走慢路径，结果不变。
 
 | 项 | 说明 |
 |---|---|
@@ -639,7 +641,7 @@ clipboard config set entry-actions.Reveal 0
 
 `cli client` 与 `cli assembly` 用系统自带的 .NET Framework 编译器各产出一个可选文件：`preload\client.exe` 与 `main\clipboard.dll`。两者缺失时程序照常运行：缺 `client.exe` 回退到脚本客户端，缺 `clipboard.dll` 时按 `src\main\*.cs` 现场编译。
 
-`client.exe` 只由 `clipboard.cmd` 在启动 PowerShell 之前调用（源码 `preload\client.cs`）：接管失败时以退出码 `100` 退回脚本，其它退出码原样透传。`clipboard.dll` 由 `lib\native.ps1` 载入，任一 `.cs` 比它新或文件缺失时不使用。两者都由 `cli build` 在清单含对应 `.cs` 时先编到 `src\` 下，再按各自入口声明的路径入包。
+`client.exe` 只由 `clipboard.cmd` 在启动 PowerShell 之前调用（源码 `preload\client.cs`）：接管失败时以退出码 `100` 退回脚本，其它退出码原样透传。`clipboard.dll` 由 `main\utils\native.ps1` 载入，任一 `.cs` 比它新或文件缺失时不使用。两者都由 `cli build` 在清单含对应 `.cs` 时先编到 `src\` 下，再按各自入口声明的路径入包。
 
 `status` 的 `resident` 行与 `config set` 之后的自动重启只认服务于当前数据目录的常驻进程（依据是它写在自身 `data\` 下的 `hotkey.txt`，退出时写成 `(stopped)`），另装一份或运行测试沙箱时不会误报。
 
@@ -673,28 +675,31 @@ flowchart LR
 ```
 package.ini             项目元数据与命令：Name / Version / [scripts] 下的命令名（cli 读取）
 cli.sh  cli.cmd  cli.ps1   命令入口（sh / CMD / PowerShell），执行 package.ini 中的命令
-cli.ini                 工具配置：[dev] 监听与轮询、[build] 打包选项、[copy] 文件清单、
-                        [test] 并行度与分组、[product.*] 插件链、[entry.*] 每个产物一节
+builder.cli.ps1         装配点：先 packages\cli，再 bundler / builder / test
+builder.cli.config.ps1  构建什么：一个目标一节（Input / Scan / Output / Plugins / Ship）
+builder.ini             发布包里放什么：electron-builder 的 Compression / [directories] / [files]
+test.config.ps1         测试跑哪些组
 scripts/install.bat     安装脚本：config init → migrate → install（打包时复制到产物根目录）
 scripts/uninstall.bat   卸载脚本：stop → uninstall purge（同上）
-tools/build.ps1         打包脚本（按 cli.ini 的 [build] 段打包到 dist\clipboard-<version>\）
-tools/build-client.ps1  编译 preload\client.exe（可选）
-tools/build-assembly.ps1 编译 main\clipboard.dll（可选）
-tools/dev.ps1           开发运行：启动常驻并监视被加载的文件
-tools/test.ps1          自测入口（转发 tests\run.ps1 的开关）
-tools/bench.ps1         性能测量（捕获、保存、解析、过滤）
-tools/shot.ps1          重新生成 docs\ 下的界面截图
-tools/utils/ini.ps1     工具自带的 ini 解析（与 src\utils 同一套规则）
-tools/utils/schema.ps1  工具自带的 schema 校验（cli.ini 与 package.ini）
-tools/schema/cli.ps1    cli.ini 的 schema：键、类型、范围
-tools/schema/package.ps1 package.ini 的 schema：名称、版本、命令表
-tools/utils/globs.ps1   Includes / Excludes 的通配展开
-tools/bundler/assets.ps1 文件处理表：按路径决定用哪个 handler 改写
-tools/bundler/assets/*.ps1 每种文件类型一个 handler：script、version、batch、shell、ini、copy
-tools/bundler/products.ps1 哪些 C# 目录合成一个文件，以及产物落在哪里
-tools/utils/console.ps1 输出前缀与失败退出（Write-Step / Fail），打包与开发共用
-tools/utils/csc.ps1     定位 .NET Framework 的 csc.exe
-tools/utils/minify.ps1  压缩器（语法树重写）
+packages/cli/           类 vite 那一半：命令表、配置读取、dev 循环、bundle 与 build
+packages/cli/index.ps1  包的导出；其余文件都在包内
+packages/cli/config.ps1 解析 builder.cli.config.ps1、preset 与包内默认值
+packages/cli/bundle.ps1 构建一个或全部目标，交给 packages\bundler
+packages/cli/build.ps1  构建、暂存并打包发布，交给 packages\builder
+packages/cli/watch.ps1  `cli dev`：监视 builder.ini 的文件清单并重启常驻
+packages/cli/assembly.ps1 / client.ps1  两个 C# 产物（main\clipboard.dll、preload\client.exe）
+packages/cli/bench.ps1  性能测量（捕获、保存、解析、过滤）
+packages/cli/shot.ps1   重新生成 docs\ 下的界面截图
+packages/cli/plugins/presets.ps1  renderer preset：插件链与 external 模块
+packages/cli/utils/*.ps1  工具自带的 console、ini、schema、globs、minify、csc
+packages/bundler/       引擎：resolve、treeshake、merge、render、verify、C# 编译
+packages/bundler/bundler.ps1  入口：读 spec，产出分块
+packages/bundler/lib/*.ps1    ast、graph、emit、surface、chunk（位集分组）
+packages/bundler/plugins/*.ps1  一个阶段一个文件
+packages/builder/       暂存与打包：package.ps1 + 文件处理表
+packages/builder/assets.ps1   文件处理表：按路径决定用哪个 handler 改写
+packages/builder/assets/*.ps1 每种文件类型一个 handler：script、version、batch、shell、ini、copy
+packages/test/          自测驱动：config.ps1 + index.ps1
 tests/run.ps1           自测驱动：按目录发现分件、并行执行、合并结果（打印在 tests\lib\reporter.ps1）
 tests/lib/harness.ps1   分件共用的断言、沙箱与命令调用
 tests/lib/reporter.ps1  测试打印：分件行、失败块、实时窗口与汇总
@@ -713,43 +718,48 @@ src/                    程序本体（打包只读这个目录）
   clipboard.ps1           入口：参数绑定 / $Root / 模块分组表 / 运行时路径 / 调用 Invoke-Main
   clipboard.ini           配置（不存在时用内置默认，config init 才生成）
   data/                   历史 / 日志 / 生效热键缓存 / 媒体（不入库）
-  lib/base.ps1            常量、版本读取、记录格式、运行时标识、度量与全部默认值
-  lib/native.ps1          平台层：P/Invoke、WinForms 类型、程序集加载、字体探测、DPI
-  lib/theme-stub.ps1      内置配色与主题空实现
-  lib/themes.ps1          主题加载层
-  lib/settings.ps1        设置文件层：schema 装配、读写单键
-  lib/media.ps1           图片与富文本的媒体文件：块存储、载荷编解码、孤儿回收
-  lib/cfhtml.ps1          CF_HTML 往返：内联图片、写回文件、字符串回退的裁剪与丢弃（头部解析与标签处理在 utils/cfhtml.ps1）
-  lib/clip.ps1            剪贴板读写（文本 / 文件清单 / 图片 / HTML+RTF）
-  lib/blobs.ps1           大正文块：超过 BlobChars 的条目落成文件，行内只留引用
-  lib/store.ps1           历史文件：CBHIST 格式、版本字段、加锁、追加 / 墓碑 / 折叠、裁剪
-  lib/transfer.ps1        导入导出：记录 ↔ 文本行
-  lib/text.ps1            界面文案：读 lang\*.ini、按语言叠加、缺键回退 en
-  lib/apprules.ps1        粘贴目标程序 → 粘贴方式
-  lib/marks.ps1           标记的读写与含义查询
-  lib/ordering.ps1        行序规则：排序标记置顶、粘性置顶的可冻结行数
-  lib/migrate.ps1         数据格式迁移：检测版本、备份、逐级升级
-  lib/modifiers.ps1       修饰键状态（真实键盘状态，不看线程队列）
-  lib/entry.ps1           条目分类（text / files / image / empty）与条目文案
-  lib/query.ps1           搜索语法：字段含义、正则编译、类型判定、匹配（普通词由 Cb.Search 扫描）
-  lib/select.ps1          批量选择：Ctrl/Shift 规则、批量复制与删除
-  lib/serve.ps1           常驻进程：捕获循环、热键、托盘、崩溃重启
-  lib/shortcut.ps1        开机自启与桌面快捷方式的安装与卸载
-  lib/config.ps1          config 命令面：应用设置、打印有效值、重启常驻
-  lib/config-template.ps1 写进文件的 clipboard.ini：行序与分组、按模板重写、reset
-  lib/settings-model.ps1  设置窗口的行：分组表、键名读成词、当前值与帮助文案
-  lib/settings-types.ps1  每种设置类型的编辑行为：翻转、组合键、单位换算、校验
-  lib/settings-vm.ps1     一次改动意味着什么：暂存值、翻转开关、增删组合键、勾选名单
-  lib/hotkey-record.ps1  录制热键时的交接：请求/应答两个文件，常驻把已注册的组合键交给窗口
-  lib/usage.ps1           help 输出
-  lib/dispatch.ps1        Invoke-Main：Initialize-Main（Apply-Config + 装配插件）→ Invoke-Dispatch
-  lib/proxy.ps1           命令代理
-  lib/ipc.ps1             Invoke-Ipc：窗口调用的通道，由通道表映射到函数
+  main/utils/base.ps1            常量、版本读取、记录格式、运行时标识、度量与全部默认值
+  main/utils/native.ps1          平台层：P/Invoke、WinForms 类型、程序集加载、字体探测、DPI
+  renderer/src/utils/theme-stub.ps1      内置配色与主题空实现
+  renderer/src/utils/themes.ps1          主题加载层
+  main/utils/settings.ps1        设置文件层：schema 装配、读写单键
+  main/utils/media.ps1           图片与富文本的媒体文件：块存储、载荷编解码、孤儿回收
+  main/utils/cfhtml.ps1          CF_HTML 往返：内联图片、写回文件、字符串回退的裁剪与丢弃（头部解析与标签处理在 utils/cfhtml.ps1）
+  main/utils/clip.ps1            剪贴板读写（文本 / 文件清单 / 图片 / HTML+RTF）
+  main/utils/blobs.ps1           大正文块：超过 BlobChars 的条目落成文件，行内只留引用
+  main/utils/store.ps1           历史文件：CBHIST 格式、版本字段、加锁、追加 / 墓碑 / 折叠、裁剪
+  main/utils/transfer.ps1        导入导出：记录 ↔ 文本行
+  renderer/src/utils/text.ps1            界面文案：读 lang\*.ini、按语言叠加、缺键回退 en
+  main/utils/apprules.ps1        粘贴目标程序 → 粘贴方式
+  main/utils/marks.ps1           标记的读写与含义查询
+  main/utils/ordering.ps1        行序规则：排序标记置顶、粘性置顶的可冻结行数
+  main/utils/migrate.ps1         数据格式迁移：检测版本、备份、逐级升级
+  main/utils/modifiers.ps1       修饰键状态（真实键盘状态，不看线程队列）
+  main/utils/entry.ps1           条目分类（text / files / image / empty）与条目文案
+  main/utils/query.ps1           搜索语法：字段含义、正则编译、类型判定、匹配（普通词由 Cb.Search 扫描）
+  main/utils/select.ps1          批量选择：Ctrl/Shift 规则、批量复制与删除
+  main/utils/serve.ps1           常驻进程：捕获循环、热键、托盘、崩溃重启
+  main/utils/shortcut.ps1        开机自启与桌面快捷方式的安装与卸载
+  main/utils/config.ps1          config 命令面：应用设置、打印有效值、重启常驻
+  main/utils/config-template.ps1 写进文件的 clipboard.ini：行序与分组、按模板重写、reset
+  renderer/src/utils/settings-model.ps1  设置窗口的行：分组表、键名读成词、当前值与帮助文案
+  renderer/src/utils/settings-types.ps1  每种设置类型的编辑行为：翻转、组合键、单位换算、校验
+  renderer/src/utils/settings-vm.ps1     一次改动意味着什么：暂存值、翻转开关、增删组合键、勾选名单
+  renderer/src/utils/anim.ps1            过渡动画的数值层
+  renderer/src/utils/focus.ps1           取前台与交还前台、松开仍按住的修饰键
+  renderer/src/utils/tray-draw.ps1       托盘菜单的行，托盘与面板共用
+  preload/utils/hotkey-record.ps1  录制热键时的交接：请求/应答两个文件，常驻把已注册的组合键交给窗口
+  main/utils/usage.ps1           help 输出
+  main/utils/dispatch.ps1        Invoke-Main：Initialize-Main（Apply-Config + 装配插件）→ Invoke-Dispatch
+  main/utils/proxy.ps1           命令代理
+  main/utils/window.ps1          所有窗口共用的框：创建、内容、事件、显隐
+  preload/utils/ipc.ps1             Invoke-Ipc：窗口调用的通道，由通道表映射到函数
+  preload/utils/window-host.ps1     窗口能应答的动作，以及请求它的那一侧
 
   preload/                编译版客户端，与它的源文件同目录（产物 preload\client.exe 不入库）
   preload/client.cs       这里只有这一个源文件
 
-  ipc/channels.ini        哪些命令由常驻进程回答，lib\proxy.ps1 与 client.cs 都读它
+  shared/ipc/channels.ini        哪些命令由常驻进程回答，main\utils\proxy.ps1 与 client.cs 都读它
 
   renderer/src/store/     窗口读写的那份状态
     define.ps1            Define-UiStore / Use-UiStore / Get-UiStoreRefs：一个 store 一个对象，
@@ -765,63 +775,63 @@ src/                    程序本体（打包只读这个目录）
   main/ui/                窗体、行表面、托盘与托盘菜单
   main/media/             Cb.Rtf 与 Cb.Rich：图片块，以及把文档排进设备上下文
 
-  renderer/src/core/     两个自绘窗口共用的盒子与控件
+  renderer/src/core/     自绘窗口运行的框架层
     draw.ps1             画笔缓存、按比例淡化的颜色、量字用的格式集
     layout.ps1           切盒子：内缩、纵向堆叠、横向分栏、滚动条滑块的尺寸与位置
-    widgets.ps1          控件本身：开关、滚动条、两色之间的混色
     component.ps1        控件树的外围：store 与修订号、生命周期、常驻缓存、延后到达的槽位
     framework.ps1        界面写成什么：带 key 的树、只改动变化处的 patch、以及遍历绘制
-    views.ps1            控件成了一条记录：kind 负责画、box 负责摆、state 表示当下状态，
-                         悬停是一次 diff，只答出需要重绘的那块矩形
     reactive.ps1         数据这一半：带陷阱的信号（Cb.ReactiveBag）、effect、派生值，
                          一批写入只 flush 一次
     setup.ps1            控件写成一份声明：带默认值的 props、返回自身绑定的函数体、
                          就地登记的挂载钩子，以及由调用方填充的具名插槽
 
-  renderer/src/windows/  窗口：只在绘制命令中加载
-    picker.ps1           历史面板：窗体、过滤、列表、按键、右键菜单、粘贴
-    picker-geom.ps1      面板纯计算：行数、数字快选、窗口位置、命中
-    picker-live.ps1      面板显示期间的行为：可见行数、滑块、插入符、搜索框与页脚；放在文件作用域，
-                         一次打开不再重新编译
-    picker-draw.ps1      可复用绘制：按键胶囊、搜索命中着色
-    picker-edit.ps1      就地编辑（F2）
+  renderer/src/components/  控件本身，以及三个窗口的部件
+    views.ps1            控件成了一条记录：kind 负责画、box 负责摆、state 表示当下状态，
+                         悬停是一次 diff，只答出需要重绘的那块矩形
+    widgets.ps1          控件本身：开关、滚动条、两色之间的混色
     pinlist.ps1          自绘列表控件 Cb.PinList
     preview.ps1          悬停预览卡片
-    anim.ps1             过渡动画的数值层
-    focus.ps1            取前台与交还前台、松开仍按住的修饰键
     media-render.ps1     图片与富文本的位图与缓存
-    settings.ps1         设置窗口：分组栏、行列表、按键与鼠标、保存后重载常驻
+    picker-geom.ps1      面板纯计算：行数、数字快选、窗口位置、命中
+    picker-live.ps1      面板显示期间的行为：可见行数、滑块、插入符、搜索框、页脚、粘贴、删除与撤销、
+                         右键菜单和悬停卡片；放在文件作用域，一次打开不再重新编译
+    picker-draw.ps1      可复用绘制：按键胶囊、搜索命中着色
+    picker-edit.ps1      就地编辑（F2）
     settings-draw.ps1    设置窗口的绘制：分组栏、行、Fluent 开关、页脚
     settings-edit.ps1    设置的就地编辑：叠在行上的输入框、写回与校验
+
+  renderer/src/windows/  三个窗口：只在绘制命令中加载
+    picker.ps1           历史面板：窗体、按键分发与服务于它的消息循环
+    settings.ps1         设置窗口：分组栏、行列表、按键与鼠标、保存后重载常驻
     tray-menu.ps1        托盘菜单：调色板与字体来自主题，行由 Cb.TrayItem 自绘
 
-  lib/plugin/             插件层：三个文件要么全有要么全无
-  lib/plugin/plugins.ps1         插件运行时
-  lib/plugin/plugin-settings.ps1 插件设置面
-  lib/plugin/plugin-marks.ps1    标记含义
+  main/utils/plugin/             插件层：三个文件要么全有要么全无
+  main/utils/plugin/plugins.ps1         插件运行时
+  main/utils/plugin/plugin-settings.ps1 插件设置面
+  main/utils/plugin/plugin-marks.ps1    标记含义
   plugins/*.ps1           插件（item-marks / entry-actions / transform / retention）
   themes/*.ini            主题（win11-dark / win11-light）
   lang/*.ini              界面文案（en 为基准，覆盖叠加；含 [meta] 字体族）
 
-  utils/ini.ps1           文本 → 文档与文档上的增删改查（纯函数，含按模板重写）
-  utils/inifile.ps1       导入 ini 文件（按路径缓存）与写回单个键
-  utils/schema.ps1        schema 的加载 / 校验 / 单值转换
-  utils/hotkey.ps1        热键字符串 → 修饰键 + 虚拟键码
-  utils/fileio.ps1        单个文件的读写原语
-  utils/hash.ps1          内容哈希（SHA1 十六进制，文件名即内容）
-  utils/image.ps1         图片字节的格式读取（PNG 头宽高、DIB 补 BMP 头）
-  utils/cfhtml.ps1       CF_HTML 头与标签的文本处理（偏移重算、取 src、取正文、取结束位置）
-  utils/transfer.ps1      导出文本的形状：行 ↔ 文本
-  utils/apprules.ps1      AppRules 的文本形式解析
-  utils/log.ps1           日志文件写入
-  utils/time.ps1          epoch、相对时间与时间串（7d / 12h）解析
-  utils/query-words.ps1   把一行搜索切成词
-  utils/format.ps1        字节计数
-  utils/dpi.ps1           DPI 缩放与圆角路径
+  shared/utils/ini.ps1           文本 → 文档与文档上的增删改查（纯函数，含按模板重写）
+  shared/utils/inifile.ps1       导入 ini 文件（按路径缓存）与写回单个键
+  shared/utils/schema.ps1        schema 的加载 / 校验 / 单值转换
+  shared/utils/hotkey.ps1        热键字符串 → 修饰键 + 虚拟键码
+  shared/utils/fileio.ps1        单个文件的读写原语
+  shared/utils/hash.ps1          内容哈希（SHA1 十六进制，文件名即内容）
+  shared/utils/image.ps1         图片字节的格式读取（PNG 头宽高、DIB 补 BMP 头）
+  shared/utils/cfhtml.ps1       CF_HTML 头与标签的文本处理（偏移重算、取 src、取正文、取结束位置）
+  shared/utils/transfer.ps1      导出文本的形状：行 ↔ 文本
+  shared/utils/apprules.ps1      AppRules 的文本形式解析
+  shared/utils/log.ps1           日志文件写入
+  shared/utils/time.ps1          epoch、相对时间与时间串（7d / 12h）解析
+  shared/utils/query-words.ps1   把一行搜索切成词
+  shared/utils/format.ps1        字节计数
+  shared/utils/dpi.ps1           DPI 缩放与圆角路径
 
-  schema/clipboard.ps1    clipboard.ini 的 schema
-  schema/theme.ps1        themes\*.ini 的 schema
-  schema/plugins/*.ps1    各插件的键表
+  shared/schema/clipboard.ps1    clipboard.ini 的 schema
+  shared/schema/theme.ps1        themes\*.ini 的 schema
+  shared/schema/plugins/*.ps1    各插件的键表
 ```
 
 分层顺序即依赖方向：只允许上层调用下层，`utils` 中的函数只接受值、返回值，不访问剪贴板与历史，也不认识具体配置键。
@@ -836,7 +846,7 @@ flowchart TD
   U --> B[schema / base / theme-stub]
 ```
 
-除 `lib\themes.ps1` 与插件三件套外，模块缺失会报 `missing: …` 并以退出码 1 结束。
+除 `renderer\src\utils\themes.ps1` 与插件三件套外，模块缺失会报 `missing: …` 并以退出码 1 结束。
 
 模块按命令加载：`$baseModules` 是每条命令都需要的 19 个文件，六个可选组 `store` / `transfer` / `config` / `panel` / `panelgeom` / `settings` 由 `$commandGroups` 决定：
 
@@ -883,7 +893,7 @@ CBHIST RS <数据版本> RS <flags> US <epoch 秒> US <extra> US <payload> RS <f
 
 ### 数据版本与迁移
 
-数据格式版本定义在 `src\lib\base.ps1` 的 `$script:DataVersion`。记录结构变更时递增该值，并在 `src\lib\migrate.ps1` 的 `$script:MigrationSteps` 增加一步：键为起始版本，步骤接收整个文件文本并返回下一版本的文本。
+数据格式版本定义在 `src\main\utils\base.ps1` 的 `$script:DataVersion`。记录结构变更时递增该值，并在 `src\main\utils\migrate.ps1` 的 `$script:MigrationSteps` 增加一步：键为起始版本，步骤接收整个文件文本并返回下一版本的文本。
 
 `clipboard migrate` 按文件版本逐级执行步骤，写入前把原文件备份到 `data\backup\history-v<版本>-<时间>.dat`。当前只发布过一种布局，步骤表为空，因此：
 
@@ -898,7 +908,7 @@ CBHIST RS <数据版本> RS <flags> US <epoch 秒> US <extra> US <payload> RS <f
 程序版本由 `package.ini` 的 `Version=` 维护，只有这一处：
 
 - 开发运行时 `base.ps1` 在加载阶段读取仓库根的 `package.ini`；
-- 打包时 `tools\build.ps1` 把这段读取替换为常量，产物不含 `package.ini`。
+- 打包时 `packages\builder\assets\version.ps1` 把这段读取替换为常量，产物不含 `package.ini`。
 
 该值决定产物目录名（`dist\clipboard-<version>\`），并出现在面板底部、`clipboard version`、`status` 与 `help` 输出中。数据格式版本是另一个值（`$script:DataVersion`），只影响存储格式。
 
@@ -934,7 +944,7 @@ CBHIST RS <数据版本> RS <flags> US <epoch 秒> US <extra> US <payload> RS <f
 
 也可直接运行 `powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run.ps1`。
 
-一个分件对应一个文件、一个进程、一个沙箱。并发数取逻辑处理器数，可由 `cli.ini` 的 `[test] Workers` 或 `-Workers` 指定，`1` 为串行；不带开关的 `cli test` 跑哪些组由 `[test] Groups` 决定（`unit` / `integration` / `e2e`，默认三组都跑）；每次运行的项数由 `cli test` 末尾的 `Test Files` / `Tests` 两行给出，不在文档里固定。
+一个分件对应一个文件、一个进程、一个沙箱。并发数取逻辑处理器数，可由 `test.config.ps1` 的 `Test.Workers` 或 `-Workers` 指定，`1` 为串行；不带开关的 `cli test` 跑哪些组由 `Test.Groups` 决定（`unit` / `integration` / `e2e`，默认三组都跑）；每次运行的项数由 `cli test` 末尾的 `Test Files` / `Tests` 两行给出，不在文档里固定。
 
 分件内的命令行调用默认经 `tests\lib\cli-runner.ps1`：分件启动时拉起一个子进程，每条命令在其内的独立 runspace 中执行，省去每次解释器启动。插件脚本块相关的命令（`pin`、`star`、`highlight`、`transform`、`kind`、`list` 等）仍起真实子进程，因为脚本块需要真实的模块加载作用域。
 
@@ -1018,97 +1028,88 @@ Describe 'int' {
 | `cli build` | 打包到 `dist\` |
 | `cli client` | 编译 `preload\client.cs` → `src\preload\client.exe`（可选） |
 | `cli assembly` | 编译 `src\main\index.cs` 的 `#part` 清单 → `src\main\clipboard.dll`（可选） |
-| `cli bundle` | 构建 `cli.ini` 声明的一个入口；`-All` 构建全部入口；`-Inspect` 列出哪些模块无法被内联及原因 |
+| `cli bundle` | 构建 `builder.cli.config.ps1` 声明的一个目标；`-Entry` 指定目标名；`-Inspect` 列出哪些模块无法被内联及原因 |
 
 `cli.sh` / `cli.cmd` / `cli.ps1` 三个入口行为一致，均先把工作目录切到仓库根，再把余下参数追加到 `package.ini` 中对应的命令行。
 
-`cli dev` 持续运行常驻进程，文件变化后重启；被外部停止（托盘退出、`clipboard stop`）或按 `Ctrl+C` 时结束，`config set` 引起的自动重启不触发退出。终端被直接杀掉时需手动 `clipboard stop`。行为由 `cli.ini` 的 `[dev]` 段决定：
+`cli dev` 持续运行常驻进程，文件变化后重启；被外部停止（托盘退出、`clipboard stop`）或按 `Ctrl+C` 时结束，`config set` 引起的自动重启不触发退出。终端被直接杀掉时需手动 `clipboard stop`。监视范围取自 `builder.ini` 的 `[files] Files`（`!` 前缀为排除），另加 `packages\**\*.ps1`、`builder.ini`、`builder.cli.config.ps1`、`package.ini`：
 
-- `BaseUrl`：两个通配的相对目录，`.` = 仓库根（默认），可写绝对路径。
-- `Includes` / `Excludes`：相对 `BaseUrl` 的通配，`*` 与 `?` 匹配单个文件名，`**` 递归；新增与删除也算变化，入口 dot-source 行指向的缺失文件会打印 `[!] missing:`。
+- `BaseUrl`（`builder.ini` 的 `[directories]`）：通配的基准目录，`.` = 仓库根（默认），可写绝对路径。
+- `Files`：相对 `BaseUrl` 的通配，`*` 与 `?` 匹配单个文件名，`**` 递归；新增与删除也算变化，入口 dot-source 行指向的缺失文件会打印 `[!] missing:`。
 - 清单里的 `.cs` 在启动前编译一次，之后哪边变了只重编那一边：`src/main/*.cs` → `src\main\clipboard.dll`，`src/preload/*.cs` → `src\preload\client.exe`；移出清单即不编译。编译前先停常驻进程，否则 dll 被占用。
-- `Interval`：轮询间隔（毫秒，默认 600）。连续一个间隔无变化才重启，一次保存分多步写入只重启一次。
+- `Interval`（`packages\cli\package.ini` 的 `[watch]`）：轮询间隔（毫秒，默认 600）。连续一个间隔无变化才重启，一次保存分多步写入只重启一次。
 
 `cli bench` 在 `%TEMP%` 下复制 `src\` 并把 `DataDir` 指向临时目录，可在常驻进程运行时测量捕获、保存、解析与过滤的耗时（`-Records` 改库规模，`-Json` / `-Out` 便于对比）；面板打开与粘贴注入需要真实桌面，不在其中。`cli shot` 把 `src\` 复制到 `%PUBLIC%`，写入示例历史后启动副本里的常驻进程，截取面板、托盘菜单与设置窗口。副本使用自己的命名对象（`Local\clipboard.shot.*`），已在运行的常驻进程不受影响，真实历史与配置不进入截图；`-Part` 选界面、`-Theme` 选主题、`-PreviewRow` 指定预览卡取自哪一行。
 
-`tools\` 下的脚本不 dot-source `src\` 的任何文件：`tools\utils\` 自带所需函数。
+`packages\` 下的脚本不 dot-source `src\` 的任何文件：各包自带所需函数。
 
-工具的日志都经 `tools\utils\console.ps1` 输出：`[..]` 步骤（青）、`[ok]` 完成并附耗时（绿）、`[!]` 警告（黄）、`[x]` 失败（红），明细行缩进变暗；耗时不足一秒显示毫秒。级别为 `silent < error < warn < info`：`-Quiet` 只留 `[!]` 与 `[x]`，`-Silent` 只留 `[x]`，环境变量 `CLIPBOARD_LOG_LEVEL` 可为整条 shell 指定级别（命令行开关优先），`cli dev -Timestamp` 给每行加 `HH:mm:ss`。输出被重定向、或设置了 `NO_COLOR` 时只留纯文本，`FORCE_COLOR=1` 强制保留颜色；`cli nosuchcmd` 会给出最接近的命令名。
+工具的日志都经 `packages\cli\utils\console.ps1` 输出：`[..]` 步骤（青）、`[ok]` 完成并附耗时（绿）、`[!]` 警告（黄）、`[x]` 失败（红），明细行缩进变暗；耗时不足一秒显示毫秒。级别为 `silent < error < warn < info`：`-Quiet` 只留 `[!]` 与 `[x]`，`-Silent` 只留 `[x]`，环境变量 `CLIPBOARD_LOG_LEVEL` 可为整条 shell 指定级别（命令行开关优先），`cli dev -Timestamp` 给每行加 `HH:mm:ss`。输出被重定向、或设置了 `NO_COLOR` 时只留纯文本，`FORCE_COLOR=1` 强制保留颜色；`cli nosuchcmd` 会给出最接近的命令名。
 
 `README.md` 与 `README.zh-CN.md` 是对外文档，插件与主题的说明页在 `docs\<语言>\`；`docs\release-notes\` 按标签名放每个版本的发布说明（如 `v0.5.0.md`），只用中文，GitHub 上的发布说明与该文件一致。
 
 ## 打包分发
 
-`cli build` 调用 `tools\build.ps1`，产物写入 `dist\clipboard-<version>\`（版本取自 `package.ini`）。包内有 `renderer\app.ps1`，而合进它的那些模块不再随包：窗口层在那里就是一个文件，命令要开窗时 `clipboard.ps1` 一次 dot-source 读完它。留在包外的模块（基础层，以及 `status` 这类命令不画图也要用的几个）仍以自己的文件随包。两个 C# 产品的落点和窗口层同一规则：`main\clipboard.dll` 与 `preload\client.exe`，一个进程一个目录。
+`cli build` 会跑 `builder.cli.config.ps1` 声明的每个目标，产物写入 `dist\clipboard-<version>\`（版本取自 `package.ini`）。窗口层按打包器的分块方式构建：每个入口单独求闭包，每个模块带上能到达它的入口集合，集合相同的模块才能合成一块。窗口自己的块落到 `renderer\<name>.<hash>.ps1`，多个窗口共用的块落到 `renderer\assets\<name>-<hash>.ps1`，`renderer\manifest.ini` 按加载顺序列出它们以及每块携带的模块；命令要开窗时 `clipboard.ps1` 按这份清单逐个 dot-source。只有窗口层自有的模块不再随包：基础层或 `status` 这类命令要用的模块仍以自己的文件随包，被入口声明为 external 的模块从不合并。两个 C# 产品的落点同一规则：`main\clipboard.dll` 与 `preload\client.exe`，一个进程一个目录。
 
-`cli bundle` 是同一套工具链的另一半，与 `cli build` 互不依赖：它把多个模块合成**一个入口文件**，阶段由 `cli.ini` 中该入口的 `[product.<名称>]` 链声明（`resolve`、`treeshake`、`merge`、`render`、`verify`），实现放在 `tools\bundler\plugins\`。入口、插件链与复制清单都在 `cli.ini`，与 vite 项目把输入和插件写在 `vite.config` 中同一种分工。模块边界一律取自解析器节点而不是文本：产物按每条语句的 extent 逐条取出，最后重新解析并与参与合并的模块逐项比对。`cli bundle -Inspect` 会列出 `src\` 下每个文件能否被内联（带 `param` 块、`begin`/`process`/`end` 块或 `trap` 的模块无法粘进更大的脚本），以及哪些模块调用了无法追踪的名字。标了 `Ship=1` 的入口由 `cli build` 自己跑：先合并，再与旁边的文件用同一张表压缩与改名，所以包里窗口层是一个文件（`renderer\app.ps1`），它的模块不再随包复制。
+`cli bundle` 是同一套工具链的另一半，与 `cli build` 互不依赖：它构建 `builder.cli.config.ps1` 声明的目标，阶段由每个目标的 `Plugins` 链声明（`resolve`、`treeshake`、`merge`、`render`、`verify`），实现放在 `packages\bundler\plugins\`。`Input` 可以是一个路径、一组文件，或 `key = @{ Entry = '<路径>' }` 的表；入口表从调用图取模块，不再手写文件清单。模块边界一律取自解析器节点而不是文本：产物按每条语句的 extent 逐条取出，最后重新解析并与参与合并的模块逐项比对。`cli bundle -Inspect` 会列出 `src\` 下每个文件能否被内联（带 `param` 块、`begin`/`process`/`end` 块或 `trap` 的模块无法粘进更大的脚本），以及哪些模块调用了无法追踪的名字。标了 `Ship` 的目标由 `cli build` 自己跑：先分块合并，再与旁边的文件用同一张表压缩与改名，所以包里窗口层是 `renderer\<name>.<hash>.ps1` 加 `renderer\assets\`，被合并的模块不再复制。
 
 模块可以用开头两条指令说明自己的边界：`#@use <模块 id>, ...` 列出它调用的模块，`#@export <函数>, ...` 列出其它模块可以调用它的哪些函数。它们故意写成注释：描述的是构建而不是程序，发布出去的副本照旧直接运行同一份文件、零成本，运行时也不需要理解它们。有了声明，bundler 在构建之前就能检查：调用了所属模块没导出的函数、调用了入口没带的模块（即平时只在运行时才露面的「module group too small」）、导出里写了不存在的函数、同一个名字被两个模块导出。没写声明的模块不参与校验，只会让「会被丢弃」的结论变成未知。`cli bundle -Inspect -Suggest` 会按真实调用关系打印每个模块该写的那两行，复制即可。
 
-`cli bundle -All` 构建文件里声明的全部入口：每个入口一个独立的 Windows PowerShell 进程，同时最多 `cli.ini` 的 `[build] Workers=` 个（`0` 表示按逻辑处理器数，且不超过入口数）。每个 worker 写自己的产物与自己的临时目录，日志按文件声明顺序输出，所以并行跑出来的样子与串行一致。
+`cli bundle -All` 构建文件里声明的全部目标：每个目标一个独立的 Windows PowerShell 进程，同时最多 `packages\cli\package.ini` 的 `[bundler] Workers=` 个（`0` 表示按逻辑处理器数，且不超过目标数）。每个 worker 写自己的产物与自己的临时目录，日志按文件声明顺序输出，所以并行跑出来的样子与串行一致。
 
 ```powershell
-cli build                       # 用 cli.ini
-cli build -Config other.ini     # 换一份配置
+cli build                          # builder.cli.config.ps1 + builder.ini
+cli build -Config other.ps1        # 换一份目标表
+cli build -BuilderConfig other.ini # 换一份发布描述
 ```
 
-`cli.ini` 的 `[build]` 段（也可写成顶层的 `build.OutDir=...`）：
+`builder.cli.config.ps1` 里一个目标就是一张有序表：
 
-| 键 | 默认 | 说明 |
-|---|---|---|
-| `OutDir` | `dist` | 输出目录；相对路径按仓库根解析 |
-| `Minify` | `1` | `1` = 压缩脚本与文本文件 |
-| `Rename` | `1` | `1` = 同时重命名内部函数与局部变量；`0` = 只压缩不改名 |
-| `Verify` | `1` | `1` = 打包后对产物运行一遍 CLI 测试，不通过则删掉产物并失败；套件的输出直接接到当前终端，逐分件显示进度 |
-| `Overwrite` | `1` | `1` = 覆盖同版本已存在的目录；`0` = 目录已存在时报错退出 |
-| `Zip` | `0` | `1` = 另外再打一个 `clipboard-<version>.zip` |
-
-`[copy]` 段说的是一个发布除入口产物之外还带什么（也可写成顶层的 `copy.Includes=...`）：
-
-| 键 | 默认 | 说明 |
-|---|---|---|
-| `BaseUrl` | `.` | `Includes` / `Excludes` 的相对目录；`.` = 仓库根，可写绝对路径 |
-| `Includes` | 见下 | 产物文件清单，相对 `BaseUrl` 的通配，语法同 `[dev]`；必须写出且必须含 `src/<Name>.ps1`、`.cmd`、`.sh` |
-| `Excludes` | 空 | 从产物中剔除的文件，最后应用 |
-
-同一份文件里另两段属于 `cli bundle`，`cli build` 编译 C# 产品时也读。`[product.<名称>] Chain=` 声明一类产物经过的阶段：脚本合并是 `resolve, treeshake, merge, render, verify`，C# 产品是 `cs-part, cs-compile`。`[entry.<名称>]` 是一个产物。
-
-| 入口键 | 说明 |
+| 键 | 说明 |
 |---|---|
-| `Product` | 用哪个 `[product.*]` 的链构建 |
-| `To` | 产物写到哪里，相对仓库根；C# 产品的 `To` 同时是它在包内的路径 |
-| `Kind` | `cs` = 编译 C# 而不是合并脚本，此时改用 `From` 与 `Target` |
-| `From` | 根源文件；它写的 `#part` 决定参与编译的文件，且不得指到该文件所在目录之外 |
-| `Target` | `library`（默认）或 `exe` |
-| `Append` | 声明之外再追加的文件通配 |
-| `Modules` | （脚本合并）模块清单，按加载顺序 |
-| `Keep` | （脚本合并）不许被改名的名字 |
-| `Minify` `Rename` `Treeshake` | 逐入口覆盖 `[build]` 的取值 |
+| `Preset` | `packages\cli\plugins\presets.ps1` 定义的成型配置之一；下面的键覆盖它，包括写成空值 |
+| `Plugins` | bundler 的插件链，按顺序：每个名字是 `packages\bundler\plugins\` 下的一个文件 |
+| `Kind` | `cs` 编译 C#，`script` 合并 `.ps1`（默认） |
+| `Input` | 一个路径、一组文件、一个通配，或 `key = @{ Entry = '<路径>' }` 的表；入口表从调用图取模块，不必再手写清单 |
+| `Scan` | 解析模块 id 用的通配 |
+| `Output` | 产物写到哪里，相对仓库根；C# 目标的路径同时是它在包内的路径 |
+| `ChunkOutput` | 入口型目标拆块时的命名模板（`[name]` 与 `[hash]`） |
+| `External` | 目标不带的模块：指向它的 `#@use` 边是文件边界，不算漏清单 |
+| `Ship` | `$true` = 产物属于发布：`cli build` 合并它，`builder.ini` 的 `Files` 不再复制它的源码 |
+| `Target` | C# 目标取 `library`（默认）或 `exe` |
+| `Append` | C# 目标在声明之外再追加的通配 |
+| `Keep` | 不许被改名的名字 |
+| `Minify` `Rename` `Treeshake` | 逐目标覆盖 `packages\cli\package.ini` 的 `[bundler]` |
 
-`cli bundle -Entry <名称>` 构建一个入口，`-All` 构建全部。`cli client` 与 `cli assembly` 就是入口 `client` 与 `main`，`cli build` 也走同一个调用编译它们，所以编译器参数只有一处。
+`builder.ini` 只有 electron-builder 的三个键：
 
-`[copy] Includes` 默认 `src/**/*.ps1,src/preload/*.cs,src/main/**/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,src/ipc/*.ini,scripts/**.bat`。
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `Compression` | `maximum` | `store` 原样入包，`normal` 按语法树重写每个 `.ps1`，`maximum` 另把内部函数与局部变量改短 |
+| `directories.Output` | `dist` | 发布写到哪个目录；其中的包目录名取自 `package.ini` 的 `Version` |
+| `directories.BaseUrl` | `.` | `Files` 与输出目录的相对基准；`.` = 仓库根，可写绝对路径 |
+| `files.Files` | 见下 | 产物文件清单，语法同 electron-builder：`**/*` 递归，`!` 前缀为排除 |
+
+`cli bundle -Entry <名称>` 构建一个目标，`-All` 构建全部。`cli client` 与 `cli assembly` 分别编译 `Preload` 与 `Main` 目标，`cli build` 也走同一个调用，所以编译器参数只有一处。
+
+`[files] Files` 默认 `src/**/*.ps1,src/**/*.cs,src/**/*.ini,src/**/*.cmd,src/**/*.sh,scripts/**/*.bat`。发布剔除什么用 `!` 表达；任何通配都到不了的目录（`src\data\`、`tests\`、`dist\`、`.git`）本就不在清单里。
 
 ```ini
-# 精简包：一套主题 + 带文档，不压缩不验证
-[build]
-OutDir=D:\release
-Minify=0
-Rename=0
-Verify=0
-Overwrite=1
+# 精简发布：一套主题 + 带文档，只压缩不改名
+Compression=normal
 
-[copy]
-BaseUrl=.
-Includes=src/**/*.ps1,src/preload/*.cs,src/main/**/*.cs,src/*.cmd,src/*.sh,src/themes/win11-dark.ini,src/lang/en.ini,scripts/**.bat,README.md,LICENSE,docs/**/*
-Excludes=src/plugins/item-marks.ps1
+[directories]
+Output=D:\release
+
+[files]
+Files=src/**/*.ps1,src/**/*.cs,src/**/*.cmd,src/**/*.sh,src/themes/win11-dark.ini,src/lang/en.ini,scripts/**/*.bat,README.md,LICENSE,docs/**/*,!src/plugins/item-marks.ps1
 ```
 
-每个文件怎么处理只看 `tools\bundler\assets.ps1` 的一张表：`.ps1` 压缩改名，`.cmd` / `.bat` 压缩，`.sh` 压缩，`.ini` 去注释与空行，其余原样复制；`src\preload` 下的 `.cs` 编成 `preload\client.exe`，`src\main` 下的 `.cs` 编成 `main\clipboard.dll`，产物入包、源码不入，编译器不可用时改为源码入包。表里每一行写的是一个 handler 名，handler 就是 `tools\bundler\assets\` 下的一个文件：一个带 `Convert` 块的哈希表，需要把结果交给下一个时再写 `Next`——`version` 那一行先把 `lib\base.ps1` 的版本块换成常量，再交给 `script`。落点：`src\` 下保留原路径，`src\` 外保留相对仓库根的路径，`scripts\` 摊平到包根。
+每个文件怎么处理只看 `packages\builder\assets.ps1` 的一张表：`.ps1` 按 `Compression` 处理，`.cmd` / `.bat` 压缩，`.sh` 压缩，`.ini` 去注释与空行，其余原样复制；`src\preload` 下的 `.cs` 编成 `preload\client.exe`，`src\main` 下的 `.cs` 编成 `main\clipboard.dll`，产物入包、源码不入，编译器不可用时改为源码入包。表里每一行写的是一个 handler 名，handler 就是 `packages\builder\assets\` 下的一个文件：一个带 `Convert` 块的哈希表，需要把结果交给下一个时再写 `Next`——`version` 那一行先把 `main\utils\base.ps1` 的版本块换成常量，再交给 `script`。落点：`src\` 下保留原路径，`src\` 外保留相对仓库根的路径，`scripts\` 摊平到包根。
 
-产物中的 `.ps1` 删注释与缩进，`Rename=1` 时内部函数与局部变量改名；`.ini` 只剩键值（主题格式见[主题](#主题)）。每步后重新解析，出现语法错误即中止。
+产物中的 `.ps1` 删注释与缩进，`Compression=maximum` 时内部函数与局部变量改名；`.ini` 只剩键值（主题格式见[主题](#主题)）。每步后重新解析，出现语法错误即中止。
 
-默认清单之外：`src\data\`、`src\clipboard.ini`、`tests\`、`tools\`、`cli.ini`、`package.ini`、`dist\`、`.git`。带文档的包在清单里加上 `README.md,LICENSE,docs/**/*`，文档按相对仓库根的路径入包。
+默认清单之外：`src\data\`、`src\clipboard.ini`、`tests\`、`packages\`、`builder.ini`、`builder.cli.config.ps1`、`test.config.ps1`、`package.ini`、`dist\`、`.git`。带文档的发布在清单里加上 `README.md,LICENSE,docs/**/*`，文档按相对仓库根的路径入包。
 
 ## 持续集成与发布
 

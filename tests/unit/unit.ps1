@@ -63,7 +63,7 @@ if ($isPackaged) {
 # The tooling's logger prints every step a tool runs, and its duration helper is what the rows
 # below read. It is loaded here, at the top, because a hook runs in the harness scope and its
 # functions would not reach the checks.
-. (Join-Path $repoRoot 'tools\utils\console.ps1')
+. (Join-Path $repoRoot 'packages\cli\utils\console.ps1')
 $script:results = New-Object System.Collections.Generic.List[object]
 # the label every row prints with
 $script:Harness.Part = 'unit\unit'
@@ -94,14 +94,15 @@ function Use-Drawing {
   }
 }
 
-# A sandbox is a throw-away copy of the tool (script + lib + plugins + themes + lang): the
-# settings file sits next to the script, so DataDir= and the store stay inside the sandbox.
-# main\ comes along because the type library lives there - the dll, or its sources.
+# A sandbox is a throw-away copy of the tool (script + the three sections + shared + plugins +
+# themes + lang): the settings file sits next to the script, so DataDir= and the store stay
+# inside the sandbox. main\ comes along because the type library lives there - the dll, or its
+# sources.
 function New-Sandbox([string]$name) {
   $dir = Join-Path $tmpRoot $name
   New-Item -ItemType Directory -Path $dir -Force | Out-Null
   Copy-Item -LiteralPath $clipPs1 -Destination $dir -Force
-  foreach ($sub in @('lib', 'utils', 'schema', 'plugins', 'themes', 'lang', 'ipc', 'main', 'renderer')) {
+  foreach ($sub in @('main', 'preload', 'renderer', 'shared', 'plugins', 'themes', 'lang')) {
     $src = Join-Path $srcRoot $sub
     if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $dir -Recurse -Force }
   }
@@ -119,28 +120,16 @@ function New-FakeSandbox([string]$name) {
   $dir = New-Sandbox $name
   $fake = Join-Path $repoRoot 'tests\lib\fake-clip.ps1'
   if (Test-Path -LiteralPath $fake) {
-    Copy-Item -LiteralPath $fake -Destination (Join-Path $dir 'lib\clip.ps1') -Force
+    Copy-Item -LiteralPath $fake -Destination (Join-Path $dir 'main\utils\clip.ps1') -Force
   }
   return $dir
-}
-
-# ---------------------------------------------------------------- cli.ini
-# cli.ini (repository root) is the harness configuration, read with the parser the tool itself
-# uses: utils\ini.ps1 is pure, and the repository copy is loaded rather than $srcRoot, so this
-# also works when -Source points at a minified package whose function names are rewritten.
-$repoIniParser = Join-Path $defaultSource 'utils\ini.ps1'
-if (Test-Path -LiteralPath $repoIniParser) { . $repoIniParser }
-$script:TestIni = @{}
-$testIniPath = Join-Path $repoRoot 'cli.ini'
-if ((Test-Path -LiteralPath $testIniPath) -and (Get-Command Read-IniDoc -ErrorAction SilentlyContinue)) {
-  $script:TestIni = (Read-IniDoc ([IO.File]::ReadAllLines($testIniPath, [Text.Encoding]::UTF8))).Map
 }
 
 # One CLI call in its own process: a command has to start from nothing, the way the user's shell
 # does. (Sharing one process and running each call in a runspace looked like a 3.4 s -> 1.0 s
 # win, but a plugin loaded there calls back into the tool through a script block whose session
 # state is stale, so `pin` lost Set-RecordMark. Speed comes from running sandboxes side by side
-# instead - see the [test] section of cli.ini.)
+# instead - see test.config.ps1.)
 function Clip([string]$sandbox, [string[]]$cliArgs) {
   $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', (Join-Path $sandbox 'clipboard.ps1')) + $cliArgs
   $watch = [Diagnostics.Stopwatch]::StartNew()
@@ -201,29 +190,37 @@ if (-not (Test-MutexFree 'Local\clipboard.daemon')) {
 try {
 
   # ------------------------------------------------------------ structure guards
-  # The program is one entry file plus lib\ modules that are dot-sourced into a single
-  # scope. These assertions keep that contract from decaying: a module must not derive
-  # paths from its own location, must not take parameters, and must not redefine a name
-  # another module already owns. The rows that read a name or a size out of the source run
-  # for the readable copy only, because a packaged one renames its internals.
+  # The program is one entry file plus the modules of the three sections and shared\, all
+  # dot-sourced into a single scope. These assertions keep that contract from decaying: a module
+  # must not derive paths from its own location, must not take parameters, and must not
+  # redefine a name another module already owns. The rows that read a name or a size out of the
+  # source run for the readable copy only, because a packaged one renames its internals.
   Describe 'struct' {
     # decided while the rows are collected, because that is when -Skip is read
     $script:StructMinified = ''
     if ($isPackaged) { $script:StructMinified = 'a packaged copy renames its internals' }
 
-    # the files the rules apply to: lib\, the pure helpers in utils\ and the two schema files
-    # (the schema plugins\ directory holds manifests, not dot-sourced modules)
+    # the files the rules apply to: the modules of main\, preload\ and renderer\, the pure
+    # helpers in shared\utils\ and the two schema files (shared\schema\plugins\ holds
+    # manifests, not dot-sourced modules)
     BeforeAll {
       $script:StructEntryPath = Join-Path $srcRoot 'clipboard.ps1'
-      $script:StructLibPath = Join-Path $srcRoot 'lib'
-      # the windows sit under renderer\src\windows: a check that reads the panel's source asks
-      # there, and the modules that stayed in lib keep answering from lib
+      # most modules sit in main\utils\, which is also the folder the rows below read a file
+      # by name from; the flat list adds the other sections so a guard sees every module
+      $script:StructLibPath = Join-Path $srcRoot 'main\utils'
+      # the three windows sit under renderer\src\windows; their parts (the drawing, the editor,
+      # the geometry) under renderer\src\components, and the reusable widgets with them
       $script:StructWinPath = Join-Path $srcRoot 'renderer\src\windows'
+      $script:StructCompPath = Join-Path $srcRoot 'renderer\src\components'
+      $script:StructRenderUtilsPath = Join-Path $srcRoot 'renderer\src\utils'
       $files = @()
-      if (Test-Path -LiteralPath $script:StructLibPath) { $files = @(Get-ChildItem -LiteralPath $script:StructLibPath -Filter '*.ps1' -File -Recurse | Sort-Object -Property Name) }
-      $utilsPath = Join-Path $srcRoot 'utils'
+      foreach ($section in @('main\utils', 'preload\utils', 'renderer\src\utils')) {
+        $path = Join-Path $srcRoot $section
+        if (Test-Path -LiteralPath $path) { $files += @(Get-ChildItem -LiteralPath $path -Filter '*.ps1' -File -Recurse | Sort-Object -Property Name) }
+      }
+      $utilsPath = Join-Path $srcRoot 'shared\utils'
       if (Test-Path -LiteralPath $utilsPath) { $files += @(Get-ChildItem -LiteralPath $utilsPath -Filter '*.ps1' -File -Recurse | Sort-Object -Property Name) }
-      $schemaPath = Join-Path $srcRoot 'schema'
+      $schemaPath = Join-Path $srcRoot 'shared\schema'
       if (Test-Path -LiteralPath $schemaPath) { $files += @(Get-ChildItem -LiteralPath $schemaPath -Filter '*.ps1' -File | Sort-Object -Property Name) }
       $script:StructFiles = $files
     }
@@ -231,17 +228,17 @@ try {
     Describe 'module set' {
       It 'every required module exists' {
         # the entry file names these by relative path; a package must carry all of them
-        $requiredLib = @('lib\base', 'lib\native', 'renderer\src\windows\focus', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
-          'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'renderer\src\windows\picker-geom', 'renderer\src\windows\picker-live', 'lib\text', 'renderer\src\windows\anim',
-          'renderer\src\windows\picker-draw', 'renderer\src\windows\picker-edit', 'renderer\src\windows\media-render', 'renderer\src\windows\pinlist', 'renderer\src\windows\preview', 'renderer\src\windows\picker', 'renderer\src\windows\tray-menu', 'lib\serve', 'lib\shortcut',
-          'renderer\src\core\draw', 'renderer\src\core\layout', 'renderer\src\core\widgets', 'renderer\src\core\component', 'renderer\src\core\framework', 'renderer\src\core\views', 'renderer\src\core\setup', 'renderer\src\core\reactive',
-          'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'renderer\src\windows\settings-draw', 'renderer\src\windows\settings-edit', 'renderer\src\windows\settings',
-          'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch', 'lib\ipc',
+        $requiredLib = @('main\utils\base', 'main\utils\native', 'renderer\src\utils\focus', 'renderer\src\utils\theme-stub', 'main\utils\settings', 'main\utils\marks', 'main\utils\ordering',
+          'main\utils\media', 'main\utils\cfhtml', 'main\utils\clip', 'main\utils\blobs', 'main\utils\store', 'main\utils\migrate', 'main\utils\transfer', 'main\utils\modifiers', 'main\utils\apprules', 'main\utils\entry', 'main\utils\query', 'main\utils\select', 'renderer\src\components\picker-geom', 'renderer\src\components\picker-live', 'renderer\src\utils\text', 'renderer\src\utils\anim',
+          'renderer\src\components\picker-draw', 'renderer\src\components\picker-edit', 'renderer\src\components\media-render', 'renderer\src\components\pinlist', 'renderer\src\components\preview', 'renderer\src\windows\picker', 'renderer\src\windows\tray-menu', 'main\utils\serve', 'main\utils\shortcut',
+          'renderer\src\core\draw', 'renderer\src\core\layout', 'renderer\src\components\widgets', 'renderer\src\core\component', 'renderer\src\core\framework', 'renderer\src\components\views', 'renderer\src\core\setup', 'renderer\src\core\reactive',
+          'renderer\src\utils\settings-model', 'renderer\src\utils\settings-types', 'renderer\src\utils\settings-vm', 'preload\utils\hotkey-record', 'renderer\src\components\settings-draw', 'renderer\src\components\settings-edit', 'renderer\src\windows\settings',
+          'main\utils\config', 'main\utils\config-template', 'main\utils\usage', 'main\utils\dispatch', 'preload\utils\ipc',
           'renderer\src\store\define', 'renderer\src\store\history-store',
-          'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey',
-          'utils\query-words', 'utils\transfer', 'utils\apprules', 'utils\fileio',
-          'utils\hash', 'utils\cfhtml', 'utils\image',
-          'schema\clipboard', 'schema\theme')
+          'shared\utils\ini', 'shared\utils\inifile', 'shared\utils\schema', 'shared\utils\log', 'shared\utils\time', 'shared\utils\format', 'shared\utils\dpi', 'shared\utils\hotkey',
+          'shared\utils\query-words', 'shared\utils\transfer', 'shared\utils\apprules', 'shared\utils\fileio',
+          'shared\utils\hash', 'shared\utils\cfhtml', 'shared\utils\image',
+          'shared\schema\clipboard', 'shared\schema\theme')
         $missingLib = @()
         foreach ($m in $requiredLib) {
           if (-not (Test-Path -LiteralPath (Join-Path $srcRoot ($m + '.ps1')))) { $missingLib += $m }
@@ -253,13 +250,15 @@ try {
         # the plugin layer is three files; a package carries all of them or none (plugins.ps1
         # is the optional one, and the other two mean nothing without it)
         $pluginLayer = @('plugins', 'plugin-settings', 'plugin-marks')
-        $pluginPresent = @($pluginLayer | Where-Object { Test-Path -LiteralPath (Join-Path $script:StructLibPath ($_ + '.ps1')) })
+        $pluginDir = Join-Path $script:StructLibPath 'plugin'
+        $pluginPresent = @($pluginLayer | Where-Object { Test-Path -LiteralPath (Join-Path $pluginDir ($_ + '.ps1')) })
         Expect (($pluginPresent.Count -eq 0) -or ($pluginPresent.Count -eq $pluginLayer.Count)) ($pluginPresent -join ', ')
       }
 
       It 'modules are plain dot-sourced scripts' {
-        # $PSScriptRoot inside lib\ points at lib\, so any path built from it is one level
-        # deep. Look at the code, not at the prose: the module headers explain this rule.
+        # $PSScriptRoot inside a section folder points at that folder, so any path built from
+        # it is one level deep. Look at the code, not at the prose: the module headers explain
+        # this rule.
         $badParse = @()
         $badParam = @()
         $badPath = @()
@@ -279,7 +278,7 @@ try {
 
       It 'no duplicate function names' {
         # a duplicate top-level name lets one module silently overwrite another (shared
-        # scope); theme-stub.ps1 is the documented exception - lib/themes.ps1 replaces it
+        # scope); theme-stub.ps1 is the documented exception - renderer/src/utils/themes.ps1 replaces it
         $owner = @{}
         $dups = @()
         foreach ($f in @(Get-Item -LiteralPath $script:StructEntryPath) + $script:StructFiles) {
@@ -318,10 +317,10 @@ try {
       It 'stays an entry point' {
         $entryLines = @([IO.File]::ReadAllLines($script:StructEntryPath)).Count
         # 250, not 224: the window layer keeps its own list here, because a package carries it as
-        # one file (renderer\app.ps1) and a working copy loads the same list module by module -
-        # one list, two shapes. The entry also decides whether the resident answers the command
-        # instead of a fresh process (the proxy block), and `status` needs a group of its own
-        # for the panel geometry it prints
+        # the chunks renderer\manifest.ini names and a working copy loads the same list module by
+        # module - one list, two shapes. The entry also decides whether the resident answers the
+        # command instead of a fresh process (the proxy block), and `status` needs a group of its
+        # own for the panel geometry it prints
         Expect ($entryLines -le 250) ([string]$entryLines + ' lines')
       } -Skip $script:StructMinified
 
@@ -337,7 +336,7 @@ try {
         # knows and the table does not would reach the default group and fail at run time, so
         # the two lists have to line up; the group lists in turn have to name files that exist.
         $entryText = [IO.File]::ReadAllText($script:StructEntryPath)
-        $dispatchText = [IO.File]::ReadAllText((Join-Path $srcRoot 'lib\dispatch.ps1'))
+        $dispatchText = [IO.File]::ReadAllText((Join-Path $srcRoot 'main\utils\dispatch.ps1'))
         $script:StructDispatched = @([regex]::Matches($dispatchText, "(?m)^  '([a-z0-9-]+)' \{") | ForEach-Object { $_.Groups[1].Value })
         $groupBlock = ($entryText -split '\$groupModules = @\{')[1]
         if ($groupBlock) { $groupBlock = ($groupBlock -split "\r?\n\}")[0] } else { $groupBlock = '' }
@@ -369,7 +368,7 @@ try {
       # what may cross the process boundary is one file, read by both halves; these two cases
       # say the rule holds and that no built-in command can appear without stating its place
       It 'the channel table decides what may cross' {
-        . (Join-Path $srcRoot 'lib\proxy.ps1')
+        . (Join-Path $srcRoot 'main\utils\proxy.ps1')
         Expect (Test-Proxyable 'list' $srcRoot) 'list is not proxied'
         Expect (Test-Proxyable 'put' $srcRoot) 'put is not proxied'
         Expect (-not (Test-Proxyable 'config' $srcRoot)) 'config is proxied'
@@ -384,7 +383,7 @@ try {
       It 'every built-in command states whether it crosses' {
         # a command with no section is treated as a plugin verb, so leaving one out would send
         # it over the pipe by accident the day it starts moving settings or the store
-        . (Join-Path $srcRoot 'lib\proxy.ps1')
+        . (Join-Path $srcRoot 'main\utils\proxy.ps1')
         $table = Get-ProxyChannels $srcRoot
         $unlisted = @($script:StructTableKeys | Where-Object { -not $table.Remote.ContainsKey($_) })
         Expect ($script:StructTableKeys.Count -ge 15 -and $unlisted.Count -eq 0) ($unlisted -join ', ')
@@ -401,9 +400,9 @@ try {
         $groupBlock = ($entryText -split '\$groupModules = @\{')[1]
         if ($groupBlock) { $groupBlock = ($groupBlock -split "\r?\n\}")[0] }
         $need = @{
-          'status' = @('renderer\src\windows\picker-geom')
-          'list'   = @('lib\store')
-          'config' = @('lib\config-template')
+          'status' = @('renderer\src\components\picker-geom')
+          'list'   = @('main\utils\store')
+          'config' = @('main\utils\config-template')
         }
         foreach ($cmd in @($need.Keys)) {
           $line = [regex]::Match($entryText, "(?m)^  '" + $cmd + "'\s*= @\(([^)]*)\)")
@@ -445,20 +444,21 @@ try {
         Expect (Test-LogEnabled 'info') 'info dropped at info'
       }
       It 'ships with the repo' {
-        $tooling = @('package.ini', 'cli.ini', 'cli.ps1', 'cli.cmd', 'cli.sh',
-          'tools\build.ps1', 'tools\dev.ps1', 'tools\test.ps1', 'tools\bench.ps1', 'tools\shot.ps1',
-          'tools\build-client.ps1', 'tools\build-assembly.ps1',
-          'tools\utils\minify.ps1', 'tools\utils\ini.ps1', 'tools\utils\globs.ps1', 'tools\utils\csc.ps1',
-          'tools\utils\console.ps1',
-          'tools\bundler\bundler.ps1', 'tools\bundler\assets.ps1', 'tools\bundler\products.ps1',
-          'tools\bundler\assets\script.ps1', 'tools\bundler\assets\version.ps1',
-          'tools\bundler\assets\batch.ps1', 'tools\bundler\assets\shell.ps1',
-          'tools\bundler\assets\ini.ps1', 'tools\bundler\assets\copy.ps1',
-          'tools\bundler\lib\ast.ps1', 'tools\bundler\lib\graph.ps1', 'tools\bundler\lib\emit.ps1',
-          'tools\bundler\plugins\10-resolve.ps1', 'tools\bundler\plugins\20-treeshake.ps1',
-          'tools\bundler\plugins\30-merge.ps1', 'tools\bundler\plugins\40-render.ps1',
-          'tools\bundler\plugins\50-cs-part.ps1', 'tools\bundler\plugins\60-cs-compile.ps1',
-          'tools\bundler\plugins\90-verify.ps1',
+        $tooling = @('package.ini', 'builder.ini', 'builder.cli.ps1', 'builder.cli.config.ps1', 'test.config.ps1', 'cli.ps1', 'cli.cmd', 'cli.sh',
+          'packages\builder\package.ps1', 'packages\cli\watch.ps1', 'packages\cli\bench.ps1', 'packages\cli\shot.ps1',
+          'packages\cli\client.ps1', 'packages\cli\assembly.ps1',
+          'packages\test\index.ps1', 'packages\test\config.ps1', 'packages\test\utils\console.ps1',
+          'packages\cli\utils\minify.ps1', 'packages\cli\utils\ini.ps1', 'packages\cli\utils\globs.ps1', 'packages\cli\utils\csc.ps1',
+          'packages\cli\utils\console.ps1',
+          'packages\bundler\bundler.ps1', 'packages\builder\assets.ps1',
+          'packages\builder\assets\script.ps1', 'packages\builder\assets\version.ps1',
+          'packages\builder\assets\batch.ps1', 'packages\builder\assets\shell.ps1',
+          'packages\builder\assets\ini.ps1', 'packages\builder\assets\copy.ps1',
+          'packages\bundler\lib\ast.ps1', 'packages\bundler\lib\graph.ps1', 'packages\bundler\lib\emit.ps1',
+          'packages\bundler\plugins\10-resolve.ps1', 'packages\bundler\plugins\20-treeshake.ps1',
+          'packages\bundler\plugins\30-merge.ps1', 'packages\bundler\plugins\40-render.ps1',
+          'packages\bundler\plugins\50-cs-part.ps1', 'packages\bundler\plugins\60-cs-compile.ps1',
+          'packages\bundler\plugins\90-verify.ps1',
           'src\main\index.cs', 'src\main\search\search.cs',
           'src\preload\client.cs', 'src\main\ui\win.cs')
         $missingTool = @()
@@ -468,18 +468,22 @@ try {
         Expect ($missingTool.Count -eq 0) ($missingTool -join ', ')
       } -Skip $script:StructMinified
 
-      # a product names the cli.ini entry that compiles it. Renaming an entry without this table
-      # leaves the .cs travelling as data and the product missing, which no test would notice:
-      # the package still starts, a second slower per command.
-      It 'every product names a C# entry cli.ini declares' {
-        . (Join-Path $repoRoot 'tools\utils\ini.ps1')
-        . (Join-Path $repoRoot 'tools\bundler\products.ps1')
-        $cfg = Import-IniMap (Join-Path $repoRoot 'cli.ini')
+      # every C# target names plugins that exist. A renamed plugin file with the config left alone
+      # fails only at packaging time, on one target, deep in a log.
+      It 'every C# target names a plugin that exists' {
+        $doc = & (Join-Path $repoRoot 'builder.cli.config.ps1')
+        $pluginDir = Join-Path $repoRoot 'packages\bundler\plugins'
         $bad = @()
-        foreach ($p in @(Get-ProductList)) {
-          $kind = 'entry.' + [string]$p.Entry + '.Kind'
-          if (-not $cfg.ContainsKey($kind)) { $bad += ([string]$p.Entry + ': no entry'); continue }
-          if ([string]$cfg[$kind] -ne 'cs') { $bad += ([string]$p.Entry + ': not Kind=cs') }
+        foreach ($name in @($doc.Keys)) {
+          $t = $doc[$name]
+          if (-not $t.Contains('Kind') -or [string]$t['Kind'] -ne 'cs') { continue }
+          if (-not $t.Contains('Plugins')) { $bad += ([string]$name + ': no Plugins'); continue }
+          foreach ($one in @(([string]$t['Plugins']) -split '[,;]')) {
+            $p = $one.Trim()
+            if (-not $p) { continue }
+            $hit = @(Get-ChildItem -LiteralPath $pluginDir -File -Filter ('*-' + $p + '.ps1'))
+            if ($hit.Count -ne 1) { $bad += ([string]$name + ': no plugin ' + $p) }
+          }
         }
         Expect ($bad.Count -eq 0) ($bad -join ', ')
       } -Skip $script:StructMinified
@@ -487,10 +491,11 @@ try {
       # every row of the file table names a handler that exists. A row pointing at a name with
       # no file behind it fails only at packaging time, on one kind of file, deep in a log.
       # 'product' is the exception and no handler: it marks a file whose folder compiles into
-      # one, which products.ps1 answers long before this loop sees the file.
+      # one, which the C# targets of builder.cli.config.ps1 answer long before this loop sees
+      # the file.
       It 'every file handler has a plugin behind it' {
-        . (Join-Path $repoRoot 'tools\bundler\assets.ps1')
-        $dir = Join-Path $repoRoot 'tools\bundler\assets'
+        . (Join-Path $repoRoot 'packages\builder\assets.ps1')
+        $dir = Join-Path $repoRoot 'packages\builder\assets'
         $missing = @()
         foreach ($name in @(Get-AssetHandlerNames)) {
           if ($name -eq 'product') { continue }
@@ -516,7 +521,7 @@ try {
       It 'ini files use lower case sections and PascalCase keys' {
         # every tracked ini follows the shared convention
         $badIni = @()
-        foreach ($iniRel in @('package.ini', 'cli.ini', 'src\themes\win11-dark.ini', 'src\themes\win11-light.ini')) {
+        foreach ($iniRel in @('package.ini', 'builder.ini', 'src\themes\win11-dark.ini', 'src\themes\win11-light.ini')) {
           $iniFile = Join-Path $repoRoot $iniRel
           if (-not (Test-Path -LiteralPath $iniFile)) { $badIni += ($iniRel + ': missing'); continue }
           foreach ($line in [IO.File]::ReadAllLines($iniFile)) {
@@ -536,9 +541,9 @@ try {
 
       # the renamer replaces a variable by its parsed extent, and a splat's extent starts at
       # the '@': rebuilding it as `$name` turns `f @h` into `f $h`, a positional argument
-      if (Test-Path -LiteralPath (Join-Path $repoRoot 'tools\utils\minify.ps1')) {
+      if (Test-Path -LiteralPath (Join-Path $repoRoot 'packages\cli\utils\minify.ps1')) {
         It 'the renamer keeps a splat a splat' {
-          . (Join-Path $repoRoot 'tools\utils\minify.ps1')
+          . (Join-Path $repoRoot 'packages\cli\utils\minify.ps1')
           $tmpIn = Join-Path ([IO.Path]::GetTempPath()) ('splat-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.ps1')
           $tmpOut = $tmpIn + '.min.ps1'
           try {
@@ -555,9 +560,9 @@ try {
       # the bundler merges modules by their syntax tree, so the three things a wrong merge
       # breaks first are its own checks: a module that cannot be inlined, the order the merge
       # emits, and a definition that went missing between the modules and the bundle
-      if (Test-Path -LiteralPath (Join-Path $repoRoot 'tools\bundler\lib\ast.ps1')) {
+      if (Test-Path -LiteralPath (Join-Path $repoRoot 'packages\bundler\lib\ast.ps1')) {
         It 'the bundler refuses a module it cannot inline' {
-          . (Join-Path $repoRoot 'tools\bundler\lib\ast.ps1')
+          . (Join-Path $repoRoot 'packages\bundler\lib\ast.ps1')
           $withParam = Get-BundleParse ("param(`$x)" + "`r`n" + 'function f { }')
           $plain = Get-BundleParse 'function f { }'
           $withTrap = Get-BundleParse ('function f { }' + "`r`n" + 'trap { }')
@@ -568,8 +573,8 @@ try {
         }
 
         It 'the bundler emits the modules in the order the list names' {
-          . (Join-Path $repoRoot 'tools\bundler\lib\ast.ps1')
-          . (Join-Path $repoRoot 'tools\bundler\lib\emit.ps1')
+          . (Join-Path $repoRoot 'packages\bundler\lib\ast.ps1')
+          . (Join-Path $repoRoot 'packages\bundler\lib\emit.ps1')
           $first = @{ Ast = (Get-BundleParse 'function First { }').Ast; Functions = @('First'); Kept = $null }
           $second = @{ Ast = (Get-BundleParse 'function Second { }').Ast; Functions = @('Second'); Kept = $null }
           $chunk = New-BundleChunk @($first, $second)
@@ -578,8 +583,8 @@ try {
         }
 
         It 'the bundler notices a definition missing from the bundle' {
-          . (Join-Path $repoRoot 'tools\bundler\lib\ast.ps1')
-          . (Join-Path $repoRoot 'tools\bundler\lib\emit.ps1')
+          . (Join-Path $repoRoot 'packages\bundler\lib\ast.ps1')
+          . (Join-Path $repoRoot 'packages\bundler\lib\emit.ps1')
           $expected = @{ Functions = @('First'); Commands = @(); Shapes = @('FunctionDefinitionAst') }
           $same = Get-BundleFingerprint 'function First { }'
           $missing = Get-BundleFingerprint 'function Other { }'
@@ -588,8 +593,8 @@ try {
         }
 
         It 'the bundler reads import and export declarations from tokens, not from text' {
-          . (Join-Path $repoRoot 'tools\bundler\lib\ast.ps1')
-          . (Join-Path $repoRoot 'tools\bundler\lib\surface.ps1')
+          . (Join-Path $repoRoot 'packages\bundler\lib\ast.ps1')
+          . (Join-Path $repoRoot 'packages\bundler\lib\surface.ps1')
           $text = ('#@use renderer/src/core/layout' + "`r`n" + '#@export New-UiBox, Get-UiStack' + "`r`n" +
             'function New-UiBox { }' + "`r`n" + 'Get-UiStack' + "`r`n" + '$note = "#@export NotAFunction"')
           $decl = Get-BundleDirectives (Get-BundleParse $text)
@@ -600,7 +605,7 @@ try {
         # a directive is only a directive when it is a real line comment: a "#part" inside a
         # string or a block comment must not pull a file into the compile set
         It 'the C# part scanner ignores a #part that is not a line comment' {
-          . (Join-Path $repoRoot 'tools\bundler\plugins\50-cs-part.ps1')
+          . (Join-Path $repoRoot 'packages\bundler\plugins\50-cs-part.ps1')
           $tmpIn = Join-Path ([IO.Path]::GetTempPath()) ('parts-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.cs')
           try {
             $q = [string][char]34
@@ -621,8 +626,8 @@ try {
         }
 
         It 'the bundler refuses a call to a function the owner does not export' {
-          . (Join-Path $repoRoot 'tools\bundler\lib\ast.ps1')
-          . (Join-Path $repoRoot 'tools\bundler\lib\surface.ps1')
+          . (Join-Path $repoRoot 'packages\bundler\lib\ast.ps1')
+          . (Join-Path $repoRoot 'packages\bundler\lib\surface.ps1')
           $owner = @{ Id = 'a'; Ast = (Get-BundleParse 'function Helper { }').Ast; Functions = @('Helper'); Uses = @(); Exports = @() }
           $caller = @{ Id = 'b'; Ast = (Get-BundleParse 'Helper').Ast; Functions = @(); Uses = @('a'); Exports = @() }
           $open = Get-BundleSurfaceReport @($owner, $caller)
@@ -637,8 +642,8 @@ try {
       }
 
       It 'the program and the tooling parse ini the same way' {
-        # The program and the tooling each carry an ini parser (src\utils\ini.ps1 + inifile.ps1
-        # and tools\utils\ini.ps1). The rules are the same on paper; this keeps them the same in
+        # The program and the tooling each carry an ini parser (src\shared\utils\ini.ps1 + inifile.ps1
+        # and packages\cli\utils\ini.ps1). The rules are the same on paper; this keeps them the same in
         # fact, because a rule that holds for clipboard.ini and not for cli.ini fails silently.
         # Both files define Read-IniDoc, so the program copy is parsed first and then replaced
         # by the tool copy. The two settings files need no test here: every command validates
@@ -647,9 +652,9 @@ try {
           '# a comment', '; another', '[section]', 'Key=value', 'Quoted="a b"',
           'Empty=', 'NoEquals', '  padded  =  text  ', 'Dup=1', 'Dup=2', 'Top=1'
         )
-        . (Join-Path $defaultSource 'utils\ini.ps1')
+        . (Join-Path $defaultSource 'shared\utils\ini.ps1')
         $programDoc = Read-IniDoc $iniSample
-        . (Join-Path $repoRoot 'tools\utils\ini.ps1')
+        . (Join-Path $repoRoot 'packages\cli\utils\ini.ps1')
         $toolDoc = Read-IniDoc $iniSample
         $iniDiff = @()
         foreach ($k in @($programDoc.Map.Keys)) {
@@ -666,7 +671,7 @@ try {
       } -Skip $script:StructMinified
     }
 
-    # The panel takes the foreground when it opens (renderer/src/windows/focus.ps1), so the keyboard and the
+    # The panel takes the foreground when it opens (renderer/src/utils/focus.ps1), so the keyboard and the
     # focus are real: the list starts with them and the filter row gets them as soon as the user
     # types. Closing hands the foreground back where it came from.
     Describe 'panel' {
@@ -675,8 +680,8 @@ try {
         # that run while it is up (picker-live.ps1). The checks below ask what the code does,
         # not which of the two holds it.
         $script:StructPickerText = [IO.File]::ReadAllText((Join-Path $script:StructWinPath 'picker.ps1')) + "`n" +
-          [IO.File]::ReadAllText((Join-Path $script:StructWinPath 'picker-live.ps1'))
-        $script:StructDrawText = [IO.File]::ReadAllText((Join-Path $script:StructWinPath 'picker-draw.ps1'))
+          [IO.File]::ReadAllText((Join-Path $script:StructCompPath 'picker-live.ps1'))
+        $script:StructDrawText = [IO.File]::ReadAllText((Join-Path $script:StructCompPath 'picker-draw.ps1'))
         $winText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'native.ps1'))
         # the platform C# is compiled from src\main (the #part list), and a package ships only
         # the compiled main\clipboard.dll - so the check reads every C# source of the
@@ -699,7 +704,7 @@ try {
       }
 
       It 'is shown once, non-modally' {
-        $showHits = ([regex]::Matches($script:StructPickerText, '(?m)^\s*\$form\.Show\(\)\s*$')).Count
+        $showHits = ([regex]::Matches($script:StructPickerText, '(?m)^\s*\[void\]\(Show-AppWindow ''picker'' -NoActivate\)\s*$')).Count
         Expect ($showHits -eq 1) ([string]$showHits + ' call(s)')
       }
 
@@ -710,7 +715,7 @@ try {
         Expect ($script:StructWinText -match '(?s)if \(!Activates\) \{ cp\.ExStyle \|= 0x08000000; \}') 'WS_EX_NOACTIVATE is unconditional'
         Expect ($script:StructPickerText -match '\$form\.Activates = \$true') 'the panel does not ask for the foreground'
         Expect (-not ($script:StructPickerText -match 'Cb\.KeyHook|Enable-KeyHook|Set-InputMode')) 'a keyboard hook is still wired into the picker'
-        Expect ($script:StructPickerText -match '(?s)\$form\.Show\(\).{0,400}Take-Foreground \$form\.Handle') 'the panel never takes the foreground'
+        Expect ($script:StructPickerText -match '(?s)Show-AppWindow ''picker'' -NoActivate.{0,400}Take-Foreground \$form\.Handle') 'the panel never takes the foreground'
       }
 
       It 'hands the foreground back when it closes' {
@@ -733,7 +738,7 @@ try {
         # the panel is refused the foreground while another process owns it, and the documented
         # workaround (AttachThreadInput) is worth writing once, not twice
         Expect ($script:StructPickerText -match 'Take-Foreground') 'the paste does not use Take-Foreground'
-        $khText = [IO.File]::ReadAllText((Join-Path $script:StructWinPath 'focus.ps1'))
+        $khText = [IO.File]::ReadAllText((Join-Path $script:StructRenderUtilsPath 'focus.ps1'))
         Expect ($khText -match '(?s)function Take-Foreground') 'Take-Foreground missing'
         Expect ($khText -match '(?s)function Take-Foreground[^\r\n]*\{(?:(?!function ).){0,1600}AttachThreadInput') 'Take-Foreground never attaches the queues'
       }
@@ -741,14 +746,14 @@ try {
       It 'the foreground is checked again after the panel hides' {
         # hiding the panel can leave another window in front - the keys only mean anything while
         # the target still has it, so the check cannot be left at the moment of the hand-over
-        Expect ($script:StructPickerText -match '(?s)\$form\.Hide\(\).{0,600}GetForegroundWindow') 'the foreground is not re-checked after the panel hid'
+        Expect ($script:StructPickerText -match '(?s)Hide-AppWindow ''picker''.{0,600}GetForegroundWindow') 'the foreground is not re-checked after the panel hid'
       }
 
       It 'a modifier still held at the timeout is released' {
         # Control.ModifierKeys reads the calling thread's key state, so waiting on it alone would
         # send Ctrl+V with Alt still down
         $modText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'modifiers.ps1'))
-        $khText = [IO.File]::ReadAllText((Join-Path $script:StructWinPath 'focus.ps1'))
+        $khText = [IO.File]::ReadAllText((Join-Path $script:StructRenderUtilsPath 'focus.ps1'))
         Expect ($modText -match '(?s)function Get-HeldModifier\s*\{.{0,400}GetAsyncKeyState') 'the modifier wait does not read the real key state'
         Expect ($modText -match 'function Test-Modifiers-Up\s*\{\s*return \(\(Get-HeldModifier\)') 'Test-Modifiers-Up still reads the thread key state'
         Expect ($khText -match '(?s)function Release-HeldModifiers') 'no Release-HeldModifiers'
@@ -862,9 +867,12 @@ try {
         Expect ($script:StructWinText -match 'SetEditSelection') 'the edit control selection is never put back'
         Expect ($script:StructWinText -match "Kind = 'edit'") 'the saved selection has no edit control form'
         Expect ($script:StructPickerText -match 'Save-UiaSelection \$prev \$script:PrevFocus') 'the picker never hands the focus control to the save'
-        $iBack = $script:StructPickerText.IndexOf('Restore-UiaSelection $script:SavedSel')
-        $iKeys = $script:StructPickerText.IndexOf('SendWait($PasteKeys)')
-        Expect ($iBack -ge 0 -and $iKeys -gt $iBack) ('order ' + $iBack + '/' + $iKeys)
+        # the paste is what has to order the two: the selection goes back (Put-BackSelection,
+        # which calls Restore-UiaSelection) and only then do the keys leave
+        $iPaste = $script:StructPickerText.IndexOf('function Paste-Clip')
+        $iBack = $script:StructPickerText.IndexOf('Put-BackSelection', $iPaste)
+        $iKeys = $script:StructPickerText.IndexOf('SendWait($script:PasteKeys)', $iPaste)
+        Expect ($iPaste -ge 0 -and $iBack -gt $iPaste -and $iKeys -gt $iBack) ('order ' + $iBack + '/' + $iKeys)
       }
 
       It 'a warm-up open saves no selection of its own' {
@@ -877,10 +885,11 @@ try {
         # Hiding the panel is what takes its activation away, and the Deactivate handler reads
         # that as a dismissal and clears the flag: asking after Hide() always answered no, so
         # Esc and a repeat of the hotkey left the caret at the start of the field (measured).
-        $m = [regex]::Match($script:StructPickerText, '(?s)function Close-Panel \{(.*?)\n    \}')
+        # the helper lives at file scope in picker-live.ps1, so its body ends on a 0-column brace
+        $m = [regex]::Match($script:StructPickerText, '(?s)function Close-Panel \{(.*?)\n\}')
         Expect $m.Success 'the close helper is gone'
         $iDecide = $m.Groups[1].Value.IndexOf('$handBack = ')
-        $iHide = $m.Groups[1].Value.IndexOf('$form.Hide()')
+        $iHide = $m.Groups[1].Value.IndexOf("Hide-AppWindow 'picker'")
         Expect ($iDecide -ge 0 -and $iHide -gt $iDecide) ('order ' + $iDecide + '/' + $iHide)
       }
 
@@ -941,7 +950,7 @@ try {
         # and it must stay inside Paste-Clip so the hand-over and the settle still happen first.
         # The body is taken whole: a character window around it moved the answer every time a
         # comment was added above the branch.
-        $m = [regex]::Match($script:StructPickerText, '(?s)function Paste-Clip[^\r\n]*\{(.*?)\n    \}')
+        $m = [regex]::Match($script:StructPickerText, '(?s)function Paste-Clip[^\r\n]*\{(.*?)\n\}\n\nfunction Use-Index')
         Expect $m.Success 'Paste-Clip is gone'
         Expect ($m.Groups[1].Value -match 'SendUnicode\(\$TypedText\)') 'SendUnicode branch missing in Paste-Clip'
         Expect ($script:StructPickerText -match '\$script:PasteTyping') 'PasteTyping never read'
@@ -976,20 +985,20 @@ try {
         # A drop-down that outlives the panel keeps the menu filter WinForms installed for it,
         # and that filter eats every later click of the process: whichever path closes the panel
         # has to close the menu first
-        Expect ($script:StructPickerText -match '(?s)Add_FormClosing\(\{.{0,600}\$cm\.Close\(\)') 'menu not closed in FormClosing'
+        Expect ($script:StructPickerText -match '(?s)-Event Closing -Handler \{.{0,600}\$cm\.Close\(\)') 'menu not closed in Closing'
       }
 
       It 'a dismissed panel closes its menu first' {
         # the menu is shown without activation, so it does not always see the click that lands
         # beside it: leaving it up keeps its filter and it eats the next click
-        Expect ($script:StructPickerText -match '(?s)Add_FormClosing\(\{.{0,400}\$cm\.Close\(\)') 'menu not closed in FormClosing'
+        Expect ($script:StructPickerText -match '(?s)-Event Closing -Handler \{.{0,400}\$cm\.Close\(\)') 'menu not closed in Closing'
         # and a click elsewhere is the form losing the activation, which is what closes it
-        Expect ($script:StructPickerText -match '(?s)Add_Deactivate\(\{.{0,900}\$form\.Close\(\)') 'the panel ignores losing the foreground'
+        Expect ($script:StructPickerText -match '(?s)-Event Deactivate -Handler \{.{0,900}Close-AppWindow') 'the panel ignores losing the foreground'
         # the menu itself is a window of this process: opening it must not count as leaving
         Expect ($script:StructPickerText -match 'IsOwnWindow') 'a window of this process counts as somewhere else'
-        Expect ($script:StructPickerText -match '(?s)Add_Deactivate\(\{.{0,400}\$cm\.Visible') 'opening the menu dismisses the panel'
+        Expect ($script:StructPickerText -match '(?s)-Event Deactivate -Handler \{.{0,400}\$cm\.Visible') 'opening the menu dismisses the panel'
         # one click beside the open menu closes the menu and the panel together
-        Expect ($script:StructPickerText -match '(?s)MenuClosedAt.{0,400}\$form\.Close\(\)') 'a click beside the menu leaves the panel open'
+        Expect ($script:StructPickerText -match '(?s)MenuClosedAt.{0,400}Close-AppWindow') 'a click beside the menu leaves the panel open'
       }
 
       It 'releases the handles it builds per open' {
@@ -1046,14 +1055,15 @@ try {
         $pickerAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $script:StructWinPath 'picker.ps1'), [ref]$null, [ref]$null)
         $shownBlocks = @($pickerAst.FindAll({
               param($node)
-              $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
-              [string]$node.Member.Value -eq 'Add_Shown' -and $node.Arguments.Count -gt 0
+              $node -is [System.Management.Automation.Language.CommandAst] -and
+              $node.GetCommandName() -eq 'Register-AppWindowEvent' -and
+              $node.Extent.Text -match '-Event Shown'
             }, $true))
         $shownFocus = 0
         $shownPaint = 0
         $shownHelper = 0
         foreach ($b in $shownBlocks) {
-          $text = $b.Arguments[0].Extent.Text
+          $text = $b.Extent.Text
           if ($text -match '\$txt\.Focus\(') { $shownFocus++ }
           if ($text -match 'SearchFocus\s*=\s*\$true') { $shownPaint++ }
           if ($text -match 'function Start-Search|Start-Search$') { $shownHelper++ }
@@ -1067,8 +1077,8 @@ try {
       It 'starts on the list and moves the keyboard to the filter on the first character' {
         # the panel owns the foreground from Show() on, but the filter row is not where the user
         # starts: no caret is shown until something is typed, and the list navigates meanwhile
-        Expect ($script:StructPickerText -match '(?s)Add_Shown\s*\(\{(?:(?!Add_).){0,400}\$lst\.Focus\(\)') 'the list does not take the keyboard on open'
-        Expect (-not ($script:StructPickerText -match '(?s)Add_Shown\s*\(\{(?:(?!Add_).){0,400}\$txt\.Focus\(\)')) 'the filter row takes the keyboard on open'
+        Expect ($script:StructPickerText -match '(?s)-Event Shown -Handler \{(?:(?!Register-AppWindowEvent).){0,400}\$lst\.Focus\(\)') 'the list does not take the keyboard on open'
+        Expect (-not ($script:StructPickerText -match '(?s)-Event Shown -Handler \{(?:(?!Register-AppWindowEvent).){0,400}\$txt\.Focus\(\)')) 'the filter row takes the keyboard on open'
         # Show() hands the focus to the first tabbable control, which would be the box: it would
         # hold the keyboard - and draw its caret - for one frame before the list takes it
         Expect ($script:StructPickerText -match '\$txt\.TabStop = \$false') 'the box is a tab stop, so Show() focuses it'
@@ -1243,7 +1253,7 @@ try {
       }
     }
 
-    # What a change means in the settings window is decided in lib\settings-vm.ps1, without the
+    # What a change means in the settings window is decided in renderer\src\utils\settings-vm.ps1, without the
     # window: the staged table, the switch, the chord list and the multi-select all answer here.
     Describe 'settings changes' {
       It 'stages a value the file does not hold, and leaves nothing for the one it does' {
@@ -1311,7 +1321,7 @@ try {
     }
 
     # A page is diffed against the rows it showed, so a change rebuilds its own row and leaves the
-    # rest of the page alone (lib\settings-model.ps1).
+    # rest of the page alone (renderer\src\utils\settings-model.ps1).
     Describe 'settings rows diff' {
       It 'rebuilds only the rows whose value moved' {
         $schema = $script:SettingsSchema
@@ -1622,7 +1632,7 @@ try {
       }
     }
 
-    # A control as a record (renderer\src\core\views.ps1): the kind decides how it draws, the node holds where
+    # A control as a record (renderer\src\components\views.ps1): the kind decides how it draws, the node holds where
     # it is and how it happens to be, and the hover is a diff that answers a rectangle - which is
     # what keeps a pointer crossing a footer button from repainting the window.
     Describe 'ui views' {
@@ -4323,7 +4333,7 @@ try {
       }
     }
 
-    # ---- batch selection (lib/select.ps1): positions in the filtered list, nothing else
+    # ---- batch selection (main/utils/select.ps1): positions in the filtered list, nothing else
     Describe 'batch selection' {
       It 'a click, a shift and a ctrl build the set' {
         $sel = New-Selection
@@ -4805,14 +4815,14 @@ try {
     [IO.File]::WriteAllLines((Join-Path $pdir 'nameless.ps1'), @("@{ Description = 'x' }"), $Utf8)
     [IO.File]::WriteAllLines((Join-Path $pdir 'boom.ps1'), @('throw "boom"'), $Utf8)
     # a plugin's keys live in its own schema file: the sandbox root carries the real schema
-    # folder, so this test plugin only adds one file to schema\plugins
-    [IO.File]::WriteAllLines((Join-Path $unitDir 'schema\plugins\one.ps1'), @(
+    # folder, so this test plugin only adds one file to shared\schema\plugins
+    [IO.File]::WriteAllLines((Join-Path $unitDir 'shared\schema\plugins\one.ps1'), @(
         "@{ Name = 'one'; File = 'clipboard.ini'; Description = 'test';",
         "   Properties = [ordered]@{ Flag = @{ Type = 'bool'; Default = 0; Description = 'test flag' } };",
         "   ThemeProperties = [ordered]@{ Tint = @{ Type = 'color'; Default = '#000000'; Description = 'themeable tint' } } }"), $Utf8)
     # a plugin's keys live in its own schema file: the sandbox root carries the real schema
-    # folder, so this test plugin only adds one file to schema\plugins
-    [IO.File]::WriteAllLines((Join-Path $unitDir 'schema\plugins\one.ps1'), @(
+    # folder, so this test plugin only adds one file to shared\schema\plugins
+    [IO.File]::WriteAllLines((Join-Path $unitDir 'shared\schema\plugins\one.ps1'), @(
         "@{ Name = 'one'; File = 'clipboard.ini'; Description = 'test';";
         "   Properties = [ordered]@{ Flag = @{ Type = 'bool'; Default = 0; Description = 'test flag' } };";
         "   ThemeProperties = [ordered]@{ Tint = @{ Type = 'color'; Default = '#000000'; Description = 'themeable tint' } } }"), $Utf8)
@@ -5358,7 +5368,7 @@ try {
     Save-Records @()
   }
 
-    # the drawing helpers live in renderer/src/windows/picker-draw.ps1 and take a Graphics plus plain values,
+    # the drawing helpers live in renderer/src/components/picker-draw.ps1 and take a Graphics plus plain values,
     # so they can be exercised without a window - that is what "no form state" buys.
     # Unit only (the helpers come from the -Library load) and source only: a packaged copy
     # has renamed internals, so the names do not exist there.

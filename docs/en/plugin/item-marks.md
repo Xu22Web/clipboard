@@ -68,7 +68,7 @@ The same action in the panel reads `Starred entry. Press Ctrl+S to unstar it fir
 
 ## Settings (`clipboard.ini`)
 
-The four keys are declared in `schema\plugins\item-marks.ps1` and merged into the settings on load; in the file they live in the `[item-marks]` section, and `config set` uses `<plugin>.<Key>`:
+The four keys are declared in `shared\schema\plugins\item-marks.ps1` and merged into the settings on load; in the file they live in the `[item-marks]` section, and `config set` uses `<plugin>.<Key>`:
 
 | Key | Default | Meaning |
 |---|---|---|

@@ -22,7 +22,7 @@
 - 简洁客观、通俗易懂、不口语化：不用比喻、拟人化表达与评价性形容词
 - 同一事实只在一处说明，其余用链接指向该处；能并入现有表格的不新开段落
 - 新增小节前先确认现有段落无法承载；预计超过约 40 行时优先并入现有表格或列表
-- 一致性：命令与配置表的取值必须与 `clipboard help`、`clipboard config`、`src\schema\clipboard.ps1` 相同
+- 一致性：命令与配置表的取值必须与 `clipboard help`、`clipboard config`、`src\shared\schema\clipboard.ps1` 相同
 
 ## 文档与截图
 
@@ -34,8 +34,8 @@
 
 ## 多语言与文案
 
-- 界面文案一律经 `Get-UiText` / `Get-UiTextOr` / `Get-UiTextCount`（`src\lib\text.ps1`）；绘制、交互与设置代码里不得出现可见的英文或中文
-- 不用 `Get-Text`：那是读剪贴板文本的函数，后加载的 `lib\clip.ps1` 会覆盖同名函数
+- 界面文案一律经 `Get-UiText` / `Get-UiTextOr` / `Get-UiTextCount`（`src\renderer\src\utils\text.ps1`）；绘制、交互与设置代码里不得出现可见的英文或中文
+- 不用 `Get-Text`：那是读剪贴板文本的函数，后加载的 `main\utils\clip.ps1` 会覆盖同名函数
 - 语言包是数据，放在 `src\lang\<code>.ini`：`en.ini` 是基准，其他语言叠加在它之上；键 = `<界面>.<槽位>`，身份用 schema 键名、组名、单位名或插件 `Name`
 - 插件标记词用 `mark.<插件 Name>.<标记字符>` （缺键回退插件声明的 `Word`）；设置项的灰置原因与只读原因用 `settings.why.<Key>`，句子外壳是 `settings.help.off` / `settings.help.pick`
 - 面板与托盘的可见文案（含 `AccessibleName`、`MessageBox` 正文、底部提示）都走语言包；`Get-RowEditBlock` 返回的原因串只给测试看，保持英文

@@ -1,5 +1,5 @@
 // src/main/ui/hot-window.cs - the message-only window that receives the global hotkey (see
-// lib/hotkey.ps1 and lib/native.ps1).
+// lib/hotkey.ps1 and main/utils/native.ps1).
 //
 // RegisterHotKey delivers WM_HOTKEY to a window, so the resident owns a hidden STATIC window and
 // raises an event when 0x0312 arrives; the PowerShell side only has to subscribe.

@@ -60,7 +60,7 @@ transform.Modes=snake,kebab,upper
 
 ## 设置项（`clipboard.ini`）
 
-这些键声明在 `schema\plugins\transform.ps1`，加载时合并进设置；文件里写在 `[transform]` 段内，`config set` 用 `<插件名>.<Key>`：
+这些键声明在 `shared\schema\plugins\transform.ps1`，加载时合并进设置；文件里写在 `[transform]` 段内，`config set` 用 `<插件名>.<Key>`：
 
 | 键 | 默认 | 说明 |
 |---|---|---|

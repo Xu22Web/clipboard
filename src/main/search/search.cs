@@ -1,4 +1,4 @@
-// src\main\search\search.cs - the filter behind the search box (see lib\query.ps1).
+// src\main\search\search.cs - the filter behind the search box (see main\utils\query.ps1).
 //
 // The panel asks for an answer on every typed character, and the PowerShell loop over the rows
 // was the one part of that answer it could not make cheap: the same loop costs a couple of

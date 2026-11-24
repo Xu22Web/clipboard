@@ -8,3 +8,4 @@ src/clipboard.ini
 src/preload/client.exe
 src/main/clipboard.dll
 dist/
+out/

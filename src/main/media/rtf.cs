@@ -1,4 +1,4 @@
-// src/main/media/rtf.cs - the picture blocks of an RTF document (see lib/media.ps1).
+// src/main/media/rtf.cs - the picture blocks of an RTF document (see main/utils/media.ps1).
 //
 // Every {\pict ...} group becomes a marker, whatever it nests - Word writes the hex behind
 // {\*\picprop{\sp{\sn shapeType}...}} chains, which no regex can follow without risking a

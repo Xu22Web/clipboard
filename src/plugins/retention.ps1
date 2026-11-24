@@ -5,7 +5,7 @@
 # kept too, so this file never has to know which mark that is.
 #
 # Settings: retention.MaxAgeDays / retention.SweepMinutes / retention.KeepPinned, described
-# in schema\plugins\retention.ps1 and merged into the settings schema when this file loads.
+# in shared\schema\plugins\retention.ps1 and merged into the settings schema when this file loads.
 #
 # The sweep is one shared block: the resident Tick calls it silently, `sweep force` runs
 # it on demand and reports. Tick.Seconds is a scriptblock, so the interval follows

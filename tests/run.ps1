@@ -23,7 +23,7 @@
       cli test                        every part, one per logical processor
       cli test -Unit                  one part, by name
       cli test -Part cli,history      several parts, by name
-      cli test -Workers 6             fewer at a time (cli.ini [test] Workers is the default,
+      cli test -Workers 6             fewer at a time (package.ini [test] Workers is the default,
                                       0 = one per logical processor)
       cli test -Serial                one after another
 #>
@@ -77,22 +77,22 @@ if (Test-Path -LiteralPath $versionFile) {
   if ($vm.Success) { $programVersion = $vm.Groups[1].Value }
 }
 
-# cli.ini is read and checked with the tooling's own parser and schema: the driver needs
-# [test] (Groups, Workers), and a file that does not match tools\schema\cli.ps1 is a broken
-# file rather than something to guess a default for.
-. (Join-Path $repoRoot 'tools\utils\ini.ps1')
-. (Join-Path $repoRoot 'tools\utils\schema.ps1')
-$iniPath = Join-Path $repoRoot 'cli.ini'
-$cfg = @{}
-if (Test-Path -LiteralPath $iniPath) { $cfg = Import-IniMap $iniPath }
-$cfgProblems = @(Test-ToolConfigMap (Import-ToolSchema (Join-Path $repoRoot 'tools\schema\cli.ps1')) $cfg 'cli.ini' 'test')
-if ($cfgProblems.Count -gt 0) {
-  foreach ($p in $cfgProblems) { Write-Host ('[x] ' + $p) }
+# test.config.ps1 is the project's vitest config: the driver needs Groups and Workers from it,
+# and packages\test\config.ps1 is the loader that says what the file may contain. A file the
+# loader rejects is a broken file rather than something to guess a default for.
+. (Join-Path $repoRoot 'packages\test\config.ps1')
+$script:tc = $null
+try { $script:tc = Get-TestConfig -Root $repoRoot }
+catch {
+  Write-Host ('[x] ' + $_.Exception.Message)
   exit 1
 }
 
 function Get-Cfg([string]$key) {
-  if ($cfg.ContainsKey($key)) { return [string]$cfg[$key] }
+  switch ([string]$key) {
+    'test.Groups' { return (@($script:tc.Groups) -join ',') }
+    'test.Workers' { return [string]$script:tc.Workers }
+  }
   return ''
 }
 
@@ -134,11 +134,11 @@ function Get-ChangedParts([string[]]$Given) {
     elseif ($p -match '^tests\\e2e\\(?<part>[A-Za-z0-9_-]+)\.ps1$') { $names = @($matches['part']) }
     elseif ($p -match '^tests\\') { $names = $script:AllParts }
     elseif ($p -match '\.md$' -or $p -match '^docs\\' -or $p -match '^LICENSE$') { $names = @() }
-    elseif ($p -match '^src\\lib\\panel\\' -or $p -match '^src\\lib\\serve\.ps1$' -or $p -match '^src\\lib\\proxy\.ps1$') { $names = @('unit', 'serve', 'proxy') }
-    elseif ($p -match '^src\\lib\\plugin\\') { $names = @('unit', 'config', 'marks', 'pins') }
-    elseif ($p -match '^src\\schema\\') { $names = @('unit', 'settings', 'config') }
+    elseif ($p -match '^src\\main\\utils\\serve\.ps1$' -or $p -match '^src\\main\\utils\\proxy\.ps1$' -or $p -match '^src\\renderer\\src\\windows\\') { $names = @('unit', 'serve', 'proxy') }
+    elseif ($p -match '^src\\main\\utils\\plugin\\') { $names = @('unit', 'config', 'marks', 'pins') }
+    elseif ($p -match '^src\\shared\\schema\\') { $names = @('unit', 'settings', 'config') }
     elseif ($p -match '^src\\') { $names = $script:AllParts }
-    elseif ($p -match '^tools\\' -or $p -match '^(cli|package)\.ini$') { $names = @('build') }
+    elseif ($p -match '^packages\\' -or $p -match '^(cli|builder|package)\.ini$') { $names = @('build') }
     else { $names = $script:AllParts }
     foreach ($n in $names) { if (-not $picked.Contains($n)) { $picked.Add($n) } }
   }
@@ -146,7 +146,7 @@ function Get-ChangedParts([string[]]$Given) {
 }
 
 if (-not ($Unit -or $Integration -or $E2E)) {
-  # no switch given: cli.ini decides which groups the plain run covers
+  # no switch given: package.ini decides which groups the plain run covers
   $groups = Split-List (Get-Cfg 'test.Groups' 'unit,integration,e2e')
   $Unit = ($groups -contains 'unit')
   $Integration = ($groups -contains 'integration')
@@ -246,7 +246,7 @@ function Update-TestAssembly {
     foreach ($f in $cs) { if ($f.LastWriteTimeUtc -gt $dllAt) { $stale = $true } }
   }
   if (-not $stale) { return }
-  $builder = Join-Path $repoRoot 'tools\build-assembly.ps1'
+  $builder = Join-Path $repoRoot 'packages\cli\assembly.ps1'
   if (-not (Test-Path -LiteralPath $builder)) { return }
   $null = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $builder 2>&1
   if (-not (Test-Path -LiteralPath $dll)) { Write-Host '[..] no C# compiler here: the parts compile the sources at run time' }

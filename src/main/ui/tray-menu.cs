@@ -75,7 +75,7 @@ namespace Cb {
       Invalidate();
     }
 
-    // the same ring the panel's frame is drawn with (renderer/src/windows/picker-draw.ps1)
+    // the same ring the panel's frame is drawn with (renderer/src/components/picker-draw.ps1)
     public static void Frame(System.Drawing.Graphics g, int w, int h, int radius, System.Drawing.Color color) {
       if (w < 6 || h < 6) { return; }
       int t = 1;
@@ -127,7 +127,7 @@ namespace Cb {
     // per opening, so its final size only exists after Show() returns: a tall one near the bottom
     // edge is pushed inside the working area instead of flipped (measured: pointer at y=622, menu
     // 482..1031 on a 1032 px work area, the pointer 140 px inside it). The rule is
-    // Get-MenuPlacement in renderer/src/windows/picker-geom.ps1, where it can be checked without a screen;
+    // Get-MenuPlacement in renderer/src/components/picker-geom.ps1, where it can be checked without a screen;
     // the menu only asks it where to go. The tray menu sets no placer and keeps the built-in one.
     public System.Func<System.Drawing.Point, System.Drawing.Size, System.Drawing.Point> Placer;
 

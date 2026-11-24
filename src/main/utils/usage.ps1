@@ -1,0 +1,126 @@
+# main/utils/usage.ps1 - `clipboard help`: base commands grouped by area, then one group per
+# loaded plugin. Plugin commands only ever appear inside their own group.
+
+function Show-Usage {
+  # Commands are printed as groups with a sub-list, the same shape `config` uses:
+  # base categories first, then one group per loaded plugin. Everything a plugin owns
+  # (pin, star, highlight, open, ...) only ever appears in that plugin's group.
+  $groups = [ordered]@{
+    'daemon'  = @(
+      @('serve', 'run the resident daemon (capture + hotkey + tray)'),
+      @('stop', 'stop the resident daemon'),
+      @('ui', 'open the history picker (starts the daemon if needed)'),
+      @('settings', 'open the settings window'),
+      @('status', 'show daemon state and settings'),
+      @('pause', 'pause capture'),
+      @('resume', 'resume capture')
+    )
+    'history' = @(
+      @('list [-Count N]', 'list entries, newest first (time + * = pinned)'),
+      @('get', 'print the clipboard text'),
+      @('put "text"', 'set the clipboard (reads stdin when text is omitted)'),
+      @('pick N', 'put entry N back on the clipboard (pictures and formatting included)'),
+      @('edit N', 'rewrite the text of entry N in notepad (place, time and marks stay)'),
+      @('del N', 'delete entry N (a row a mark protects must be unprotected first)'),
+      @('clear [-All]', 'delete entries (protected rows always stay, marks may keep more)')
+    )
+    'config'  = @(
+      @('config', 'show every key grouped by base / plugin'),
+      @('config get KEY', 'show one key (effective + raw value from clipboard.ini)'),
+      @('config set KEY VAL', 'validate and write one key, then reload the resident'),
+      @('config edit', 'open clipboard.ini in notepad'),
+      @('config init', 'add missing keys, comment out retired ones'),
+      @('config reset', 'rewrite the file from the defaults (loses values)')
+    )
+    'theme'   = @(
+      @('themes', 'list the themes in themes\ and the active one')
+    )
+    'setup'   = @(
+      @('export FILE', 'write the history to .json (all), .csv or .txt (text only); -Media embeds pictures in the json'),
+      @('import FILE', 'add the entries of an export; -Replace swaps the whole history after a backup'),
+      @('backup [name]', 'zip history, media and blobs into data\backup'),
+      @('restore [name]', 'put a snapshot back (the current history is backed up first)'),
+      @('migrate [-Purge]', 'upgrade an older history file to the layout this build reads (purge = archive one that cannot be migrated)'),
+      @('install [bypass]', 'create the shortcuts (bypass = -ExecutionPolicy Bypass; Autostart / DesktopShortcut pick which)'),
+      @('uninstall [purge]', 'remove the shortcuts (purge also deletes data and config)'),
+      @('version', 'print the program and data format version'),
+      @('help', 'show this help')
+    )
+  }
+
+  Write-Host ('clipboard ' + $script:Version + ' - lightweight clipboard history for Windows 10 / 11')
+  Write-Host ''
+  Write-Host 'Usage: clipboard <command> [args] [options]'
+  Write-Host 'Captures text, file lists, pictures and formatted text (html / rtf).'
+  foreach ($g in $groups.Keys) {
+    Write-Host ''
+    Write-Host ('  [' + $g + ']')
+    foreach ($row in $groups[$g]) {
+      $n = [string]$row[0]
+      while ($n.Length -lt 24) { $n = $n + ' ' }
+      Write-Host ('    ' + $n + ' ' + [string]$row[1])
+    }
+  }
+
+  # one group per loaded plugin (description comes from the plugin's CommandHelp)
+  $pcmds = @()
+  if (Get-Command Get-PluginCommandList -ErrorAction SilentlyContinue) { $pcmds = @(Get-PluginCommandList) }
+  $names = @()
+  if ($pcmds.Count -gt 0) { $names = @($pcmds | ForEach-Object { $_.Plugin } | Select-Object -Unique) }
+  foreach ($pn in $names) {
+    Write-Host ''
+    Write-Host ('  [plugin: ' + $pn + ']')
+    foreach ($c in @($pcmds | Where-Object { $_.Plugin -eq $pn })) {
+      $n = [string]$c.Name
+      while ($n.Length -lt 24) { $n = $n + ' ' }
+      Write-Host ('    ' + $n + ' ' + [string]$c.Summary)
+    }
+  }
+
+  Write-Host ''
+  Write-Host 'Panel keys:'
+  Write-Host '  [list]'
+  Write-Host '    Enter                paste the selected entry'
+  Write-Host '    Ctrl+Enter           copy only, do not inject a paste'
+  Write-Host '    F2                   edit the text of the selected entry in place'
+  Write-Host '    Ctrl+1-9 / Ctrl+0    pick one of the visible rows'
+  Write-Host '    Ctrl+A               select every row in the result'
+  Write-Host '    Home / End           first row / last row'
+  Write-Host '    Del                  delete'
+  Write-Host '    Ctrl+Z               undo the last delete'
+  Write-Host '    Esc                  clear the search, a second Esc closes'
+  $pkeys = @()
+  if (Get-Command Get-PluginPanelKeys -ErrorAction SilentlyContinue) { $pkeys = @(Get-PluginPanelKeys) }
+  foreach ($pk in $pkeys) {
+    $combo = ''
+    if ($pk.Shift) { $combo = 'Shift+' }
+    if ($pk.Ctrl) { $combo = $combo + 'Ctrl+' }
+    if ($pk.Alt) { $combo = $combo + 'Alt+' }
+    $combo = $combo + $pk.Key
+    $label = $pk.Label
+    if (-not $label) { $label = 'plugin action' }
+    Write-Host ('    ' + $combo.PadRight(21) + $label + '   (' + $pk.Plugin + ')')
+  }
+  Write-Host '  [scroll]'
+  Write-Host '    PgUp / PgDn          page by one screen'
+  Write-Host '    wheel                a quarter of the rows on screen, or ScrollLines='
+
+  Write-Host ''
+  Write-Host 'Settings (clipboard.ini only - there are no setting switches):'
+  Write-Host '    clipboard config            every key, grouped by base / plugin'
+  Write-Host '    clipboard config set K V    validate, write one line, reload the resident'
+  Write-Host '    clipboard config init       add missing keys, comment out retired ones'
+  Write-Host '    clipboard config reset      rewrite the file from the defaults (loses values)'
+
+  Write-Host ''
+  Write-Host 'Examples:'
+  Write-Host '  clipboard put "hello there"    echo hi | clipboard put    clipboard list -Count 5'
+  Write-Host '  clipboard config set Theme win11-light    clipboard config set MaxItems 200'
+  Write-Host '  clipboard serve                clipboard ui               clipboard config edit'
+  $missing = @()
+  if (Get-Command Get-PluginMissingNames -ErrorAction SilentlyContinue) { $missing = @(Get-PluginMissingNames) }
+  if ($missing.Count -gt 0) {
+    Write-Host ''
+    Write-Host ('[!] plugin not found: ' + ($missing -join ', ') + '   (check Plugins= and README.md)')
+  }
+}

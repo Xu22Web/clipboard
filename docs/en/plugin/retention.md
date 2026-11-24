@@ -34,7 +34,7 @@ $ clipboard sweep force
 
 ## Settings (`clipboard.ini`)
 
-The keys are declared in `schema\plugins\retention.ps1` and merged into the settings on load; in the file they live in the `[retention]` section, and `config set` uses `<plugin>.<Key>`:
+The keys are declared in `shared\schema\plugins\retention.ps1` and merged into the settings on load; in the file they live in the `[retention]` section, and `config set` uses `<plugin>.<Key>`:
 
 | Key | Default | Meaning |
 |---|---|---|

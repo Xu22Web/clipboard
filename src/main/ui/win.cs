@@ -1,5 +1,5 @@
 // src\main\ui\win.cs - the win32 surface: the entry points, the interfaces reached through it,
-// and the caret and target helpers built on both (see lib/native.ps1).
+// and the caret and target helpers built on both (see main/utils/native.ps1).
 //
 // Everything the platform layer needs from the OS is declared here once, so a PowerShell caller
 // reaches a real signature instead of a late-bound name: the handles are IntPtr, the strings are

@@ -1,7 +1,7 @@
 // preload\client.cs - the compiled client half of the command proxy.
 //
 // A command line costs about 2.5 s, and roughly 1 s of that is one PowerShell start even when
-// the resident answers over the pipe (lib/proxy.ps1). This client costs about 150 ms: it is
+// the resident answers over the pipe (main/utils/proxy.ps1). This client costs about 150 ms: it is
 // started by clipboard.cmd before any PowerShell exists, builds the same request frame the
 // PowerShell client builds, and prints the answer.
 //
@@ -81,7 +81,7 @@ static class Client
     string cmd = pos[0];
     string name = cmd.ToLowerInvariant();
     if (name.Length == 0) return Fallback;
-    // What may cross is one file, ipc\channels.ini, shared with the PowerShell half; a name
+    // What may cross is one file, shared\ipc\channels.ini, shared with the PowerShell half; a name
     // it does not list is a plugin verb, which crosses when the file says so.
     Channels channels = Channels.Load(Path.Combine(root, "ipc", "channels.ini"));
     if (!channels.Allows(name)) return Fallback;
@@ -118,10 +118,10 @@ static class Client
     return 0;
   }
 
-  // The channel table, read from ipc\channels.ini: one [channel.<name>] section per built-in
+  // The channel table, read from shared\ipc\channels.ini: one [channel.<name>] section per built-in
   // command with Remote=1 (the resident answers it) or Remote=0 (the command line runs it), and
   // [channels] Plugins=1 to let a verb with no section of its own cross. The same file is read
-  // by lib\proxy.ps1, so neither half can drift from the other.
+  // by main\utils\proxy.ps1, so neither half can drift from the other.
   //
   // A missing or unreadable file refuses everything: this client then returns Fallback and the
   // caller runs the command the slow way, which is the same answer a second later.
@@ -139,7 +139,7 @@ static class Client
       return Verb(name);
     }
 
-    // the shape lib\proxy.ps1 accepts: a lower case verb, nothing else
+    // the shape main\utils\proxy.ps1 accepts: a lower case verb, nothing else
     static bool Verb(string s)
     {
       if (s.Length == 0) return false;

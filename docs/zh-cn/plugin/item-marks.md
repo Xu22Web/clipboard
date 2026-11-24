@@ -68,7 +68,7 @@ $ clipboard del 1
 
 ## 设置项（`clipboard.ini`）
 
-这四项声明在 `schema\plugins\item-marks.ps1`，加载时合并进设置；文件里写在 `[item-marks]` 段内，`config set` 用 `<插件名>.<Key>`：
+这四项声明在 `shared\schema\plugins\item-marks.ps1`，加载时合并进设置；文件里写在 `[item-marks]` 段内，`config set` 用 `<插件名>.<Key>`：
 
 | 键 | 默认 | 说明 |
 |---|---|---|

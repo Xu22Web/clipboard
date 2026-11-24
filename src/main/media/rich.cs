@@ -1,4 +1,4 @@
-// src/main/media/rich.cs - RTF laid out into a device context (see lib/media.ps1).
+// src/main/media/rich.cs - RTF laid out into a device context (see main/utils/media.ps1).
 //
 // A RichTextBox lays a document out into a device context through EM_FORMATRANGE, which works
 // while the control is not on screen at all. DrawToBitmap on an unparented control renders

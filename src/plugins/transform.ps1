@@ -5,7 +5,7 @@
 #   camel / snake / kebab / title   split on space, _ - and lower->upper, then join
 #
 # Settings: transform.Mode / transform.Modes / transform.Trim, described in
-# schema\plugins\transform.ps1 and merged into the settings schema when this file loads.
+# shared\schema\plugins\transform.ps1 and merged into the settings schema when this file loads.
 # One-off:  clipboard transform 3            entry 3 with the configured mode
 #           clipboard transform "3 snake"    entry 3 as snake_case (quotes required)
 # Right-click  one "Transform as <mode>" entry per mode listed in transform.Modes; the

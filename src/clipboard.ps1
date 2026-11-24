@@ -13,15 +13,12 @@
   written, lives in clipboard.ini and is changed with `clipboard config set <key> <value>`.
 
   This file is the entry point only: parameter binding, the tool root, the module list and
-  the runtime paths. The program itself lives under lib\, with the pure helpers under
-  utils\ and the ini schemas under schema\, layer by layer:
+  the runtime paths. The sections follow Electron: main\ runs the program, preload\ carries
+  the channel and the window link, renderer\ draws, and shared\ holds the helpers and schemas:
 
-    base -> utils (ini / inifile / schema) -> log / time / format / dpi -> native / theme-stub
+    base -> shared\utils (ini / inifile / schema) -> log / time / format / dpi -> native
          -> media -> clip -> store -> entry -> picker-geom -> anim -> picker
          -> config / serve / shortcut / usage -> dispatch
-
-  Copy the whole folder, not just this file: every module is required except themes.ps1 and
-  plugins.ps1, which degrade to the built-in palette and the base feature set.
 #>
 [CmdletBinding()]
 param(
@@ -42,20 +39,20 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $Root = Split-Path -Parent $PSCommandPath
-$libDir = Join-Path $Root 'lib'
 
 #region modules
 # The tool root is computed here and nowhere else: inside a dot-sourced file $PSScriptRoot
-# points at the folder it lives in (lib\ or utils\), so a path built there would resolve
-# themes\, plugins\ and data\ one level too deep. Only base.ps1 and values.ps1 assign
+# points at the folder it lives in (main\utils\, shared\utils\), so a path built there would
+# resolve themes\, plugins\ and data\ one level too deep. Only base.ps1 and values.ps1 assign
 # anything while loading (the defaults and the settings schema); the order below matters for
 # those two and is otherwise for readers.
 #
-# Paths are relative to the tool root, so a module can sit in lib\, in renderer\src\windows\ or in
-# utils\. The utils\ files are the pure helpers: utils\ini parses text into a document,
-# utils\inifile reads a file once and writes a key back, utils\schema validates a value
-# against src\schema\, utils\hash names a file after its content, utils\cfhtml reads and
-# rewrites the CF_HTML header.
+# Paths are relative to the tool root, so a module can sit in main\utils\, in
+# renderer\src\windows\ or renderer\src\components\, or in shared\utils\. The shared\utils\ files
+# are the pure helpers: shared\utils\ini parses text into a document, shared\utils\inifile reads a
+# file once and writes a key back, shared\utils\schema validates a value against
+# src\shared\schema\, shared\utils\hash names a file after its content, shared\utils\cfhtml reads
+# and rewrites the CF_HTML header.
 #
 # Only what a command can reach is parsed: compiling a module costs about 20 ms, so `version`
 # reads eighteen files, `list` about thirty, and only `ui` / `serve` pay for the panel, the
@@ -64,32 +61,33 @@ $libDir = Join-Path $Root 'lib'
 # schema, the palette stubs, the usage text, the dispatcher) is in the base list, because every
 # command pays for it.
 $baseModules = @(
-  'lib\base',
-  'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\fileio',
-  'utils\hotkey', 'utils\apprules',
-  'lib\native', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering', 'lib\text', 'lib\config', 'lib\usage', 'lib\dispatch'
+  'main\utils\base', 'preload\utils\window-host',
+  'shared\utils\ini', 'shared\utils\inifile', 'shared\utils\schema', 'shared\utils\log', 'shared\utils\time', 'shared\utils\format', 'shared\utils\fileio',
+  'shared\utils\hotkey', 'shared\utils\apprules',
+  'main\utils\native', 'renderer\src\utils\theme-stub', 'main\utils\settings', 'main\utils\marks', 'main\utils\ordering', 'renderer\src\utils\text', 'main\utils\config', 'main\utils\usage', 'main\utils\dispatch'
 )
 # one group per job: the files a job can reach, and nothing else. Storing an entry and getting
 # it back are one job - the capture pipeline (clip), the payload files (blobs), the image and
 # formatted-text sidecars (media, cfhtml) and the paste modifiers all live in it.
 #
-# The window layer is its own list because a package carries it as one file: [entry.app] in
-# cli.ini merges exactly these modules into renderer\app.ps1, and the build leaves them out of
-# the copy. A working copy has no such file, so the same list is loaded module by module - one
-# list, two shapes, and nothing to keep in step by hand.
-$windowBundle = 'renderer\app'
-$windowModules = @('renderer\src\core\draw', 'lib\ipc', 'renderer\src\store\define', 'renderer\src\store\history-store', 'renderer\src\windows\media-render', 'renderer\src\windows\anim', 'renderer\src\windows\picker-draw', 'renderer\src\windows\picker-edit', 'renderer\src\windows\pinlist', 'renderer\src\windows\preview', 'renderer\src\windows\focus', 'renderer\src\windows\picker', 'renderer\src\windows\picker-live', 'renderer\src\core\layout', 'renderer\src\core\widgets', 'renderer\src\core\component', 'renderer\src\core\framework', 'renderer\src\core\views', 'renderer\src\core\setup', 'renderer\src\core\reactive', 'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'renderer\src\windows\settings-draw', 'renderer\src\windows\settings-edit', 'renderer\src\windows\settings', 'renderer\src\windows\tray-menu')
+# The window layer is its own list because a package carries it as chunks: the bundler resolves
+# the three windows, groups the modules by the entries that reach them, and writes
+# renderer\manifest.ini beside the files. The build leaves the merged modules out of the copy, and
+# a working copy has no manifest, so the same list is loaded module by module - one list, two
+# shapes, and nothing to keep in step by hand.
+$windowBundle = 'renderer'
+$windowModules = @('renderer\src\core\draw', 'renderer\src\utils\tray-draw', 'preload\utils\ipc', 'renderer\src\store\define', 'renderer\src\store\history-store', 'renderer\src\components\media-render', 'renderer\src\utils\anim', 'renderer\src\components\picker-draw', 'renderer\src\components\picker-edit', 'renderer\src\components\pinlist', 'renderer\src\components\preview', 'renderer\src\utils\focus', 'renderer\src\windows\picker', 'renderer\src\components\picker-live', 'renderer\src\core\layout', 'renderer\src\components\widgets', 'renderer\src\core\component', 'renderer\src\core\framework', 'renderer\src\components\views', 'renderer\src\core\setup', 'renderer\src\core\reactive', 'renderer\src\utils\settings-model', 'renderer\src\utils\settings-types', 'renderer\src\utils\settings-vm', 'preload\utils\hotkey-record', 'renderer\src\components\settings-draw', 'renderer\src\components\settings-edit', 'renderer\src\windows\settings', 'renderer\src\windows\tray-menu')
 $groupModules = @{
-  store    = @('utils\hash', 'utils\image', 'utils\cfhtml', 'lib\store', 'lib\entry', 'lib\query', 'lib\select', 'lib\clip', 'lib\media', 'lib\blobs', 'lib\cfhtml', 'lib\modifiers', 'lib\apprules', 'utils\query-words')
-  transfer = @('lib\transfer', 'utils\transfer', 'lib\migrate')
-  config   = @('lib\config', 'lib\config-template', 'lib\shortcut', 'utils\dpi')
+  store    = @('shared\utils\hash', 'shared\utils\image', 'shared\utils\cfhtml', 'main\utils\store', 'main\utils\entry', 'main\utils\query', 'main\utils\select', 'main\utils\clip', 'main\utils\media', 'main\utils\blobs', 'main\utils\cfhtml', 'main\utils\modifiers', 'main\utils\apprules', 'shared\utils\query-words')
+  transfer = @('main\utils\transfer', 'shared\utils\transfer', 'main\utils\migrate')
+  config   = @('main\utils\config', 'main\utils\config-template', 'main\utils\shortcut', 'shared\utils\dpi')
   # utils\image stays in the store group, and picker-geom in panelgeom: the window layer uses
   # both, but so do `list` and `status`, and a command that opens no window must not load the
   # bundle to get them - they travel as their own files
-  panel    = @('utils\image', 'renderer\src\windows\picker-geom') + $windowModules + @('lib\serve')
+  panel    = @('main\utils\window', 'shared\utils\image', 'renderer\src\components\picker-geom') + $windowModules + @('main\utils\serve')
   # panelgeom: the arithmetic `status` prints; settings: the palette, the frame helpers and focus
-  panelgeom = @('renderer\src\windows\picker-geom')
-  settings = @('renderer\src\core\draw', 'renderer\src\core\layout', 'renderer\src\core\widgets', 'renderer\src\core\component', 'renderer\src\core\framework', 'renderer\src\core\views', 'renderer\src\core\setup', 'renderer\src\core\reactive', 'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'renderer\src\windows\anim', 'renderer\src\windows\picker-draw', 'renderer\src\windows\picker-geom', 'renderer\src\windows\focus', 'renderer\src\windows\settings-draw', 'renderer\src\windows\settings-edit', 'renderer\src\windows\settings')
+  panelgeom = @('renderer\src\components\picker-geom')
+  settings = @('main\utils\window', 'renderer\src\core\draw', 'renderer\src\core\layout', 'renderer\src\components\widgets', 'renderer\src\core\component', 'renderer\src\core\framework', 'renderer\src\components\views', 'renderer\src\core\setup', 'renderer\src\core\reactive', 'renderer\src\utils\settings-model', 'renderer\src\utils\settings-types', 'renderer\src\utils\settings-vm', 'preload\utils\hotkey-record', 'renderer\src\utils\anim', 'renderer\src\components\picker-draw', 'renderer\src\components\picker-geom', 'renderer\src\utils\focus', 'renderer\src\components\settings-draw', 'renderer\src\components\settings-edit', 'renderer\src\windows\settings')
 }
 # what each command can reach. A name that is not listed here is a plugin verb: those read and
 # write entries, so they get the store group.
@@ -127,14 +125,13 @@ foreach ($g in $wantGroups) { foreach ($m in $groupModules[$g]) { $requiredModul
 # A package carries the window layer as one file, so the command that opens a window parses one
 # file instead of thirty. Which shape is here decides the load, and a command that never opens a
 # window does not pay for the bundle.
-$bundlePath = Join-Path $Root ($windowBundle + '.ps1')
+$bundlePath = Join-Path $Root ($windowBundle + '\app.ps1')
+$bundleManifest = Join-Path $Root ($windowBundle + '\manifest.ini')
 $bundleCovered = @{}
 foreach ($m in $windowModules) { $bundleCovered[[string]$m] = $true }
 $bundleLoaded = $false
-if (Test-Path -LiteralPath $bundlePath) {
-  foreach ($m in $requiredModules) {
-    if ($bundleCovered.ContainsKey([string]$m)) { $bundleLoaded = $true; break }
-  }
+if ((Test-Path -LiteralPath $bundleManifest) -or (Test-Path -LiteralPath $bundlePath)) {
+  foreach ($m in $requiredModules) { if ($bundleCovered.ContainsKey([string]$m)) { $bundleLoaded = $true; break } }
 }
 
 #region command proxy
@@ -151,9 +148,9 @@ if (-not $Library -and $Command -eq 'put' -and [string]::IsNullOrEmpty($Value)) 
 }
 $loadedModules = @{}
 if (-not $Library -and -not $NoProxy -and $env:CLIPBOARD_NO_PROXY -ne '1') {
-  # only the proxy itself: it reads src\ipc\channels.ini, the one file that says what may cross
-  . (Join-Path $Root 'lib\proxy.ps1')
-  $loadedModules['lib\proxy'] = $true
+  # only the proxy itself: it reads src\shared\ipc\channels.ini, the one file that says what may cross
+  . (Join-Path $Root 'main\utils\proxy.ps1')
+  $loadedModules['main\utils\proxy'] = $true
   Invoke-ProxyAttempt $Root $Command $Value $Sub $Arg $Count $PSBoundParameters
 }
 #endregion
@@ -165,18 +162,21 @@ foreach ($module in $requiredModules) {
   $modulePath = Join-Path $Root ($module + '.ps1')
   if (-not (Test-Path -LiteralPath $modulePath)) {
     Write-Host ('[x] missing: ' + $modulePath)
-    Write-Host '    this build is clipboard.ps1 + lib\ + utils\ - copy the whole folder.'
+    Write-Host '    this build is clipboard.ps1 + main\ + shared\ - copy the whole folder.'
     exit 1
   }
   . $modulePath
 }
-# the window layer as one file, when the package carries it that way
-if ($bundleLoaded) { . $bundlePath }
+# the window layer as one file, or as the chunks its manifest lists, when the package carries it
+if ($bundleLoaded) {
+  if (Test-Path -LiteralPath $bundleManifest) { foreach ($one in @(Get-ChunkList $bundleManifest)) { . $one } }
+  else { . $bundlePath }
+}
 # optional layers: without them the tool runs on the built-in palette and the base commands
-$themeModule = Join-Path $libDir 'themes.ps1'
+$themeModule = Join-Path $Root 'renderer\src\utils\themes.ps1'
 if (Test-Path -LiteralPath $themeModule) { . $themeModule }
 # the plugin layer is three files: the runtime, what a mark means, and the settings surface
-$pluginDir = Join-Path $libDir 'plugin'
+$pluginDir = Join-Path $Root 'main\utils\plugin'
 $pluginModule = Join-Path $pluginDir 'plugins.ps1'
 if (Test-Path -LiteralPath $pluginModule) {
   . $pluginModule

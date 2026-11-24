@@ -6,7 +6,7 @@
 # because a settings window is a place the user returns to rather than a flyout.
 #
 # Values are staged, not written: every change lands in one pending table that the rows are
-# drawn from, and Save writes the whole table in one pass (renderer/src/windows/settings-edit.ps1). The
+# drawn from, and Save writes the whole table in one pass (renderer/src/components/settings-edit.ps1). The
 # resident process is reloaded once, when the window closes after a save: restarting it per
 # keystroke would make the window unusable, and restarting it on a change nobody kept would be
 # work for nothing.
@@ -160,7 +160,7 @@ function Show-Settings {
   }
   Update-SettingsActions
   # The window's own controls - the two caption buttons and the footer actions - are view nodes
-  # (renderer\src\core\views.ps1), kept on one parent so the patch can leave the ones that did not change
+  # (renderer\src\components\views.ps1), kept on one parent so the patch can leave the ones that did not change
   # alone. Their boxes come from the layout, their hover from the node's own state: a pointer
   # crossing Save repaints Save, not the window.
   #
@@ -377,7 +377,7 @@ function Show-Settings {
   }
 
   # The controls a row owns beyond its value - the delete cross of each chord line, and the plus
-  # that adds one - are view nodes (renderer\src\core\views.ps1). Only the rows on screen hold them, and
+  # that adds one - are view nodes (renderer\src\components\views.ps1). Only the rows on screen hold them, and
   # their geometry comes from the layout and the scroll offset, which is why this runs again
   # whenever either can have moved.
   function Update-SettingsRowHooks {
@@ -488,7 +488,7 @@ function Show-Settings {
       # table of keys beside the ones it draws.
       $what = [string]$node.Key
       if ($what -ceq 'close') {
-        Add-UiHandler $node 'click' { param($p) $form.Close() }
+        Add-UiHandler $node 'click' { param($p) [void](Close-AppWindow 'settings') }
       } elseif ($what -ceq 'min') {
         Add-UiHandler $node 'click' { param($p) $form.WindowState = [Windows.Forms.FormWindowState]::Minimized }
       } else {
@@ -557,7 +557,7 @@ function Show-Settings {
   # table and the footer says it is not saved yet.
   function Stage-Setting([string]$key, [string]$value, [string]$what) {
     if (-not $key) { return $false }
-    # what the change means is decided in lib\settings-vm.ps1; the window repaints and words
+    # what the change means is decided in renderer\src\utils\settings-vm.ps1; the window repaints and words
     # the message, and nothing else
     $staged = Get-SettingStagedValue $script:SetPending $schema $key ([string]$value)
     $script:SetPending = $staged.Pending
@@ -593,7 +593,9 @@ function Show-Settings {
       $script:SetPal = Get-UiPalette
       # the tray may hold a menu and a mark drawn with the old palette: a window opened from the
       # tray runs in the resident, so those objects are right here to be re-skinned
-      if (Get-Command Update-TrayLook -ErrorAction SilentlyContinue) { Update-TrayLook }
+      # the tray belongs to the resident: asking through the window layer keeps this file from
+      # pulling the capture loop (and the panel it opens) into the settings bundle
+      [void](Request-Window -Name 'tray' -Action 'look')
     }
     if ($plan.Language) {
       # a language may name its own font family, and the faces are built once per process: drop
@@ -1077,7 +1079,7 @@ function Show-Settings {
     $form.Invalidate()
   }
 
-  $form = New-Object Cb.FluentForm
+  $form = New-AppWindow -Name 'settings' -Frame 'Cb.FluentForm' -Borderless
   # the resident and the panel reach this window through the script scope: a hotkey pressed while
   # it is open asks it to step aside (see Hide-SettingsForPanel below)
   $script:SetWindow = $form
@@ -1088,7 +1090,7 @@ function Show-Settings {
   $form.KeyPreview = $true
   $form.Text = (Get-UiText 'settings.window.title')
   $form.AccessibleName = (Get-UiText 'settings.window.title')
-  # The one mark the tool draws (lib\native.ps1): the same icon the tray shows, so the taskbar
+  # The one mark the tool draws (main\utils\native.ps1): the same icon the tray shows, so the taskbar
   # button and Alt-Tab never carry a second drawing of it.
   $icon = New-AppIcon
   if ($null -ne $icon) { $form.Icon = $icon }
@@ -1242,7 +1244,7 @@ function Show-Settings {
         Draw-SettingsValueField $g $pal $script:SetEditRect '' ([string]$script:SetEditField.Unit) $true $mode
       }
       if ($listOnly) { return }
-      # the caption buttons and the footer actions are view nodes (renderer\src\core\views.ps1): one walk
+      # the caption buttons and the footer actions are view nodes (renderer\src\components\views.ps1): one walk
       # draws them all, in the order the patch kept them
       [void](Render-UiTree $script:SetChrome { param($c) if ($c.Type -ne 'chrome') { [void](Draw-UiView $g $pal $c) } })
       # the footer is the window's own bar: the last change on the left, the actions on the right.
@@ -1272,7 +1274,7 @@ function Show-Settings {
     }
     if ($script:SetRecKey) { Record-Key $e; return }
     if ($e.KeyCode -eq [Windows.Forms.Keys]::Escape) {
-      $form.Close()
+      [void](Close-AppWindow 'settings')
       $e.Handled = $true
     }
   })
@@ -1320,7 +1322,7 @@ function Show-Settings {
       $script:SetSbHot = $hot
       $form.Invalidate()
     }
-    # The caption buttons and the footer actions are view nodes (renderer\src\core\views.ps1), so one diff
+    # The caption buttons and the footer actions are view nodes (renderer\src\components\views.ps1), so one diff
     # moves the hover and answers the rectangle that changed: crossing Save repaints Save instead
     # of the whole window, and a disabled action never takes the hover at all.
     $dirty = Update-UiViewHot $script:SetChrome.Children.ToArray() $e.X $e.Y $true
@@ -1585,17 +1587,17 @@ function Show-Settings {
   })
   $animTimer.Start()
 
-  $form.Add_Deactivate({
+  Register-AppWindowEvent -Name 'settings' -Event Deactivate -Handler {
     # leaving the window is the other way out of the field: a value is committed, never quietly
     # dropped, and a refusal keeps it open until the user is back
     if ($null -ne $script:SetEditBox) { Complete-Edit }
-  })
+  }
 
   # Leaving with staged work would drop it without a word, and once the window is gone there is
   # nowhere to say so: the one question is asked here, and No keeps the window open with the
   # staged values still in place.
-  $form.Add_FormClosing({
-    param($s, $e)
+  Register-AppWindowEvent -Name 'settings' -Event Closing -Handler {
+    param($e)
     if ($script:SetPending.Count -eq 0) { return }
     try {
       $askText = Get-UiText 'settings.msg.closeUnsaved'
@@ -1605,7 +1607,7 @@ function Show-Settings {
         [Windows.Forms.MessageBoxDefaultButton]::Button2)
       if ($ans -ne [Windows.Forms.DialogResult]::Yes) { $e.Cancel = $true }
     } catch { }
-  })
+  }
 
   try {
     # a paint or key handler that throws must not take the window down with a modal box the user
@@ -1670,4 +1672,16 @@ function Show-SettingsAfterPanel {
     if ($state -ne [Windows.Forms.FormWindowState]::Minimized) { $w.Activate() }
   } catch { }
   $script:SetWindowState = $null
+}
+
+# What the rest of the program may ask this window to do. It is registered here, at the end of the
+# file, because every handler names a function this file defines: the window owns its behaviour,
+# and a caller reaches it by action name instead of by function name - which is what keeps the
+# three windows from being one closure.
+Register-Window -Name 'settings' -Handlers @{
+  open    = { param($args) Show-Settings -Group ([string]$args['Group']) }
+  hide    = { param($args) [bool](Hide-SettingsForPanel) }
+  restore = { param($args) Show-SettingsAfterPanel }
+  ring    = { param($args) [void](Ring-SettingsAsk ([string]$args['Name'])) }
+  test    = { param($args) [bool](Test-SettingsWindowOpen ([string]$args['Name'])) }
 }

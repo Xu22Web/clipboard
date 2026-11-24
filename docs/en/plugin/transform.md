@@ -60,7 +60,7 @@ transform.Modes=snake,kebab,upper
 
 ## Settings (`clipboard.ini`)
 
-The keys are declared in `schema\plugins\transform.ps1` and merged into the settings on load; in the file they live in the `[transform]` section, and `config set` uses `<plugin>.<Key>`:
+The keys are declared in `shared\schema\plugins\transform.ps1` and merged into the settings on load; in the file they live in the `[transform]` section, and `config set` uses `<plugin>.<Key>`:
 
 | Key | Default | Meaning |
 |---|---|---|

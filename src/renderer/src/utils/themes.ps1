@@ -1,0 +1,256 @@
+# renderer/src/utils/themes.ps1 - theme discovery, validation and application for clipboard.
+#
+# A theme is one INI file inside <root>\themes:
+#
+#   Name=win11-dark                       # optional, defaults to the file name
+#   Description=Windows 11 Fluent, dark
+#   FontFamily=                           # empty = auto (Segoe UI Variable Text -> Segoe UI)
+#   IconFamily=                           # empty = auto (Segoe Fluent Icons -> MDL2)
+#
+#   [palette]                             # colour tokens, #RRGGBB or #AARRGGBB
+#   Surface=#202020
+#   Border=#16FFFFFF
+#
+#   [fonts]                               # point sizes
+#   Body=10.5
+#
+#   [metrics]                             # optional 96 dpi overrides
+#   RowHeight=40
+#
+#   [item-marks]                          # a section named after a plugin restyles that
+#   StarColor=#FFC86E                     # plugin's ThemeSettings for this theme only
+#
+# Loading rules:
+#   - only themes\*.ini are considered, by file name, case-insensitively
+#   - nothing is executed while resolving a name: Get-ThemeNames / Resolve-ThemeName only
+#     look at file names, so a broken theme cannot break `clipboard config`
+#   - an unknown name falls back to win11-dark; a theme is always matched by its file name
+#   - unknown colour tokens, bad colour values and out-of-range numbers are logged and
+#     skipped instead of failing the whole theme
+#   - a missing themes folder or an unreadable theme keeps the built-in palette
+#
+# The settings file only picks a theme by name (Theme=win11-dark). Individual colours are
+# NOT ini keys of clipboard.ini: a theme is a package, and per-theme plugin styling lives
+# in the theme ini itself.
+#
+# The base tool keeps stubs for Get-ThemeNames / Resolve-ThemeName / Read-Theme /
+# Apply-Theme plus the built-in palette, so a missing renderer\src\utils\themes.ps1 degrades to
+# "built-in palette only" rather than breaking the panel.
+
+# theme names on disk (file names without .ini, sorted); nothing is parsed here. The listing
+# itself lives in utils/schema.ps1, so validating a theme name needs no module that draws.
+function Get-ThemeNames {
+  $out = @(Get-ThemeNameList (Get-ThemeDir))
+  if ($out.Count -eq 0 -and -not (Test-Path -LiteralPath (Get-ThemeDir))) { Write-Log ('themes folder missing: ' + (Get-ThemeDir)) }
+  return $out
+}
+
+# a theme is matched by name only (the file in themes\); anything else falls back to the
+# default, so a typo can never leave the panel without colours
+function Resolve-ThemeName([string]$name) {
+  $want = ([string]$name).Trim()
+  if ($want -eq '') { return 'win11-dark' }
+  foreach ($n in @(Get-ThemeNames)) { if ($n -ieq $want) { return $n } }
+  return 'win11-dark'
+}
+
+# '#RRGGBB' (opaque) or '#AARRGGBB' (with alpha)
+function Convert-ThemeColor([string]$spec) {
+  Use-Drawing
+  $s = ([string]$spec).Trim()
+  if ($s -notmatch '^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$') { return $null }
+  $hex = $s.Substring(1)
+  try {
+    if ($hex.Length -eq 6) {
+      return [Drawing.Color]::FromArgb(
+        [Convert]::ToInt32($hex.Substring(0, 2), 16),
+        [Convert]::ToInt32($hex.Substring(2, 2), 16),
+        [Convert]::ToInt32($hex.Substring(4, 2), 16))
+    }
+    return [Drawing.Color]::FromArgb(
+      [Convert]::ToInt32($hex.Substring(0, 2), 16),
+      [Convert]::ToInt32($hex.Substring(2, 2), 16),
+      [Convert]::ToInt32($hex.Substring(4, 2), 16),
+      [Convert]::ToInt32($hex.Substring(6, 2), 16))
+  } catch { return $null }
+}
+
+# A plugin hands row colours back as strings and the row painter asks for them on every
+# scroll tick, so the parse is remembered by spec. Callers must still tolerate $null.
+function Get-UiColor([string]$spec) {
+  if (-not $spec) { return $null }
+  if ($null -eq $script:UiColorCache) { $script:UiColorCache = @{} }
+  $k = $spec.Trim().ToUpperInvariant()
+  if ($script:UiColorCache.ContainsKey($k)) { return $script:UiColorCache[$k] }
+  $c = Convert-ThemeColor $k
+  if ($script:UiColorCache.Count -gt 256) { $script:UiColorCache.Clear() }
+  $script:UiColorCache[$k] = $c
+  return $c
+}
+
+# The theme schema (schema/theme.ps1) says which sections exist and what their values mean;
+# utils/inifile.ps1 reads the text. Together they replace a parser of its own, so a theme
+# follows exactly the rules of every other .ini - "[palette]" + "Surface=..." arrives here
+# as the flat key "palette.Surface".
+function Get-ThemeSchema {
+  if ($null -ne $script:ThemeSchema) { return $script:ThemeSchema }
+  $script:ThemeSchema = Import-Schema (Join-Path $Root 'shared\schema\theme.ps1')
+  return $script:ThemeSchema
+}
+
+# Parse one theme ini: meta keys, plus every section the schema names (palette, fonts,
+# metrics) and one section per plugin. A section the schema allows is just a bag of values;
+# the plugin decides what they mean.
+function Read-ThemeIni([string]$path) {
+  $schema = Get-ThemeSchema
+  $t = @{
+    Name        = ''
+    Description = ''
+    FontFamily  = ''
+    IconFamily  = ''
+    Palette     = @{}
+    Fonts       = @{}
+    Metrics     = @{}
+    PluginTheme = @{}
+  }
+  $doc = Import-Ini $path
+  foreach ($k in @(Select-IniDocKeys $doc)) {
+    $key = [string]$k
+    $v = Get-IniDocValue $doc $key
+    $dot = $key.IndexOf('.')
+    if ($dot -lt 0) {
+      # meta keys are PascalCase (FontFamily); the underscore spelling is still accepted
+      switch ($key.ToLowerInvariant() -replace '_', '') {
+        'name' { $t.Name = $v }
+        'description' { $t.Description = $v }
+        'fontfamily' { $t.FontFamily = $v }
+        'iconfamily' { $t.IconFamily = $v }
+      }
+      continue
+    }
+    $section = $key.Substring(0, $dot).ToLowerInvariant()
+    $leaf = $key.Substring($dot + 1)
+    $spec = Get-SchemaSection $schema $section
+    if ($null -eq $spec) { continue }
+    # a value the schema rejects is dropped, so Apply-Theme keeps the built-in colour or size
+    $r = Convert-SchemaValue @{ Name = 'theme-value'; Properties = @{ Value = $spec } } 'Value' $v
+    if (-not $r.Ok) { continue }
+    $target = ''
+    if ($spec.Contains('Target')) { $target = [string]$spec['Target'] }
+    if ($target -eq 'Palette') { $t.Palette[$leaf] = [string]$r.Value; continue }
+    if ($target -eq 'Fonts') { $t.Fonts[$leaf] = [string]$r.Value; continue }
+    if ($target -eq 'Metrics') { $t.Metrics[$leaf] = [string]$r.Value; continue }
+    if (-not $t.PluginTheme.ContainsKey($section)) { $t.PluginTheme[$section] = @{} }
+    $t.PluginTheme[$section][$leaf] = $v
+  }
+  if ($t.Name -eq '') { $t.Name = [IO.Path]::GetFileNameWithoutExtension($path) }
+  return $t
+}
+
+# built-in palette = the last known-good Win11 dark look, used when no theme file exists
+function Get-BasePalette {
+  Use-Drawing
+  return @{
+    Surface      = [Drawing.Color]::FromArgb(32, 32, 32)
+    Field        = [Drawing.Color]::FromArgb(45, 45, 45)
+    FieldBorder  = [Drawing.Color]::FromArgb(24, 255, 255, 255)
+    Text         = [Drawing.Color]::FromArgb(255, 255, 255)
+    Dim          = [Drawing.Color]::FromArgb(170, 170, 170)
+    Faint        = [Drawing.Color]::FromArgb(138, 138, 138)
+    Accent       = [Drawing.Color]::FromArgb(96, 205, 255)
+    AccentSoft   = [Drawing.Color]::FromArgb(30, 96, 205, 255)
+    Border       = [Drawing.Color]::FromArgb(22, 255, 255, 255)
+    SelBg        = [Drawing.Color]::FromArgb(26, 255, 255, 255)
+    HoverBg      = [Drawing.Color]::FromArgb(18, 255, 255, 255)
+    BadgeBg      = [Drawing.Color]::FromArgb(16, 255, 255, 255)
+    BadgeText    = [Drawing.Color]::FromArgb(200, 200, 200)
+    KeyCapBg     = [Drawing.Color]::FromArgb(12, 255, 255, 255)
+    KeyCapBorder = [Drawing.Color]::FromArgb(28, 255, 255, 255)
+    Mark         = [Drawing.Color]::FromArgb(255, 200, 110)
+    Warn         = [Drawing.Color]::FromArgb(255, 153, 164)
+  }
+}
+
+# the palette the panel draws with
+function Get-UiPalette {
+  if ($null -ne $script:ThemePalette) { return $script:ThemePalette }
+  return (Get-BasePalette)
+}
+
+# parse a theme file; $null when the name matches no file or the file cannot be read
+function Read-Theme([string]$name) {
+  $dir = Get-ThemeDir
+  $file = $null
+  foreach ($n in @(Get-ThemeNames)) {
+    if ($n -ieq $name) { $file = Join-Path $dir ($n + '.ini'); break }
+  }
+  if (-not $file) { return $null }
+  try { return (Read-ThemeIni $file) } catch {
+    Write-Log ('theme failed: ' + $name + ' - ' + $_.Exception.Message)
+    return $null
+  }
+}
+
+# Resolve palette / fonts / metric overrides and per-plugin theme values.
+# Safe to call repeatedly; every call rebuilds from the theme file.
+#
+# -SkipColors exists for the command line: turning a colour string into a Drawing.Color
+# means loading System.Drawing (~250 ms the first time), and no CLI command ever draws.
+# Fonts, metrics and the plugin sections are still resolved, so `config` reports them.
+function Apply-Theme {
+  param([switch]$SkipColors)
+  if (-not $SkipColors) { Use-Drawing }
+  $script:ThemePalette = $null
+  $script:ThemeFonts = @{}
+  $script:ThemeFace = @{ Font = ''; Icon = '' }
+  $script:ThemeOverrides = @{}
+  # metrics restart from the built-in table: a theme without a [metrics] section must not
+  # inherit the numbers of the theme applied before it
+  $script:Metric = $script:MetricDefault.Clone()
+  $name = Resolve-ThemeName $script:Theme
+  $script:Theme = $name
+  $pal = $null
+  $t = Read-Theme $name
+  if ($t -is [hashtable]) {
+    if ($t.FontFamily) { $script:ThemeFace.Font = [string]$t.FontFamily }
+    if ($t.IconFamily) { $script:ThemeFace.Icon = [string]$t.IconFamily }
+    if (-not $SkipColors) {
+      $pal = Get-BasePalette
+      foreach ($k in @($t.Palette.Keys)) {
+        $key = [string]$k
+        if (-not $pal.ContainsKey($key)) { Write-Log ('theme colour ignored (unknown token): ' + $name + '.' + $key); continue }
+        $c = Convert-ThemeColor ([string]$t.Palette[$k])
+        if ($null -eq $c) { Write-Log ('theme colour ignored (bad value): ' + $name + '.' + $key); continue }
+        $pal[$key] = $c
+      }
+    }
+    foreach ($k in @($t.Fonts.Keys)) {
+      $v = 0.0
+      if (-not [double]::TryParse([string]$t.Fonts[$k], [ref]$v) -or $v -lt 6 -or $v -gt 48) {
+        Write-Log ('theme font ignored (out of range): ' + $name + '.' + $k)
+        continue
+      }
+      $script:ThemeFonts[[string]$k] = $v
+    }
+    foreach ($k in @($t.Metrics.Keys)) {
+      $key = [string]$k
+      if (-not $script:Metric.ContainsKey($key)) { Write-Log ('theme metric ignored (unknown): ' + $name + '.' + $key); continue }
+      $v = 0
+      if (-not [int]::TryParse([string]$t.Metrics[$k], [ref]$v) -or $v -lt 1 -or $v -gt 4000) {
+        Write-Log ('theme metric ignored (out of range): ' + $name + '.' + $key)
+        continue
+      }
+      $script:Metric[$key] = $v
+    }
+    # plugin sections: <plugin>.<Key> = value, only for keys the plugin declared as
+    # ThemeSettings (the plugin layer enforces that when it applies them)
+    foreach ($pname in @($t.PluginTheme.Keys)) {
+      foreach ($k in @($t.PluginTheme[$pname].Keys)) {
+        $script:ThemeOverrides[([string]$pname + '.' + [string]$k)] = [string]$t.PluginTheme[$pname][$k]
+      }
+    }
+  } elseif ($name -ne 'win11-dark') {
+    Write-Log ('theme not found, using built-in palette: ' + $name)
+  }
+  $script:ThemePalette = $pal
+}

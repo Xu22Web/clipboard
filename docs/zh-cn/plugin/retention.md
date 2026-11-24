@@ -34,7 +34,7 @@ $ clipboard sweep force
 
 ## 设置项（`clipboard.ini`）
 
-这些键声明在 `schema\plugins\retention.ps1`，加载时合并进设置；文件里写在 `[retention]` 段内，`config set` 用 `<插件名>.<Key>`：
+这些键声明在 `shared\schema\plugins\retention.ps1`，加载时合并进设置；文件里写在 `[retention]` 段内，`config set` 用 `<插件名>.<Key>`：
 
 | 键 | 默认 | 说明 |
 |---|---|---|

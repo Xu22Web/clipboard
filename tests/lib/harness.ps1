@@ -380,7 +380,7 @@ function New-FakeSandbox([string]$name) {
   $fake = Join-Path $script:Harness.RepoRoot 'tests\lib\fake-clip.ps1'
   if ($script:Harness.IsPackaged) { return $dir }
   if (Test-Path -LiteralPath $fake) {
-    Copy-Item -LiteralPath $fake -Destination (Join-Path $dir 'lib\clip.ps1') -Force
+    Copy-Item -LiteralPath $fake -Destination (Join-Path $dir 'main\utils\clip.ps1') -Force
   }
   return $dir
 }
@@ -394,7 +394,7 @@ function Get-ClientExe {
   $script:Harness.ClientExe = ''
   $beside = Join-Path $script:Harness.SrcRoot 'preload\client.exe'
   if (Test-Path -LiteralPath $beside) { $script:Harness.ClientExe = $beside; return $beside }
-  $builder = Join-Path $script:Harness.RepoRoot 'tools\build-client.ps1'
+  $builder = Join-Path $script:Harness.RepoRoot 'packages\cli\client.ps1'
   $source = Join-Path $script:Harness.SrcRoot 'preload\client.cs'
   if (-not (Test-Path -LiteralPath $builder) -or -not (Test-Path -LiteralPath $source)) { return '' }
   # Content addressed and outside the per-run temp folder: recompiling a client that did not
@@ -493,7 +493,7 @@ function Start-TestPart([string]$Source = '', [switch]$ClipShared, [switch]$Quie
   $script:Harness.RepoRoot = $repoRoot
   $script:Harness.DefaultSource = $defaultSource
   $script:Harness.SrcRoot = (Resolve-Path -LiteralPath $Source).Path
-  # a packaged copy has minified function names, so tests\lib\fake-clip.ps1 cannot stand in for lib\clip.ps1
+  # a packaged copy has minified function names, so tests\lib\fake-clip.ps1 cannot stand in for main\utils\clip.ps1
   $script:Harness.IsPackaged = ($script:Harness.SrcRoot -ne (Resolve-Path -LiteralPath $defaultSource).Path)
   $script:Harness.ClipPs1 = Join-Path $script:Harness.SrcRoot 'clipboard.ps1'
   if (-not (Test-Path -LiteralPath $script:Harness.ClipPs1)) { Write-Error ('cannot find ' + $script:Harness.ClipPs1); exit 2 }

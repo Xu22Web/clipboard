@@ -1,4 +1,4 @@
-#@use lib/native
+#@use main/utils/native
 #@export Initialize-UiReactive, New-UiReactive, Get-UiReactive, Set-UiReactive, Add-UiRender, Remove-UiRender, New-UiComputed, Invoke-UiFlush, Test-UiFlushPending, New-UiApp, Test-UiAppOpen, Set-UiAppSignal, Get-UiAppSignal, Add-UiAppEffect, Close-UiApp
 # renderer\src\core\reactive.ps1 - the data half of the framework: a value you can watch, and an update that
 # is batched.

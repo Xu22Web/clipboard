@@ -14,7 +14,7 @@
 # ThemeSettings -> themes\<name>.ini  [item-marks]  (not ini keys of clipboard.ini)
 # The highlight colours are theme items only: how a row looks belongs to the theme, so
 # there is no clipboard.ini key for them. Both sets of keys - the ini switches and the
-# theme styling - are described in schema\plugins\item-marks.ps1.
+# theme styling - are described in shared\schema\plugins\item-marks.ps1.
 #
 # Scriptblocks must be self-contained: they may call base helpers, but must not read
 # variables created in this file's scope (that scope is gone when they run).

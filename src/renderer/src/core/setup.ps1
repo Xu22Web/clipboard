@@ -1,8 +1,8 @@
-#@use renderer/src/core/component, renderer/src/core/views
+#@use renderer/src/core/component, renderer/src/components/views
 #@export Get-UiSetupState, Get-UiSetupContext, Merge-UiSetupProps, Add-UiSetupHook, Use-UiSlot, Invoke-UiSlot, New-UiSetupView, Get-UiSetupContextOf
 # renderer\src\core\setup.ps1 - a component declared the way <script setup> declares one.
 #
-# A component here is still a node (renderer\src\core\views.ps1) whose kind decides how it draws. What was
+# A component here is still a node (renderer\src\components\views.ps1) whose kind decides how it draws. What was
 # missing is how the node is *declared*: props in, one function that builds what it needs, and the
 # lifecycle hooks it registers while that function runs - instead of the caller hunting the node
 # afterwards to attach them.

@@ -36,7 +36,7 @@ function RunFake([string[]]$cliArgs, [switch]$Cold) { return (Invoke-CliRunner $
 # The state probe lives in the product module, which this process never loads: loading it here
 # keeps the win+v row comparable whether or not the module is otherwise in use.
 if (-not (Get-Command Get-WinVState -ErrorAction SilentlyContinue)) {
-  $nativeFile = Join-Path $script:srcRoot 'lib\native.ps1'
+  $nativeFile = Join-Path $script:srcRoot 'main\utils\native.ps1'
   if (Test-Path -LiteralPath $nativeFile) { . $nativeFile }
 }
 

@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 Clipboard history for Windows 10 / 11, written in plain PowerShell 5.1 with no third-party dependencies: a global hotkey, a searchable history panel and a resident capture loop.
 
-The program is the entry point `src\clipboard.ps1` plus the modules under `src\lib\`; distribution copies the whole folder. Data stays inside the program folder, the Windows clipboard history service (`cbdhsvc`) is not used, nothing goes over the network and no administrator rights are needed.
+The program is the entry point `src\clipboard.ps1` plus the modules under `src\main\`, `src\preload\`, `src\renderer\` and `src\shared\`; distribution copies the whole folder. Data stays inside the program folder, the Windows clipboard history service (`cbdhsvc`) is not used, nothing goes over the network and no administrator rights are needed.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -41,7 +41,7 @@ The program is the entry point `src\clipboard.ps1` plus the modules under `src\l
 
 ## Quick start
 
-The program runs on its own (`src\clipboard.ps1` plus `src\lib\` / `utils\` / `schema\`), and the repository root has `cli` for the commands `package.ini` declares.
+The program runs on its own (`src\clipboard.ps1` plus `src\main\` / `src\preload\` / `src\renderer\` / `src\shared\`), and the repository root has `cli` for the commands `package.ini` declares.
 
 ```powershell
 cli              # list the commands package.ini declares
@@ -50,7 +50,7 @@ cli test         # run every self test
 cli build        # package into dist\clipboard-<version>\
 cli client       # compile the optional native client src\preload\client.exe
 cli assembly     # compile the optional type library src\main\clipboard.dll
-cli bundle       # build one entry from cli.ini (-Inspect lists what cannot be inlined)
+cli bundle       # build one entry from builder.cli.config.ps1 (-Inspect lists what cannot be inlined)
 ```
 
 `cli` has two entries: `cli.sh` (Git Bash / MSYS, `./cli.sh`) and `cli.cmd` (CMD, `cli`). Command names are case-insensitive; the remaining arguments are appended to the matching line of `package.ini`, for example `cli test -Unit`, `cli build -Config other.ini`.
@@ -324,11 +324,11 @@ Further rules:
 - `config set` validates against the types and ranges above and rewrites only that line; a running resident restarts. `config get <key>` shows the effective value and the raw ini value, and every line of `config` is tagged with where it came from (`<- ini` / `<- default`).
 - The command line handles positional arguments and `list -Count N` only; a setting passed to a command is refused by argument binding (for example `clipboard put hi -MaxItems 50`).
 - `Rows` also bounds pinning: the sticky pins take at most `Rows - 1` rows, `config set` refuses a larger `item-marks.StickyRows` and lowering `Rows` lowers a value that no longer fits.
-- Defaults are declared only in the `Default` of `src\schema\clipboard.ps1`; the variables they drive live in `src\lib\base.ps1`.
+- Defaults are declared only in the `Default` of `src\shared\schema\clipboard.ps1`; the variables they drive live in `src\main\utils\base.ps1`.
 
 ### INI conventions
 
-Every ini in the repository uses the same syntax (`package.ini`, `cli.ini`, `clipboard.ini`, `themes\*.ini`). The program side is `utils\ini.ps1`, `utils\inifile.ps1` and `utils\schema.ps1`; the tool side (`tools\`) has its own `tools\utils\ini.ps1` (same parsing rules) and `tools\utils\schema.ps1` (validating `cli.ini` and `package.ini`) and never loads anything under `src\`. The two validators differ on purpose: for the program a missing key means "unset, use the default", for the tools it is an error.
+Every ini in the repository uses the same syntax (`package.ini`, `builder.ini`, `clipboard.ini`, `themes\*.ini`). The program side is `shared\utils\ini.ps1`, `shared\utils\inifile.ps1` and `shared\utils\schema.ps1`; the tooling carries its own copies (`packages\cli\utils\ini.ps1`, same parsing rules) and never loads anything under `src\`. A missing key means "unset, use the default" for the program, and an error for a tool's own schema.
 
 - One `Key=Value` per line; a line starting with `#` or `;` is a comment, and a trailing comment is not a thing (a `#` inside a value belongs to it, as in `Accent=#5AC8FA`); values are not quoted, surrounding whitespace is trimmed, and a key written twice keeps the last value.
 - `[section]` puts the keys that follow into that section: `Dev=...` under `[scripts]` is the same key as `scripts.Dev=...` at the top. A section header is a line holding nothing but `[name]`.
@@ -338,11 +338,13 @@ Every ini in the repository uses the same syntax (`package.ini`, `cli.ini`, `cli
 | File | Purpose | Sections |
 |---|---|---|
 | `package.ini` | project metadata and commands, read by `cli` | `Name` / `Version` under `[package]`, the command names under `[scripts]` |
-| `cli.ini` | tool settings, read by `cli dev` / `cli build` / `cli test` / `cli bundle` | `[dev]` `[build]` `[copy]` `[test]` `[product.*]` `[entry.*]` |
+| `builder.cli.config.ps1` | what `cli build` / `cli bundle` build: one table per target | `Input` / `Scan` / `Output` / `Plugins` / `External` / `Ship` and the rewrite switches |
+| `builder.ini` | what a release is: electron-builder's three keys | `Compression`, `[directories]`, `[files]` |
+| `test.config.ps1` | which parts the suite runs | `Test.Groups` / `Test.Exclude` / `Test.Workers` / `Test.Reporter` / `Test.Bail` / `Test.Serial` |
 | `clipboard.ini` | program settings, written by `config init` | base keys are ungrouped; plugin keys live in `[<plugin>]` (a flat `<plugin>.<Key>` still reads) |
 | `themes\*.ini` | theme definition | `[palette]` `[fonts]` `[metrics]` `[<plugin>]` |
 | `schema\*.ps1` | the schema of `clipboard.ini` and of a theme | — |
-| `schema\plugins\*.ps1` | one plugin's keys: `Properties` go into the plugin section of `clipboard.ini`, `ThemeProperties` into the theme | — |
+| `shared\schema\plugins\*.ps1` | one plugin's keys: `Properties` go into the plugin section of `clipboard.ini`, `ThemeProperties` into the theme | — |
 
 ### schema files
 
@@ -549,7 +551,7 @@ A plugin is one `.ps1` file returning a hashtable.
 | `ClearKeeps` | no | the marks `clear` keeps by default |
 | `Init` | no | one-time initialisation per process |
 
-A plugin file declares no `Settings` / `ThemeSettings`: its keys live in `schema\plugins\<plugin>.ps1` and are merged on load (see [a plugin's own settings](#a-plugins-own-settings)).
+A plugin file declares no `Settings` / `ThemeSettings`: its keys live in `shared\schema\plugins\<plugin>.ps1` and are merged on load (see [a plugin's own settings](#a-plugins-own-settings)).
 
 ### Marks
 
@@ -595,7 +597,7 @@ A plugin may declare two kinds of key tables, in two files:
 
 ### A plugin's own settings
 
-A plugin's settings are declared in the `Properties` of `schema\plugins\<plugin>.ps1` and merged into the settings schema on load, sharing validation and display with the base keys under the name `<plugin>.<Key>`.
+A plugin's settings are declared in the `Properties` of `shared\schema\plugins\<plugin>.ps1` and merged into the settings schema on load, sharing validation and display with the base keys under the name `<plugin>.<Key>`.
 
 ```ini
 Plugins=entry-actions
@@ -623,7 +625,7 @@ What a plugin does when it loads and fails:
 
 ## Command proxy
 
-Every command starts a PowerShell process, and most of that time goes into parsing this program — which the resident has already done. Which commands may therefore run inside the resident by way of a named pipe is one file, `src\ipc\channels.ini`: one `[channel.<name>]` section per built-in command with `Remote=1` (the resident answers it) or `Remote=0` (the command line runs it), and `[channels] Plugins=1` to let a verb without a section of its own cross. `lib\proxy.ps1` reads it for both halves and `preload\client.cs` reads it too, so nothing has to keep two lists in step; a missing file crosses nothing and every command simply takes the slow path.
+Every command starts a PowerShell process, and most of that time goes into parsing this program — which the resident has already done. Which commands may therefore run inside the resident by way of a named pipe is one file, `src\shared\ipc\channels.ini`: one `[channel.<name>]` section per built-in command with `Remote=1` (the resident answers it) or `Remote=0` (the command line runs it), and `[channels] Plugins=1` to let a verb without a section of its own cross. `main\utils\proxy.ps1` reads it for both halves and `preload\client.cs` reads it too, so nothing has to keep two lists in step; a missing file crosses nothing and every command simply takes the slow path.
 
 | | |
 |---|---|
@@ -640,7 +642,7 @@ Between a window and the channel sits the store, and the panel takes the rows fr
 
 `cli client` and `cli assembly` each produce one optional file with the .NET Framework compiler that ships with Windows: `preload\client.exe` and `main\clipboard.dll`. Without them the program still runs: no `client.exe` means the script client, no `clipboard.dll` means `src\main\*.cs` is compiled on the spot.
 
-`client.exe` is called only by `clipboard.cmd`, before PowerShell starts (source `preload\client.cs`): when taking over fails it returns `100` to fall back to the script, and passes any other exit code through. `clipboard.dll` is loaded by `lib\native.ps1` and ignored when a `.cs` is newer or the file is missing. `cli build` compiles both into `src\` first when the manifest carries the matching `.cs`, then packages them at the paths their entries name.
+`client.exe` is called only by `clipboard.cmd`, before PowerShell starts (source `preload\client.cs`): when taking over fails it returns `100` to fall back to the script, and passes any other exit code through. `clipboard.dll` is loaded by `main\utils\native.ps1` and ignored when a `.cs` is newer or the file is missing. `cli build` compiles both into `src\` first when the manifest carries the matching `.cs`, then packages them at the paths their entries name.
 
 The `resident` line of `status`, and the restart after `config set`, only accept the resident serving the current data folder (judged by the `hotkey.txt` it writes into its own `data\`, `(stopped)` on exit), so a second install or a test sandbox is never mistaken for it.
 
@@ -674,28 +676,31 @@ Layout, relative to the repository root:
 ```
 package.ini             project metadata and commands (Name / Version / the [scripts] names); read by cli
 cli.sh  cli.cmd  cli.ps1  the command entry points (sh / CMD / PowerShell) running package.ini
-cli.ini                 tool settings: [dev] watch and poll, [build] packaging, [copy] the
-                        file list, [test] workers, [product.*] chains, [entry.*] outputs
+builder.cli.ps1         the assembly point: packages\cli, then bundler / builder / test
+builder.cli.config.ps1  what a build produces: one table per target (Input / Scan / Output / Plugins / Ship)
+builder.ini             what a release carries: electron-builder's Compression / [directories] / [files]
+test.config.ps1         which parts the suite runs
 scripts/install.bat     config init -> migrate -> install (copied to the package root)
 scripts/uninstall.bat   stop -> uninstall purge (same)
-tools/build.ps1         packaging, by the [build] section of cli.ini, into dist\clipboard-<version>\
-tools/build-client.ps1  compile preload\client.exe (optional)
-tools/build-assembly.ps1 compile main\clipboard.dll (optional)
-tools/dev.ps1           run the resident and restart it when a loaded file changes
-tools/test.ps1          the test entry point (forwards to tests\run.ps1)
-tools/bench.ps1         timing for capture, save, parse and filter
-tools/shot.ps1          regenerate the screenshots under docs\ (one folder per language)
-tools/utils/ini.ps1     the tools' own ini parser (same rules as src\utils)
-tools/utils/schema.ps1  the tools' own schema validation (cli.ini and package.ini)
-tools/schema/cli.ps1    the cli.ini schema: keys, types, ranges
-tools/schema/package.ps1 the package.ini schema: name, version, command table
-tools/utils/globs.ps1   Includes / Excludes expansion
-tools/bundler/assets.ps1 what happens to one file: which handler rewrites it
-tools/bundler/assets/*.ps1 one handler per kind of file: script, version, batch, shell, ini, copy
-tools/bundler/products.ps1 which folder of C# becomes one file, and where it lands
-tools/utils/console.ps1 output prefixes and failure exit (Write-Step / Fail)
-tools/utils/csc.ps1     locate the .NET Framework csc.exe
-tools/utils/minify.ps1  the minifier (syntax-tree rewrite)
+packages/cli/           the vite half: command table, config loader, dev loop, bundle and build
+packages/cli/index.ps1  the package's exports; every other file is internal
+packages/cli/config.ps1 resolve builder.cli.config.ps1, presets and the package defaults
+packages/cli/bundle.ps1 build one target or all of them, through packages\bundler
+packages/cli/build.ps1  build, stage and pack a release through packages\builder
+packages/cli/watch.ps1  `cli dev`: watch builder.ini's file list, restart the resident
+packages/cli/assembly.ps1 / client.ps1  the two C# products (main\clipboard.dll, preload\client.exe)
+packages/cli/bench.ps1  timing for capture, save, parse and filter
+packages/cli/shot.ps1   regenerate the screenshots under docs\ (one folder per language)
+packages/cli/plugins/presets.ps1  the renderer preset: its chain and its external modules
+packages/cli/utils/*.ps1  the tooling's own copies of console, ini, schema, globs, minify, csc
+packages/bundler/       the engine: resolve, treeshake, merge, render, verify, C# compile
+packages/bundler/bundler.ps1  the entry: -TargetFile spec in, chunks out
+packages/bundler/lib/*.ps1    ast, graph, emit, surface, chunk (the bit-set grouping)
+packages/bundler/plugins/*.ps1  one file per stage
+packages/builder/       staging and packing: package.ps1 + the asset table
+packages/builder/assets.ps1   what happens to one file: which handler rewrites it
+packages/builder/assets/*.ps1 one handler per kind of file: script, version, batch, shell, ini, copy
+packages/test/          the suite runner: config.ps1 + index.ps1
 tests/run.ps1           the test driver: discover parts, run them, merge results
 tests/lib/harness.ps1   assertions, sandboxes and command calls shared by the parts
 tests/lib/reporter.ps1  the printed output: part lines, failure blocks, live window, summary
@@ -715,43 +720,48 @@ src/                    the program (the only folder packaging reads)
   clipboard.ini           settings (built-in defaults until config init writes it)
   data/                   history / log / hotkey cache / media (not committed)
   client.exe              compiled client (not committed; cli client)
-  lib/base.ps1            constants, version, record format, runtime identity, metrics, every default
-  lib/native.ps1          platform layer: P/Invoke, WinForms types, assembly loading, fonts, DPI
-  lib/theme-stub.ps1      built-in colours and the empty theme
-  lib/themes.ps1          the theme loader
-  lib/settings.ps1        the settings file: schema assembly, reading and writing one key
-  lib/media.ps1           media files for pictures and formatted text: blocks, codecs, orphan cleanup
-  lib/cfhtml.ps1          CF_HTML round trip: inline pictures, write back, trim and drop in the string form
-  lib/clip.ps1            clipboard reading and writing (text / file list / picture / HTML+RTF)
-  lib/blobs.ps1           large bodies: an entry over BlobChars becomes a file, the row keeps a reference
-  lib/store.ps1           the history file: CBHIST, version field, locking, append / tombstone / fold, trim
-  lib/transfer.ps1        export and import: records <-> text lines
-  lib/text.ps1            the words: read lang\*.ini, lay the language over en, fall back per key
-  lib/apprules.ps1        paste target -> paste behaviour
-  lib/marks.ps1           reading and writing marks and their meaning
-  lib/ordering.ps1        row order: the sort mark on top, how many sticky rows may freeze
-  lib/migrate.ps1         data format migration: detect the version, back up, step up
-  lib/modifiers.ps1       modifier state (the real keyboard, not the thread queue)
-  lib/entry.ps1           entry kinds (text / files / image / empty) and their words
-  lib/query.ps1           search syntax: fields, regular expressions, kind tests, matching (plain words are scanned by Cb.Search)
-  lib/select.ps1          multi-select: Ctrl/Shift rules, copying and deleting a batch
-  lib/serve.ps1           the resident: capture loop, hotkey, tray, restart after a crash
-  lib/shortcut.ps1        installing and removing the autostart and desktop shortcuts
-  lib/config.ps1          the config command: apply, print, restart the resident
-  lib/config-template.ps1 the clipboard.ini that gets written: order, groups, rewrite, reset
-  lib/settings-model.ps1  the rows of the settings window: groups, key to words, value and help
-  lib/settings-types.ps1  the editor of each type: switches, chords, unit conversion, validation
-  lib/settings-vm.ps1     what a change means: staged values, a flipped switch, a chord, a ticked name
-  lib/hotkey-record.ps1   handing a recording to the resident: two files, and the chords it holds
-  lib/usage.ps1           the help output
-  lib/dispatch.ps1        Invoke-Main: Initialize-Main (Apply-Config + plugins) -> Invoke-Dispatch
-  lib/proxy.ps1           the command proxy
-  lib/ipc.ps1             Invoke-Ipc: the channel a window calls, mapped to a function by the table
+  main/utils/base.ps1            constants, version, record format, runtime identity, metrics, every default
+  main/utils/native.ps1          platform layer: P/Invoke, WinForms types, assembly loading, fonts, DPI
+  renderer/src/utils/theme-stub.ps1      built-in colours and the empty theme
+  renderer/src/utils/themes.ps1          the theme loader
+  main/utils/settings.ps1        the settings file: schema assembly, reading and writing one key
+  main/utils/media.ps1           media files for pictures and formatted text: blocks, codecs, orphan cleanup
+  main/utils/cfhtml.ps1          CF_HTML round trip: inline pictures, write back, trim and drop in the string form
+  main/utils/clip.ps1            clipboard reading and writing (text / file list / picture / HTML+RTF)
+  main/utils/blobs.ps1           large bodies: an entry over BlobChars becomes a file, the row keeps a reference
+  main/utils/store.ps1           the history file: CBHIST, version field, locking, append / tombstone / fold, trim
+  main/utils/transfer.ps1        export and import: records <-> text lines
+  renderer/src/utils/text.ps1            the words: read lang\*.ini, lay the language over en, fall back per key
+  main/utils/apprules.ps1        paste target -> paste behaviour
+  main/utils/marks.ps1           reading and writing marks and their meaning
+  main/utils/ordering.ps1        row order: the sort mark on top, how many sticky rows may freeze
+  main/utils/migrate.ps1         data format migration: detect the version, back up, step up
+  main/utils/modifiers.ps1       modifier state (the real keyboard, not the thread queue)
+  main/utils/entry.ps1           entry kinds (text / files / image / empty) and their words
+  main/utils/query.ps1           search syntax: fields, regular expressions, kind tests, matching (plain words are scanned by Cb.Search)
+  main/utils/select.ps1          multi-select: Ctrl/Shift rules, copying and deleting a batch
+  main/utils/serve.ps1           the resident: capture loop, hotkey, tray, restart after a crash
+  main/utils/shortcut.ps1        installing and removing the autostart and desktop shortcuts
+  main/utils/config.ps1          the config command: apply, print, restart the resident
+  main/utils/config-template.ps1 the clipboard.ini that gets written: order, groups, rewrite, reset
+  renderer/src/utils/settings-model.ps1  the rows of the settings window: groups, key to words, value and help
+  renderer/src/utils/settings-types.ps1  the editor of each type: switches, chords, unit conversion, validation
+  renderer/src/utils/settings-vm.ps1     what a change means: staged values, a flipped switch, a chord, a ticked name
+  renderer/src/utils/anim.ps1            the animation numbers
+  renderer/src/utils/focus.ps1           taking and returning the foreground, releasing held modifiers
+  renderer/src/utils/tray-draw.ps1       the tray menu's rows, drawn for the tray and for the panel
+  preload/utils/hotkey-record.ps1   handing a recording to the resident: two files, and the chords it holds
+  main/utils/usage.ps1           the help output
+  main/utils/dispatch.ps1        Invoke-Main: Initialize-Main (Apply-Config + plugins) -> Invoke-Dispatch
+  main/utils/proxy.ps1           the command proxy
+  main/utils/window.ps1          the frame every window is made with: create, content, events, show / hide
+  preload/utils/ipc.ps1             Invoke-Ipc: the channel a window calls, mapped to a function by the table
+  preload/utils/window-host.ps1     the actions a window answers, and the ask that reaches one
 
   preload/                the compiled client, beside its source
   preload/client.cs       the only source here (not committed output: preload\client.exe)
 
-  ipc/channels.ini        which commands the resident answers, read by lib\proxy.ps1 and client.cs
+  shared/ipc/channels.ini        which commands the resident answers, read by main\utils\proxy.ps1 and client.cs
 
   renderer/src/store/     the state a window reads and writes
     define.ps1            Define-UiStore / Use-UiStore / Get-UiStoreRefs: one object per store,
@@ -769,66 +779,67 @@ src/                    the program (the only folder packaging reads)
                             scheduler that batches a write, and the derived value
   main/media/               Cb.Rtf and Cb.Rich: picture blocks, and a document laid into a device context
 
-  renderer/src/core/      boxes and controls both drawn windows share
+  renderer/src/core/      the framework the drawn windows run on
     draw.ps1              the brush cache, the colour at a fraction of its alpha, the string formats
     layout.ps1            cutting a box: inset, stack, columns, a scrollbar's thumb
-    widgets.ps1           the controls: a switch, a scrollbar, a colour between two others
     component.ps1         the tree around them: store and revision, lifecycle, keep-alive, a slot
                           that arrives later
     framework.ps1         what a surface is written as: a keyed tree, the patch that keeps only what
                           changed, and the walk that draws it
-    views.ps1             a control as a record: a kind draws it, a box places it, a state says how
-                          it is, and a hover diff answers the rectangle that has to be repainted
     reactive.ps1          the data half: signals with traps (Cb.ReactiveBag), effects, derived
                           values, and one flush per batch of writes
     setup.ps1             a control written as a declaration: props with defaults, the body that
                           returns its bindings, ambient lifecycle hooks, and named slots a caller
                           fills
 
-  renderer/src/windows/   the windows, loaded only by commands that draw
-    picker.ps1            the history panel: window, filter, list, keys, context menu, paste
-    picker-geom.ps1       the panel's arithmetic: rows, quick keys, placement, hit tests
-    picker-live.ps1       rows on screen, the thumb, the caret and the chrome, at file scope so
-                          one open does not compile them again
-    picker-draw.ps1       shared drawing: key caps, search hits
-    picker-edit.ps1       the in-place editor (F2)
+  renderer/src/components/  the controls, and the parts of the three windows
+    views.ps1             a control as a record: a kind draws it, a box places it, a state says how
+                          it is, and a hover diff answers the rectangle that has to be repainted
+    widgets.ps1           the controls: a switch, a scrollbar, a colour between two others
     pinlist.ps1           the self-drawn list control Cb.PinList
     preview.ps1           the hover preview card
-    anim.ps1              the animation numbers
-    focus.ps1             taking and returning the foreground, releasing held modifiers
     media-render.ps1      bitmaps and caches for pictures and formatted text
-    settings.ps1          the settings window: groups, rows, keys and mouse, reload after saving
+    picker-geom.ps1       the panel's arithmetic: rows, quick keys, placement, hit tests
+    picker-live.ps1       the panel's behaviour while it is up: rows, thumb, caret, chrome, paste,
+                          delete and undo, the row menu and the hover card, at file scope so one
+                          open does not compile them again
+    picker-draw.ps1       shared drawing: key caps, search hits
+    picker-edit.ps1       the in-place editor (F2)
     settings-draw.ps1     drawing the settings window: side column, rows, switches, footer
     settings-edit.ps1     editing in place: the input over a row, writing back, validation
+
+  renderer/src/windows/   the three windows, loaded only by commands that draw
+    picker.ps1            the history panel: the window, its keys and the loop that serves it
+    settings.ps1          the settings window: groups, rows, keys and mouse, reload after saving
     tray-menu.ps1         the tray menu: palette and fonts from the theme, rows drawn by Cb.TrayItem
 
-  lib/plugin/             the plugin layer: all three files or none
-  lib/plugin/plugins.ps1         the plugin runtime
-  lib/plugin/plugin-settings.ps1 the settings surface
-  lib/plugin/plugin-marks.ps1    what a mark means
+  main/utils/plugin/             the plugin layer: all three files or none
+  main/utils/plugin/plugins.ps1         the plugin runtime
+  main/utils/plugin/plugin-settings.ps1 the settings surface
+  main/utils/plugin/plugin-marks.ps1    what a mark means
   plugins/*.ps1           the plugins (item-marks / entry-actions / transform / retention)
   themes/*.ini            the themes (win11-dark / win11-light)
   lang/*.ini              the words (en is the base, a language is laid over it; [meta] names its font)
 
-  utils/ini.ps1           text -> document, and edits on a document (pure functions)
-  utils/inifile.ps1       import an ini file (cached by path) and write one key back
-  utils/schema.ps1        schema loading, validation and single-value conversion
-  utils/hotkey.ps1        a hotkey string -> modifiers and a virtual key
-  utils/fileio.ps1        primitives for reading and writing one file
-  utils/hash.ps1          content hash (SHA1 hex; the name is the content)
-  utils/image.ps1         read a picture's format from its bytes (PNG header, DIB to BMP)
-  utils/cfhtml.ps1        CF_HTML header and tag text handling (offsets, src, body, end)
-  utils/transfer.ps1      the shape of the exported text: lines <-> text
-  utils/apprules.ps1      parsing the text form of AppRules
-  utils/log.ps1           writing the log file
-  utils/time.ps1          epoch, relative time and time spans (7d / 12h)
-  utils/query-words.ps1   splitting a search line into words
-  utils/format.ps1        byte counts
-  utils/dpi.ps1           DPI scaling and rounded paths
+  shared/utils/ini.ps1           text -> document, and edits on a document (pure functions)
+  shared/utils/inifile.ps1       import an ini file (cached by path) and write one key back
+  shared/utils/schema.ps1        schema loading, validation and single-value conversion
+  shared/utils/hotkey.ps1        a hotkey string -> modifiers and a virtual key
+  shared/utils/fileio.ps1        primitives for reading and writing one file
+  shared/utils/hash.ps1          content hash (SHA1 hex; the name is the content)
+  shared/utils/image.ps1         read a picture's format from its bytes (PNG header, DIB to BMP)
+  shared/utils/cfhtml.ps1        CF_HTML header and tag text handling (offsets, src, body, end)
+  shared/utils/transfer.ps1      the shape of the exported text: lines <-> text
+  shared/utils/apprules.ps1      parsing the text form of AppRules
+  shared/utils/log.ps1           writing the log file
+  shared/utils/time.ps1          epoch, relative time and time spans (7d / 12h)
+  shared/utils/query-words.ps1   splitting a search line into words
+  shared/utils/format.ps1        byte counts
+  shared/utils/dpi.ps1           DPI scaling and rounded paths
 
-  schema/clipboard.ps1    the clipboard.ini schema
-  schema/theme.ps1        the themes\*.ini schema
-  schema/plugins/*.ps1    one key table per plugin
+  shared/schema/clipboard.ps1    the clipboard.ini schema
+  shared/schema/theme.ps1        the themes\*.ini schema
+  shared/schema/plugins/*.ps1    one key table per plugin
 ```
 
 The layers are the dependency order: a lower layer is called by the one above, never the other way; a function in `utils` takes values and returns values, touches neither the clipboard nor the history, and knows no configuration key.
@@ -843,7 +854,7 @@ flowchart TD
   U --> B[schema / base / theme-stub]
 ```
 
-Apart from `lib\themes.ps1` and the three plugin files, a missing module prints `missing: ...` and exits with code 1.
+Apart from `renderer\src\utils\themes.ps1` and the three plugin files, a missing module prints `missing: ...` and exits with code 1.
 
 Modules load per command: `$baseModules` holds the 19 files every command needs, and the six optional groups `store` / `transfer` / `config` / `panel` / `panelgeom` / `settings` are chosen by `$commandGroups`:
 
@@ -890,7 +901,7 @@ CBHIST RS <data version> RS <flags> US <epoch seconds> US <extra> US <payload> R
 
 ### Data version and migration
 
-The data format version is `$script:DataVersion` in `src\lib\base.ps1`. A change to the record structure bumps it and adds one step to `$script:MigrationSteps` in `src\lib\migrate.ps1`: the key is the version it starts from, and the step takes the whole file text and returns the text of the next version.
+The data format version is `$script:DataVersion` in `src\main\utils\base.ps1`. A change to the record structure bumps it and adds one step to `$script:MigrationSteps` in `src\main\utils\migrate.ps1`: the key is the version it starts from, and the step takes the whole file text and returns the text of the next version.
 
 `clipboard migrate` runs the steps for the file's version one after another, backing the original up to `data\backup\history-v<version>-<time>.dat` first. Only one layout has ever shipped, so the step table is empty and:
 
@@ -905,7 +916,7 @@ The data format version is `$script:DataVersion` in `src\lib\base.ps1`. A change
 The program version lives in `Version=` in `package.ini`, nowhere else:
 
 - when run from source, `base.ps1` reads the repository's `package.ini` while loading;
-- when packaging, `tools\build.ps1` replaces that read with a constant and the package carries no `package.ini`.
+- when packaging, `packages\builder\assets\version.ps1` replaces that read with a constant and the package carries no `package.ini`.
 
 The value names the output folder (`dist\clipboard-<version>\`) and appears in the panel footer, in `clipboard version`, in `status` and in `help`. The data format version is a different value (`$script:DataVersion`) and only affects the storage format.
 
@@ -941,7 +952,7 @@ The tool does not run as a Windows service: a service lives in Session 0, with n
 
 `powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run.ps1` works as well.
 
-One part is one file, one process and one sandbox. The worker count defaults to the number of logical processors and can be set by `[test] Workers` in `cli.ini` or by `-Workers`; `1` is serial. Which groups a plain `cli test` runs comes from `[test] Groups` (`unit` / `integration` / `e2e`, all three by default). The number of items in a run comes from the `Test Files` / `Tests` lines at the end of `cli test` and is not pinned here.
+One part is one file, one process and one sandbox. The worker count defaults to the number of logical processors and can be set by `Test.Workers` in `test.config.ps1` or by `-Workers`; `1` is serial. Which groups a plain `cli test` runs comes from `Test.Groups` (`unit` / `integration` / `e2e`, all three by default). The number of items in a run comes from the `Test Files` / `Tests` lines at the end of `cli test` and is not pinned here.
 
 A command-line call inside a part goes through `tests\lib\cli-runner.ps1` by default: the part starts one child process and every command runs in its own runspace inside it, which saves an interpreter start per call. Commands involving plugin script blocks (`pin`, `star`, `highlight`, `transform`, `kind`, `list`…) still start a real child process, because a script block needs a real module scope.
 
@@ -1024,99 +1035,88 @@ Everything runs in a sandbox copy under `%TEMP%` and never touches the repositor
 | `cli build` | package into `dist\` |
 | `cli client` | compile `preload\client.cs` into `src\preload\client.exe` (optional) |
 | `cli assembly` | compile the `#part` list in `src\main\index.cs` into `src\main\clipboard.dll` (optional) |
-| `cli bundle` | build one entry declared in `cli.ini`; `-All` builds every one of them; `-Inspect` lists the modules a bundle cannot inline and why |
+| `cli bundle` | build one target declared in `builder.cli.config.ps1`; `-All` builds every one of them; `-Inspect` lists the modules a bundle cannot inline and why |
 
 `cli.sh` / `cli.cmd` / `cli.ps1` behave the same: they change to the repository root and append the remaining arguments to the matching line of `package.ini`.
 
-`cli dev` keeps the resident running and restarts it when a file changes; it ends when the resident is stopped from outside (the tray's Exit, `clipboard stop`) or when you press `Ctrl+C`, and the restart after a `config set` does not count as an exit. A terminal killed outright needs a manual `clipboard stop`. Its behaviour comes from the `[dev]` section of `cli.ini`:
+`cli dev` keeps the resident running and restarts it when a file changes; it ends when the resident is stopped from outside (the tray's Exit, `clipboard stop`) or when you press `Ctrl+C`, and the restart after a `config set` does not count as an exit. A terminal killed outright needs a manual `clipboard stop`. What it watches is the `[files] Files` list of `builder.ini` (a `!` prefix excludes), plus `packages\**\*.ps1`, `builder.ini`, `builder.cli.config.ps1` and `package.ini`:
 
-- `BaseUrl`: the folder the two glob lists are relative to, `.` = the repository root (the default); an absolute path works.
-- `Includes` / `Excludes`: globs under `BaseUrl`, with `*` and `?` for one name and `**` for recursion; a new or deleted file counts as a change, and a missing file a dot-source line points at prints `[!] missing:`.
-- A `.cs` in the manifest is compiled once before the start, and afterwards only the side that changed: `src/main/*.cs` → `src\main\clipboard.dll`, `src/preload/*.cs` → `src\preload\client.exe`; taking it out of the list stops the compile. The resident is stopped before compiling, or the dll is locked.
-- `Interval`: the poll interval in ms (600 by default). The restart waits for one quiet interval, so a save that writes in several steps restarts once.
+- `BaseUrl` (`[directories]` of `builder.ini`): the folder the globs are relative to, `.` = the repository root (the default); an absolute path works.
+- `Files`: globs under `BaseUrl`, with `*` and `?` for one name and `**` for recursion; a new or deleted file counts as a change, and a missing file a dot-source line points at prints `[!] missing:`.
+- A `.cs` in the list is compiled once before the start, and afterwards only the side that changed: `src/main/*.cs` → `src\main\clipboard.dll`, `src/preload/*.cs` → `src\preload\client.exe`; taking it out of the list stops the compile. The resident is stopped before compiling, or the dll is locked.
+- `Interval` (`[watch]` of `packages\cli\package.ini`): the poll interval in ms (600 by default). The restart waits for one quiet interval, so a save that writes in several steps restarts once.
 
 `cli bench` copies `src\` into `%TEMP%` and points `DataDir` at a temporary folder, so capture, save, parse and filter can be measured while a resident is running (`-Records` changes the store size, `-Json` / `-Out` make runs comparable); panel opening and paste injection need a real desktop and are not part of it. `cli shot` copies `src\` into `%PUBLIC%`, seeds an example history and starts the copy's resident to capture the panel, the tray menu and the settings window. The copy carries its own named objects (`Local\clipboard.shot.*`), so a resident already running is unaffected and neither the real history nor the real settings reach a screenshot; `-Part` picks the surface, `-Theme` the theme and `-PreviewRow` the row the card is taken from.
 
-Nothing under `tools\` dot-sources a file in `src\`: `tools\utils\` carries the functions it needs.
+Nothing under `packages\` dot-sources a file in `src\`: each package carries the functions it needs.
 
-Every tool prints through `tools\utils\console.ps1`: `[..]` a step (cyan), `[ok]` done with its time (green), `[!]` a warning (yellow), `[x]` a failure (red), with detail lines indented and dimmed; under a second the time is shown in ms. The levels are `silent < error < warn < info`: `-Quiet` keeps only `[!]` and `[x]`, `-Silent` only `[x]`, and `CLIPBOARD_LOG_LEVEL` sets a level for the whole shell (a switch wins). `cli dev -Timestamp` prefixes every line with `HH:mm:ss`. Redirected output, or `NO_COLOR`, leaves plain text and `FORCE_COLOR=1` keeps the colour; `cli nosuchcmd` suggests the closest command name.
+Every tool prints through `packages\cli\utils\console.ps1`: `[..]` a step (cyan), `[ok]` done with its time (green), `[!]` a warning (yellow), `[x]` a failure (red), with detail lines indented and dimmed; under a second the time is shown in ms. The levels are `silent < error < warn < info`: `-Quiet` keeps only `[!]` and `[x]`, `-Silent` only `[x]`, and `CLIPBOARD_LOG_LEVEL` sets a level for the whole shell (a switch wins). `cli dev -Timestamp` prefixes every line with `HH:mm:ss`. Redirected output, or `NO_COLOR`, leaves plain text and `FORCE_COLOR=1` keeps the colour; `cli nosuchcmd` suggests the closest command name.
 
 `README.md` and `README.zh-CN.md` are the documents for users; the plugin and theme pages live under `docs\<language>\`, and `docs\release-notes\` holds one file per release, named after its tag (`v0.5.0.md`). A release note is written in Chinese only, and the same text is what the GitHub release shows.
 
 ## Packaging
 
-`cli build` runs `tools\build.ps1` and writes into `dist\clipboard-<version>\` (the version comes from `package.ini`). A package carries `renderer\app.ps1` and none of the modules it was built from: the window layer is one file there, and `clipboard.ps1` reads it with one dot-source when the command opens a window. The modules it leaves outside (the base layer, and the ones a command like `status` needs without drawing) keep travelling as their own files. The two C# products land the same way as the window layer: `main\clipboard.dll` and `preload\client.exe`, one folder per process.
+`cli build` runs every target `builder.cli.config.ps1` declares and writes into `dist\clipboard-<version>\` (the version comes from `package.ini`). The window layer is built the way a bundler splits one: each entry is resolved on its own, every module carries the set of entries that reach it, and modules with the same set form one chunk. A window's own chunk lands as `renderer\<name>.<hash>.ps1`, the chunks several windows load land under `renderer\assets\<name>-<hash>.ps1`, and `renderer\manifest.ini` lists them in load order together with the modules each one carries. `clipboard.ps1` dot-sources that list when a command opens a window. Only the modules the window layer owns leave the package: a module the base layer or a command like `status` needs keeps its own file, and a module an entry declares as external is never bundled. The two C# products land the same way: `main\clipboard.dll` and `preload\client.exe`, one folder per process.
 
-`cli bundle` is the second half of that tooling and is independent of it: it builds one *entry* - several modules as one file - with the stages named in that entry's `[product.<name>]` chain in `cli.ini` (`resolve`, `treeshake`, `merge`, `render`, `verify`) and the plugin files under `tools\bundler\plugins\`. The entries, the chains and the copy list all live in `cli.ini`, the way a vite project keeps its inputs and plugins in `vite.config`. A module boundary is always a parser node, never a line of text: a bundle is emitted statement by statement through each node's extent, then read back and compared with the modules it was built from. `cli bundle -Inspect` lists, for every file under `src\`, whether a bundle could inline it (a `param` block, a `begin`/`process`/`end` block or a `trap` cannot be glued into a larger script) and which modules call a name nothing can follow. `cli build` runs every entry marked `Ship=1` itself: the bundle is merged there, then minified and renamed by the same tables as the files beside it, so a package carries the window layer as one file (`renderer\app.ps1`) and leaves its modules out of the copy.
+`cli bundle` is the second half of that tooling and is independent of it: it builds the targets `builder.cli.config.ps1` declares with the stages named in each target's `Plugins` chain (`resolve`, `treeshake`, `merge`, `render`, `verify`) and the plugin files under `packages\bundler\plugins\`. `Input` is one path, a list of files, or a table of `key = @{ Entry = '<path>' }`; a table of entries takes the modules from the call graph instead of a written list. A module boundary is always a parser node, never a line of text: a bundle is emitted statement by statement through each node's extent, then read back and compared with the modules it was built from. `cli bundle -Inspect` lists, for every file under `src\`, whether a bundle could inline it (a `param` block, a `begin`/`process`/`end` block or a `trap` cannot be glued into a larger script) and which modules call a name nothing can follow. `cli build` runs every target marked `Ship` itself: the chunks are merged there, then minified and renamed by the same tables as the files beside them, so a package carries the window layer as `renderer\<name>.<hash>.ps1` plus `renderer\assets\` and leaves the modules it merged out of the copy.
 
 A module can state its own edges with two directives at the top of the file: `#@use <module id>, ...` for the modules it calls and `#@export <function>, ...` for what the rest of the program may call. They are comments on purpose - they describe the build, not the program, so the shipped copy runs the same file with no cost and nothing at run time has to understand them. With them the bundler checks the entry *before* building: a call to a function its module does not export, a call into a module the entry does not list (the mistake that otherwise only shows up as "module group too small"), an export naming a function that does not exist, and the same name exported twice. Modules without directives are left unchecked and only make the "would drop" answer unknown. `cli bundle -Inspect -Suggest` prints, for every module, the `#@use` and `#@export` lines its real calls imply.
 
-`cli bundle -All` builds every entry the file declares, one Windows PowerShell process per entry, up to `[build] Workers=` in `cli.ini` at a time (`0` = one per logical processor, capped at the number of entries). Each worker writes its own output and its own temp folder, and the logs are printed in the order the file declares the entries, so a parallel run reads like a serial one.
+`cli bundle -All` builds every target the file declares, one Windows PowerShell process per target, up to `[bundler] Workers=` in `packages\cli\package.ini` at a time (`0` = one per logical processor, capped at the number of targets). Each worker writes its own output and its own temp folder, and the logs are printed in the order the file declares the targets, so a parallel run reads like a serial one.
 
 ```powershell
-cli build                       # with cli.ini
-cli build -Config other.ini     # with another configuration
+cli build                          # builder.cli.config.ps1 + builder.ini
+cli build -Config other.ps1        # another target table
+cli build -BuilderConfig other.ini # another release description
 ```
 
-The `[build]` section of `cli.ini` (a top-level `build.OutDir=...` also works):
+A target in `builder.cli.config.ps1` (a PowerShell expression returning one ordered table):
 
-| Key | Default | Meaning |
-|---|---|---|
-| `OutDir` | `dist` | output folder; a relative path is resolved against the repository root |
-| `Minify` | `1` | `1` = minify scripts and text files |
-| `Rename` | `1` | `1` = also rename internal functions and local variables; `0` = minify without renaming |
-| `Verify` | `1` | `1` = run the CLI tests against the package, delete it and fail when they fail; the suite prints straight to this terminal, part by part |
-| `Overwrite` | `1` | `1` = overwrite an existing folder of the same version; `0` = fail when it exists |
-| `Zip` | `0` | `1` = also write `clipboard-<version>.zip` |
-
-The `[copy]` section says what a release carries beside the outputs the entries produce (a top-level `copy.Includes=...` also works):
-
-| Key | Default | Meaning |
-|---|---|---|
-| `BaseUrl` | `.` | the folder `Includes` / `Excludes` are relative to; `.` = the repository root, an absolute path works |
-| `Includes` | see below | the file list of the package, globs under `BaseUrl` like `[dev]`; required, and it has to contain `src/<Name>.ps1`, `.cmd` and `.sh` |
-| `Excludes` | empty | files to drop from the package, applied last |
-
-Two more sections of the same file belong to `cli bundle`, and to `cli build` when it compiles the C# products. `[product.<name>] Chain=` names the stages one kind of output goes through: `resolve, treeshake, merge, render, verify` for a script bundle, `cs-part, cs-compile` for a C# product. `[entry.<name>]` is one output.
-
-| Entry key | Meaning |
+| Key | Meaning |
 |---|---|
-| `Product` | the `[product.*]` whose chain builds it |
-| `To` | where the output is written, relative to the repository root; a C# product's `To` is also the path it keeps in the package |
-| `Kind` | `cs` = compile C# instead of bundling scripts; the entry then uses `From` and `Target` |
-| `From` | the root source; its `#part` lines decide the file list, and a directive may not leave that file's folder |
-| `Target` | `library` (default) or `exe` |
-| `Append` | further globs added to the file list, after the declared ones |
-| `Modules` | (script bundle) the modules, in load order |
-| `Keep` | (script bundle) names the bundle must not rename |
-| `External` | (script bundle) modules the bundle does not carry: the base layer stays as `lib\*.ps1`, so a `#@use` edge into it is a file boundary, not a missing list entry |
-| `Ship` | `1` = this output belongs in the package: `cli build` merges it and leaves its modules out of the copy |
-| `Minify` `Rename` `Treeshake` | per-entry overrides of the `[build]` values |
+| `Preset` | one of the shapes `packages\cli\plugins\presets.ps1` defines; the keys below override it, an empty value included |
+| `Plugins` | the bundler chain, in order: each name is one file under `packages\bundler\plugins\` |
+| `Kind` | `cs` compiles C#, `script` bundles `.ps1` files (the default) |
+| `Input` | one path, a list of files, a glob, or a table of `key = @{ Entry = '<path>' }`; a table takes the modules from the call graph, so no file is listed twice |
+| `Scan` | the glob the module ids are resolved against |
+| `Output` | where it lands, relative to the repository root; for a C# target the path doubles as the package path |
+| `ChunkOutput` | the template for the chunks an entry-driven target splits into (`[name]` and `[hash]`) |
+| `External` | modules the target does not carry: a `#@use` edge into one is a file boundary, not a missing list entry |
+| `Ship` | `$true` puts the output in the release: `cli build` merges it and `builder.ini` leaves its sources out of `Files` |
+| `Target` | `library` (default) or `exe`, for a C# target |
+| `Append` | further globs added to a C# target's file list, after the declared ones |
+| `Keep` | names the bundle must not rename |
+| `Minify` `Rename` `Treeshake` | per-target overrides of `[bundler]` in `packages\cli\package.ini` |
 
-`cli bundle -Entry <name>` builds one entry and `-All` builds every one. `cli client` and `cli assembly` are entries `client` and `main` under their own names, and `cli build` compiles both through the same call, so no tool spells out a compiler flag of its own.
+`builder.ini` holds electron-builder's three keys and nothing else:
 
-`[copy] Includes` defaults to `src/**/*.ps1,src/preload/*.cs,src/main/**/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,src/ipc/*.ini,scripts/**.bat`.
+| Key | Default | Meaning |
+|---|---|---|
+| `Compression` | `maximum` | `store` packs every file as it is, `normal` rewrites each `.ps1` from its syntax tree, `maximum` also shortens internal functions and local variables |
+| `directories.Output` | `dist` | the folder a release is written to; the package folder inside it is named after `package.ini` `Version` |
+| `directories.BaseUrl` | `.` | the folder `Files` and the output folder are relative to; `.` = the repository root, an absolute path works |
+| `files.Files` | see below | the file list of the package, in electron-builder's pattern language: `**/*` recurses, a `!` prefix excludes |
+
+`cli bundle -Entry <name>` builds one target and `-All` builds every one. `cli client` and `cli assembly` compile the `Preload` and `Main` targets, and `cli build` compiles both through the same call, so no tool spells out a compiler flag of its own.
+
+`[files] Files` defaults to `src/**/*.ps1,src/**/*.cs,src/**/*.ini,src/**/*.cmd,src/**/*.sh,scripts/**/*.bat`. What a release leaves out is expressed with `!`, and the folders no pattern reaches - `src\data\`, `tests\`, `dist\`, `.git` - never enter it.
 
 ```ini
-# a lean package: one theme, with the documents, no minify, no verify
-[build]
-OutDir=D:\release
-Minify=0
-Rename=0
-Verify=0
-Overwrite=1
+# a lean release: one theme, with the documents, no renaming
+Compression=normal
 
-[copy]
-BaseUrl=.
-Includes=src/**/*.ps1,src/preload/*.cs,src/main/**/*.cs,src/*.cmd,src/*.sh,src/themes/win11-dark.ini,src/lang/en.ini,scripts/**.bat,README.md,LICENSE,docs/**/*
-Excludes=src/plugins/item-marks.ps1
+[directories]
+Output=D:\release
+
+[files]
+Files=src/**/*.ps1,src/**/*.cs,src/**/*.cmd,src/**/*.sh,src/themes/win11-dark.ini,src/lang/en.ini,scripts/**/*.bat,README.md,LICENSE,docs/**/*,!src/plugins/item-marks.ps1
 ```
 
-What happens to a file comes from one table in `tools\bundler\assets.ps1`: `.ps1` is minified and renamed, `.cmd` / `.bat` minified, `.sh` minified, `.ini` stripped of comments and blank lines, everything else copied; a `.cs` under `src\preload` becomes `preload\client.exe`, one under `src\main` becomes `main\clipboard.dll`, the compiled part goes into the package and its source does not, and without a compiler the source goes in instead. Each row names a handler, and a handler is one file under `tools\bundler\assets\`: a table with a `Convert` block, plus `Next` when it hands its result on - the `version` row replaces the version block of `lib\base.ps1` and passes the result to `script`. A file keeps its path under `src\`, keeps its repository-relative path outside `src\`, and `scripts\` is flattened to the package root.
+What happens to a file comes from one table in `packages\builder\assets.ps1`: `.ps1` is written as `Compression` says, `.cmd` / `.bat` compressed, `.sh` compressed, `.ini` stripped of comments and blank lines, everything else copied; a `.cs` under `src\preload` becomes `preload\client.exe`, one under `src\main` becomes `main\clipboard.dll`, the compiled part goes into the package and its source does not, and without a compiler the source goes in instead. Each row names a handler, and a handler is one file under `packages\builder\assets\`: a table with a `Convert` block, plus `Next` when it hands its result on - the `version` row replaces the version block of `main\utils\base.ps1` and passes the result to `script`. A file keeps its path under `src\`, keeps its repository-relative path outside `src\`, and `scripts\` is flattened to the package root.
 
-A packaged `.ps1` loses its comments and indentation, and with `Rename=1` its internal functions and local variables are renamed; a `.ini` keeps key and value only (the theme format is in [themes](#themes)). Every step re-parses the result, and a syntax error stops the build.
+A packaged `.ps1` loses its comments and indentation, and with `Compression=maximum` its internal functions and local variables are renamed; a `.ini` keeps key and value only (the theme format is in [themes](#themes)). Every step re-parses the result, and a syntax error stops the build.
 
-Outside the default list: `src\data\`, `src\clipboard.ini`, `tests\`, `tools\`, `cli.ini`, `package.ini`, `dist\`, `.git`. A package that carries the documents adds `README.md,LICENSE,docs/**/*` to the list, and they keep their repository-relative paths.
+Outside the default list: `src\data\`, `src\clipboard.ini`, `tests\`, `packages\`, `builder.ini`, `builder.cli.config.ps1`, `test.config.ps1`, `package.ini`, `dist\`, `.git`. A release that carries the documents adds `README.md,LICENSE,docs/**/*` to the list, and they keep their repository-relative paths.
 
 ## CI and release
 

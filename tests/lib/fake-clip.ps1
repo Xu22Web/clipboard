@@ -1,4 +1,4 @@
-# tests/lib/fake-clip.ps1 - a drop-in replacement for lib/clip.ps1 inside a sandbox.
+# tests/lib/fake-clip.ps1 - a drop-in replacement for main/utils/clip.ps1 inside a sandbox.
 #
 # The real file is the only place that talks to the Windows clipboard, so replacing that one
 # file gives a sandbox its own clipboard: text, a file list, a picture or formatted text, kept
@@ -10,7 +10,7 @@
 #     all - every CLI test would otherwise fight over the one system clipboard.
 #
 # It keeps the same function names and return shapes as the real thing (Text / Rich / Image,
-# See Get-ClipCapture in lib/clip.ps1), and it reuses the real media layer for the parts that
+# See Get-ClipCapture in main/utils/clip.ps1), and it reuses the real media layer for the parts that
 # are not about Windows: a rich reference and an image descriptor are written and read with
 # the same functions the program uses, so the bytes on the way back are the bytes that went in.
 

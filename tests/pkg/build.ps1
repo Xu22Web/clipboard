@@ -20,55 +20,51 @@ $intDir = New-FakeSandbox 'cli'
 $cfg2 = Join-Path $intDir 'clipboard.ini'
 
 
-# tools\build.ps1 is driven by a settings file and rewrites the scripts from their syntax tree,
+# packages\builder\package.ps1 is driven by a settings file and rewrites the scripts from their syntax tree,
 # never packing the history
 $pkgOut = Join-Path $tmpRoot 'pkg'
-$build = Join-Path $repoRoot 'tools\build.ps1'
+$build = Join-Path $repoRoot 'builder.cli.ps1'
 $buildCfg = Join-Path $tmpRoot 'build-test.ini'
-# every [build] key has to be present: the build reads cli.ini and refuses to invent a default,
-# so each case starts from the whole section and overrides what it tests.
-#
-# The include list itself is READ from cli.ini instead of being written again here. It is the one
-# fact that says what a package is, and a copy of it drifts the moment a folder moves: this file
-# used to carry four copies of it, and moving the type library broke every one at once. The cases
-# below then trim that list instead of restating it.
-. (Join-Path $repoRoot 'tools\utils\ini.ps1')
-$repoIncludes = [string](Import-IniMap (Join-Path $repoRoot 'cli.ini'))['copy.Includes']
-if (-not $repoIncludes) { throw 'cli.ini has no [copy] Includes to test against' }
-# the client stays out of the default list so most cases skip a compile; cli.ini carries it
-$allFiles = 'Includes=' + (@(($repoIncludes -split ',') | Where-Object { $_ -notlike 'src/preload/*' }) -join ',')
-$withClient = 'Includes=' + $repoIncludes
-$buildDefaults = @('BaseUrl=.', 'Minify=1', 'Rename=1', 'Verify=0', 'Overwrite=1', 'Zip=0', $allFiles, 'Excludes=')
-# the entries and the product chains travel with the test config: the package build runs them,
-# so a config without them would describe a different package. They are READ from cli.ini for
-# the same reason the include list is.
-function Get-BundleSectionLines {
-  $lines = New-Object System.Collections.Generic.List[string]
-  $active = $false
-  foreach ($raw in [IO.File]::ReadAllLines((Join-Path $repoRoot 'cli.ini'))) {
-    $trim = $raw.Trim()
-    if ($trim -match '^\[(.+)\]$') {
-      $section = $Matches[1]
-      $active = ($section -like 'entry.*') -or ($section -like 'product.*')
-      if ($active) { $lines.Add($raw) }
-      continue
-    }
-    if ($active) { $lines.Add($raw) }
-  }
-  return $lines.ToArray()
+
+# Every case below runs a real build, and a build compiles src\main\clipboard.dll. A resident
+# process holds that file, so a machine with the panel running would fail every case with
+# CS0016 ("the file is in use") - the suite asks it to stop first, the way `cli dev` does
+# before it recompiles, and says so once instead of once per row.
+$stopCmd = Join-Path $repoRoot 'src\clipboard.cmd'
+if (Test-Path -LiteralPath $stopCmd) {
+  & $stopCmd stop 2>&1 | Out-Null
+  Start-Sleep -Milliseconds 600
 }
+# every [directories] and [files] key has to be present: the builder reads builder.ini and refuses
+# to invent a default, so each case starts from the whole file and overrides the key it tests.
+#
+# The file list itself is READ from builder.ini instead of being written again here. It is the one
+# fact that says what a package is, and a copy of it drifts the moment a folder moves.
+. (Join-Path $repoRoot 'packages\cli\utils\ini.ps1')
+$repoFiles = [string](Import-IniMap (Join-Path $repoRoot 'builder.ini'))['files.Files']
+if (-not $repoFiles) { throw 'builder.ini has no [files] Files to test against' }
+# the client stays out of the default list so most cases skip a compile; builder.ini carries it
+$allFiles = 'Files=' + (@(($repoFiles -split ',') | Where-Object { $_ -notlike 'src/preload/*' }) -join ',')
+$withClient = 'Files=' + $repoFiles
 function Write-BuildCfg([string]$outDir, [string[]]$override) {
-  $lines = @('OutDir=' + $outDir) + $buildDefaults
+  # a key belongs to the section it is read from: the output folder to [directories], the list to
+  # [files], compression at the top. All three start whole, and an override replaces the key it
+  # names.
+  $compression = 'maximum'
+  $dir = @(('Output=' + $outDir), 'BaseUrl=.')
+  $files = @($allFiles)
   foreach ($line in @($override)) {
     $key = $line.Split('=')[0]
-    $kept = @()
-    foreach ($l in $lines) { if (-not $l.StartsWith($key + '=')) { $kept += $l } }
-    $kept += $line
-    $lines = $kept
+    if (@('Output', 'BaseUrl') -contains $key) {
+      $dir = @(@($dir | Where-Object { -not $_.StartsWith($key + '=') }) + @($line))
+    } elseif ($key -eq 'Files') {
+      $files = @($line)
+    } elseif ($key -eq 'Compression') {
+      $compression = $line.Split('=')[1]
+    }
   }
-  # the entry and product sections go after every flat key: an override written below a
-  # "[section]" line would be read as a key of that section
-  [IO.File]::WriteAllLines($buildCfg, (@($lines) + @(Get-BundleSectionLines)), $Utf8)
+  $lines = @(('Compression=' + $compression), '', '[directories]') + $dir + @('', '[files]') + $files
+  [IO.File]::WriteAllLines($buildCfg, $lines, $Utf8)
 }
 
 # The rows below need the package to exist: a build that failed says so once per row instead of
@@ -86,14 +82,14 @@ Describe 'int' {
   }
 
   Describe 'repo tooling' {
-    It 'build script ships under tools\\' {
-      Expect (Test-Path -LiteralPath $build) 'tools\build.ps1 has to ship with the repo'
+    It 'build script ships under packages\builder\' {
+      Expect (Test-Path -LiteralPath $build) 'packages\builder\package.ps1 has to ship with the repo'
     }
     It 'build options ship with the repo' {
-      Expect (Test-Path -LiteralPath (Join-Path $repoRoot 'cli.ini')) 'cli.ini has to ship with the repo'
+      Expect (Test-Path -LiteralPath (Join-Path $repoRoot 'builder.ini')) 'builder.ini has to ship with the repo'
     }
-    It 'minifier ships under tools\\utils\\' {
-      Expect (Test-Path -LiteralPath (Join-Path $repoRoot 'tools\utils\minify.ps1')) 'the minifier has to ship'
+    It 'minifier ships under packages\builder\utils\' {
+      Expect (Test-Path -LiteralPath (Join-Path $repoRoot 'packages\cli\utils\minify.ps1')) 'the minifier has to ship'
     }
     It 'package.ini ships with the repo' {
       Expect (Test-Path -LiteralPath (Join-Path $repoRoot 'package.ini')) 'package.ini has to ship with the repo'
@@ -103,7 +99,7 @@ Describe 'int' {
   Describe 'the package' {
     BeforeAll {
       Write-BuildCfg $pkgOut @($withClient)
-      $script:bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
+      $script:bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build build -BuilderConfig $buildCfg 2>&1
       # the package folder is named after the version package.ini declares
       $script:pkgDir = Join-Path $pkgOut ('clipboard-' + $programVersion)
       $script:names = @()
@@ -119,22 +115,44 @@ Describe 'int' {
     }
     It 'package keeps the program files' {
       if (-not (Test-Built $script:pkgDir $script:bout)) { return }
-      Expect ((Test-Path -LiteralPath (Join-Path $script:pkgDir 'clipboard.ps1')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'clipboard.cmd')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'lib\plugin\plugins.ps1')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'renderer\app.ps1'))) 'the entry file, the launcher, the base modules and the window bundle have to travel'
+      Expect ((Test-Path -LiteralPath (Join-Path $script:pkgDir 'clipboard.ps1')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'clipboard.cmd')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'main\utils\plugin\plugins.ps1')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'renderer\manifest.ini'))) 'the entry file, the launcher, the base modules and the chunk manifest have to travel'
     }
     # the modules an entry names do not come along as files as well: the list is read from
-    # cli.ini, so a module that moves out of the bundle follows without touching this check
-    It 'the window layer ships as one file' {
-      if (-not (Test-Built $script:pkgDir $script:bout)) { return }
-      $entryModules = [string](Import-IniMap (Join-Path $repoRoot 'cli.ini'))['entry.app.Modules']
-      $copiedTwice = @()
-      foreach ($one in @($entryModules -split ',')) {
-        $text = $one.Trim()
-        if (-not $text) { continue }
-        $rel = ($text -replace '^src/', '') -replace '/', '\'
-        if (Test-Path -LiteralPath (Join-Path $script:pkgDir $rel)) { $copiedTwice += $rel }
+      # builder.cli.config.ps1, so a module that moves out of the bundle follows without touching
+      # this check
+      It 'the window layer ships as chunks, not as the modules it merged' {
+        if (-not (Test-Built $script:pkgDir $script:bout)) { return }
+        # a window chunk is a file of its own; a shared one lives under assets\; each line says
+        # which source files the chunk already carries, and those must not also travel as files
+        $manifest = Join-Path $script:pkgDir 'renderer\manifest.ini'
+        # the modules the window layer owns come from the entry, so a module a command also loads
+        # (picker-geom, for `status`) is not held to this rule
+        $windowSet = @{}
+        $entryText = [IO.File]::ReadAllText((Join-Path $repoRoot 'src\clipboard.ps1'))
+        $windowBlock = [regex]::Match($entryText, '\$windowModules\s*=\s*@\(([^\)]*)\)').Groups[1].Value
+        foreach ($m in [regex]::Matches($windowBlock, "'([^']+)'")) {
+          $windowSet[$m.Groups[1].Value.Replace('\', '/').ToLowerInvariant()] = $true
+        }
+        $chunks = 0
+        $inModules = $false
+        $copiedTwice = @()
+        foreach ($line in @([IO.File]::ReadAllLines($manifest))) {
+          $t = $line.Trim()
+          if ($t.StartsWith('[')) { $inModules = ($t -eq '[modules]'); continue }
+          if (-not $t) { continue }
+          $at = $t.IndexOf('=')
+          if ($at -lt 1) { continue }
+          if (-not $inModules) { $chunks++; continue }
+          foreach ($id in @($t.Substring($at + 1).Split(','))) {
+            $one = $id.Trim()
+            if (-not $windowSet.ContainsKey($one.ToLowerInvariant())) { continue }
+            $rel = $one.Replace('/', '\')
+            if (Test-Path -LiteralPath (Join-Path $script:pkgDir ($rel + '.ps1'))) { $copiedTwice += $rel }
+          }
+        }
+        Expect ($chunks -ge 2) ('the manifest lists ' + $chunks + ' chunk(s)')
+        Expect ($copiedTwice.Count -eq 0) ('still copied beside its chunk: ' + ($copiedTwice -join ', '))
       }
-      Expect ($copiedTwice.Count -eq 0) ('still copied beside the bundle: ' + ($copiedTwice -join ', '))
-    }
     # A function named inside a here-string is text the rename pass cannot rewrite: the string
     # keeps the spelling it was written with, so the package has to define that name as well.
     It 'a function named inside a string keeps its name in the package' {
@@ -176,7 +194,7 @@ Describe 'int' {
       Expect ($clientRc -eq 100) ('exit ' + [string]$clientRc)
     }
     # The type library is either compiled ahead of time or shipped as source, never both and
-    # never neither: lib\native.ps1 needs one of the two to open the panel.
+    # never neither: main\utils\native.ps1 needs one of the two to open the panel.
     It 'package carries the assembly or its source, never both' {
       if (-not (Test-Built $script:pkgDir $script:bout)) { return }
       $asmDir = Join-Path $script:pkgDir 'main'
@@ -219,12 +237,12 @@ Describe 'int' {
       if (-not (Test-Built $script:pkgDir $script:bout)) { return }
       Expect ((Test-Path -LiteralPath (Join-Path $script:pkgDir 'plugins\item-marks.ps1')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'themes\win11-dark.ini'))) 'plugins and themes have to travel'
     }
-    # both halves of the command proxy read src\ipc\channels.ini; without it in the package every
+    # both halves of the command proxy read src\shared\ipc\channels.ini; without it in the package every
     # command still answers, but each one pays the 2.5 s start instead of the pipe
     It 'package keeps the channel table' {
       if (-not (Test-Built $script:pkgDir $script:bout)) { return }
-      $table = Join-Path $script:pkgDir 'ipc\channels.ini'
-      if (-not (Test-Path -LiteralPath $table)) { Expect $false 'ipc\channels.ini has to travel'; return }
+      $table = Join-Path $script:pkgDir 'shared\ipc\channels.ini'
+      if (-not (Test-Path -LiteralPath $table)) { Expect $false 'shared\ipc\channels.ini has to travel'; return }
       $remote = @([IO.File]::ReadAllLines($table) | Where-Object { $_ -match '^\s*Remote\s*=\s*1' })
       Expect ($remote.Count -ge 5) ('channels with Remote=1: ' + [string]$remote.Count)
     }
@@ -298,7 +316,7 @@ Describe 'int' {
     # the version is a constant in a package: same number, no package.ini to read
     It 'a package carries the version as a constant' {
       if (-not (Test-Built $script:pkgDir $script:bout)) { return }
-      $pkgBase = [IO.File]::ReadAllText((Join-Path $script:pkgDir 'lib\base.ps1'))
+      $pkgBase = [IO.File]::ReadAllText((Join-Path $script:pkgDir 'main\utils\base.ps1'))
       Expect ((-not ($pkgBase -match 'package\.ini')) -and ($pkgBase -match [regex]::Escape($programVersion))) 'the version has to be a constant in a package'
     }
     It 'a package reports the package.ini version' {
@@ -308,33 +326,23 @@ Describe 'int' {
     }
   }
 
-  # Overwrite=0 refuses to replace an existing package
-  Describe 'an existing folder' {
-    It 'Overwrite=0 keeps the existing folder' {
-      if (-not (Test-Built $script:pkgDir $script:bout)) { return }
-      Write-BuildCfg $pkgOut @('Overwrite=0')
-      $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
-      Expect (($out -join ' ') -match 'already exists') (($out | Select-Object -Last 1) -as [string])
-    }
-  }
-
-  # the list is the package: a theme that is not named does not travel, a file named in
-  # Excludes does not travel, the docs travel only when the list names them. Minify=0: these
-  # builds are only about which files travelled, so the rewrite would cost more than the whole
-  # check. One build answers all of it - a second one would only prove the same copy handler
-  # twice.
+  # the list is the package: a theme that is not named does not travel, a file named with "!" does
+  # not travel, the docs travel only when the list names them. Compression=store: these builds are
+  # only about which files travelled. One build answers all of it - a second one would only prove
+  # the same copy handler twice.
   Describe 'a trimmed list' {
     BeforeAll {
       $script:pkgOut2 = Join-Path $tmpRoot 'pkg2'
-      # one theme instead of the glob, plus the docs: the difference the case is about
-      $oneTheme = ($allFiles -replace 'src/themes/\*\.ini', 'src/themes/win11-light.ini') + ',README.md,LICENSE,docs/**/*'
-      Write-BuildCfg $script:pkgOut2 @('Minify=0', $oneTheme, 'Excludes=src/plugins/item-marks.ps1')
-      $script:bout2 = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
+      # one theme instead of the glob, plus the docs: the difference the case is about. The glob in
+      # the list is the recursive one, so the replacement names it the same way.
+      $oneTheme = ($allFiles -replace [regex]::Escape('src/**/*.ini'), 'src/themes/win11-light.ini') + ',README.md,LICENSE,docs/**/*'
+      Write-BuildCfg $script:pkgOut2 @('Compression=store', ($oneTheme + ',!src/plugins/item-marks.ps1'))
+      $script:bout2 = & powershell -NoProfile -ExecutionPolicy Bypass -File $build build -BuilderConfig $buildCfg 2>&1
       $script:pkgDir2 = Join-Path $script:pkgOut2 ('clipboard-' + $programVersion)
     }
-    It 'Excludes= drops the plugin it names' {
+    It 'a !pattern keeps the plugin out' {
       if (-not (Test-Built $script:pkgDir2 $script:bout2)) { return }
-      Expect ((Test-Path -LiteralPath (Join-Path $script:pkgDir2 'plugins\transform.ps1')) -and -not (Test-Path -LiteralPath (Join-Path $script:pkgDir2 'plugins\item-marks.ps1'))) 'Excludes= has to drop the plugin it names'
+      Expect ((Test-Path -LiteralPath (Join-Path $script:pkgDir2 'plugins\transform.ps1')) -and -not (Test-Path -LiteralPath (Join-Path $script:pkgDir2 'plugins\item-marks.ps1'))) 'a !pattern has to keep the plugin out'
     }
     It 'the list decides which theme ships' {
       if (-not (Test-Built $script:pkgDir2 $script:bout2)) { return }
@@ -354,9 +362,9 @@ Describe 'int' {
     It 'a list without clipboard.ps1 stops the build' {
       # the entry point is the one glob taken out: everything else still ships, so the build
       # gets far enough to complain about the launcher
-      $noEntry = 'Includes=' + (@(($repoIncludes -split ',') | Where-Object { $_ -ne 'src/**/*.ps1' }) -join ',')
-      Write-BuildCfg (Join-Path $tmpRoot 'pkg2') @('Minify=0', $noEntry)
-      $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
+      $noEntry = 'Files=' + (@(($repoFiles -split ',') | Where-Object { $_ -ne 'src/**/*.ps1' }) -join ',')
+      Write-BuildCfg (Join-Path $tmpRoot 'pkg2') @('Compression=store', $noEntry)
+      $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $build build -BuilderConfig $buildCfg 2>&1
       Expect (($out -join ' ') -match 'does not ship clipboard\.ps1') (($out | Select-Object -Last 1) -as [string])
     }
   }

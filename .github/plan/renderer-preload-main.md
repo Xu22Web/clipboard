@@ -81,7 +81,7 @@ tools/
 
 ## 3. 三层契约（先定契约，再搬文件）
 
-### 3.1 `src/ipc/channels.ini`
+### 3.1 `src/shared/ipc/channels.ini`
 
 ```ini
 # 一行一个通道。渲染层能调的方法全部在这里，其余三处产物由 ipc-gen 插件生成。
@@ -318,7 +318,7 @@ PS1 没有 ESM，也没有可静态判定的导出。定义**可达性**，丢�
 PS1 没有 `import`/`export` 关键字，而「谁依赖谁」现在是靠调用名反推的，反推不出「不能调」这类错误。所以每个模块可以用两条注释指令把自己的边界说清楚：
 
 ```powershell
-#@use lib/ui/component, utils/dpi        # 我调用哪些模块
+#@use lib/ui/component, shared/utils/dpi        # 我调用哪些模块
 #@export New-UiBox, Get-UiStack           # 别处可以调我的哪些函数
 ```
 
@@ -352,7 +352,7 @@ dist/clipboard-0.5.0/
 
 对照现在的包（91 个文件，`lib\`、`utils\`、`schema\` 平铺）：
 - `lib\panel\*.ps1` 12 个文件 → 3 个入口包
-- `lib\ui\*.ps1` 7 个 + `lib\settings-*.ps1` 3 个 → 内联进 3 个入口包
+- `lib\ui\*.ps1` 7 个 + `main\utils\settings-*.ps1` 3 个 → 内联进 3 个入口包
 - `lib\assembly\clipboard.dll` → `main\clipboard.dll`
 - `client.exe` → `preload\client.exe`
 - 入口 `clipboard.ps1` 从 224 行缩到约 120 行：解析参数 → 选传输 → 载入口 → 调 main
@@ -367,17 +367,17 @@ dist/clipboard-0.5.0/
 | `lib/ui/widgets.ps1` 里的 `Draw-UiButton`/`Draw-UiIconButton`/`Draw-UiKeyChip`/`Draw-UiToggle`/`Draw-UiScrollbar` | `components/{button,icon,tag,switch,scroll-view}.ps1` | 由 `Register-UiView` 注册为组件，widgets 只留绘制原语 |
 | `lib/panel/preview.ps1`（673） | `components/preview-popup.ps1` + `windows/preview.ps1` | 先拆「弹窗本体」与「入口」 |
 | `lib/panel/picker.ps1`（1778）里的右键菜单段 | `components/context-menu.ps1` | 托盘菜单不动 |
-| `lib/hotkey-record.ps1`（94） | `components/hotkey-input.ps1` | 多键录制新增 `hotkey-list.ps1` |
-| `lib/settings-types.ps1`（399）里的 combo/多选/路径类型 | `components/{dropdown,multiselect,path-picker}.ps1` | 类型校验留原处，绘制与交互搬走 |
+| `preload/utils/hotkey-record.ps1`（94） | `components/hotkey-input.ps1` | 多键录制新增 `hotkey-list.ps1` |
+| `renderer/src/utils/settings-types.ps1`（399）里的 combo/多选/路径类型 | `components/{dropdown,multiselect,path-picker}.ps1` | 类型校验留原处，绘制与交互搬走 |
 | `lib/panel/picker-edit.ps1` `settings-edit.ps1` 的 Edit 创建与滚动 | `components/input.ps1` | 两处现在各写一遍 |
 | `lib/panel/anim.ps1`（79） | `components/skeleton.ps1` 的驱动 | 加载态才画 |
 | `lib/panel/settings.ps1`（1673） | `windows/settings.ps1` | `$script:Set*` 信号迁进 `store/settings-store.ps1` |
 | `lib/panel/tray-menu.ps1`（222） | `windows/tray-menu.ps1` | `Cb.TrayMenu` 已是 C#，只搬 PS 侧组装 |
 | `lib/panel/picker*.ps1` 其余 | `windows/app.ps1` | 与 preview/editor 共用 surface |
-| `lib/settings-model.ps1` `settings-vm.ps1` | `store/settings-store.ps1` + `core/framework.ps1` 的 keyed diff | 行 diff 已由 `Sync-UiTree` 承担 |
+| `renderer/src/utils/settings-model.ps1` `settings-vm.ps1` | `store/settings-store.ps1` + `core/framework.ps1` 的 keyed diff | 行 diff 已由 `Sync-UiTree` 承担 |
 | `lib/assembly/cb.native.cs`（2309） | `src/main/**` 13–16 个 .cs | 按 §2 分区，`namespace Cb.Main.<Area>` |
 | `lib/client/client.cs`（321） | `preload/client.cs` | 加生成区与 `--call/--watch` |
-| `lib/proxy.ps1` `dispatch.ps1` `serve.ps1` | 原位 | 属 main 的 PS 侧，不在本次搬迁 |
+| `main/utils/proxy.ps1` `dispatch.ps1` `serve.ps1` | 原位 | 属 main 的 PS 侧，不在本次搬迁 |
 
 ## 7. 分阶段实施
 
@@ -489,7 +489,7 @@ $s.$onAction({ param($name, $args) }) # action 之前/之后，可包装
 
 ## 12. 落地情况（2026-11-24）
 
-P0–P6 已全部完成，三层的包内结构就是 §6 那张表：`renderer\app.ps1`（窗口层一个文件）、`renderer\src\windows\picker-geom.ps1`（External，单独随包）、`preload\client.exe`、`main\clipboard.dll`。
+P0–P6 已全部完成，三层的包内结构就是 §6 那张表：`renderer\app.ps1`（窗口层一个文件）、`renderer\src\components\picker-geom.ps1`（External，单独随包）、`preload\client.exe`、`main\clipboard.dll`。
 
 §9 清单的现状：
 
@@ -506,7 +506,7 @@ P0–P6 已全部完成，三层的包内结构就是 §6 那张表：`renderer\
 
 两项判定为不做：
 
-- **P4 的显式 `Draw` / `Measure` / `Hit` 三件套**：`renderer\src\core\views.ps1` 的 box 矩形已经承担 Measure 与 Hit（`picks the topmost control under a point` 守着），`layout.ps1` 负责摆放，`widgets.ps1` 只留 Draw。再抽一层三件套是重复抽象。
+- **P4 的显式 `Draw` / `Measure` / `Hit` 三件套**：`renderer\src\views\views.ps1` 的 box 矩形已经承担 Measure 与 Hit（`picks the topmost control under a point` 守着），`layout.ps1` 负责摆放，`widgets.ps1` 只留 Draw。再抽一层三件套是重复抽象。
 - **`docs` / `lang` / `themes` 走独立的 assets 插件**：`tools\bundler\assets.ps1` 的 handler 表已经是「一个文件进、一个文件出」的唯一出口，`build.ps1` 与 `dev.ps1` 都只问它。把它再包一层插件，得到的仍是同一张表。
 
 未来若要让 `build.ps1` 完全不碰文件（连复制都交给 bundler），才需要把这条链做成 entry；在那之前，`assets.ps1` + `products.ps1` + `build.ps1` 的 `switch` 是三处而非一处，但每一处都有单一的拥有者。

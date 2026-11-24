@@ -11,13 +11,13 @@
 // the same namespace.
 //
 //   reactivity\  the bag with traps, the effects, the derived value   (renderer\src\core\reactive.ps1)
-//   ipc\         the pipe server and the frame it speaks             (lib\serve.ps1)
-//   store\       the record format and the blobs beside it           (lib\store.ps1)
-//   clip\        reading and writing the clipboard itself            (lib\clip.ps1)
-//   media\       pictures, formatted text, the caches beside them    (lib\media.ps1)
-//   search\      the row filter a query runs against                 (lib\query.ps1)
+//   ipc\         the pipe server and the frame it speaks             (main\utils\serve.ps1)
+//   store\       the record format and the blobs beside it           (main\utils\store.ps1)
+//   clip\        reading and writing the clipboard itself            (main\utils\clip.ps1)
+//   media\       pictures, formatted text, the caches beside them    (main\utils\media.ps1)
+//   search\      the row filter a query runs against                 (main\utils\query.ps1)
 //   ui\          win32, the forms, the tray, the pin list            (renderer\src\windows\*)
-//   utils\       paths, logging, hashing, time                       (lib\base.ps1, utils\*)
+//   utils\       paths, logging, hashing, time                       (main\utils\base.ps1, utils\*)
 
 // The directive is a line comment on purpose: it is read by a scanner that knows what a string
 // and a block comment look like, so the text "#part" inside a literal declares nothing.

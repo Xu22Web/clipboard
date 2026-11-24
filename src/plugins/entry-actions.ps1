@@ -10,7 +10,7 @@
 # KindOf / TypeGlyph.
 #
 # Settings: entry-actions.Browser / Reveal / Detail / PreviewChars / Detect / ShowTargets,
-# described in schema\plugins\entry-actions.ps1 and merged into the settings schema when
+# described in shared\schema\plugins\entry-actions.ps1 and merged into the settings schema when
 # this file loads.
 #
 # Scriptblocks must be self-contained: they may call base helpers, but must not read
@@ -333,7 +333,9 @@
   # entry and the Ctrl+O panel key, so both apply exactly the same rule.
   ContextMenu  = @(
     @{
-      Label  = (Get-UiTextOr 'plugin.entry-actions.open' 'Open link or path')
+      # a scriptblock, not a word: the plugin is loaded before the language is applied, so a
+      # string built here freezes whichever language was on at load time (item-marks does the same)
+      Label  = { param($rec) Get-UiTextOr 'plugin.entry-actions.open' 'Open link or path' }
       Test   = { param($rec) [bool](& (Get-PluginData 'entry-actions' 'CanOpen') $rec) }
       Invoke = { param($rec) if ($null -ne $rec) { [void](& (Get-PluginData 'entry-actions' 'OpenPayload') ([string]$rec.Payload)) } }
     }

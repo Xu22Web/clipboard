@@ -106,7 +106,7 @@ The icon comes from `TypeGlyph` and `ShowTypeIcon=0` turns it off; without this 
 
 ## Settings (`clipboard.ini`)
 
-The keys are declared in `schema\plugins\entry-actions.ps1` and merged into the settings on load; in the file they live in the `[entry-actions]` section, and `config set` uses `<plugin>.<Key>`:
+The keys are declared in `shared\schema\plugins\entry-actions.ps1` and merged into the settings on load; in the file they live in the `[entry-actions]` section, and `config set` uses `<plugin>.<Key>`:
 
 | Key | Default | Meaning |
 |---|---|---|

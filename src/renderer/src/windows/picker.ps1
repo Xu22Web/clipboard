@@ -15,17 +15,20 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
   # and the panel opens over it, which is what pressing the hotkey asked for; it comes back when
   # the panel closes.
   $script:PickerOverSettings = $false
-  if ((Get-Command Test-SettingsWindowOpen -ErrorAction SilentlyContinue) -and (Test-SettingsWindowOpen)) {
+  if ((Get-Command Test-WindowOpen -ErrorAction SilentlyContinue) -and (Test-WindowOpen 'settings')) {
     $recording = $false
     if (Get-Command Test-HotkeyRecordRequested -ErrorAction SilentlyContinue) {
       try { $recording = [bool](Test-HotkeyRecordRequested $script:StoreDir) } catch { $recording = $false }
     }
-    if ($recording -or -not (Get-Command Hide-SettingsForPanel -ErrorAction SilentlyContinue)) {
-      [void](Ring-SettingsAsk)
+    # the settings window is asked through the window layer: a direct call would be an edge, and
+    # an edge means the settings window travels in every bundle that reaches the panel
+    $hidden = $null
+    if (-not $recording) { $hidden = Request-Window -Name 'settings' -Action 'hide' }
+    if ($recording -or -not $hidden) {
+      [void](Request-Window -Name 'settings' -Action 'ring')
       return
     }
-    $script:PickerOverSettings = [bool](Hide-SettingsForPanel)
-    if (-not $script:PickerOverSettings) { [void](Ring-SettingsAsk); return }
+    $script:PickerOverSettings = [bool]$hidden
   }
   # A settings window in another process may have saved a language since this process started:
   # the panel is drawn from the words in force when it opens, so read the code first, and rebuild
@@ -93,6 +96,8 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     # the control that owns the keyboard there: restored when the panel hands the foreground
     # over (an input method) and after the paste that follows a pick
     $script:PrevFocus = Save-TargetFocus $prev
+    # Get-PasteTarget and Format-PasteTarget (picker-live.ps1) read it from here
+    $script:PanelPrev = $prev
     # the caret that control was showing: taking the foreground makes some editors drop their
     # selection, and then the paste would land at the start of the field instead of where the
     # user was typing. Cloned ranges are put back just before the keys go out. The warm-up opens
@@ -143,7 +148,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     $script:UndoRec = $null
     $script:UndoIdx = 0
     $script:Filtered = @()
-    # rows marked for a batch action (lib/select.ps1): positions in the filtered list
+    # rows marked for a batch action (main/utils/select.ps1): positions in the filtered list
     $script:Sel = New-Selection
     $script:Labels = @()
     $script:Tokens = @()
@@ -157,17 +162,9 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     # entry carried over can never be mistaken for a different row.
     if ($null -eq $script:RowCache -or $null -eq $script:LabelCache) { $script:RowCache = @{}; $script:LabelCache = @{} }
     $rowCache = $script:RowCache; $labelCache = $script:LabelCache
-    function Find-PanelKey([string]$keyName, [bool]$ctrl, [bool]$alt, [bool]$shift) {
-      $name = ([string]$keyName).ToUpperInvariant()
-      foreach ($k in $panelKeys) {
-        if ($k.Key -ne $name) { continue }
-        if ([bool]$k.Ctrl -ne $ctrl) { continue }
-        if ([bool]$k.Alt -ne $alt) { continue }
-        if ([bool]$k.Shift -ne $shift) { continue }
-        return $k
-      }
-      return $null
-    }
+    # the panel's key handler reads these through Find-PanelKey, which lives with the other
+    # file-scope panel functions (renderer\src\components\picker-live.ps1)
+    $script:PanelKeys = $panelKeys
 
     # Two shapes, one code path: what differs is resolved here, before a control exists,
     # because the window height is fixed for the life of the panel.
@@ -177,7 +174,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     # the search field sits in the middle of the header: 14 px above it in a 68 px one
     $boxTop = [int](($preset.Head - 40) / 2)
 
-    $form = New-Object Cb.FluentForm
+    $form = New-AppWindow -Name 'picker' -Frame 'Cb.FluentForm' -Borderless -NoTaskbar
     # the panel activates; its preview cards keep the no-activate form
     $form.Activates = $true
     $form.FormBorderStyle = 'None'
@@ -437,7 +434,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     $form.Controls.Add($sbar)
     $form.Controls.Add($foot)
     $form.Controls.Add($head)
-    # The functions that run while the panel is up live at file scope (renderer\src\windows\picker-live.ps1),
+    # The functions that run while the panel is up live at file scope (renderer\src\components\picker-live.ps1),
     # so their bodies are compiled once per process instead of once per open. They read the
     # controls from here; nothing else in this function changes hands.
     $script:PanelForm = $form
@@ -453,6 +450,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     $script:PanelPh = $ph
     $script:PanelClr = $clr
     $script:PanelCaret = $caret
+    $script:PanelEmpty = $empty
     $script:PanelBoxTop = $boxTop
     $msWidgets = [int]$swOpen.ElapsedMilliseconds
 
@@ -470,7 +468,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $form.Top = [int]$pb.Top
     }
 
-    # shortcut hints as Fluent key chips: [key] action, built in renderer/src/windows/picker-draw.ps1
+    # shortcut hints as Fluent key chips: [key] action, built in renderer/src/components/picker-draw.ps1
     $footL.Add_Paint({
         param($s, $e)
         try {
@@ -500,47 +498,14 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
         } catch { }
       })
 
-    function Set-Foot([string]$msg, [int]$ms = 0) {
-      if ($script:Confirm) { return }
-      if ($ms -le 0) { $ms = [int]$script:Timing['FootMessage'] }
-      $script:FootMode = 'message'
-      $script:FootMsg = $msg
-      $footL.Invalidate()
-      try {
-        $footTimer.Stop()
-        if ($ms -gt 0) { $footTimer.Interval = $ms; $footTimer.Start() }
-      } catch { }
-    }
+    # The footer message and its timer live with the other file-scope panel functions
+    # (renderer\src\components\picker-live.ps1).
 
     # The wheel step is a property of the panel rather than of the mouse, so Sync-Sb sets it
     # from the rows on screen; ScrollLines overrides it. The control carries the fraction of a
     # notch between events, which is what a precision touchpad sends.
-    # The rows move under a pointer that does not: after a scroll, or after the filter narrowed
-    # the list, the row below the cursor is a different one. Reading it again here keeps the
-    # highlight and the card on the row the user is actually pointing at, and the rest timer
-    # starts over - a preview follows a cursor that has come to rest, so sweeping the list with
-    # the wheel no longer flashes a card between two notches. MouseMove only sees the pointer
-    # move, which is why this cannot live there.
-    function Sync-HoverFromCursor {
-      $i = -1
-      try {
-        if (-not $lst.IsDisposed) {
-          $p = $lst.PointToClient([Windows.Forms.Cursor]::Position)
-          if ($lst.ClientRectangle.Contains($p)) { $i = $lst.IndexFromPoint($p) }
-        }
-      } catch { $i = -1 }
-      if ($i -ne [int]$script:Hover) {
-        $old = [int]$script:Hover
-        $script:Hover = $i
-        Set-AnimHover $script:Anim $i
-        foreach ($k in @($old, $i)) {
-          if ($k -ge 0 -and $k -lt $lst.ItemCount) { $lst.Invalidate($lst.GetItemRectangle($k)) }
-        }
-      }
-      $script:PvAt = Get-Date
-      $script:PvIdx = -1
-      Hide-Preview $pv
-    }
+    # Sync-HoverFromCursor (the row under a still pointer) lives with the other file-scope panel
+    # functions, renderer\src\components\picker-live.ps1.
     # every way the list can scroll (wheel, drag, keys, selection) has to move the thumb, and
     # none of them may leave the selection behind off screen
     $lst.Add_ScrollChanged({ Sync-Sb; Keep-SelectionInView; Sync-HoverFromCursor })
@@ -617,379 +582,27 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     $script:SearchType = $null
     try { $script:SearchType = [Cb.Search] } catch { $script:SearchType = $null }
 
-    function Update-List([string]$q) {
-      $swUp = [Diagnostics.Stopwatch]::StartNew()
-      $lst.BeginUpdate()
-      try {
-        # compiled in lib/query.ps1; highlight still works on plain words only
-        $query = New-Query -Line $q
-        $tokens = @($query.Terms)
-        $script:Tokens = $tokens
-        # sticky pins: the plugin names the mark and the cap, the base decides how many rows
-        # actually fit - see Get-StickyPlan / Get-StickyTopRows in lib/ordering.ps1. The
-        # runtime is there in every run that draws a panel, so the call is made directly: a
-        # missing command is the only case that means "no plan", and Get-Command per keystroke
-        # cost more than the call itself
-        $plan = $null
-        try { $plan = Get-PluginStickyPlan (Get-Rows) } catch [System.Management.Automation.CommandNotFoundException] { $plan = $null }
-        if ($null -eq $plan) { $plan = @{ Mark = ''; Max = 0 } }
-        # The rows: plain words go to the assembly, where the scan costs no PowerShell loop at
-        # all; its heads are built once per store snapshot (a pin or a delete replaces the
-        # array), never per keystroke. Everything else keeps the readable path in lib\query.ps1.
-        if ($null -ne $script:SearchType -and $query.Bad.Count -eq 0 -and (Test-QueryPlain $query)) {
-          if (-not [object]::ReferenceEquals($script:QueryHeadsFor, $script:Entries)) {
-            $script:QueryHeads = New-QueryHeads $script:Entries
-            $script:QueryHeadsFor = $script:Entries
-          }
-          $rows = @([Cb.Search]::Pick($script:Entries, [Cb.Search]::Match($script:QueryHeads, [string[]]@($query.Terms), [string[]]@($query.Excludes))))
-        } else {
-          $rows = @(Invoke-Query $script:Entries $query)
-        }
-        # the pins sort first, so the run of sticky rows at the top is what gets frozen
-        $script:StickyTop = Get-StickyTopRows $rows $plan.Mark $plan.Max
-        $res = [System.Collections.Generic.List[object]]::new()
-        $labs = [System.Collections.Generic.List[string]]::new()
-        $mk = $(if ($script:ShowNewlineMarker) { 1 } else { 0 })
-        foreach ($rec in $rows) {
-          $res.Add($rec)
-          $lkey = ([int]$rec.Key * 2) + $mk
-          $lab = $labelCache[$lkey]
-          if ($null -eq $lab) {
-            $lab = Get-RecordLabel $rec $script:ShowNewlineMarker
-            if ($labelCache.Count -gt 1200) { $labelCache.Clear() }
-            $labelCache[$lkey] = $lab
-          }
-          $labs.Add($lab)
-        }
-        $script:Filtered = $res.ToArray()
-        $script:Labels = $labs.ToArray()
-        # the control only learns how many rows there are; the labels stay in $script:Labels
-        $lst.ItemCount = $script:Labels.Count
-        # freeze the pinned run, then start the scrollable part right under it
-        $lst.PinnedCount = $script:StickyTop
-        if ($script:Labels.Count -gt 0) { $lst.SelectedIndex = 0 } else { $lst.SelectedIndex = -1 }
-        $lst.TopIndex = $script:StickyTop
-        # a filter that hides part of the list invalidates the positions behind it
-        Trim-Selection $script:Sel ($script:Labels.Count)
-        Sync-Selection $script:Sel $lst
-      } catch {
-        Write-Log ('update list failed: ' + $_.Exception.Message)
-      } finally {
-        # the lock has to come off even when a row above threw, or the list never paints
-        $lst.EndUpdate()
-      }
-      if ($script:Labels.Count -eq 0) {
-        $es = Get-EmptyState $script:Entries $query $q $script:Glyphs
-        $script:EmptyGlyph = $es.Glyph
-        $script:EmptyTitle = $es.Title
-        $script:EmptySub = $es.Sub
-        $empty.Visible = $true
-        $empty.BringToFront()
-        $empty.Invalidate()
-      } else {
-        $empty.Visible = $false
-      }
-      # the filter changed what sits under the pointer: same reading as after a scroll
-      Sync-HoverFromCursor
-      Sync-Placeholder
-      Sync-SearchCaret
-      $lst.Invalidate()
-      Sync-Sb
-      Restore-Foot
-      # A filter that took long enough to feel leaves a line: the row count says whether the
-      # cost is the store or the list it fed, which is the first question a slow search asks
-      $msUp = [int]$swUp.Elapsed.TotalMilliseconds
-      if ($msUp -ge 40) { Write-Log ('picker: filter ' + $msUp + ' ms (' + $script:Labels.Count + ' of ' + @($script:Entries).Count + ' rows)') }
-    }
+    # Update-List lives with the other file-scope panel functions
+    # (renderer\src\components\picker-live.ps1); the list and the empty state reach it through
+    # $script:PanelList / $script:PanelEmpty, and the label cache is $script:LabelCache.
 
     # The picker already put the text on the clipboard: hide it and paste into the window
     # that is in front. Shared by Enter and by a plugin action that asks for
     # After = 'paste' (transform copies the rewritten text, then wants it pasted).
     #
-    # Which window that is gets decided when the key is pressed, not when the panel opened:
-    # the hook lets Alt+Tab through, so the user can bring another application forward while
-    # the panel is up, and the text still has to land where they are looking now. A window of
-    # this process does not count - after an input-method hand-over the panel itself is in
-    # front, and the daemon's own console can be too. Those are not places to paste into, and
-    # the window the panel came from is the answer for them.
-    function Get-PasteTarget {
-      try {
-        $fgNow = [Cb.Win]::GetForegroundWindow()
-        if ($fgNow -ne [IntPtr]::Zero -and -not [Cb.Win]::IsOwnWindow($fgNow)) { return $fgNow }
-      } catch { }
-      return $prev
-    }
+    # Get-PasteTarget, Format-PasteTarget and Put-BackSelection live with the other file-scope
+    # panel functions (renderer\src\components\picker-live.ps1).
 
-    # One line for a window. A paste that lands elsewhere is the one report that cannot be
-    # reproduced from a screenshot, and a handle alone says nothing: the program name and the
-    # title are what the user recognises.
-    function Format-WindowName([IntPtr]$hwnd) {
-      $where = 'hwnd=0x' + ([int64]$hwnd).ToString('X')
-      $proc = ''
-      try { $proc = Get-WindowProcessName $hwnd } catch { }
-      if ($proc) { $where = $where + ' ' + $proc }
-      try {
-        $title = [Cb.Win]::WindowTitle($hwnd, 40)
-        if ($title) { $where = $where + ' "' + $title + '"' }
-      } catch { }
-      return $where
-    }
+    # Get-PasteTarget, Format-PasteTarget, Put-BackSelection, Close-Panel, Paste-Clip and
+    # Use-Index live with the other file-scope panel functions
+    # (renderer\src\components\picker-live.ps1).
 
-    function Format-PasteTarget([IntPtr]$target) {
-      $where = Format-WindowName $target
-      if ($target -ne $prev) { $where = $where + ' (switched, was 0x' + ([int64]$prev).ToString('X') + ')' }
-      return $where
-    }
+    # Del-Index, Undo-Delete, Cancel-Confirm and Request-Clear live with the other file-scope
+    # panel functions (renderer\src\components\picker-live.ps1); each reads the controls it needs
+    # from $script:Panel*.
 
-    # Put the cloned selection back, once. Editors that reset their selection when they lose the
-    # foreground get the caret back this way, both before a paste and when the panel closes.
-    function Put-BackSelection([string]$why = '') {
-      if (@($script:SavedSel).Count -le 0) { return }
-      $back = 0
-      try { $back = Restore-UiaSelection $script:SavedSel } catch { $back = 0 }
-      Write-Log ('selection restored=' + $back + $why)
-    }
-
-    function Paste-Clip([string]$TypedText = '', [int]$ClipMs = 0) {
-      # every step of a paste is a wait the user can feel, and which one it is cannot be told
-      # from a screenshot: one line per paste carries the milliseconds of each stage
-      $pasteSw = [Diagnostics.Stopwatch]::StartNew()
-      $target = Get-PasteTarget
-      Write-Log ('paste target: ' + (Format-PasteTarget $target))
-      if ($script:NoPaste) { Close-Panel; return }
-      # An elevated window ignores keys sent by a process that is not, and the failure says
-      # nothing: nothing arrives and nothing throws. Say so instead of reporting a paste that
-      # never happened.
-      if (Test-ElevatedTarget $target) {
-        Write-Log 'paste skipped: the target window runs elevated'
-        Set-Foot (Get-UiText 'panel.foot.copiedAdmin') ([int]$script:Timing['FootMessage'])
-        return
-      }
-      # the hotkey is usually still held when the panel opens: pasting now would send
-      # Ctrl+V with Alt/Ctrl down and land as something else entirely
-      while ($pasteSw.ElapsedMilliseconds -lt $script:ModReleaseTimeout) {
-        if (Test-Modifiers-Up) { break }
-        Start-Sleep -Milliseconds 10
-      }
-      $modMs = [int]$pasteSw.ElapsedMilliseconds
-      # waiting only works when the key is let go of soon: a modifier that is still down when
-      # the wait ends is released, so the paste cannot arrive as another shortcut
-      if (-not (Test-Modifiers-Up)) { Release-HeldModifiers }
-      # SetForegroundWindow can be refused by the foreground lock and SendKeys types into
-      # whatever is in front, so the target has to have the front. The panel holds it while it
-      # is open, so this is the step that moves it back - and losing the activation here is part
-      # of the paste, which is what $script:Pasting tells the Deactivate handler.
-      $hadFront = $false
-      try { $hadFront = ([Cb.Win]::GetForegroundWindow() -eq $target) } catch { $hadFront = $false }
-      $frontSw = [Diagnostics.Stopwatch]::StartNew()
-      $script:Pasting = $true
-      try {
-        if (-not $hadFront -and -not (Take-Foreground $target)) {
-          Write-Log 'paste skipped: the target window did not take the foreground'
-          Set-Foot (Get-UiText 'panel.foot.copiedNoFocus') ([int]$script:Timing['FootMessage'])
-          return
-        }
-        # the window is back but its caret may not be: give the control the keyboard again, and
-        # only when it lost it - AttachThreadInput plus SetFocus is another way to raise a window.
-        # Only the window the panel came from has a remembered control; after a switch the caret
-        # already sits where the user left it.
-        if ($target -eq $prev -and $script:PrevFocus -ne [IntPtr]::Zero) {
-          $hasFocus = $false
-          try { $hasFocus = ([Cb.Win]::FocusOfWindow($target) -eq $script:PrevFocus) } catch { $hasFocus = $false }
-          if (-not $hasFocus) { [void](Restore-TargetFocus $target $script:PrevFocus) }
-        }
-        # the window needs a moment before it takes the keyboard again: a chord sent inside that
-        # gap is dropped without an error. After a page key moved the list the gap is longer, and
-        # 30 ms lost one pick in three on Chromium 76 while 80 ms lost none.
-        Start-Sleep -Milliseconds $script:PasteSettle
-        $focusMs = [int]$frontSw.ElapsedMilliseconds
-        # The foreground can move again while the panel settles (another window, a shell flyout),
-        # and the keys would go into whatever is in front by then: Ditto re-checks the target at
-        # this point too, and its log marks the case "paste timing around activate target".
-        try {
-          if ([Cb.Win]::GetForegroundWindow() -ne $target) {
-            Write-Log 'paste: the foreground moved before the keys, taking it back'
-            [void](Take-Foreground $target)
-          }
-        } catch { }
-        # an editor that dropped its selection when the panel took the foreground gets the caret
-        # back here, before the keys: only for the window the panel came from, because after an
-        # Alt+Tab the caret already sits where the user left it in the other window
-        if ($target -eq $prev) { Put-BackSelection }
-        # the target moves the caret itself once the text is in, so the close that follows must
-        # not select the old range again - that put the caret back in front of what was pasted
-        $script:SavedSel = @()
-        # The keys go out before the panel is hidden: hiding the active window first lets Windows
-        # pick the next window in the z-order, and taking the front back afterwards is exactly
-        # what reads as "the window I had focused before flashes up".
-        if ($TypedText -ne '') {
-          # typing lands in the focused control through SendInput: no clipboard and no paste
-          # key, which is what a target that ignores Ctrl+V needs
-          $keysSw = [Diagnostics.Stopwatch]::StartNew()
-          $sent = 0
-          try { $sent = [Cb.Win]::SendUnicode($TypedText) } catch { Write-Log ('typing failed: ' + $_.Exception.Message) }
-          Write-Log ('typed ' + $sent + ' of ' + $TypedText.Length + ' characters')
-        } else {
-          $keysSw = [Diagnostics.Stopwatch]::StartNew()
-          # SendKeys builds its modifier from a virtual key with no scan code, and an input
-          # method can answer that with VK_PROCESSKEY: the chord then lands as a bare letter
-          # and nothing is pasted (measured on Chromium 76, once in about ten opens). One chord
-          # is sent as the physical key instead; a sequence or a repeat still needs SendKeys.
-          $chord = $false
-          try { $chord = Send-PasteChord $PasteKeys } catch { $chord = $false }
-          if (-not $chord) {
-            Write-Log 'paste keys: SendKeys (not a single chord)'
-            try { [Windows.Forms.SendKeys]::SendWait($PasteKeys) } catch { Write-Log ('sendkeys fail: ' + $_.Exception.Message) }
-          }
-        }
-        Write-Log ('paste: ' + [int]$pasteSw.ElapsedMilliseconds + ' ms (clip ' + $ClipMs + ', mod ' + $modMs + ', focus ' + $focusMs + ', settle ' + [int]$script:PasteSettle + ', keys ' + [int]$keysSw.ElapsedMilliseconds + ')')
-        try {
-          $after = [Cb.Win]::GetForegroundWindow()
-          if ($after -ne $target) { Write-Log ('paste: the foreground changed while the keys were sent (' + (Format-WindowName $after) + ')') }
-        } catch { }
-        $form.Hide()
-        # the panel leaving can still move the foreground; the paste is already done, so this
-        # only puts the user back where they were
-        if ([Cb.Win]::GetForegroundWindow() -ne $target) {
-          $moved = [Cb.Win]::GetForegroundWindow()
-          Write-Log ('paste: the foreground moved after the panel hid (' + (Format-WindowName $moved) + '), taking it back')
-          [void](Take-Foreground $target)
-        }
-      } finally {
-        $script:Pasting = $false
-      }
-      $form.Close()
-    }
-
-    # Closing from inside the panel. The panel holds the foreground, so hiding it hands the front
-    # to whatever is next in the z-order: the window it came from has to be asked for by name,
-    # together with the control that owned the caret there.
-    function Close-Panel {
-      # Hiding the panel is what takes the activation away, and the Deactivate handler reads that
-      # as a dismissal and clears the flag - so whether the foreground has to be handed back is
-      # decided before the window goes, not after it.
-      $handBack = ($script:OwnFront -and $prev -ne [IntPtr]::Zero)
-      try { $form.Hide() } catch { }
-      if ($handBack) {
-        try { [void][Cb.Win]::SetForegroundWindow($prev) } catch { }
-        try { [void](Restore-TargetFocus $prev $script:PrevFocus) } catch { }
-        # the window that was typing gets its caret back too: some editors drop the selection
-        # when they lose the foreground, and a closed panel must not move the caret either
-        Put-BackSelection ' (panel closed)'
-        $script:SavedSel = @()
-      }
-      try { $form.Close() } catch { }
-    }
-
-    function Use-Index([int]$idx, [switch]$NoInject) {
-      if ($idx -lt 0 -or $idx -ge $script:Filtered.Count) { return }
-      $rec = $script:Filtered[$idx]
-      $payload = $rec.Payload
-      # the formatted sidecar only applies to the text that produced it
-      $rich = [string]$rec.Rich
-      # a plugin may rewrite what gets pasted (text only, upper case, snake case ...)
-      if (Get-Command Invoke-PluginTransform -ErrorAction SilentlyContinue) {
-        try {
-          $t = Invoke-PluginTransform $payload
-          if ($null -ne $t -and [string]$t -ne '' -and [string]$t -cne $payload) {
-            $payload = [string]$t
-            $rich = ''
-            Write-Log ('pasted via transform (' + $payload.Length + ' chars)')
-          }
-        } catch { Write-Log ('transform skipped: ' + $_.Exception.Message) }
-      }
-      $pasteTo = Get-PasteTarget
-      if ($script:NoPaste -or $NoInject.IsPresent -or (Test-AppRuleNoPaste $pasteTo)) { [void](Set-ClipItem $payload $rich); Set-LastCapture $payload; Close-Panel; return }
-      # the program in front decides whether the formatting travels with the paste:
-      # a terminal wants the text, an editor wants the layout. The window asked about is the
-      # one the paste goes back to - the panel itself may be in front after a hand-over.
-      if ($rich -and -not (Test-AppRuleKeepsRich $pasteTo)) { $rich = '' }
-      $clipSw = [Diagnostics.Stopwatch]::StartNew()
-      $okClip = Set-ClipItem $payload $rich
-      $clipMs = [int]$clipSw.ElapsedMilliseconds
-      if (-not $okClip) { Write-Log 'set clipboard failed'; Close-Panel; return }
-      # our own write must not come back as a new capture
-      Set-LastCapture $payload
-      # PasteTyping=1 skips the paste key. Only plain text can be typed: a file list and a
-      # picture still need the clipboard.
-      $typed = ''
-      if ($script:PasteTyping -and $rich -eq '' -and -not (Test-FilePayload $payload) -and -not (Test-ImagePayload $payload)) { $typed = $payload }
-      Paste-Clip -TypedText $typed -ClipMs $clipMs
-    }
-
-    function Del-Index([int]$idx) {
-      if ($idx -lt 0 -or $idx -ge $script:Filtered.Count) { return }
-      $victim = $script:Filtered[$idx]
-      $removed = [string]$script:History.Remove($victim.Payload)
-      if ($removed -like 'protected:*') {
-        # only the plugin that declared the mark knows how to remove it
-        $pm = $removed.Substring(10)
-        $info = Get-MarkInfo $pm
-        $word = Get-MarkUiWord $pm
-        if ($info -and $info.Unset) {
-          $hint = [string]$info.Hint
-          $unset = [string]$info.Unset
-          if ($hint) { Set-Foot (Get-UiText 'panel.foot.markHint' @($word, $hint, $unset)) ([int]$script:Timing['FootWarn']) }
-          else { Set-Foot (Get-UiText 'panel.foot.markNoHint' @($word, $unset)) ([int]$script:Timing['FootWarn']) }
-        } else {
-          Set-Foot (Get-UiText 'panel.foot.markNoPlugin' @($word, $pm)) ([int]$script:Timing['FootWarn'])
-        }
-        return
-      }
-      if ($removed -eq 'removed') {
-        if ($script:UndoOn) { $script:UndoRec = $victim; $script:UndoIdx = $idx }
-      }
-      # the store re-read only when something was deleted, so its rows are what the panel shows
-      $script:Entries = @($script:History.Rows)
-      if ($removed -eq 'removed') { Write-Log ('deleted entry (' + $victim.Payload.Length + ' chars), left ' + $script:Entries.Count) }
-      Update-List $txt.Text
-      if ($script:Filtered.Count -gt 0) { $lst.SelectedIndex = [Math]::Min($idx, $script:Filtered.Count - 1) }
-      if ($script:UndoOn -and $removed -eq 'removed') { Set-Foot (Get-UiText 'panel.foot.deleted') ([int]$script:Timing['FootMessage']) }
-    }
-
-    function Undo-Delete {
-      if (-not $script:UndoOn) { Set-Foot (Get-UiText 'panel.foot.undoOff') ([int]$script:Timing['FootWarn']); return }
-      if ($null -eq $script:UndoRec) { Set-Foot (Get-UiText 'panel.foot.nothingToUndo') ([int]$script:Timing['FootShort']); return }
-      $rec = $script:UndoRec
-      $at = $script:UndoIdx
-      $script:UndoRec = $null
-      [void](Restore-Record $rec $at)
-      Write-Log ('undo restored (' + $rec.Payload.Length + ' chars) at ' + $at)
-      $script:Entries = @($script:History.Refresh())
-      Update-List $txt.Text
-      Set-Foot (Get-UiText 'panel.foot.restored') ([int]$script:Timing['FootInfo'])
-    }
-
-    function Cancel-Confirm {
-      $confirmTimer.Stop()
-      if (-not $script:Confirm) { return }
-      $script:Confirm = $false
-      Restore-Foot
-    }
-
-    function Request-Clear {
-      if ($script:Entries.Count -eq 0) { Set-Foot (Get-UiText 'panel.foot.nothingToClear') ([int]$script:Timing['FootShort']); return }
-      $script:Confirm = $true
-      $footTimer.Stop()
-      $script:FootMode = 'confirm'
-      if (@(Get-ClearKeepMarks).Count -gt 0) { $script:FootMsg = Get-UiText 'panel.foot.confirmClearKept' }
-      else { $script:FootMsg = Get-UiText 'panel.foot.confirmClearAll' }
-      $footL.Invalidate()
-      $confirmTimer.Stop()
-      $confirmTimer.Start()
-    }
-
-    function Clear-All {
-      $script:Confirm = $false
-      $confirmTimer.Stop()
-      Clear-Store (Get-ClearKeepMarks)
-      $script:Entries = @($script:History.Refresh())
-      Write-Log ('history cleared from the panel, left ' + $script:Entries.Count + ' rows')
-      Update-List $txt.Text
-      $kept = @(Get-MarkUiCount $script:Entries)
-      if ($kept.Count -gt 0) { Set-Foot (Get-UiText 'panel.foot.clearedKept' @($kept -join ', ')) ([int]$script:Timing['FootWarn']) }
-      else { Set-Foot (Get-UiText 'panel.foot.cleared') ([int]$script:Timing['FootInfo']) }
-    }
+    # Clear-All lives with the other file-scope panel functions
+    # (renderer\src\components\picker-live.ps1).
 
     # The row menu is the tray menu's twin: the same skin, the same rounded rows and the same
     # hairline separators. renderer/src/windows/tray-menu.ps1 owns the layout and the row helpers, and
@@ -997,6 +610,8 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     # not open a window drawn in the system colours.
     $cmSkin = New-TrayMenuSkin (Px 252)
     $cm = New-Object Cb.TrayMenu -ArgumentList $cmSkin
+    $script:PanelMenu = $cm
+    $script:PanelMenuSkin = $cmSkin
     # Rows are rebuilt per opening, so the menu only knows its final height once it has opened: it
     # places itself, or it comes up covering the pointer on the rows near the bottom edge. The rule
     # and its wiring are shared with any other menu that has to place itself (New-TrayMenuPlacer).
@@ -1014,101 +629,11 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       # one code point for both menus: the tray menu's own table is the one that decides it
       Clear  = [string](Get-TrayGlyphs).Clear
     }
-    # The rows are rebuilt for the row under the pointer, in one helper: the menu hides the
-    # actions that do not apply and names each plugin over its own group, and rebuilding is what
-    # keeps the strip's layout right - a row that was hidden once never gets its place back.
-    function Fill-RowMenu($cur) {
-      $has = ($null -ne $cur)
-      foreach ($old in @($cm.Items)) { try { $old.Dispose() } catch { } }
-      $cm.Items.Clear()
-
-      $paste = New-TrayMenuRow -Skin $cmSkin -Label (Get-UiText 'menu.paste') -Glyph $menuGlyph.Paste
-      $paste.Hint = 'Enter'
-      $paste.Enabled = $has
-      # the primary action carries the accent on its glyph, the way a Fluent menu marks the one
-      # row a press is usually meant for
-      $paste.GlyphInk = $cmSkin.Accent
-      $paste.Add_Click({ Use-Index $lst.SelectedIndex })
-      [void]$cm.Items.Add($paste)
-
-      $copy = New-TrayMenuRow -Skin $cmSkin -Label (Get-UiText 'menu.copyOnly') -Glyph $menuGlyph.Copy
-      $copy.Hint = 'Ctrl+Enter'
-      $copy.Enabled = $has
-      $copy.Add_Click({ Use-Index $lst.SelectedIndex -NoInject })
-      [void]$cm.Items.Add($copy)
-
-      # a picture, a file list and a formatted entry have nothing the editor can show
-      $editable = ($has -and (Test-RowEditable $cur))
-      if ($editable) {
-        $edit = New-TrayMenuRow -Skin $cmSkin -Label (Get-UiText 'menu.edit') -Glyph $menuGlyph.Edit
-        $edit.Hint = 'F2'
-        $edit.Add_Click({ Begin-RowEdit })
-        [void]$cm.Items.Add($edit)
-      }
-
-      $del = New-TrayMenuRow -Skin $cmSkin -Label (Get-UiText 'menu.delete') -Glyph $menuGlyph.Delete
-      $del.Hint = 'Del'
-      $del.Enabled = $has
-      # a removal warns in the same token the panel uses for a refusal
-      $del.GlyphInk = $cmSkin.Warn
-      $del.Ink = $cmSkin.Warn
-      $del.Add_Click({ try { Del-Index $lst.SelectedIndex } catch { } })
-      [void]$cm.Items.Add($del)
-
-      $clear = New-TrayMenuRow -Skin $cmSkin -Label (Get-UiText 'menu.clearHistory') -Glyph $menuGlyph.Clear
-      $clear.Enabled = ($script:Entries.Count -gt 0)
-      $clear.GlyphInk = $cmSkin.Warn
-      $clear.Ink = $cmSkin.Warn
-      # the destructive row starts its own block: a separator row, not a line inside the row, so
-      # the air above the line and below it is the same as everywhere else in the menu
-      [void](Add-TrayMenuSeparator $cm $cmSkin)
-      [void]$cm.Items.Add($clear)
-      $clear.Add_Click({ Request-Clear })
-
-      # plugin actions: one group per plugin, in load order, with a header that names it. Only
-      # the actions whose Test passes for this row are built, so nothing has to be hidden later.
-      $picked = New-Object System.Collections.Generic.List[object]
-      try {
-        if ($has -and (Get-Command Get-PluginActions -ErrorAction SilentlyContinue)) {
-          foreach ($act in @(Get-PluginActions)) {
-            if (-not (Test-PluginAction $act $cur)) { continue }
-            [void]$picked.Add($act)
-          }
-        }
-      } catch { Write-Log ('plugin menu failed: ' + $_.Exception.Message) }
-
-      $seen = New-Object System.Collections.Generic.List[string]
-      foreach ($act in $picked) {
-        $owner = [string]$act['Plugin']
-        if (-not $seen.Contains($owner)) {
-          [void]$seen.Add($owner)
-          # every plugin block starts with a line, the way the built-in block before it does
-          [void](Add-TrayMenuSeparator $cm $cmSkin)
-          $cap = New-TrayMenuRow -Skin $cmSkin -Label (Get-UiTextOr ('plugin.caption.' + $owner) $owner) -Caption
-          [void]$cm.Items.Add($cap)
-        }
-        $row = New-TrayMenuRow -Skin $cmSkin -Label (Get-ActionText $act $cur)
-        if ($act.ContainsKey('Key')) { $row.Hint = [string]$act['Key'] }
-        $row.Tag = $act
-        $row.Add_Click([System.EventHandler]{
-            param($sn, $ev)
-            try {
-              $a = $sn.Tag
-              if ($null -eq $a -or $lst.SelectedIndex -lt 0) { return }
-              if ($lst.SelectedIndex -ge $script:Filtered.Count) { return }
-              # a returned string is a note for the footer (a refused pin, for one)
-              $note = (& $a['Invoke'] $script:Filtered[$lst.SelectedIndex]); if ($note) { Set-Foot ([string]$note) ([int]$script:Timing['FootMessage']) }
-              $script:Entries = @($script:History.Refresh())
-              # After = 'paste': the action put its result on the clipboard and wants
-              # it pasted into the window the picker came from (transform does this)
-              if ($a.ContainsKey('After') -and [string]$a['After'] -eq 'paste') { Paste-Clip }
-              else { Update-List $txt.Text }
-            } catch { Write-Log ('plugin action failed: ' + $_.Exception.Message) }
-          })
-        [void]$cm.Items.Add($row)
-      }
-      $cm.Fit()
-    }
+    $script:PanelMenuGlyph = $menuGlyph
+    # The rows are rebuilt for the row under the pointer, in one helper (Fill-RowMenu, in
+    # renderer\src\components\picker-live.ps1): the menu hides the actions that do not apply and
+    # names each plugin over its own group, and rebuilding is what keeps the strip's layout right
+    # - a row that was hidden once never gets its place back.
     # a placeholder fill so the strip has its real height before the first open: the drop-down
     # positions itself from the size it has then
     Fill-RowMenu $null
@@ -1132,21 +657,22 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     # the loop below does not dismiss the panel on the very click that chose the item.
     $cm.Add_Closed({ $script:MenuClosedAt = Get-Date })
 
-    # one StringFormat set per process, shared with the drawing helpers in renderer/src/windows/picker-draw.ps1
+    # one StringFormat set per process, shared with the drawing helpers in renderer/src/components/picker-draw.ps1
     $sfSet = New-PickerStringFormats
     $bgBrush = New-Object Drawing.SolidBrush $ui.Surface
-    # One brush per colour lives in renderer/src/windows/picker-draw.ps1, so reopening builds nothing.
+    # One brush per colour lives in renderer/src/components/picker-draw.ps1, so reopening builds nothing.
     $sfEll = $sfSet.Ellipsis
     $sfNone = $sfSet.None
     $sfRight = $sfSet.Right
     $sfCenter = $sfSet.Center
     $sfSeg = $sfSet.Seg
-    # the hover card (renderer/src/windows/preview.ps1): geometry and brushes once per panel, never per
+    # the hover card (renderer/src/components/preview.ps1): geometry and brushes once per panel, never per
     # hover; it ellipsizes like the rows, because a Win11 flyout never cuts text mid-glyph
     $pvCfg = New-PreviewConfig $ui $sfEll $fBody $fSmall
+    $script:PanelPvCfg = $pvCfg
 
     # draw one label in pieces so the matched tokens can be tinted; the tail is trimmed
-    # with an ellipsis once the available width is exhausted (renderer/src/windows/picker-draw.ps1)
+    # with an ellipsis once the available width is exhausted (renderer/src/components/picker-draw.ps1)
 
     $lst.Add_DrawItem({
         param($s, $e)
@@ -1162,7 +688,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
         # the same amount would leave every row sitting one gutter to the left of centre. The
         # gutter is added to the left inset and taken off the width instead, which balances the
         # block against the window while RowRight stays twice RowInset (11 px each side at
-        # 700 wide, 96 dpi; see the metric table in lib\base.ps1).
+        # 700 wide, 96 dpi; see the metric table in main\utils\base.ps1).
         $gutter = [int]$sbar.Width
         $rowW = [Math]::Min($b.Width, $listHost.ClientSize.Width) - (Px $m['RowRight']) - $gutter
         if ($rowW -lt (Px $m['RowMinWidth'])) { $rowW = Px $m['RowMinWidth'] }
@@ -1310,17 +836,11 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
           $g.DrawString(('Ctrl+' + (Get-QuickKeyLabel $offset)), $fSmall, (Get-Brush $capInk), $capRect, $sfCenter)
         }
       })
-    # Hover preview (renderer/src/windows/preview.ps1): it waits for the cursor to rest and prepares a record's
-    # text once, so sweeping the list costs a timestamp per row and nothing else.
+    # Hover preview (renderer/src/components/preview.ps1) is Show-HoverPreview, which lives with
+    # the other file-scope panel functions (renderer\src\components\picker-live.ps1).
     $pv = New-PreviewState
+    $script:PanelPv = $pv
     $script:PvAt = Get-Date; $script:PvIdx = -1
-    function Show-HoverPreview {
-      if ($null -eq $pv -or $script:Hover -lt 0 -or $script:Hover -ge $script:Filtered.Count) { Hide-Preview $pv; $script:PvIdx = -1; return }
-      $pvCfg.Area = [Windows.Forms.Screen]::FromPoint([Windows.Forms.Cursor]::Position).WorkingArea
-      $at = $lst.PointToScreen($lst.GetItemRectangle($script:Hover).Location)
-      Update-Preview $pv $script:Filtered[$script:Hover] $at.Y $pvCfg $form.Bounds
-      $script:PvIdx = $script:Hover
-    }
     $lst.Add_SelectedIndexChanged({ if (-not $lst.IsDisposed) { Set-AnimSelection $script:Anim $lst.SelectedIndex; $footL.Invalidate() } })
     $lst.Add_MouseMove({
         param($s, $e)
@@ -1348,7 +868,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       })
     $lst.Add_DoubleClick({ if ($lst.SelectedIndex -ge 0) { Use-Index $lst.SelectedIndex } })
     # Ctrl toggles a row, Shift takes a run, a plain click starts over - the rules live in
-    # lib/select.ps1 so they can be tested without a window
+    # main/utils/select.ps1 so they can be tested without a window
     # the footer lists what the selected row allows (F2 only for a plain text row), so every
     # path that changes the selection has to repaint it: the list redraws itself, the footer is
     # its own control and would otherwise keep the hints of the row selected before
@@ -1358,17 +878,22 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     $footTimer = New-Object Windows.Forms.Timer
     $footTimer.Interval = [int]$script:Timing['FootMessage']
     $footTimer.Add_Tick({ $footTimer.Stop(); Restore-Foot })
+    $script:PanelFootTimer = $footTimer
 
     $confirmTimer = New-Object Windows.Forms.Timer
     $confirmTimer.Interval = [int]$script:Timing['Confirm']
     $confirmTimer.Add_Tick({ $confirmTimer.Stop(); $script:Confirm = $false; Restore-Foot })
+    $script:PanelConfirmTimer = $confirmTimer
 
     $deb = New-Object Windows.Forms.Timer
     $deb.Interval = [int]$script:Timing['Debounce']
     $deb.Add_Tick({ $deb.Stop(); Update-List $txt.Text })
-    # F2 edits the selected entry in place; the editor lives in renderer/src/windows/picker-edit.ps1
+    $script:PanelDeb = $deb
+    # F2 edits the selected entry in place; the editor lives in renderer/src/components/picker-edit.ps1
     Set-PickerEditHost $form $lst $txt $ui $fBody { param($q) Update-List $q } { param($m, $ms) Set-Foot $m ([int]$ms) } { param($t) $t.Focus() }
-    function Flush-List { if ($deb.Enabled) { $deb.Stop(); Update-List $txt.Text } }
+    # Flush-List lives with the other file-scope panel functions
+    # (renderer\src\components\picker-live.ps1); it stops the debounce timer and re-reads the
+    # store with what the box holds now.
     $txt.Add_TextChanged({ $script:CaretEnd = 0; Sync-Placeholder; Sync-SearchCaret; $deb.Stop(); $deb.Start() })
     $txt.Add_GotFocus({ $script:SearchFocus = $true; $script:SysHides = 0; Set-AnimTarget $script:Anim 'Field' 1.0; $box.Invalidate(); Sync-SearchCaret })
     $txt.Add_LostFocus({ $script:SearchFocus = $false; $script:CaretEnd = 0; Set-AnimTarget $script:Anim 'Field' 0.0; $box.Invalidate(); Sync-SearchCaret })
@@ -1509,21 +1034,15 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     # ---- the keyboard the panel holds -----------------------------------------
     # The panel activates like any other window, so nothing has to be posted into its controls:
     # the list starts with the keyboard (no caret in the filter row until the user types), the
-    # first printable character moves the focus to the search field, and a click anywhere in the
-    # search area moves it there too.
-    function Start-Search {
-      if ($null -ne $script:EditRow) { return }
-      if (-not $txt.Focused) { $txt.Focus() }
-      $txt.SelectionStart = $txt.TextLength
-      $script:CaretEnd = 0
-      Sync-SearchCaret
-    }
+    # first printable character moves the focus to the search field (Start-Search, in
+    # renderer\src\components\picker-live.ps1), and a click anywhere in the search area moves it
+    # there too.
 
-    $form.Add_Paint({
-        param($s, $e)
-        Draw-PanelFrame $e.Graphics $form.ClientSize.Width $form.ClientSize.Height $ui.Border (Get-WindowRadius) $ui.Surface
-      })
-    $form.Add_Shown({
+    Set-AppWindowContent -Name 'picker' -Paint {
+        param($g, $e)
+        Draw-PanelFrame $g $form.ClientSize.Width $form.ClientSize.Height $ui.Border (Get-WindowRadius) $ui.Surface
+      }
+    Register-AppWindowEvent -Name 'picker' -Event Shown -Handler {
         # the layout and the list were built before Show() (see below), so the frame is already
         # complete: the keyboard goes to the list, not to the filter row, so no caret shows until
         # the user actually types
@@ -1531,25 +1050,25 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
         try { $lst.Focus() } catch { }
         Sync-SearchCaret
         Write-Log ('picker: shown ' + $script:Theme + '/' + $script:UiFamily + ' items=' + $script:Entries.Count + ' scale=' + $script:UiScale + ' size=' + $form.Width + 'x' + $form.Height + ' at ' + $form.Left + ',' + $form.Top)
-      })
+      }
 
     $script:ShownAt = Get-Date
     # Close() disposes a non-modal form, so the geometry has to be read while it is still
     # alive - the window-size save below happens after the loop and would otherwise throw
     $script:PickerGeo = $null
-    $form.Add_FormClosing({
+    Register-AppWindowEvent -Name 'picker' -Event Closing -Handler {
         # a drop-down left standing keeps its menu filter, which then eats every later click
         try { if (-not $cm.IsDisposed -and $cm.Visible) { $cm.Close() } } catch { Write-Log ('menu close failed: ' + $_.Exception.Message) }
         # Close() can arrive again after Dispose() (Hide then Close, plus the deactivate timer)
         if ($form.IsDisposed) { return }
         $script:PickerGeo = @{ W = $form.Width; H = $form.Height; L = $form.Left; T = $form.Top }
-      })
-    $form.Add_Activated({
+      }
+    Register-AppWindowEvent -Name 'picker' -Event Activated -Handler {
         # the panel came back to the front: the keyboard goes to the list, which is where it
         # starts, unless the editor is open
         if (-not $form.ContainsFocus) { try { $lst.Focus() } catch { } }
-      })
-    $form.Add_Deactivate({
+      }
+    Register-AppWindowEvent -Name 'picker' -Event Deactivate -Handler {
         $script:CtrlHeld = $false
         # a paste moves the foreground to its target on purpose: that is not a dismissal
         if ($script:Pasting) { return }
@@ -1560,15 +1079,15 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
         # is what made the first open of a session flash and vanish. Ask again, then close.
         if (-not $script:OwnFront) {
           $script:OwnFront = Take-Foreground $form.Handle
-          if (-not $script:OwnFront) { $form.Close() }
+          if (-not $script:OwnFront) { [void](Close-AppWindow 'picker') }
           return
         }
         # the panel is no longer the window in front: closing it has nothing to hand back
         $script:OwnFront = $false
         # an edit in progress keeps the panel open: closing would drop the text
         if ($null -ne $script:EditRow) { return }
-        if (((Get-Date) - $script:ShownAt).TotalMilliseconds -gt [int]$script:Timing['CloseOnBlur']) { $form.Close() }
-      })
+        if (((Get-Date) - $script:ShownAt).TotalMilliseconds -gt [int]$script:Timing['CloseOnBlur']) { [void](Close-AppWindow 'picker') }
+      }
 
     # The panel owns the foreground from Show() on (renderer\src\windows\focus.ps1), so the box is not
     # focused until the user types into it.
@@ -1599,6 +1118,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     if ($Warm) {
       try { $deb.Dispose() } catch { }
       try { $footTimer.Dispose() } catch { }
+      $script:PanelFootTimer = $null
       try { $confirmTimer.Dispose() } catch { }
       try { Close-Preview $pv } catch { }
       try { $pvCfg.InkBrush.Dispose(); $pvCfg.DimBrush.Dispose() } catch { }
@@ -1621,9 +1141,18 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $script:PanelPh = $null
       $script:PanelClr = $null
       $script:PanelCaret = $null
+      $script:PanelPv = $null
+      $script:PanelEmpty = $null
+      $script:PanelDeb = $null
+      $script:PanelConfirmTimer = $null
+      $script:PanelPrev = [IntPtr]::Zero
+      $script:PanelPvCfg = $null
+      $script:PanelMenu = $null
+      $script:PanelMenuSkin = $null
+      $script:PanelMenuGlyph = $null
       return
     }
-    $form.Show()
+    [void](Show-AppWindow 'picker' -NoActivate)
     # Show() creates the handle; without one there is nothing to position (Chromium 76 did that)
     if (-not $form.IsHandleCreated) { try { $form.CreateControl() } catch { } }
     if ([IntPtr]$form.Handle -eq [IntPtr]::Zero) { Write-Log 'picker: no handle'; try { $form.Dispose() } catch { }; return }
@@ -1661,7 +1190,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
         $fgShell = [Cb.Win]::GetForegroundWindow()
         if ($fgShell -ne $form.Handle -and (Test-ShellFlyout $fgShell)) {
           Write-Log 'picker: dismissed (Windows Start / search came up)'
-          $form.Close(); break
+          [void](Close-AppWindow 'picker'); break
         }
       }
       # Whether the drawn caret is the only one there is: while an input method composes, the
@@ -1674,7 +1203,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       if (-not $form.ContainsFocus -and ((Get-Date) - $script:ShownAt).TotalMilliseconds -gt 350) {
         # a click elsewhere dismisses the panel; the context menu is ours, not somewhere else
         $fg = [Cb.Win]::GetForegroundWindow()
-        if ($fg -ne $form.Handle -and $fg -ne $prev -and -not $cm.Visible -and -not [Cb.Win]::IsOwnWindow($fg)) { $form.Close(); break }
+        if ($fg -ne $form.Handle -and $fg -ne $prev -and -not $cm.Visible -and -not [Cb.Win]::IsOwnWindow($fg)) { [void](Close-AppWindow 'picker'); break }
       }
       # A click beside the open menu closes it and the panel together: the menu eats that click,
       # so the panel would otherwise need a second one. The cursor says where it landed.
@@ -1683,7 +1212,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
         $script:MenuClosedAt = $null
         if ($recent -and -not $form.Bounds.Contains([Windows.Forms.Cursor]::Position)) {
           Write-Log 'picker: dismissed by a click outside (menu was open)'
-          $form.Close(); break
+          [void](Close-AppWindow 'picker'); break
         }
       }
       # a card waits for the cursor to rest; a page built off-thread lands on the next tick
@@ -1739,6 +1268,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
 
     $deb.Dispose()
     $footTimer.Dispose()
+    $script:PanelFootTimer = $null
     $confirmTimer.Dispose()
     Close-Preview $pv
     try { $pvCfg.InkBrush.Dispose(); $pvCfg.DimBrush.Dispose() } catch { }
@@ -1746,7 +1276,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     # GDI handles this panel owns: the row background brush and the region the form paints with
     try { $bgBrush.Dispose() } catch { }
     try { $rgn = $form.Region; $form.Dispose(); if ($null -ne $rgn) { $rgn.Dispose() } } catch { }
-    # The functions in renderer\src\windows\picker-live.ps1 read the controls from the script scope; the
+    # The functions in renderer\src\components\picker-live.ps1 read the controls from the script scope; the
     # window they belong to is gone, so nothing may keep pointing at a disposed control.
     $script:PanelForm = $null
     $script:PanelList = $null
@@ -1761,6 +1291,15 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     $script:PanelPh = $null
     $script:PanelClr = $null
     $script:PanelCaret = $null
+    $script:PanelPv = $null
+    $script:PanelEmpty = $null
+    $script:PanelDeb = $null
+    $script:PanelConfirmTimer = $null
+    $script:PanelPrev = [IntPtr]::Zero
+    $script:PanelPvCfg = $null
+    $script:PanelMenu = $null
+    $script:PanelMenuSkin = $null
+    $script:PanelMenuGlyph = $null
   } catch {
     Write-Log ('picker error: ' + $_.Exception.Message)
     try {
@@ -1771,12 +1310,30 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     } catch { }
   } finally {
     # an error can leave the window on screen with no loop left to serve it
-    try { if ($form -and -not $form.IsDisposed) { $form.Close() } } catch { }
+    try { if ($form -and -not $form.IsDisposed) { [void](Close-AppWindow 'picker') } } catch { }
     $script:PickerOpen = $false
     # the settings window that stepped aside comes back with the state it had
     if ($script:PickerOverSettings) {
       $script:PickerOverSettings = $false
-      if (Get-Command Show-SettingsAfterPanel -ErrorAction SilentlyContinue) { Show-SettingsAfterPanel }
+      [void](Request-Window -Name 'settings' -Action 'restore')
     }
   }
+}
+
+# The resident opens the panel through the window layer, so this file never becomes an edge into
+# the capture loop: a call to Show-Picker from serve.ps1 would put the panel in every bundle that
+# carries the loop. `show` is what the tray and the hotkey ask for; `test` answers whether the
+# panel is up without reaching for its state.
+Register-Window -Name 'picker' -Handlers @{
+  show = {
+    param($args)
+    $tray = $false
+    $warm = $false
+    if ($args -is [System.Collections.IDictionary]) {
+      if ($args.Contains('Tray')) { $tray = [bool]$args['Tray'] }
+      if ($args.Contains('Warm')) { $warm = [bool]$args['Warm'] }
+    }
+    Show-Picker -Tray:$tray -Warm:$warm
+  }
+  test = { param($args) [bool]$script:PickerOpen }
 }

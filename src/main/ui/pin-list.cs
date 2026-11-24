@@ -1,5 +1,5 @@
 // src/main/ui/pin-list.cs - the row surface both drawn windows put their rows on (see
-// renderer/src/windows/pinlist.ps1 for why it exists).
+// renderer/src/components/pinlist.ps1 for why it exists).
 //
 // A plain Control paints nothing and hit-tests nothing, so this one owns the three things a row
 // list needs and the host does not: the scroll position (always a whole row), the wheel the host

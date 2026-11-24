@@ -15,11 +15,11 @@ Framework 4，没有 Node，也没有 npm 依赖。它的代码与工具链按 E
 | `package.json` 的 `version` | `package.ini` 的 `Version` | 版本只有这一处；包目录名由它生成 |
 | `electron.vite.config.ts` | `cli.ini` | 入口、插件链、复制清单、开关 |
 | `main/index.ts` | `src/clipboard.ps1` | 入口：参数绑定、工具根、模块表 |
-| 主进程代码 | `src/lib/*.ps1` + `src/main/**/*.cs` | 常驻循环在 `lib/serve.ps1`，平台层在 C# |
+| 主进程代码 | `src/lib/*.ps1` + `src/main/**/*.cs` | 常驻循环在 `main/utils/serve.ps1`，平台层在 C# |
 | `preload/index.ts` | `src/preload/client.cs` | 命令行加速器，不是 IPC 桥 |
 | `renderer/src/**` | `src/renderer/src/**` | 窗口层：core / store / windows |
-| `ipcMain.handle` 注册表 | `src/ipc/channels.ini` | 一行一个通道，带 `Handler=` 与 `Remote=` |
-| `ipcRenderer.invoke` | `Invoke-Ipc`（`src/lib/ipc.ps1`） | 窗口调用进程内函数的唯一入口 |
+| `ipcMain.handle` 注册表 | `src/shared/ipc/channels.ini` | 一行一个通道，带 `Handler=` 与 `Remote=` |
+| `ipcRenderer.invoke` | `Invoke-Ipc`（`src/preload/utils/ipc.ps1`） | 窗口调用进程内函数的唯一入口 |
 | pinia store | `src/renderer/src/store/` | `Define-UiStore` / `Use-UiStore` / `Patch` / `Reset` |
 | Vue / React 组件 | `src/renderer/src/core/` | 盒模型、控件、组件树、视图、响应式 |
 | 窗口与页面 | `src/renderer/src/windows/` | 面板、设置窗、托盘菜单、预览卡 |
@@ -35,7 +35,7 @@ Framework 4，没有 Node，也没有 npm 依赖。它的代码与工具链按 E
 
 ### 主进程：常驻循环 + 类型库
 
-- `src/lib/serve.ps1` — 捕获循环、热键注册、托盘、崩溃后退避重启；
+- `src/main/utils/serve.ps1` — 捕获循环、热键注册、托盘、崩溃后退避重启；
 - `src/lib/*.ps1` — `store`（历史文件）、`clip`（剪贴板读写）、`media`（图片与富文本）、
   `config`（设置）、`query`（搜索）等，按依赖方向排列；
 - `src/main/**/*.cs` — Win32 入口点、窗体、自绘列表、托盘菜单、RTF 排版；由
@@ -65,8 +65,8 @@ dot-source 读完。`picker-geom.ps1` 留在包外，因为 `status` 这类不�
 
 ## 3. 进程之间能说什么
 
-`src/ipc/channels.ini` 是唯一的清单：一节一个通道，`Handler=` 指定常驻进程里回答它的函数，
-`Remote=` 说明命令行是否也能走。`lib/proxy.ps1`（命令行一侧）与 `preload/client.cs`（管道
+`src/shared/ipc/channels.ini` 是唯一的清单：一节一个通道，`Handler=` 指定常驻进程里回答它的函数，
+`Remote=` 说明命令行是否也能走。`main/utils/proxy.ps1`（命令行一侧）与 `preload/client.cs`（管道
 一侧）都读这一份文件，因此增加一个通道只改一处。
 
 窗口一侧只有 `Invoke-Ipc`：同一通道两种传输——在常驻进程内就是一次函数调用，不在则走命名
@@ -159,7 +159,7 @@ export default defineConfig({
 electron-builder 里，这相当于把产物写进 `files`、把源目录排除掉。
 
 文件级处理落在 `tools/bundler/assets/`：每种文件一个 handler，`assets.ps1` 里的表决定哪个
-路径用哪个。`version` 那一行是链式的——先把 `lib/base.ps1` 的版本块换成常量，再交给
+路径用哪个。`version` 那一行是链式的——先把 `main/utils/base.ps1` 的版本块换成常量，再交给
 `script`。
 
 包内目录因此读起来像 Electron 的产物：
@@ -170,7 +170,7 @@ clipboard-<version>/
   main/clipboard.dll
   preload/client.exe
   renderer/app.ps1
-  renderer/src/windows/picker-geom.ps1
+  renderer/src/components/picker-geom.ps1
   lib/  utils/  schema/  plugins/  themes/  lang/  ipc/
 ```
 
@@ -190,6 +190,6 @@ clipboard-<version>/
 1. `package.ini` — 有哪些命令；
 2. `cli.ini` — 有哪些入口、各自的插件链、包带哪些文件；
 3. `src/clipboard.ps1` — 命令如何映射到模块分组，包内单文件与源码多文件两种加载；
-4. `src/lib/serve.ps1` — 常驻循环；
+4. `src/main/utils/serve.ps1` — 常驻循环；
 5. `src/renderer/src/windows/picker.ps1` — 一个真实窗口的全貌；
 6. `tools/build.ps1` — 一次发布的全部步骤。

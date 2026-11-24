@@ -1,4 +1,4 @@
-// src/main/ui/shell.cs - the process's own identity on the taskbar (see lib/native.ps1's
+// src/main/ui/shell.cs - the process's own identity on the taskbar (see main/utils/native.ps1's
 // Set-AppId).
 //
 // The taskbar groups windows by the process's AppUserModelID and takes the button's icon from

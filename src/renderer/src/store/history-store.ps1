@@ -2,7 +2,7 @@
 #
 # The panel reads it on every refresh and the clipboard commands write to it; both go through
 # this store instead of each keeping its own copy. The rows themselves come from the channel
-# table (Invoke-Ipc 'list'), so where they are stored stays lib\store's business and this file
+# table (Invoke-Ipc 'list'), so where they are stored stays main\utils\store's business and this file
 # only says what a window may see.
 #
 #   $history = Use-UiStore 'history'

@@ -1,0 +1,252 @@
+# utils/ini.ps1 - the ini document and the operations on it. Pure: lines in, lines out.
+#
+# No file is opened here (utils/inifile.ps1 does that), no cache lives here, and no key is
+# known here: what a key means is a schema's business (src/shared/schema/*.ps1).
+#
+# A document - a "doc" - keeps the file as it was read, plus an index into it:
+#
+#   Lines    the file line by line, comments and blank lines included
+#   Map      key -> value, case-insensitive, the last value wins
+#   Keys     the keys in file order, at the first position of a repeated key
+#   Index    key -> @{ Lines = <line numbers>; Section = <name or ''>; Leaf = <name in it> }
+#   Sections section name -> @{ Head = <header line>; Last = <last line of the block> }
+#
+# Keys are flat: a "[section]" line prefixes the keys that follow it, so
+#
+#   [scripts]      and     scripts.Dev=x
+#   Dev=x
+#
+# produce the same key. Section names are lower case and keys PascalCase by convention, and
+# both are read case-insensitively.
+#
+# Every writer changes Lines and then reindexes, so a key keeps its line, the comment above it
+# and the order of the file. `config set` writes one key, `config init` fits the whole file to
+# the template this version writes: both go through the functions below instead of walking the
+# text themselves, and none of them opens a file.
+
+# rebuild Map, Keys, Index and Sections from Lines
+function Update-IniDocIndex($doc) {
+  $map = @{}
+  $keys = [System.Collections.Generic.List[string]]::new()
+  $index = @{}
+  $sections = @{}
+  $section = ''
+  $sectionKey = ''
+  $lineNo = -1
+  foreach ($raw in @($doc.Lines)) {
+    $lineNo++
+    $l = ([string]$raw).Trim()
+    if ($l.Length -eq 0) { continue }
+    if ($l[0] -eq '#' -or $l[0] -eq ';') {
+      # a comment still belongs to the block: a key added later goes after it, not before
+      if ($sectionKey -and $sections.ContainsKey($sectionKey)) { $sections[$sectionKey].Last = $lineNo }
+      continue
+    }
+    if ($l.StartsWith('[') -and $l.EndsWith(']')) {
+      $section = $l.Substring(1, $l.Length - 2).Trim()
+      $sectionKey = $section.ToLowerInvariant()
+      $sections[$sectionKey] = @{ Head = $lineNo; Last = $lineNo }
+      continue
+    }
+    $i = $l.IndexOf('=')
+    if ($i -lt 1) { continue }
+    $leaf = $l.Substring(0, $i).Trim()
+    $key = $leaf
+    if ($section) { $key = $section + '.' + $leaf }
+    $v = $l.Substring($i + 1).Trim()
+    if ($v.Length -ge 2 -and $v[0] -eq '"' -and $v[$v.Length - 1] -eq '"') { $v = $v.Substring(1, $v.Length - 2) }
+    if (-not $map.ContainsKey($key)) { $keys.Add($key) }
+    $map[$key] = $v
+    if (-not $index.ContainsKey($key)) {
+      $index[$key] = @{ Lines = @(); Section = [string]$section; Leaf = $leaf }
+    }
+    $index[$key].Lines += $lineNo
+    if ($sectionKey -and $sections.ContainsKey($sectionKey)) { $sections[$sectionKey].Last = $lineNo }
+  }
+  $doc.Map = $map
+  $doc.Keys = $keys.ToArray()
+  $doc.Index = $index
+  $doc.Sections = $sections
+  return $doc
+}
+
+# parse lines into a doc. A repeated key keeps the last value and its first position, so a file
+# that sets a key twice reads like the browser reading a stylesheet.
+function Read-IniDoc([string[]]$lines) {
+  $doc = @{ Lines = @(); Map = @{}; Keys = @(); Index = @{}; Sections = @{} }
+  $list = [System.Collections.Generic.List[string]]::new()
+  foreach ($l in @($lines)) { $list.Add([string]$l) }
+  $doc.Lines = $list.ToArray()
+  return (Update-IniDocIndex $doc)
+}
+
+# an empty doc, for a caller that builds one up instead of parsing
+function New-IniDoc {
+  return @{ Lines = @(); Map = @{}; Keys = @(); Index = @{}; Sections = @{} }
+}
+
+# the value of one key, "" when the doc does not have it
+function Get-IniDocValue($doc, [string]$key) {
+  if ($null -eq $doc) { return '' }
+  if ($doc.Map.ContainsKey($key)) { return [string]$doc.Map[$key] }
+  return ''
+}
+
+# one line of the file as it is written, the one a reader would see when a key appears twice
+function Get-IniDocLine($doc, [string]$key) {
+  if ($null -eq $doc -or -not $key) { return '' }
+  if (-not $doc.Index.ContainsKey($key)) { return '' }
+  $lines = @($doc.Index[$key].Lines)
+  if ($lines.Count -eq 0) { return '' }
+  return [string]$doc.Lines[[int]$lines[$lines.Count - 1]]
+}
+
+# the header line and the last line of a block, $null when the file has no such section
+function Get-IniDocSection($doc, [string]$name) {
+  if ($null -eq $doc -or -not $name) { return $null }
+  $key = $name.Trim().ToLowerInvariant()
+  if (-not $doc.Sections.ContainsKey($key)) { return $null }
+  return $doc.Sections[$key]
+}
+
+# put a block of lines (a comment, a section header and a key, say) in at one position
+function Insert-IniDocLines($doc, [int]$at, [string[]]$block) {
+  if ($null -eq $doc) { return $doc }
+  $list = [System.Collections.Generic.List[string]]::new()
+  foreach ($l in @($doc.Lines)) { $list.Add([string]$l) }
+  if ($at -lt 0) { $at = 0 }
+  if ($at -gt $list.Count) { $at = $list.Count }
+  $n = 0
+  foreach ($b in @($block)) { $list.Insert($at + $n, [string]$b); $n++ }
+  $doc.Lines = $list.ToArray()
+  return (Update-IniDocIndex $doc)
+}
+
+# write one key: an existing key keeps its line and the spelling the file already uses, a new
+# one joins its [section] block, or is appended with a fresh header when the file has none
+function Set-IniDocValue($doc, [string]$key, [string]$value) {
+  if ($null -eq $doc) { return $doc }
+  if ($doc.Index.ContainsKey($key)) {
+    $hit = $doc.Index[$key]
+    $lines = @($doc.Lines)
+    foreach ($n in @($hit.Lines)) {
+      $lines[[int]$n] = [string]$hit.Leaf + '=' + $value
+    }
+    $doc.Lines = $lines
+    return (Update-IniDocIndex $doc)
+  }
+  $leaf = $key
+  $group = ''
+  $dot = $key.LastIndexOf('.')
+  if ($dot -gt 0) {
+    $group = $key.Substring(0, $dot)
+    $leaf = $key.Substring($dot + 1)
+  }
+  if ($group) {
+    $sec = Get-IniDocSection $doc $group
+    if ($null -ne $sec) { return (Insert-IniDocLines $doc ([int]$sec.Last + 1) @($leaf + '=' + $value)) }
+    $block = @(('[' + $group + ']'), ($leaf + '=' + $value))
+    $cur = @($doc.Lines)
+    if ($cur.Count -gt 0 -and $cur[$cur.Count - 1].Trim()) { $block = @('') + $block }
+    return (Insert-IniDocLines $doc $cur.Count $block)
+  }
+  # A new flat key joins the flat keys, which end where the first [section] starts. Appending it
+  # to the end of the file would put it inside the last section, and there it reads as that
+  # section's key - the setting is written, never found again, and every save adds another copy.
+  # The blank and comment lines that introduce the sections stay below it.
+  $lines = @($doc.Lines)
+  $at = $lines.Count
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ([string]$lines[$i].Trim() -match '^\[') { $at = $i; break }
+  }
+  while ($at -gt 0) {
+    $above = [string]$lines[$at - 1]
+    $t = $above.Trim()
+    if ($t -eq '' -or $t.StartsWith('#') -or $t.StartsWith(';')) { $at--; continue }
+    break
+  }
+  return (Insert-IniDocLines $doc $at @($key + '=' + $value))
+}
+
+# every key under a group ("item-marks"), or every key when the prefix is empty
+function Select-IniDocKeys($doc, [string]$prefix = '') {
+  $out = [System.Collections.Generic.List[string]]::new()
+  if ($null -eq $doc) { return $out.ToArray() }
+  $head = ''
+  if ($prefix) { $head = $prefix.TrimEnd('.') + '.' }
+  foreach ($k in @($doc.Keys)) {
+    $name = [string]$k
+    if (-not $head) { $out.Add($name); continue }
+    if ($name.StartsWith($head, [StringComparison]::OrdinalIgnoreCase)) { $out.Add($name) }
+  }
+  return $out.ToArray()
+}
+
+# Fit a doc to a template: the template is the shape the file should have, the doc holds the
+# values that are already there. A template is lines this version wrote itself, so it is not
+# parsed - it carries the headings, one comment above each key and one line per key, and every
+# key line is replaced by the value the doc has for it. A key the doc does not have keeps the
+# template's line, which is where the default comes from.
+#
+# A key the doc has but the template does not is not dropped: it is written as a comment at the
+# end, where removing the '#' brings it back. Pure: the doc is not touched, and the lines that
+# would be written come back with the two counts a caller reports.
+function Merge-IniDocTemplate($doc, [string[]]$template) {
+  $out = [System.Collections.Generic.List[string]]::new()
+  $known = @{}
+  $section = ''
+  $added = 0
+  foreach ($raw in @($template)) {
+    $s = [string]$raw
+    $t = $s.Trim()
+    if ($t -match '^\[(.+)\]$') { $section = $Matches[1].Trim(); $out.Add($s); continue }
+    if ($t -eq '' -or $t.StartsWith('#') -or $t.StartsWith(';')) { $out.Add($s); continue }
+    if ($t -notmatch '^([A-Za-z0-9_.-]+)\s*=') { $out.Add($s); continue }
+    $leaf = $Matches[1]
+    $full = $leaf
+    if ($section) { $full = $section + '.' + $leaf }
+    $known[$full.ToLowerInvariant()] = $true
+    $line = Get-IniDocLine $doc $full
+    if ($line) {
+      # keep the value exactly, re-spelled in the template's 'Key=value' shape
+      $value = [string]($line.Trim() -replace '^[^=]*=', '')
+      $out.Add($leaf + '=' + $value)
+      continue
+    }
+    $added++
+    $out.Add($s)
+  }
+  # keys this version does not know: readable, out of the way, one comment each
+  $unknown = [System.Collections.Generic.List[string]]::new()
+  if ($null -ne $doc) {
+    foreach ($k in @($doc.Keys)) {
+      if ($known.ContainsKey(([string]$k).ToLowerInvariant())) { continue }
+      foreach ($n in @($doc.Index[$k].Lines)) {
+        $unknown.Add('# [unknown] ' + ([string]$doc.Lines[[int]$n]).Trim())
+      }
+    }
+  }
+  if ($unknown.Count -gt 0) {
+    $out.Add('')
+    $out.Add('# ---- keys this version does not know (remove the # to keep one) ----')
+    foreach ($l in $unknown) { $out.Add($l) }
+  }
+  return @{ Lines = $out.ToArray(); Added = $added; Unknown = $unknown.Count }
+}
+
+# the two line sets say the same thing; trailing whitespace an editor added does not count
+function Test-IniLinesSame([string[]]$a, [string[]]$b) {
+  $x = @($a)
+  $y = @($b)
+  if ($x.Count -ne $y.Count) { return $false }
+  for ($i = 0; $i -lt $x.Count; $i++) {
+    if (([string]$x[$i]).TrimEnd() -cne ([string]$y[$i]).TrimEnd()) { return $false }
+  }
+  return $true
+}
+
+# the file as it would be written: the lines that were read, with every edit in place
+function ConvertTo-IniText($doc) {
+  if ($null -eq $doc) { return @() }
+  return @($doc.Lines)
+}
