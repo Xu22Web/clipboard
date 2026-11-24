@@ -159,15 +159,18 @@ function Show-Settings {
     )
   }
   Update-SettingsActions
-  $script:SetHotAction = -1
+  # The window's own controls - the two caption buttons and the footer actions - are view nodes
+  # (lib\ui\views.ps1), kept on one parent so the patch can leave the ones that did not change
+  # alone. Their boxes come from the layout, their hover from the node's own state: a pointer
+  # crossing Save repaints Save, not the window.
+  $script:SetChrome = New-UiView 'chrome' '' @{ }
+  [void](Mount-UiComponent $script:SetChrome)
   # the chord line whose delete button is under the pointer, -1 for none
   $script:SetHotDelete = -1
   # the add button of a chain under the pointer, the index of the line it would fill, -1 for none
   $script:SetHotAdd = -1
-  # the row under the pointer, and whether the close button is: the only two hover states left
+  # the row under the pointer: the controls in it paint their own hover
   $script:SetHover = -1
-  $script:SetCloseHot = $false
-  $script:SetMinHot = $false
   # where the pointer grabbed the header: a window with no title bar is moved by its own header
   $script:SetDragFrom = $null
   # a shortcut row waiting for its chord, and the modifiers held so far
@@ -299,6 +302,48 @@ function Show-Settings {
     $maxScroll = [Math]::Max(0, @($script:SetRows).Count - $vis)
     # the offset is a distance, so the clamp is one too, and it needs no visible-row count
     [void](Set-ScrollTo ([int]$script:SetScroll))
+    # the buttons say what the rows just said: which actions apply, and in which words
+    Update-SetChrome
+  }
+
+  # The window's own controls as the patch sees them: two caption buttons that never change, and
+  # the footer actions whose words and enabled state follow the staged set. The patch keeps the
+  # ones that stayed, so a refresh does not throw away a button's hover.
+  function Update-SetChrome {
+    # A page with nothing to act on (About) has no actions at all - a Save that can only ever be
+    # disabled says the window is broken rather than that the page is a statement. A read-only
+    # row with a folder picker still stages a value, so the pick counts as something to act on.
+    $actionable = @($script:SetRows | Where-Object {
+        (-not $_.Locked) -or ($_.ContainsKey('Pick') -and [string]$_.Pick)
+      })
+    $script:SetActionSpecs = @()
+    if ($actionable.Count -gt 0) { $script:SetActionSpecs = @($script:SetActions) }
+    $specs = New-Object System.Collections.Generic.List[object]
+    $specs.Add(@{ Key = 'close'; Type = 'icon'; Props = @{ Glyph = 'close'; Enabled = $true } })
+    $specs.Add(@{ Key = 'min'; Type = 'icon'; Props = @{ Glyph = 'min'; Enabled = $true } })
+    foreach ($a in @($script:SetActionSpecs)) {
+      $key = [string]$a.Key
+      $specs.Add(@{ Key = $key; Type = 'button'; Props = @{
+            Label = [string]$a.Label; Primary = [bool]$a.Primary; Enabled = (Test-SettingsActionOn $key) } })
+    }
+    [void](Sync-UiViews $script:SetChrome $specs.ToArray())
+    # the layout owns where each one is; the node only carries it for the draw and the hit test
+    $layout = $script:SetLayout
+    $close = Get-SettingsCloseRect $layout
+    $min = Get-SettingsMinRect $layout
+    $labels = @($script:SetActionSpecs | ForEach-Object { [string]$_.Label })
+    $rects = @(Get-SettingsActionRects $layout $labels)
+    foreach ($node in $script:SetChrome.Children.ToArray()) {
+      $box = $null
+      if ([string]$node.Key -ceq 'close') { $box = $close }
+      elseif ([string]$node.Key -ceq 'min') { $box = $min }
+      else {
+        for ($i = 0; $i -lt $labels.Count; $i++) {
+          if ([string]$script:SetActionSpecs[$i].Key -ceq [string]$node.Key) { $box = $rects[$i]; break }
+        }
+      }
+      [void](Update-UiComponent $node $box)
+    }
   }
 
   # a row whose owner setting is off: shown, greyed, and refusing edits with the reason
@@ -1045,27 +1090,12 @@ function Show-Settings {
         Draw-SettingsValueField $g $pal $script:SetEditRect '' ([string]$script:SetEditField.Unit) $true $mode
       }
       if ($listOnly) { return }
-      # the close button, top right, where every window puts one
-      Draw-SettingsMin $g $pal $layout $script:SetMinHot
-      Draw-SettingsClose $g $pal $layout $script:SetCloseHot
+      # the caption buttons and the footer actions are view nodes (lib\ui\views.ps1): one walk
+      # draws them all, in the order the patch kept them
+      [void](Render-UiTree $script:SetChrome { param($c) if ($c.Type -ne 'chrome') { [void](Draw-UiView $g $pal $c) } })
       # the footer is the window's own bar: the last change on the left, the actions on the right.
-      # A page with nothing to act on (About) has no actions at all - a Save that can only ever be
-      # disabled says the window is broken rather than that the page is a statement. A read-only
-      # row with a folder picker still stages a value, so the pick counts as something to act on.
-      # each action carries its own state: the reset one stays available, the pair waits for a change
-      $acts = @()
-      $actionable = @($script:SetRows | Where-Object {
-          (-not $_.Locked) -or ($_.ContainsKey('Pick') -and [string]$_.Pick)
-        })
-      if ($actionable.Count -gt 0) {
-        $acts = @(foreach ($a in $script:SetActions) {
-          $copy = @{}
-          foreach ($k in $a.Keys) { $copy[$k] = $a[$k] }
-          $copy['Enabled'] = (Test-SettingsActionOn ([string]$a.Key))
-          $copy
-        })
-      }
-      Draw-SettingsFooter $g $pal $layout $script:SetMsg $script:SetMsgErr $acts ($script:SetPending.Count -gt 0) $script:SetHotAction
+      # The bar itself - its hairline and its message - is not a control, so it stays here.
+      Draw-SettingsFooter $g $pal $layout $script:SetMsg $script:SetMsgErr $script:SetActionSpecs
     } catch {
       Write-Log ('settings paint: ' + $_.Exception.Message + ' @ ' + $_.ScriptStackTrace)
     }
@@ -1138,14 +1168,11 @@ function Show-Settings {
       $script:SetSbHot = $hot
       $form.Invalidate()
     }
-    $close = Get-SettingsCloseRect $script:SetLayout
-    $overClose = ($e.X -ge [int]$close.Left -and $e.X -le ([int]$close.Left + [int]$close.Width) -and
-      $e.Y -ge [int]$close.Top -and $e.Y -le ([int]$close.Top + [int]$close.Height))
-    if ($overClose -ne $script:SetCloseHot) { $script:SetCloseHot = $overClose; $form.Invalidate() }
-    $min = Get-SettingsMinRect $script:SetLayout
-    $overMin = ($e.X -ge [int]$min.Left -and $e.X -le ([int]$min.Left + [int]$min.Width) -and
-      $e.Y -ge [int]$min.Top -and $e.Y -le ([int]$min.Top + [int]$min.Height))
-    if ($overMin -ne $script:SetMinHot) { $script:SetMinHot = $overMin; $form.Invalidate() }
+    # The caption buttons and the footer actions are view nodes (lib\ui\views.ps1), so one diff
+    # moves the hover and answers the rectangle that changed: crossing Save repaints Save instead
+    # of the whole window, and a disabled action never takes the hover at all.
+    $dirty = Update-UiViewHot $script:SetChrome.Children.ToArray() $e.X $e.Y $true
+    if (-not $dirty.IsEmpty) { $form.Invalidate($dirty) }
     # a press on the header moves the window: there is no title bar to drag
     if ($null -ne $script:SetDragFrom) {
       $now = [Windows.Forms.Cursor]::Position
@@ -1154,17 +1181,6 @@ function Show-Settings {
           ([int]$script:SetDragFrom.Top + ($now.Y - [int]$script:SetDragFrom.Y))))
       return
     }
-    # the footer actions light up under the pointer the way the edit card's buttons do
-    $rects = @(Get-SettingsActionRects $script:SetLayout @($script:SetActions | ForEach-Object { [string]$_.Label }))
-    $hotAction = -1
-    for ($i = 0; $i -lt $rects.Count; $i++) {
-      if (-not (Test-SettingsActionOn ([string]$script:SetActions[$i].Key))) { continue }
-      $rc = $rects[$i]
-      if ($e.X -lt [int]$rc.Left -or $e.X -gt ([int]$rc.Left + [int]$rc.Width)) { continue }
-      if ($e.Y -lt [int]$rc.Top -or $e.Y -gt ([int]$rc.Top + [int]$rc.Height)) { continue }
-      $hotAction = $i
-    }
-    if ($hotAction -ne $script:SetHotAction) { $script:SetHotAction = $hotAction; $form.Invalidate() }
     $idx = Get-SettingsRowAt $script:SetLayout @($script:SetRows).Count $script:SetScroll $e.X $e.Y
     if ($idx -ne $script:SetHover) {
       # A row does not light up under the pointer: only the control in it is a target, and a
@@ -1232,14 +1248,14 @@ function Show-Settings {
       # lets the same click reach what it pointed at, so Save works with the editor still up.
       if ($null -ne $script:SetEditBox) { return }
     }
-    # the footer actions sit below the list, so no row and no lane can be under them
-    $acts = @(Get-SettingsActionRects $script:SetLayout @($script:SetActions | ForEach-Object { [string]$_.Label }))
-    for ($i = 0; $i -lt $acts.Count; $i++) {
-      if (-not (Test-SettingsActionOn ([string]$script:SetActions[$i].Key))) { continue }
-      $rc = $acts[$i]
-      if ($e.X -lt [int]$rc.Left -or $e.X -gt ([int]$rc.Left + [int]$rc.Width)) { continue }
-      if ($e.Y -lt [int]$rc.Top -or $e.Y -gt ([int]$rc.Top + [int]$rc.Height)) { continue }
-      Invoke-SettingsAction ([string]$script:SetActions[$i].Key)
+    # the window's own controls first: the caption buttons sit in the header, above everything,
+    # and the footer actions below the list, where no row and no lane can be under them
+    $hit = Hit-UiViewList $script:SetChrome.Children.ToArray() $e.X $e.Y $true
+    if ($null -ne $hit) {
+      $what = [string]$hit.Key
+      if ($what -ceq 'close') { $form.Close(); return }
+      if ($what -ceq 'min') { $form.WindowState = [Windows.Forms.FormWindowState]::Minimized; return }
+      Invoke-SettingsAction $what
       return
     }
     # the scrollbar lane comes before the rows: it sits beside them, and a press on the thumb
@@ -1258,19 +1274,6 @@ function Show-Settings {
         if ($e.Y -gt [int]$thumb.Top) { $to = [int]$script:SetScroll + $page }
         if (Set-ScrollTo $to) { $form.Invalidate() }
       }
-      return
-    }
-    # the close button first: it sits in the header, above everything else
-    $close = Get-SettingsCloseRect $script:SetLayout
-    if ($e.X -ge [int]$close.Left -and $e.X -le ([int]$close.Left + [int]$close.Width) -and
-      $e.Y -ge [int]$close.Top -and $e.Y -le ([int]$close.Top + [int]$close.Height)) {
-      $form.Close()
-      return
-    }
-    $min = Get-SettingsMinRect $script:SetLayout
-    if ($e.X -ge [int]$min.Left -and $e.X -le ([int]$min.Left + [int]$min.Width) -and
-      $e.Y -ge [int]$min.Top -and $e.Y -le ([int]$min.Top + [int]$min.Height)) {
-      $form.WindowState = [Windows.Forms.FormWindowState]::Minimized
       return
     }
     # the header is the title bar this window does not draw: a press on it moves the window, and

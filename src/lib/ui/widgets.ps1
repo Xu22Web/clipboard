@@ -100,3 +100,77 @@ function Draw-UiScrollbar($g, $pal, $lane, $thumb, [double]$k) {
   $path = New-RoundPath $x ([int]$thumb.Top) $w ([int]$thumb.Len) ([Math]::Max(1, [int]($w / 2)))
   try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
 }
+
+# A dialog button: a 4 px radius, the field colour and its hairline for the secondary ones, the
+# accent with the surface colour as ink for the primary, and a wash under the pointer. A disabled
+# button keeps its shape and loses its colour, because a filled button with grey text still reads
+# as one that can be pressed. Drawn the way the edit card drew its Save / Cancel pair, which is
+# what makes a footer button and a card button the same control.
+function Draw-UiButton($g, $pal, $rect, [string]$label, [bool]$primary, [bool]$enabled, [bool]$hot) {
+  if ($null -eq $g -or $null -eq $pal -or $null -eq $rect) { return }
+  $x = [int]$rect.Left
+  $y = [int]$rect.Top
+  $w = [int]$rect.Width
+  $h = [int]$rect.Height
+  $radius = [int](Px 4)
+  $fill = $pal['Field']
+  $edge = $pal['FieldBorder']
+  $ink = $pal['Text']
+  if ($primary -and $enabled) { $fill = $pal['Accent']; $edge = $pal['Accent']; $ink = $pal['Surface'] }
+  if (-not $enabled) { $fill = $pal['Surface']; $edge = $pal['Border']; $ink = $pal['Faint'] }
+  $path = New-RoundPath $x $y $w $h $radius
+  $brush = New-Object Drawing.SolidBrush $fill
+  try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
+  if ($hot -and $enabled) {
+    # the filled button takes a thin layer of the text colour, which lightens it on a dark theme
+    # and deepens it on a light one; the outlined ones fade toward the tint a row hovers in
+    $tint = Scale-Alpha $pal['HoverBg'] 1.0
+    if ($primary) { $tint = Scale-Alpha $pal['Text'] 0.15 }
+    if ($tint.A -gt 0) {
+      $over = New-RoundPath $x $y $w $h $radius
+      $ob = New-Object Drawing.SolidBrush $tint
+      try { $g.FillPath($ob, $over) } finally { $over.Dispose(); $ob.Dispose() }
+    }
+  }
+  $pen = New-Object Drawing.Pen $edge
+  $stroke = New-RoundPath $x $y $w $h $radius
+  try { $g.DrawPath($pen, $stroke) } finally { $stroke.Dispose(); $pen.Dispose() }
+  $sf = New-PickerStringFormats
+  $box = New-Object Drawing.RectangleF -ArgumentList @([single]$x, [single]$y, [single]$w, [single]$h)
+  # the body face, not the small one: a dialog button is a label, not a caption
+  $g.DrawString($label, $script:FBody, (Get-Brush $ink), $box, $sf.Center)
+}
+
+# A caption button: a glyph on its own that gains a hover fill, the way a title bar's buttons do.
+# 'close' is the cross, 'min' the single rule; both are drawn with round caps so the stroke reads
+# as a Fluent icon rather than as two hairlines.
+function Draw-UiIconButton($g, $pal, $rect, [string]$glyph, [bool]$enabled, [bool]$hot) {
+  if ($null -eq $g -or $null -eq $pal -or $null -eq $rect) { return }
+  $x = [int]$rect.Left
+  $y = [int]$rect.Top
+  $w = [int]$rect.Width
+  $h = [int]$rect.Height
+  $radius = [int][Math]::Max(2, (Px 4))
+  if ($hot -and $enabled) {
+    $brush = New-Object Drawing.SolidBrush $pal['HoverBg']
+    $path = New-RoundPath $x $y $w $h $radius
+    try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
+  }
+  $ink = $pal['Dim']
+  if ($hot -and $enabled) { $ink = $pal['Text'] }
+  if (-not $enabled) { $ink = $pal['Faint'] }
+  $pen = New-Object Drawing.Pen $ink
+  $pen.StartCap = [Drawing.Drawing2D.LineCap]::Round
+  $pen.EndCap = [Drawing.Drawing2D.LineCap]::Round
+  try {
+    $cx = $x + [int]($w / 2)
+    $cy = $y + [int]($h / 2)
+    $d = [int](Px 4)
+    if ($glyph -ceq 'min') {
+      $g.DrawLine($pen, ($cx - $d), $cy, ($cx + $d), $cy)
+    } else {
+      $g.DrawLine($pen, ($cx - $d), ($cy - $d), ($cx + $d), ($cy + $d))
+      $g.DrawLine($pen, ($cx + $d), ($cy - $d), ($cx - $d), ($cy + $d))
+    }
+  } finally { $pen.Dispose() }
+}

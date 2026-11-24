@@ -748,6 +748,8 @@ src/                    the program (the only folder packaging reads)
   lib/ui/component.ps1      the tree around them: store and revision, lifecycle, keep-alive, a slot that arrives later
   lib/ui/framework.ps1      what a surface is written as: a keyed tree, the patch that keeps only what changed,
                             and the walk that draws it
+  lib/ui/views.ps1          a control as a record: a kind draws it, a box places it, a state says how it is,
+                            and a hover diff answers the rectangle that has to be repainted
 
   lib/panel/              the panel stack, loaded only by commands that draw
   lib/panel/picker.ps1      the history panel: window, filter, list, keys, context menu, paste

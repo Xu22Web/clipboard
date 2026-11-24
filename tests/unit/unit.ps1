@@ -230,7 +230,7 @@ try {
         $requiredLib = @('lib\base', 'lib\native', 'lib\panel\focus', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
           'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\panel\picker-live', 'lib\text', 'lib\panel\anim',
           'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\panel\tray-menu', 'lib\serve', 'lib\shortcut',
-          'lib\ui\layout', 'lib\ui\widgets', 'lib\ui\component', 'lib\ui\framework',
+          'lib\ui\layout', 'lib\ui\widgets', 'lib\ui\component', 'lib\ui\framework', 'lib\ui\views',
           'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings',
           'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch',
           'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey',
@@ -1377,7 +1377,8 @@ try {
         Expect ([string]$page.Children[0].Props.Label -eq 'uno') 'and the node takes the new record with it'
       }
 
-      It 'draws a parent before its children and skips what is unmounted' {        $seen = New-Object System.Collections.Generic.List[string]
+      It 'draws a parent before its children and skips what is unmounted' {
+        $seen = New-Object System.Collections.Generic.List[string]
         $page = New-UiComponent 'page'
         [void](Mount-UiComponent $page)
         [void](Sync-UiTree $page @(
@@ -1390,6 +1391,73 @@ try {
         $after = New-Object System.Collections.Generic.List[string]
         [void](Render-UiTree $page { param($node) $after.Add('x') })
         Expect ($after.Count -eq 0) 'a taken-down tree draws nothing'
+      }
+    }
+
+    # A control as a record (lib\ui\views.ps1): the kind decides how it draws, the node holds where
+    # it is and how it happens to be, and the hover is a diff that answers a rectangle - which is
+    # what keeps a pointer crossing a footer button from repainting the window.
+    Describe 'ui views' {
+      BeforeAll {
+        $script:ViewA = New-UiView 'button' 'a' @{ Label = 'one' }
+        $script:ViewB = New-UiView 'button' 'b' @{ Label = 'two' }
+        $script:ViewA.Box = @{ Left = 0; Top = 0; Width = 40; Height = 20 }
+        $script:ViewB.Box = @{ Left = 50; Top = 0; Width = 40; Height = 20 }
+      }
+
+      It 'moves the hover to one control and answers only what changed' {
+        $dirty = Update-UiViewHot @($script:ViewA, $script:ViewB) 10 10
+        Expect (-not $dirty.IsEmpty) 'the control under the pointer changed'
+        Expect ((Test-UiViewState $script:ViewA 'Hot') -and -not (Test-UiViewState $script:ViewB 'Hot')) 'only the one under the pointer holds it'
+        Expect (($dirty.Left -eq 0) -and ($dirty.Width -eq 40)) 'the rectangle is that control, not the window'
+        Expect ((Update-UiViewHot @($script:ViewA, $script:ViewB) 20 10).IsEmpty) 'staying on it repaints nothing'
+        $over = Update-UiViewHot @($script:ViewA, $script:ViewB) 60 10
+        Expect (($over.Left -eq 0) -and ($over.Width -eq 90)) 'crossing to the other repaints both'
+        $off = Update-UiViewHot @($script:ViewA, $script:ViewB) 200 200
+        Expect (($off.Left -eq 50) -and ($off.Width -eq 40)) 'leaving the last one repaints that one'
+      }
+
+      It 'picks the topmost control under a point and refuses a disabled one' {
+        $top = New-UiView 'button' 'top' @{ Label = 'over' }
+        $top.Box = @{ Left = 10; Top = 5; Width = 20; Height = 10 }
+        $hit = Hit-UiViewList @($script:ViewA, $top) 15 8
+        Expect ([string]$hit.Key -ceq 'top') 'later in the list wins, the way it is drawn'
+        $off = New-UiView 'button' 'off' @{ Label = 'off'; Enabled = $false }
+        $off.Box = @{ Left = 0; Top = 0; Width = 40; Height = 20 }
+        Expect ($null -eq (Hit-UiViewList @($off) 10 10 $true)) 'a disabled control takes no press'
+        Expect ([string](Hit-UiViewList @($off) 10 10).Key -ceq 'off') 'but it is still where it is'
+      }
+
+      It 'keeps a button across a refresh and updates the one whose state moved' {
+        $bar = New-UiView 'chrome' '' @{}
+        [void](Mount-UiComponent $bar)
+        [void](Sync-UiViews $bar @(
+            @{ Key = 'save'; Type = 'button'; Props = @{ Label = 'Save'; Primary = $true } },
+            @{ Key = 'discard'; Type = 'button'; Props = @{ Label = 'Discard' } }
+          ))
+        $save = $bar.Children[0]
+        $step = Sync-UiViews $bar @(
+          @{ Key = 'save'; Type = 'button'; Props = @{ Label = 'Save'; Primary = $false } },
+          @{ Key = 'discard'; Type = 'button'; Props = @{ Label = 'Discard' } }
+        )
+        Expect ($step.Reused -eq 2 -and $step.Updated -eq 1) 'only the button whose state moved is updated'
+        Expect ($step.Children[0] -eq $save) 'the kept button is the same node, with its hover'
+      }
+
+      It 'draws the kind it was given and nothing for a kind that is not there' {
+        $canvas = New-Object Drawing.Bitmap 60, 30
+        $gfx = [Drawing.Graphics]::FromImage($canvas)
+        try {
+          Register-UiView 'probe' { param($g, $pal, $node, $box) $script:ProbeDrawn = [int]$box.Width }
+          $n = New-UiView 'probe' 'p' @{ }
+          $n.Box = @{ Left = 0; Top = 0; Width = 33; Height = 10 }
+          Expect (Draw-UiView $gfx @{} $n) 'a registered kind is drawn'
+          Expect ($script:ProbeDrawn -eq 33) 'with the box it was given'
+          $unknown = New-UiView 'nope' 'q' @{ }
+          $unknown.Box = @{ Left = 0; Top = 0; Width = 5; Height = 5 }
+          Expect (-not (Draw-UiView $gfx @{} $unknown)) 'an unknown kind draws nothing'
+          Expect (-not (Draw-UiView $gfx @{} (New-UiView 'probe' 'r' @{ }))) 'a control with no box is not on screen'
+        } finally { $gfx.Dispose(); $canvas.Dispose() }
       }
     }
 

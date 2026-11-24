@@ -746,6 +746,8 @@ src/                    程序本体（打包只读这个目录）
   lib/ui/widgets.ps1       控件本身：开关、滚动条、两色之间的混色
   lib/ui/component.ps1     控件树的外围：store 与修订号、生命周期、常驻缓存、延后到达的槽位
   lib/ui/framework.ps1     界面写成什么：带 key 的树、只改动变化处的 patch、以及遍历绘制
+  lib/ui/views.ps1         控件成了一条记录：kind 负责画、box 负责摆、state 表示当下状态，
+                           悬停是一次 diff，只答出需要重绘的那块矩形
 
   lib/panel/              面板栈：只在绘制命令中加载
   lib/panel/picker.ps1      历史面板：窗体、过滤、列表、按键、右键菜单、粘贴

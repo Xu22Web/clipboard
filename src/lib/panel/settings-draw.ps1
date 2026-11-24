@@ -857,54 +857,13 @@ function Get-SettingsActionRects($layout, $labels) {
   return $out.ToArray()
 }
 
-# A footer action, drawn the way the edit card draws its Save / Cancel pair: a 4 px radius, the
-# field colour and its hairline for the secondary ones, the accent with the surface colour as ink
-# for the primary. Hover is the same wash the card uses. A disabled action keeps its shape and
-# loses its colour, because nothing is staged yet.
-function Draw-SettingsAction($g, $pal, $rect, [string]$label, [bool]$primary, [bool]$enabled, [bool]$hot) {
-  if ($null -eq $g -or $null -eq $pal -or $null -eq $rect) { return }
-  $x = [int]$rect.Left
-  $y = [int]$rect.Top
-  $w = [int]$rect.Width
-  $h = [int]$rect.Height
-  $radius = [int](Px 4)
-  $fill = $pal['Field']
-  $edge = $pal['FieldBorder']
-  $ink = $pal['Text']
-  if ($primary -and $enabled) { $fill = $pal['Accent']; $edge = $pal['Accent']; $ink = $pal['Surface'] }
-  # a disabled action gives up its fill as well as its colour: a filled button with grey text
-  # still reads as one that can be pressed
-  if (-not $enabled) { $fill = $pal['Surface']; $edge = $pal['Border']; $ink = $pal['Faint'] }
-  $path = New-RoundPath $x $y $w $h $radius
-  $brush = New-Object Drawing.SolidBrush $fill
-  try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
-  if ($hot -and $enabled) {
-    # the filled button takes a thin layer of the text colour, which lightens it on a dark theme
-    # and deepens it on a light one; the outlined ones fade toward the tint a row hovers in
-    $tint = Scale-Alpha $pal['HoverBg'] 1.0
-    if ($primary) { $tint = Scale-Alpha $pal['Text'] 0.15 }
-    if ($tint.A -gt 0) {
-      $over = New-RoundPath $x $y $w $h $radius
-      $ob = New-Object Drawing.SolidBrush $tint
-      try { $g.FillPath($ob, $over) } finally { $over.Dispose(); $ob.Dispose() }
-    }
-  }
-  $pen = New-Object Drawing.Pen $edge
-  $stroke = New-RoundPath $x $y $w $h $radius
-  try { $g.DrawPath($pen, $stroke) } finally { $stroke.Dispose(); $pen.Dispose() }
-  $sf = New-PickerStringFormats
-  $box = New-Object Drawing.RectangleF -ArgumentList @([single]$x, [single]$y, [single]$w, [single]$h)
-  # the body face, not the small one: a dialog button is a label, not a caption
-  $g.DrawString($label, $script:FBody, (Get-Brush $ink), $box, $sf.Center)
-}
-
-# The footer is the window's own bar: what the last change did on the left and the three actions
-# on the right. There is no key to describe here - the window is driven by the pointer - and a
-# refusal is drawn in Warn, the token the panel uses for the same thing. $actions is the fixed set
-# of labels; $enabled says whether anything is staged, which is what lights the whole group.
+# The footer is the window's own bar: what the last change did on the left and the actions on
+# the right. The actions themselves are view nodes drawn by lib\ui\views.ps1 - this bar draws only
+# what is not a control: the hairline that marks it off, and the message that sits beside the
+# buttons. $actions is only needed for where the buttons end, which is where the message stops.
 # The version and the item count are not here: they describe the program, not the page, and they
 # live on the About page where they can be read in full.
-function Draw-SettingsFooter($g, $pal, $layout, [string]$msg, [bool]$isError, $actions, [bool]$enabled, [int]$hot = -1) {
+function Draw-SettingsFooter($g, $pal, $layout, [string]$msg, [bool]$isError, $actions) {
   if ($null -eq $g -or $null -eq $pal) { return }
   $sf = New-PickerStringFormats
   $left = [int]$layout.Pad
@@ -915,16 +874,10 @@ function Draw-SettingsFooter($g, $pal, $layout, [string]$msg, [bool]$isError, $a
   $pen = New-Object Drawing.Pen $pal['Border']
   try { $g.DrawLine($pen, $left, $top, $limit, $top) } finally { $pen.Dispose() }
   $specs = @($actions)
-  $rects = @(Get-SettingsActionRects $layout @($specs | ForEach-Object { [string]$_.Label }))
-  for ($i = 0; $i -lt $rects.Count; $i++) {
-    $primary = $false
-    if ($specs[$i].ContainsKey('Primary')) { $primary = [bool]$specs[$i].Primary }
-    # an action may state its own state; the argument is what a caller without one gets
-    $on = $enabled
-    if ($specs[$i].ContainsKey('Enabled')) { $on = [bool]$specs[$i].Enabled }
-    Draw-SettingsAction $g $pal $rects[$i] ([string]$specs[$i].Label) $primary $on ($i -eq $hot)
+  if ($specs.Count -gt 0) {
+    $rects = @(Get-SettingsActionRects $layout @($specs | ForEach-Object { [string]$_.Label }))
+    if ($rects.Count -gt 0) { $limit = [int]$rects[0].Left - (Px 16) }
   }
-  if ($rects.Count -gt 0) { $limit = [int]$rects[0].Left - (Px 16) }
   if (-not $msg) { return }
   $ink = $pal['Dim']
   if ($isError) { $ink = $pal['Warn'] }
@@ -946,29 +899,6 @@ function Get-SettingsCloseRect($layout) {
   }
 }
 
-# A caption button: a faint cross that gains a hover fill, the way the panel's own buttons do.
-function Draw-SettingsClose($g, $pal, $layout, [bool]$hot) {  if ($null -eq $g -or $null -eq $pal) { return }
-  $r = Get-SettingsCloseRect $layout
-  $radius = [int][Math]::Max(2, (Px 4))
-  if ($hot) {
-    $brush = New-Object Drawing.SolidBrush $pal['HoverBg']
-    $path = New-RoundPath ([int]$r.Left) ([int]$r.Top) ([int]$r.Width) ([int]$r.Height) $radius
-    try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
-  }
-  $ink = $pal['Dim']
-  if ($hot) { $ink = $pal['Text'] }
-  $pen = New-Object Drawing.Pen $ink
-  $pen.StartCap = [Drawing.Drawing2D.LineCap]::Round
-  $pen.EndCap = [Drawing.Drawing2D.LineCap]::Round
-  try {
-    $cx = [int]$r.Left + [int]($r.Width / 2)
-    $cy = [int]$r.Top + [int]($r.Height / 2)
-    $d = [int](Px 4)
-    $g.DrawLine($pen, ($cx - $d), ($cy - $d), ($cx + $d), ($cy + $d))
-    $g.DrawLine($pen, ($cx + $d), ($cy - $d), ($cx - $d), ($cy + $d))
-  } finally { $pen.Dispose() }
-}
-
 # The minimise button sits beside the close one, in the order a caption bar puts them.
 function Get-SettingsMinRect($layout) {
   $size = [int]$layout.CloseSize
@@ -979,29 +909,6 @@ function Get-SettingsMinRect($layout) {
     Width = $size
     Height = $size
   }
-}
-
-# One rule across the middle, the glyph a window's own minimise button draws.
-function Draw-SettingsMin($g, $pal, $layout, [bool]$hot) {
-  if ($null -eq $g -or $null -eq $pal) { return }
-  $r = Get-SettingsMinRect $layout
-  $radius = [int][Math]::Max(2, (Px 4))
-  if ($hot) {
-    $brush = New-Object Drawing.SolidBrush $pal['HoverBg']
-    $path = New-RoundPath ([int]$r.Left) ([int]$r.Top) ([int]$r.Width) ([int]$r.Height) $radius
-    try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
-  }
-  $ink = $pal['Dim']
-  if ($hot) { $ink = $pal['Text'] }
-  $pen = New-Object Drawing.Pen $ink
-  $pen.StartCap = [Drawing.Drawing2D.LineCap]::Round
-  $pen.EndCap = [Drawing.Drawing2D.LineCap]::Round
-  try {
-    $cx = [int]$r.Left + [int]($r.Width / 2)
-    $cy = [int]$r.Top + [int]($r.Height / 2)
-    $d = [int](Px 4)
-    $g.DrawLine($pen, ($cx - $d), $cy, ($cx + $d), $cy)
-  } finally { $pen.Dispose() }
 }
 
 # Where the thumb sits, as one calculation shared by the paint, the hit test and the drag: the
