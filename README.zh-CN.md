@@ -689,7 +689,8 @@ tools/utils/schema.ps1  工具自带的 schema 校验（cli.ini 与 package.ini�
 tools/schema/cli.ps1    cli.ini 的 schema：键、类型、范围
 tools/schema/package.ps1 package.ini 的 schema：名称、版本、命令表
 tools/utils/globs.ps1   Includes / Excludes 的通配展开
-tools/bundler/assets.ps1 文件处理表：按路径决定压缩 / 复制 / 编译产物
+tools/bundler/assets.ps1 文件处理表：按路径决定用哪个 handler 改写
+tools/bundler/assets/*.ps1 每种文件类型一个 handler：script、version、batch、shell、ini、copy
 tools/bundler/products.ps1 哪些 C# 目录合成一个文件，以及产物落在哪里
 tools/utils/console.ps1 输出前缀与失败退出（Write-Step / Fail），打包与开发共用
 tools/utils/csc.ps1     定位 .NET Framework 的 csc.exe
@@ -1103,7 +1104,7 @@ Includes=src/**/*.ps1,src/preload/*.cs,src/main/**/*.cs,src/*.cmd,src/*.sh,src/t
 Excludes=src/plugins/item-marks.ps1
 ```
 
-每个文件怎么处理只看 `tools\bundler\assets.ps1` 的一张表：`.ps1` 压缩改名，`.cmd` / `.bat` 压缩，`.sh` 压缩，`.ini` 去注释与空行，其余原样复制；`src\preload` 下的 `.cs` 编成 `preload\client.exe`，`src\main` 下的 `.cs` 编成 `main\clipboard.dll`，产物入包、源码不入，编译器不可用时改为源码入包。落点：`src\` 下保留原路径，`src\` 外保留相对仓库根的路径，`scripts\` 摊平到包根。
+每个文件怎么处理只看 `tools\bundler\assets.ps1` 的一张表：`.ps1` 压缩改名，`.cmd` / `.bat` 压缩，`.sh` 压缩，`.ini` 去注释与空行，其余原样复制；`src\preload` 下的 `.cs` 编成 `preload\client.exe`，`src\main` 下的 `.cs` 编成 `main\clipboard.dll`，产物入包、源码不入，编译器不可用时改为源码入包。表里每一行写的是一个 handler 名，handler 就是 `tools\bundler\assets\` 下的一个文件：一个带 `Convert` 块的哈希表，需要把结果交给下一个时再写 `Next`——`version` 那一行先把 `lib\base.ps1` 的版本块换成常量，再交给 `script`。落点：`src\` 下保留原路径，`src\` 外保留相对仓库根的路径，`scripts\` 摊平到包根。
 
 产物中的 `.ps1` 删注释与缩进，`Rename=1` 时内部函数与局部变量改名；`.ini` 只剩键值（主题格式见[主题](#主题)）。每步后重新解析，出现语法错误即中止。
 

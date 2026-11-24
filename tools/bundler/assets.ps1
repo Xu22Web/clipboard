@@ -57,6 +57,19 @@ function Get-LibraryHandler([string]$rel) {
   return 'copy'
 }
 
+# every handler name the table can reach, in table order and without repeating one: what a
+# test asks for when it checks that each name has a file behind it. 'product' is in the list
+# because a .cs row still names one, but it rewrites nothing: products.ps1 decides which folder
+# compiles into which file, and the build has already taken those files out of this loop.
+function Get-AssetHandlerNames {
+  $out = New-Object System.Collections.Generic.List[string]
+  foreach ($rule in @($script:LibraryRules)) {
+    $name = [string]$rule.Handler
+    if (-not $out.Contains($name)) { $out.Add($name) }
+  }
+  return $out.ToArray()
+}
+
 function Test-OwnScope([string]$rel) {
   $path = ([string]$rel) -replace '/', '\'
   foreach ($d in @($script:OwnScopeDirs)) {
@@ -64,4 +77,52 @@ function Test-OwnScope([string]$rel) {
     if ($path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { return $true }
   }
   return $false
+}
+
+# One handler per kind of file, each in its own file under assets\: a table named after the row
+# that reaches it, with a Convert script block. A handler may name Next, and then its work is
+# a step in front of another one - version patches lib\base.ps1 and hands the result to script.
+#
+# Loading is by name and cached, so a build parses each handler once however many files it
+# rewrites. The folder is given, not derived: a dot-sourced module has no idea where its caller
+# keeps its things, and guessing is how a path silently points one level off.
+$script:AssetDir = ''
+$script:AssetHandlers = @{}
+
+function Initialize-AssetHandlers([string]$dir) {
+  $script:AssetDir = [string]$dir
+  $script:AssetHandlers = @{}
+}
+
+function Get-AssetHandler([string]$name) {
+  $key = [string]$name
+  if ($script:AssetHandlers.ContainsKey($key)) { return $script:AssetHandlers[$key] }
+  if (-not $script:AssetDir) { throw 'no handler folder: call Initialize-AssetHandlers first' }
+  $file = Join-Path $script:AssetDir ($key + '.ps1')
+  if (-not (Test-Path -LiteralPath $file)) { throw ('no handler named ' + $key + ': ' + $file) }
+  $table = . $file
+  if ($null -eq $table -or -not $table.ContainsKey('Convert')) {
+    throw ('handler ' + $file + ' answers no table with a Convert block')
+  }
+  # the name inside the file has to be the name that found it, or a row points at a lie
+  if ([string]$table.Name -ne $key) { throw ('handler ' + $file + ' calls itself ' + $table.Name + ', not ' + $key) }
+  $script:AssetHandlers[$key] = $table
+  return $table
+}
+
+# Rewrite one file. $ctx carries the read paths, the write path, the two switches and the maps
+# the renamer works from; whatever the chain answers is a count of bytes and an optional row.
+function Invoke-AssetConvert($ctx) {
+  $name = [string]$ctx.Handler
+  $result = $null
+  $hops = 0
+  while ($name) {
+    $hops++
+    if ($hops -gt 4) { throw ('handler chain too long at ' + [string]$ctx.Rel) }
+    $handler = Get-AssetHandler $name
+    $result = & $handler.Convert $ctx
+    if (-not $handler.ContainsKey('Next')) { return $result }
+    $name = [string]$handler.Next
+  }
+  return $result
 }

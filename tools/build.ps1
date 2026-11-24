@@ -134,18 +134,6 @@ function CopyCfgList([string]$key) {
   return @(Split-GlobList (CopyCfg $key))
 }
 
-# src\lib\base.ps1 keeps the version between two markers for the development run; a package
-# gets the number itself instead of code that reads package.ini. The rule that sends a file
-# here lives in tools\bundler\assets.ps1, so $rel is whatever that path was.
-function Get-VersionPatchedText([string]$text, [string]$version, [string]$rel) {
-  $begin = $text.IndexOf('#@version-begin')
-  $end = $text.IndexOf('#@version-end')
-  if ($begin -lt 0 -or $end -lt $begin) { Fail ($rel + ' carries no #@version-begin / #@version-end block') }
-  $head = $text.Substring(0, $begin)
-  $tail = $text.Substring($text.IndexOf("`n", $end) + 1)
-  return ($head + "`$script:Version = '" + $version + "'`r`n" + $tail)
-}
-
 # package.ini owns the version and the command shortcuts; the build only reads it here
 $pkg = Import-IniMap (Join-Path $root 'package.ini')
 $version = ''
@@ -179,6 +167,8 @@ $wantZip = CfgBool 'Zip'
 # output. The build reads them; it does not own them.
 . (Join-Path $root 'tools\bundler\assets.ps1')
 . (Join-Path $root 'tools\bundler\products.ps1')
+# the handler for a kind of file is a file of its own under assets\
+Initialize-AssetHandlers (Join-Path $root 'tools\bundler\assets')
 $includeGlobs = CopyCfgList 'Includes'
 $excludeGlobs = CopyCfgList 'Excludes'
 # every glob is written relative to BaseUrl: "." keeps them at the repository root, so a shipped
@@ -350,59 +340,39 @@ try {
     $target = Join-Path $stage $rel
     $parent = Split-Path -Parent $target
     if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-    $source = $f
-    $handler = Get-LibraryHandler $rel
-    if ($handler -eq 'version') {
-      # The development copy reads the version from package.ini. A package carries the number
-      # itself, so the block is replaced before the minifier sees the file.
-      $source = Join-Path $stageRoot ('verpatch\' + (Split-Path -Leaf $f))
-      New-Item -ItemType Directory -Path (Split-Path -Parent $source) -Force | Out-Null
-      [IO.File]::WriteAllText($source, (Get-VersionPatchedText ([IO.File]::ReadAllText($f)) $version $rel))
-      $handler = 'script'
+    # What the file becomes is the handler's business, not this loop's: the row above named it
+    # and the handler behind that name decides. The context is everything a handler may need -
+    # the read and write paths, the two switches, and the maps the renamer works from.
+    $ctx = @{
+      Handler      = (Get-LibraryHandler $rel)
+      Path         = $f
+      Source       = $f
+      OutPath      = $target
+      Rel          = $rel
+      Minify       = $minify
+      Rename       = $rename
+      FunctionMap  = $map
+      ScriptVarMap = @{}
+      GlobalVarMap = @{}
+      Version      = $version
+      StageRoot    = $stageRoot
+      Ascii        = $ascii
+      Utf8Bom      = $utf8Bom
     }
-    switch ($handler) {
-      'script' {
-        if (-not $minify) {
-          Copy-Item -LiteralPath $source -Destination $target -Force
-          $len = (Get-Item -LiteralPath $source).Length
-          $before += $len
-          $after += $len
-          break
-        }
-        if ($rename) {
-          $vars = $scopeMaps['*']
-          if ($scopeMaps.ContainsKey($f)) { $vars = $scopeMaps[$f] }
-          $globals = $globalMap
-          if ($scopeMaps.ContainsKey($f)) { $globals = @{} }   # a plugin has a scope of its own
-          $r = Invoke-MinifyFile -Path $source -OutPath $target -FunctionMap $map -ScriptVarMap $vars -GlobalVarMap $globals
-        } else {
-          $r = Invoke-MinifyFile -Path $source -OutPath $target -NoRename
-        }
-        $r.Path = $f
-        $before += $r.Before
-        $after += $r.After
-        $rows.Add($r)
+    if ($minify -and $rename) {
+      # one scope for the main script and everything it dot-sources; a folder the table names
+      # runs in a scope of its own, so its names are its own
+      $ctx.ScriptVarMap = $scopeMaps['*']
+      $ctx.GlobalVarMap = $globalMap
+      if ($scopeMaps.ContainsKey($f)) {
+        $ctx.ScriptVarMap = $scopeMaps[$f]
+        $ctx.GlobalVarMap = @{}
       }
-      'batch' {
-        # CRLF: cmd.exe reads both, and a batch file written with LF alone breaks on some
-        # versions of the goto/label handling
-        $text = [IO.File]::ReadAllText($f).Replace("`r`n", "`n").Replace("`n", "`r`n").TrimEnd()
-        if ($minify) { $text = Compress-Batch $text }
-        [IO.File]::WriteAllText($target, ($text + "`r`n"), $ascii)
-      }
-      'shell' {
-        # the shell launchers need LF: sh would take the CR as part of the command
-        $text = [IO.File]::ReadAllText($f)
-        if ($minify) { $text = (Compress-Shell $text).TrimEnd() + "`n" }
-        [IO.File]::WriteAllText($target, $text, $ascii)
-      }
-      'ini' {
-        $text = [IO.File]::ReadAllText($f)
-        if ($minify) { $text = (Compress-Ini $text).TrimEnd() + "`r`n" }
-        [IO.File]::WriteAllText($target, $text, $utf8Bom)
-      }
-      default { Copy-Item -LiteralPath $f -Destination $target -Force }
     }
+    $converted = Invoke-AssetConvert $ctx
+    $before += [int]$converted.Before
+    $after += [int]$converted.After
+    if ($null -ne $converted.Row) { $rows.Add($converted.Row) }
   }
 
   # a folder that cannot start is worth saying out loud here rather than when someone

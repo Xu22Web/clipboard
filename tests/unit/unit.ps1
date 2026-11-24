@@ -451,6 +451,9 @@ try {
           'tools\utils\minify.ps1', 'tools\utils\ini.ps1', 'tools\utils\globs.ps1', 'tools\utils\csc.ps1',
           'tools\utils\console.ps1',
           'tools\bundler\bundler.ps1', 'tools\bundler\assets.ps1', 'tools\bundler\products.ps1',
+          'tools\bundler\assets\script.ps1', 'tools\bundler\assets\version.ps1',
+          'tools\bundler\assets\batch.ps1', 'tools\bundler\assets\shell.ps1',
+          'tools\bundler\assets\ini.ps1', 'tools\bundler\assets\copy.ps1',
           'tools\bundler\lib\ast.ps1', 'tools\bundler\lib\graph.ps1', 'tools\bundler\lib\emit.ps1',
           'tools\bundler\plugins\10-resolve.ps1', 'tools\bundler\plugins\20-treeshake.ps1',
           'tools\bundler\plugins\30-merge.ps1', 'tools\bundler\plugins\40-render.ps1',
@@ -479,6 +482,21 @@ try {
           if ([string]$cfg[$kind] -ne 'cs') { $bad += ([string]$p.Entry + ': not Kind=cs') }
         }
         Expect ($bad.Count -eq 0) ($bad -join ', ')
+      } -Skip $script:StructMinified
+
+      # every row of the file table names a handler that exists. A row pointing at a name with
+      # no file behind it fails only at packaging time, on one kind of file, deep in a log.
+      # 'product' is the exception and no handler: it marks a file whose folder compiles into
+      # one, which products.ps1 answers long before this loop sees the file.
+      It 'every file handler has a plugin behind it' {
+        . (Join-Path $repoRoot 'tools\bundler\assets.ps1')
+        $dir = Join-Path $repoRoot 'tools\bundler\assets'
+        $missing = @()
+        foreach ($name in @(Get-AssetHandlerNames)) {
+          if ($name -eq 'product') { continue }
+          if (-not (Test-Path -LiteralPath (Join-Path $dir ($name + '.ps1')))) { $missing += $name }
+        }
+        Expect ($missing.Count -eq 0) ($missing -join ', ')
       } -Skip $script:StructMinified
 
       It 'package.ini declares every command' {
