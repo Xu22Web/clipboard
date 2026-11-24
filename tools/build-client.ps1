@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 <#
-  tools\build-client.ps1 - compile src\lib\client\client.cs into client.exe.
+  tools\build-client.ps1 - compile src\preload\client.cs into client.exe.
 
   The client is an accelerator, never a requirement: clipboard.cmd runs it when the file sits
   next to clipboard.ps1 and falls back to the PowerShell path when it is missing or exits 100.

@@ -30,7 +30,7 @@ $script:LibraryRules = @(
 # compiles it (tools\bundler\plugins\60-cs-compile.ps1), so the compiler and its flags live in
 # one place and neither the build nor the watcher knows what a .cs costs to build.
 $script:Products = @(
-  @{ Dir = 'lib\client'; Ext = '.cs'; Entry = 'client'; Out = 'client.exe'; Label = 'client.exe'; Required = $false }
+  @{ Dir = 'preload'; Ext = '.cs'; Entry = 'client'; Out = 'client.exe'; Label = 'client.exe'; Required = $false }
   @{ Dir = 'main'; Ext = '.cs'; Entry = 'main'; Out = 'lib\assembly\clipboard.dll'; Label = 'lib\assembly\clipboard.dll'; Required = $true }
 )
 

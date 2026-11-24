@@ -636,7 +636,7 @@ Every command starts a PowerShell process, and most of that time goes into parsi
 
 `cli client` and `cli assembly` each produce one optional file with the .NET Framework compiler that ships with Windows: `client.exe` and `lib\assembly\clipboard.dll`. Without them the program still runs: no `client.exe` means the script client, no `clipboard.dll` means `lib\assembly\*.cs` is compiled on the spot.
 
-`client.exe` is called only by `clipboard.cmd`, before PowerShell starts (source `lib\client\client.cs`): when taking over fails it returns `100` to fall back to the script, and passes any other exit code through. `clipboard.dll` is loaded by `lib\native.ps1` and ignored when a `.cs` is newer or the file is missing. `cli build` compiles both into `src\` first when the manifest carries the matching `.cs`, then packages them.
+`client.exe` is called only by `clipboard.cmd`, before PowerShell starts (source `preload\client.cs`): when taking over fails it returns `100` to fall back to the script, and passes any other exit code through. `clipboard.dll` is loaded by `lib\native.ps1` and ignored when a `.cs` is newer or the file is missing. `cli build` compiles both into `src\` first when the manifest carries the matching `.cs`, then packages them.
 
 The `resident` line of `status`, and the restart after `config set`, only accept the resident serving the current data folder (judged by the `hotkey.txt` it writes into its own `data\`, `(stopped)` on exit), so a second install or a test sandbox is never mistaken for it.
 
@@ -740,8 +740,10 @@ src/                    the program (the only folder packaging reads)
   lib/usage.ps1           the help output
   lib/dispatch.ps1        Invoke-Main: Initialize-Main (Apply-Config + plugins) -> Invoke-Dispatch
   lib/proxy.ps1           the command proxy
-  lib/client/client.cs    the compiled client's source
   lib/assembly/clipboard.dll the compiled library (not committed; cli assembly)
+
+  preload/                the compiled client: it builds the request frame and prints the answer
+  preload/client.cs       the only source here (not committed output: src\client.exe)
 
   main/                   the type library, one folder per job, compiled through index.cs
   main/index.cs           the #part list that decides what is compiled: a source nothing reaches
@@ -1003,7 +1005,7 @@ Everything runs in a sandbox copy under `%TEMP%` and never touches the repositor
 | `cli bench` | time capture, save, parse and filter in a temporary copy |
 | `cli shot` | regenerate the screenshots under `docs\<language>\`: both panel themes, the compact shape, the hover card, the tray menu, the settings window |
 | `cli build` | package into `dist\` |
-| `cli client` | compile `lib\client\client.cs` into `src\client.exe` (optional) |
+| `cli client` | compile `preload\client.cs` into `src\client.exe` (optional) |
 | `cli assembly` | compile the `#part` list in `src\main\index.cs` (plus the sources still in `lib\assembly`) into `src\lib\assembly\clipboard.dll` (optional) |
 | `cli bundle` | build one entry declared in `cli.ini`; `-All` builds every one of them; `-Inspect` lists the modules a bundle cannot inline and why |
 
@@ -1013,7 +1015,7 @@ Everything runs in a sandbox copy under `%TEMP%` and never touches the repositor
 
 - `BaseUrl`: the folder the two glob lists are relative to, `.` = the repository root (the default); an absolute path works.
 - `Includes` / `Excludes`: globs under `BaseUrl`, with `*` and `?` for one name and `**` for recursion; a new or deleted file counts as a change, and a missing file a dot-source line points at prints `[!] missing:`.
-- A `.cs` in the manifest is compiled once before the start, and afterwards only the side that changed: `src/lib/assembly/*.cs` → `src\lib\assembly\clipboard.dll`, `src/lib/client/*.cs` → `src\client.exe`; taking it out of the list stops the compile. The resident is stopped before compiling, or the dll is locked.
+- A `.cs` in the manifest is compiled once before the start, and afterwards only the side that changed: `src/lib/assembly/*.cs` → `src\lib\assembly\clipboard.dll`, `src/preload/*.cs` → `src\client.exe`; taking it out of the list stops the compile. The resident is stopped before compiling, or the dll is locked.
 - `Interval`: the poll interval in ms (600 by default). The restart waits for one quiet interval, so a save that writes in several steps restarts once.
 
 `cli bench` copies `src\` into `%TEMP%` and points `DataDir` at a temporary folder, so capture, save, parse and filter can be measured while a resident is running (`-Records` changes the store size, `-Json` / `-Out` make runs comparable); panel opening and paste injection need a real desktop and are not part of it. `cli shot` copies `src\` into `%PUBLIC%`, seeds an example history and starts the copy's resident to capture the panel, the tray menu and the settings window. The copy carries its own named objects (`Local\clipboard.shot.*`), so a resident already running is unaffected and neither the real history nor the real settings reach a screenshot; `-Part` picks the surface, `-Theme` the theme and `-PreviewRow` the row the card is taken from.
@@ -1074,7 +1076,7 @@ Two more sections of the same file belong to `cli bundle`, and to `cli build` wh
 
 `cli bundle -Entry <name>` builds one entry and `-All` builds every one. `cli client` and `cli assembly` are entries `client` and `main` under their own names, and `cli build` compiles both through the same call, so no tool spells out a compiler flag of its own.
 
-`[copy] Includes` defaults to `src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat`.
+`[copy] Includes` defaults to `src/**/*.ps1,src/preload/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat`.
 
 ```ini
 # a lean package: one theme, with the documents, no minify, no verify
@@ -1091,7 +1093,7 @@ Includes=src/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/win11-
 Excludes=src/plugins/item-marks.ps1
 ```
 
-What happens to a file comes from one table in `tools\utils\pipeline.ps1`: `.ps1` is minified and renamed, `.cmd` / `.bat` minified, `.sh` minified, `.ini` stripped of comments and blank lines, everything else copied; a `.cs` under `src\lib\client` becomes `client.exe`, one under `src\lib\assembly` becomes `lib\assembly\clipboard.dll`, the compiled part goes into the package and its source does not, and without a compiler the source goes in instead. A file keeps its path under `src\`, keeps its repository-relative path outside `src\`, and `scripts\` is flattened to the package root.
+What happens to a file comes from one table in `tools\utils\pipeline.ps1`: `.ps1` is minified and renamed, `.cmd` / `.bat` minified, `.sh` minified, `.ini` stripped of comments and blank lines, everything else copied; a `.cs` under `src\preload` becomes `client.exe`, one under `src\lib\assembly` becomes `lib\assembly\clipboard.dll`, the compiled part goes into the package and its source does not, and without a compiler the source goes in instead. A file keeps its path under `src\`, keeps its repository-relative path outside `src\`, and `scripts\` is flattened to the package root.
 
 A packaged `.ps1` loses its comments and indentation, and with `Rename=1` its internal functions and local variables are renamed; a `.ini` keeps key and value only (the theme format is in [themes](#themes)). Every step re-parses the result, and a syntax error stops the build.
 

@@ -423,7 +423,7 @@ try {
           'tools\bundler\plugins\50-cs-part.ps1', 'tools\bundler\plugins\60-cs-compile.ps1',
           'tools\bundler\plugins\90-verify.ps1',
           'src\main\index.cs', 'src\main\search\search.cs',
-          'src\lib\client\client.cs', 'src\main\ui\win.cs')
+          'src\preload\client.cs', 'src\main\ui\win.cs')
         $missingTool = @()
         foreach ($tool in $tooling) {
           if (-not (Test-Path -LiteralPath (Join-Path $repoRoot $tool))) { $missingTool += $tool }

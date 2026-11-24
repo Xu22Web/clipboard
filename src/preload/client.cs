@@ -1,13 +1,13 @@
-// lib\client\client.cs - the compiled client half of the command proxy.
+// preload\client.cs - the compiled client half of the command proxy.
 //
 // A command line costs about 2.5 s, and roughly 1 s of that is one PowerShell start even when
 // the resident answers over the pipe (lib/proxy.ps1). This client costs about 150 ms: it is
 // started by clipboard.cmd before any PowerShell exists, builds the same request frame the
 // PowerShell client builds, and prints the answer.
 //
-// It is the only file here that builds an executable: tools\build-client.ps1 compiles it into
-// client.exe, while tools\build-assembly.ps1 turns lib\assembly\*.cs into
-// lib\assembly\clipboard.dll.
+// It is the only file here that builds an executable: cli.ini [entry.client] compiles it into
+// src\client.exe (via tools\bundler\plugins\60-cs-compile.ps1), while [entry.main] turns
+// src\main into lib\assembly\clipboard.dll.
 //
 // It is optional by design. clipboard.cmd only tries it when client.exe sits next to
 // clipboard.ps1, and it treats exit code 100 as "nothing happened, run PowerShell instead", so

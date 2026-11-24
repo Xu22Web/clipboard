@@ -384,7 +384,7 @@ function New-FakeSandbox([string]$name) {
   return $dir
 }
 
-# The compiled client (lib\client\client.cs) is optional, so a part that wants to exercise it asks
+# The compiled client (preload\client.cs) is optional, so a part that wants to exercise it asks
 # for one here: a package carries its own copy, a source checkout gets one built into %TEMP%
 # once per run, and an empty string means "no compiler here" - the caller skips instead of
 # failing.
@@ -394,7 +394,7 @@ function Get-ClientExe {
   $beside = Join-Path $script:Harness.SrcRoot 'client.exe'
   if (Test-Path -LiteralPath $beside) { $script:Harness.ClientExe = $beside; return $beside }
   $builder = Join-Path $script:Harness.RepoRoot 'tools\build-client.ps1'
-  $source = Join-Path $script:Harness.SrcRoot 'lib\client\client.cs'
+  $source = Join-Path $script:Harness.SrcRoot 'preload\client.cs'
   if (-not (Test-Path -LiteralPath $builder) -or -not (Test-Path -LiteralPath $source)) { return '' }
   # Content addressed and outside the per-run temp folder: recompiling a client that did not
   # change used to cost every run of the suite a csc call, in the parts that exercise it.

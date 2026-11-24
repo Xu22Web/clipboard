@@ -36,7 +36,7 @@ $buildCfg = Join-Path $tmpRoot 'build-test.ini'
 $repoIncludes = [string](Import-IniMap (Join-Path $repoRoot 'cli.ini'))['copy.Includes']
 if (-not $repoIncludes) { throw 'cli.ini has no [copy] Includes to test against' }
 # the client stays out of the default list so most cases skip a compile; cli.ini carries it
-$allFiles = 'Includes=' + (@(($repoIncludes -split ',') | Where-Object { $_ -notlike 'src/lib/client/*' }) -join ',')
+$allFiles = 'Includes=' + (@(($repoIncludes -split ',') | Where-Object { $_ -notlike 'src/preload/*' }) -join ',')
 $withClient = 'Includes=' + $repoIncludes
 $buildDefaults = @('BaseUrl=.', 'Minify=1', 'Rename=1', 'Verify=0', 'Overwrite=1', 'Zip=0', $allFiles, 'Excludes=')
 function Write-BuildCfg([string]$outDir, [string[]]$override) {

@@ -45,6 +45,7 @@ src/
     utils/      paths.cs  log.cs  hashing.cs  time.cs  json.cs
   preload/
     client.cs                   单文件：CLI 代理 + `--call/--watch` IPC 桥（生成区由 channels.ini 填充）
+                                —— 已完成迁移（原 lib\client\client.cs），生成区尚待 ipc-gen
   renderer/src/
     core/                       框架层，不放业务（用户 4 个目录之外新增，理由见下）
       layout.ps1  widgets.ps1  views.ps1  framework.ps1  component.ps1  reactive.ps1  setup.ps1

@@ -131,7 +131,7 @@ $Plugin = @{
       if (-not [IO.Path]::IsPathRooted($entry)) { $entry = Join-Path $ctx.Root $entry }
       if (-not $entry -or -not (Test-Path -LiteralPath $entry)) { throw ('no root file: ' + [string]$ctx.Entry.From) }
       # the folder a directive may not leave is the one the root file sits in: src\main for the
-      # type library, src\lib\client for the single-source client. A caller that compiles another
+      # type library, src\preload for the single-source client. A caller that compiles another
       # copy of the same source moves the root, and the tree moves with it.
       $mainRoot = Split-Path -Parent $entry
       $files = @(Resolve-CSharpParts $ctx.Root $entry $mainRoot)

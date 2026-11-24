@@ -10,7 +10,7 @@
   What the compiler is given is decided in one place: src\main\index.cs lists the sources with
   a #part line each, and the bundler resolves that list (tools\bundler\plugins\50-cs-part.ps1).
   Sources still sitting in src\lib\assembly are appended by the entry, so a block can move out
-  of there one at a time. The executable source lives in src\lib\client (tools\build-client.ps1).
+  of there one at a time. The executable source lives in src\preload (tools\build-client.ps1).
 
       cli assembly                       write src\lib\assembly\clipboard.dll
       cli assembly -Out dist\clipboard.dll  write it somewhere else
