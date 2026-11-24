@@ -21,7 +21,7 @@
   init + migrate + install) and uninstall.bat (stop + uninstall purge).
 
   What goes in: the files cli.ini [copy] Includes names, and only those. Nothing here knows
-  what a file is: tools\utils\pipeline.ps1 holds one table - a .ps1 is minified, a .cmd/.bat
+  what a file is: tools\bundler\assets.ps1 holds one table - a .ps1 is minified, a .cmd/.bat
   compressed, a .sh compressed, an .ini stripped of its comments, a .cs under a product folder
   compiled - and this script only walks the list. The default list is the program scripts, the
   three launchers, the themes, the two batch helpers and the two product sources.
@@ -47,7 +47,7 @@ if (-not (Test-Path -LiteralPath $srcRoot)) { Fail ('missing: ' + $srcRoot) }
 
 # Where a shipped file lands in the package: a file under src\ keeps the path it has there, a
 # file outside src\ keeps the path it has under the repository root, and the rows in
-# tools\utils\pipeline.ps1 name the few that belong at the package root instead.
+# tools\bundler\assets.ps1 name the few that belong at the package root instead.
 function Get-PackageRel([string]$file) {
   $full = [IO.Path]::GetFullPath($file)
   $srcFull = [IO.Path]::GetFullPath($srcRoot).TrimEnd([char]92, [char]47) + [IO.Path]::DirectorySeparatorChar
@@ -136,7 +136,7 @@ function CopyCfgList([string]$key) {
 
 # src\lib\base.ps1 keeps the version between two markers for the development run; a package
 # gets the number itself instead of code that reads package.ini. The rule that sends a file
-# here lives in tools\utils\pipeline.ps1, so $rel is whatever that path was.
+# here lives in tools\bundler\assets.ps1, so $rel is whatever that path was.
 function Get-VersionPatchedText([string]$text, [string]$version, [string]$rel) {
   $begin = $text.IndexOf('#@version-begin')
   $end = $text.IndexOf('#@version-end')
@@ -174,8 +174,11 @@ $overwrite = CfgBool 'Overwrite'
 $wantZip = CfgBool 'Zip'
 # the include and exclude lists use the same glob syntax, and the same splitter, as [dev]
 . (Join-Path $root 'tools\utils\globs.ps1')
-# what to do with each file is one table, shared with the watcher
-. (Join-Path $root 'tools\utils\pipeline.ps1')
+# What one file becomes, and which folder of C# becomes one file: both tables live beside the
+# bundler, because a handler here does the same job as an entry there - several inputs, one
+# output. The build reads them; it does not own them.
+. (Join-Path $root 'tools\bundler\assets.ps1')
+. (Join-Path $root 'tools\bundler\products.ps1')
 $includeGlobs = CopyCfgList 'Includes'
 $excludeGlobs = CopyCfgList 'Excludes'
 # every glob is written relative to BaseUrl: "." keeps them at the repository root, so a shipped
@@ -239,7 +242,7 @@ $scriptFiles += @($shipProducts.Keys)
 
 # ---------------------------------------------------------------- products (ahead of time)
 # A .cs under a product folder means "compile this folder into one file": the list decides
-# which products exist and tools\utils\pipeline.ps1 says how. Compiling writes into src\ before
+# which products exist and tools\bundler\products.ps1 says how. Compiling writes into src\ before
 # anything is staged, so a source run and `cli dev` use the same binary the release ships. A
 # compiler that is missing, or a dll held open by a running resident, leaves the product out:
 # its sources then travel instead and the program compiles them at run time.
@@ -255,7 +258,7 @@ foreach ($f in $pkgFiles) {
 # their entry names
 foreach ($f in @($shipProducts.Keys)) { $plainFiles.Add($f) }
 $productOut = @{}
-# the compile command belongs to the entry the table names, not to this script: pipeline.ps1
+# the compile command belongs to the entry the table names, not to this script: products.ps1
 # runs it through the bundler, and what comes back is a log and whether the file is there
 foreach ($p in @(Get-ProductList)) {
   if (-not $productSources.ContainsKey($p.Dir)) { continue }
@@ -303,7 +306,7 @@ try {
       $map = New-FunctionMap $scriptFiles
       Write-Note ('internal functions renamed: ' + $map.Count)
       # one scope for the main script and everything it dot-sources, one per script the
-      # program calls by path (the table in tools\utils\pipeline.ps1 names that folder)
+      # program calls by path (the table in tools\bundler\assets.ps1 names that folder)
       $sharedFiles = @($scriptFiles | Where-Object { -not (Test-OwnScope (Get-PackageRel $_)) })
       $shared = New-ScriptVariableMap $sharedFiles
       foreach ($file in @($scriptFiles | Where-Object { Test-OwnScope (Get-PackageRel $_) })) {
@@ -329,7 +332,7 @@ try {
     Copy-Item -LiteralPath $productOut[$outRel] -Destination $target -Force
   }
 
-  # Everything else goes through the table in tools\utils\pipeline.ps1: the handler for a path
+  # Everything else goes through the table in tools\bundler\assets.ps1: the handler for a path
   # says how the file is rewritten, and the path it keeps in the package is the one it had
   # under src\. A new kind of file is a row there, never a branch here.
   $ascii = New-Object System.Text.ASCIIEncoding

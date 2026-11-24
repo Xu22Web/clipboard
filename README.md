@@ -690,7 +690,8 @@ tools/utils/schema.ps1  the tools' own schema validation (cli.ini and package.in
 tools/schema/cli.ps1    the cli.ini schema: keys, types, ranges
 tools/schema/package.ps1 the package.ini schema: name, version, command table
 tools/utils/globs.ps1   Includes / Excludes expansion
-tools/utils/pipeline.ps1 what happens to one file: minify / copy / compile
+tools/bundler/assets.ps1 what happens to one file: minify / copy / compile
+tools/bundler/products.ps1 which folder of C# becomes one file, and where it lands
 tools/utils/console.ps1 output prefixes and failure exit (Write-Step / Fail)
 tools/utils/csc.ps1     locate the .NET Framework csc.exe
 tools/utils/minify.ps1  the minifier (syntax-tree rewrite)
@@ -1110,7 +1111,7 @@ Includes=src/**/*.ps1,src/preload/*.cs,src/main/**/*.cs,src/*.cmd,src/*.sh,src/t
 Excludes=src/plugins/item-marks.ps1
 ```
 
-What happens to a file comes from one table in `tools\utils\pipeline.ps1`: `.ps1` is minified and renamed, `.cmd` / `.bat` minified, `.sh` minified, `.ini` stripped of comments and blank lines, everything else copied; a `.cs` under `src\preload` becomes `preload\client.exe`, one under `src\main` becomes `main\clipboard.dll`, the compiled part goes into the package and its source does not, and without a compiler the source goes in instead. A file keeps its path under `src\`, keeps its repository-relative path outside `src\`, and `scripts\` is flattened to the package root.
+What happens to a file comes from one table in `tools\bundler\assets.ps1`: `.ps1` is minified and renamed, `.cmd` / `.bat` minified, `.sh` minified, `.ini` stripped of comments and blank lines, everything else copied; a `.cs` under `src\preload` becomes `preload\client.exe`, one under `src\main` becomes `main\clipboard.dll`, the compiled part goes into the package and its source does not, and without a compiler the source goes in instead. A file keeps its path under `src\`, keeps its repository-relative path outside `src\`, and `scripts\` is flattened to the package root.
 
 A packaged `.ps1` loses its comments and indentation, and with `Rename=1` its internal functions and local variables are renamed; a `.ini` keeps key and value only (the theme format is in [themes](#themes)). Every step re-parses the result, and a syntax error stops the build.
 

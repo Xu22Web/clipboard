@@ -449,8 +449,8 @@ try {
           'tools\build.ps1', 'tools\dev.ps1', 'tools\test.ps1', 'tools\bench.ps1', 'tools\shot.ps1',
           'tools\build-client.ps1', 'tools\build-assembly.ps1',
           'tools\utils\minify.ps1', 'tools\utils\ini.ps1', 'tools\utils\globs.ps1', 'tools\utils\csc.ps1',
-          'tools\utils\console.ps1', 'tools\utils\pipeline.ps1',
-          'tools\bundler\bundler.ps1',
+          'tools\utils\console.ps1',
+          'tools\bundler\bundler.ps1', 'tools\bundler\assets.ps1', 'tools\bundler\products.ps1',
           'tools\bundler\lib\ast.ps1', 'tools\bundler\lib\graph.ps1', 'tools\bundler\lib\emit.ps1',
           'tools\bundler\plugins\10-resolve.ps1', 'tools\bundler\plugins\20-treeshake.ps1',
           'tools\bundler\plugins\30-merge.ps1', 'tools\bundler\plugins\40-render.ps1',
@@ -470,7 +470,7 @@ try {
       # the package still starts, a second slower per command.
       It 'every product names a C# entry cli.ini declares' {
         . (Join-Path $repoRoot 'tools\utils\ini.ps1')
-        . (Join-Path $repoRoot 'tools\utils\pipeline.ps1')
+        . (Join-Path $repoRoot 'tools\bundler\products.ps1')
         $cfg = Import-IniMap (Join-Path $repoRoot 'cli.ini')
         $bad = @()
         foreach ($p in @(Get-ProductList)) {

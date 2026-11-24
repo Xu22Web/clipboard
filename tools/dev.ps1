@@ -85,9 +85,18 @@ if ($Interval -le 0) {
 
 # Both compiled products come from src\. A .cs file in Includes is a promise: the loop builds
 # its product before the first start and again after every save, so the file the program runs
-# never outlives the source. Which folder produces what is a table in tools\utils\pipeline.ps1,
-# shared with the build, and the compile command is the entry that table names - neither tool
-# names a folder or a compiler itself.
+# never outlives the source. Which folder produces what is a table in tools\bundler\products.ps1,
+# which the build reads too, and the compile command is the entry that table names - neither
+# tool names a folder or a compiler itself.
+
+# a file's path under src\, the coordinate the product table speaks; '' for a file outside it
+function Get-SourceRel([string]$srcRoot, [string]$file) {
+  $full = [IO.Path]::GetFullPath($file)
+  $rootFull = [IO.Path]::GetFullPath($srcRoot).TrimEnd([char]92, [char]47) + [IO.Path]::DirectorySeparatorChar
+  if (-not $full.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) { return '' }
+  return $full.Substring($rootFull.Length)
+}
+
 function Invoke-NativeBuild($products) {
   foreach ($p in @($products)) {
     if ($null -eq $p) { continue }
@@ -119,8 +128,10 @@ $baseSetting = (Cfg 'BaseUrl').Trim()
 if (-not $baseSetting) { Fail 'cli.ini [dev] BaseUrl is empty' }
 $baseDir = Resolve-BaseDir $root $baseSetting
 if (-not (Test-Path -LiteralPath $baseDir)) { Fail ('cli.ini [dev] BaseUrl does not exist: ' + $baseSetting) }
-# a .cs in the list is what makes its product part of the loop
-. (Join-Path $root 'tools\utils\pipeline.ps1')
+# a .cs in the list is what makes its product part of the loop. The two tables live beside the
+# bundler, because an entry and a handler do the same job: several inputs, one file.
+. (Join-Path $root 'tools\bundler\assets.ps1')
+. (Join-Path $root 'tools\bundler\products.ps1')
 # the table names the entry; this is the one program that builds it
 $bundler = Join-Path $root 'tools\bundler\bundler.ps1'
 if (-not (Test-Path -LiteralPath $bundler)) { Fail ('missing: ' + $bundler) }
