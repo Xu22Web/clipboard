@@ -2235,6 +2235,32 @@ try {
         Expect $threw 'an undefined store name was handed back'
       }
 
+      # Patch writes several keys and notifies once, because three notifications are three redraws;
+      # Reset goes back to the state the store was defined with, getters included
+      It 'a store patches in one go and resets to what it was defined with' {
+        $null = Define-UiStore 'probe' {
+          param($ctx)
+          $ctx.State.Left = 0
+          $ctx.State.Right = 0
+          & $ctx.Getter 'Sum' { param($s) ([int]$s.Context.State.Left + [int]$s.Context.State.Right) }
+        }
+        $probe = Use-UiStore 'probe'
+        $hook = $probe.Subscribe({ param($changed) $script:PatchHeard++ })
+        $script:PatchHeard = 0
+        $probe.Patch(@{ Left = 2; Right = 3 })
+        Expect ($script:PatchHeard -eq 1) ([string]$script:PatchHeard + ' changes heard')
+        Expect ($probe.Sum -eq 5) ([string]$probe.Sum)
+        # a key the store never declared is refused instead of written and never seen
+        $threw = $false
+        try { $probe.Patch(@{ Nonesuch = 1 }) } catch { $threw = $true }
+        Expect $threw 'an undeclared key was written'
+        $refs = Get-UiStoreRefs $probe
+        Expect (($refs.Left -eq 2) -and ($refs.Right -eq 3) -and ($refs.Sum -eq 5)) ([string]$refs.Left + '/' + [string]$refs.Right + '/' + [string]$refs.Sum)
+        $probe.Reset()
+        Expect (($probe.Left -eq 0) -and ($probe.Right -eq 0) -and ($probe.Sum -eq 0)) ([string]$probe.Left + '/' + [string]$probe.Right + '/' + [string]$probe.Sum)
+        $null = $hook
+      }
+
       # a store write goes through the channel too, and only a real delete re-reads
       It 'a store write removes a row and keeps the rows honest' {
         $history = Use-UiStore 'history'

@@ -634,7 +634,7 @@ Every command starts a PowerShell process, and most of that time goes into parsi
 
 A window does not call the store: it calls a channel, and `Handler=` in the same table says which function answers. `Invoke-Ipc 'list'` runs `Get-Records` in this process — one function call, no frame and no copy — and a name that is not a channel, or a channel without `Handler=`, throws instead of running something that happens to exist. That is the surface a panel is allowed to use; the panel's seven refreshes go through it, and a channel that has to answer a window is a row in this file rather than a function name buried in the drawing code.
 
-Between a window and the channel sits the store, and the panel takes the rows from it: `Use-UiStore 'history'` answers the one object that owns them, `Refresh` reads the channel and keeps the result, `Rows` reads that state back (one array per read, since a property answers through the pipeline), and `Count` / `IsEmpty` are computed when they are read. A store is defined once, in `renderer\src\store\`, so a second window reads the same state instead of a copy. The store also owns the delete: `Remove` calls the `del` channel and re-reads only when something was really removed.
+Between a window and the channel sits the store, and the panel takes the rows from it: `Use-UiStore 'history'` answers the one object that owns them, `Refresh` reads the channel and keeps the result, `Rows` reads that state back (one array per read, since a property answers through the pipeline), and `Count` / `IsEmpty` are computed when they are read. A store is defined once, in `renderer\src\store\`, so a second window reads the same state instead of a copy. `Patch` writes several keys and notifies once, `Reset` goes back to the state the store was defined with, and `Get-UiStoreRefs` answers what a view binds to. The store also owns the delete: `Remove` calls the `del` channel and re-reads only when something was really removed.
 
 ### Precompiled parts (optional)
 
@@ -753,7 +753,8 @@ src/                    the program (the only folder packaging reads)
   ipc/channels.ini        which commands the resident answers, read by lib\proxy.ps1 and client.cs
 
   renderer/src/store/     the state a window reads and writes
-    define.ps1            Define-UiStore / Use-UiStore: one object per store, getters and actions
+    define.ps1            Define-UiStore / Use-UiStore / Get-UiStoreRefs: one object per store,
+                          state keys readable as properties, getters, actions, Patch, Reset
     history-store.ps1     the history: Rows, Count, IsEmpty, Refresh, Clear, Remove
 
   main/                   the type library, one folder per job, compiled through index.cs

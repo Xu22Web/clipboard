@@ -15,6 +15,9 @@
 #     $history.Refresh()
 #     $history.Rows       # state, read as a property
 #     $history.Count      # getter, computed from the state when it is read
+#     $history.Patch(@{ Rows = @() })   # several keys, one notification
+#     $history.Reset()                  # back to what the store was defined with
+#     Get-UiStoreRefs $history          # storeToRefs: the names a view binds to
 #
 # Everything below is bookkeeping around that shape: a registry so two callers get the same
 # object, a state bag so a write is visible to both, and a hook list so a window can be told a
@@ -34,6 +37,7 @@ function New-UiStoreContext([string]$Name) {
   return @{
     Name    = $Name
     State   = @{}
+    Initial = @{}
     Getters = @{}
     Actions = @{}
     Watchers = New-Object System.Collections.Generic.List[object]
@@ -82,7 +86,49 @@ function New-UiStoreObject($Context) {
   }
   # a watcher hears every change an action reports, one call per action
   $store | Add-Member -MemberType ScriptMethod -Name Subscribe -Value { param($hook) $Context.Watchers.Add($hook); return $hook }.GetNewClosure()
+  # Patch and Reset are pinia's $patch and $reset, minus the dollar sign: PowerShell cannot call
+  # a member whose name starts with one ($store.$patch does not parse), and a name that needs
+  # quoting everywhere is worse than a name that reads like the rest of this program.
+  #
+  # Patch writes several keys and notifies once, because a view that hears three times redraws
+  # three times. A key the store never declared is refused rather than added: the properties a
+  # view reads are fixed when the store is defined, so a new key would be written and never seen.
+  $store | Add-Member -MemberType ScriptMethod -Name Patch -Value {
+    param($partial)
+    if ($null -eq $partial) { return }
+    if ($partial -is [scriptblock]) { & $partial $Context.State }
+    else {
+      foreach ($k in @($partial.Keys)) {
+        $key = [string]$k
+        if (-not $Context.State.ContainsKey($key)) { throw ('no state named ' + $key + ' in store ' + $Context.Name) }
+        $Context.State[$key] = $partial[$k]
+      }
+    }
+    Invoke-UiStoreChange $Context '*'
+  }.GetNewClosure()
+  # back to the state the store was defined with, for a window that is opened again or a test
+  # that runs twice; the key set comes back too, so a key Patch refused cannot appear here
+  $store | Add-Member -MemberType ScriptMethod -Name Reset -Value {
+    param()
+    $Context.State.Clear()
+    foreach ($k in @($Context.Initial.Keys)) { $Context.State[[string]$k] = $Context.Initial[$k] }
+    Invoke-UiStoreChange $Context '*'
+  }.GetNewClosure()
   return $store
+}
+
+# storeToRefs: what a view binds to, read once - the state keys and the getters, both by their
+# current value. A view is told when something moved and re-reads, so handing out live boxes
+# here would only hide which read it got.
+function Get-UiStoreRefs($Store) {
+  $refs = @{}
+  foreach ($k in @($Store.State.Keys)) { $refs[[string]$k] = $Store.State[[string]$k] }
+  foreach ($k in @($Store.Context.Getters.Keys)) {
+    $name = [string]$k
+    $prop = $Store.PSObject.Properties[$name]
+    if ($null -ne $prop) { $refs[$name] = $prop.Value }
+  }
+  return $refs
 }
 
 # Define one store. The body is called once, with a context it fills in; defining a name twice
@@ -96,6 +142,8 @@ function Define-UiStore([string]$Name, [scriptblock]$Body) {
   # an action that writes state says so, so the watchers hear one change per action
   $ctx.Set = { param($key, $value) $ctx.State[$key] = $value; Invoke-UiStoreChange $ctx @($key) }
   [void](& $Body $ctx)
+  # what Reset goes back to: the keys the body declared, at the values it declared them with
+  foreach ($k in @($ctx.State.Keys)) { $ctx.Initial[[string]$k] = $ctx.State[$k] }
   $store = New-UiStoreObject $ctx
   $script:UiStores[$Name] = $store
   [void]$script:UiStoreOrder.Add($Name)
