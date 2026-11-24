@@ -15,6 +15,32 @@
 # Everything an effect reads is tracked; everything else is not. The handle Add-UiRender answers
 # is what a window keeps: a stopped effect lets go of its ScriptBlock, and a ScriptBlock that is
 # still registered holds the form it was created in. Clear-UiRender is the whole-window version.
+#
+# Where each of these sits next to the Composition API it comes from - the correspondence is kept
+# here so a reader coming from Vue does not have to guess, and so a later change has one place to
+# correct:
+#
+#   reactive(obj)        New-UiReactive $table        the bag is the proxy; a write of the same
+#                                                     value is not a write
+#   computed(getter)     New-UiComputed { ... }       .Value, lazy, marked dirty on trigger
+#   watchEffect(fn)      Add-UiRender { ... }         the effect is the watcher
+#   effectScope()        New-UiApp / Close-UiApp      the scope owns its effects and cells
+#   nextTick()           Invoke-UiFlush               run now, not on a promise: the flush is what
+#                                                     a posted window message or a paint calls
+#   provide / inject     the app record itself        a window hands what it owns through it,
+#                                                     because there is one window per app here
+#   props                node Props + fingerprints    a node is patched only when its values move
+#   emits                Add-UiHandler / Invoke-UiEmit
+#   onMounted/onUnmounted Add-UiHook 'mounted' / 'unmounted'
+#   v-for/:key, v-if     Sync-UiTree                  a key kept is a node kept, a spec absent is a
+#                                                     node unmounted
+#   v-memo               the fingerprint a surface passes to Sync-UiTree
+#
+# There is deliberately no ref(): a bag with one key is the same thing without a second object,
+# and nothing here needs a value that crosses a function boundary by reference. There is no
+# watch(source, cb) either: every change this program reacts to is a signal an effect reads, and
+# the (new, old) pair a watcher would report is what the node's own `updated` hook already gets.
+
 
 # The traps are C# types, so nothing here works until the assembly is up: a command that only
 # touches a signal must load it, the same way a window does before it draws.
@@ -98,4 +124,68 @@ function Get-UiReactiveStats {
     Flushes = [int][Cb.Reactive]::Flushes
     Runs    = [int][Cb.Reactive]::Runs
   }
+}
+
+# ------------------------------------------------------------------ the outermost scope
+# What a window owns, in one record: its signals, the effects it started, the derived values it
+# holds, and the one call that gives all of it back. A surface that opens an app cannot leave an
+# effect or a cell behind by forgetting a line - the effects hold ScriptBlocks, and a ScriptBlock
+# holds the form it was made in.
+
+function New-UiApp($state = $null) {
+  Initialize-UiReactive
+  return @{
+    Bag     = (New-UiReactive $state)
+    Effects = (New-Object System.Collections.Generic.List[int])
+    Cells   = (New-Object System.Collections.Generic.List[object])
+    Closed  = $false
+  }
+}
+
+function Test-UiAppOpen($app) {
+  if ($null -eq $app) { return $false }
+  if ($app.Closed) { return $false }
+  return $true
+}
+
+# A signal write on the app's bag. False means the app is closed or the value did not move.
+function Set-UiAppSignal($app, [string]$key, $value) {
+  if (-not (Test-UiAppOpen $app)) { return $false }
+  return (Set-UiReactive $app.Bag $key $value)
+}
+
+function Get-UiAppSignal($app, [string]$key, $default = $null) {
+  if (-not (Test-UiAppOpen $app)) { return $default }
+  return (Get-UiReactive $app.Bag $key $default)
+}
+
+# An effect owned by the app: stopped with it, without the surface keeping its id.
+function Add-UiAppEffect($app, [scriptblock]$fn) {
+  if (-not (Test-UiAppOpen $app) -or $null -eq $fn) { return 0 }
+  $id = Add-UiRender $fn
+  $app.Effects.Add($id)
+  return $id
+}
+
+function Add-UiAppComputed($app, [scriptblock]$fn) {
+  if (-not (Test-UiAppOpen $app) -or $null -eq $fn) { return $null }
+  $cell = New-UiComputed $fn
+  $app.Cells.Add($cell)
+  return $cell
+}
+
+# Everything the app started, in the order that lets go cleanly: the derived values first (each
+# of them owns an effect of its own), then the effects, then the bag.
+function Close-UiApp($app) {
+  if ($null -eq $app) { return }
+  if ($app.Closed) { return }
+  $app.Closed = $true
+  foreach ($cell in $app.Cells) {
+    if ($null -eq $cell) { continue }
+    try { $cell.Dispose() } catch { }
+  }
+  $app.Cells.Clear()
+  foreach ($id in $app.Effects) { Remove-UiRender ([int]$id) }
+  $app.Effects.Clear()
+  $app.Bag = $null
 }

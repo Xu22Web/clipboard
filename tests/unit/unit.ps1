@@ -1632,8 +1632,7 @@ try {
         $cell.Dispose()
       }
 
-      It 'gives back what an effect held when it is stopped' {
-        $bag = New-UiReactive @{ Page = 'a'; Pending = 0 }
+      It 'gives back what an effect held when it is stopped' {        $bag = New-UiReactive @{ Page = 'a'; Pending = 0 }
         $ids = New-Object System.Collections.Generic.List[int]
         for ($i = 0; $i -lt 3; $i++) {
           $ids.Add((Add-UiRender { $script:ReactRuns.Add('x'); [void]$bag.Page }))
@@ -1647,6 +1646,25 @@ try {
         Expect ($stats.Effects -eq 0) 'no effect is left behind'
         Expect ($stats.Targets -eq 0) 'and the bag holds no dependency any more'
         Expect (-not (Test-UiFlushPending)) 'nothing is queued for it'
+      }
+
+      It 'owns a window: one bag, its effects, its derived values, one way out' {
+        # the outermost scope: a surface hands it the signals and stops worrying about ids
+        $app = New-UiApp @{ Page = 'Clipboard'; Pending = 0 }
+        $id = Add-UiAppEffect $app { $script:ReactRuns.Add('render'); [void](Get-UiAppSignal $app 'Pending' 0) }
+        $cell = Add-UiAppComputed $app { [int](Get-UiAppSignal $app 'Pending' 0) * 2 }
+        Expect ($id -gt 0 -and $null -ne $cell) 'the app holds what it started'
+        Expect ($script:ReactRuns.Count -eq 1) 'the effect ran when it was added'
+        [void](Set-UiAppSignal $app 'Pending' 3)
+        [void](Invoke-UiFlush)
+        Expect ($script:ReactRuns.Count -eq 2) 'a write reached it through the app'
+        Expect ($cell.Value -eq 6) 'and the derived value followed'
+        Close-UiApp $app
+        Expect (-not (Test-UiAppOpen $app)) 'it says it is closed'
+        Expect ((Get-UiReactiveStats).Effects -eq 0) 'every effect it started is stopped'
+        Expect (-not (Set-UiAppSignal $app 'Pending' 9)) 'and a write after closing does nothing'
+        Close-UiApp $app
+        Expect $true 'closing twice is not an error'
       }
     }
 

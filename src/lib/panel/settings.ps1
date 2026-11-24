@@ -310,8 +310,8 @@ function Show-Settings {
     # The buttons say what the rows just said. Writing the signals is what tells the render
     # effect; it is not called from here, so every caller of a refresh gets the same single
     # update and none of them has to remember it.
-    [void](Set-UiReactive $script:SetState 'Page' [string]$page)
-    [void](Set-UiReactive $script:SetState 'Pending' @($script:SetPending).Count)
+    [void](Set-UiAppSignal $script:SetApp 'Page' [string]$page)
+    [void](Set-UiAppSignal $script:SetApp 'Pending' @($script:SetPending).Count)
     Request-UiFlush
     # a different page or a different staged set changes which lines exist at all
     $script:SetCtlStamp = ''
@@ -322,9 +322,9 @@ function Show-Settings {
   # and the effect that draws the band reads both. Nothing here calls Invalidate: the write
   # queues the effect, and the effect repaints the bar instead of the window.
   function Sync-SetMessage {
-    if ($null -eq $script:SetState) { return }
-    [void](Set-UiReactive $script:SetState 'Msg' ([string]$script:SetMsg))
-    [void](Set-UiReactive $script:SetState 'MsgErr' ([int]$script:SetMsgErr))
+    if (-not (Test-UiAppOpen $script:SetApp)) { return }
+    [void](Set-UiAppSignal $script:SetApp 'Msg' ([string]$script:SetMsg))
+    [void](Set-UiAppSignal $script:SetApp 'MsgErr' ([int]$script:SetMsgErr))
     Request-UiFlush
   }
 
@@ -1081,24 +1081,24 @@ function Show-Settings {
   # The window's state as signals (lib\ui\reactive.ps1), and two effects that read them. A write
   # queues them instead of rebuilding on the spot, and one flush runs each once - so a handler
   # that stages five values rebuilds the footer once, and a message repaints the bar, not the page.
-  $script:SetState = New-UiReactive @{ Page = ''; Pending = 0; Msg = ''; MsgErr = 0 }
+  $script:SetApp = New-UiApp @{ Page = ''; Pending = 0; Msg = ''; MsgErr = 0 }
   $script:SetFlushQueued = $false
-  $script:SetRender = Add-UiRender {
-    [void](Get-UiReactive $script:SetState 'Page' '')
-    [void](Get-UiReactive $script:SetState 'Pending' 0)
-    Update-SetChrome
-    $form.Invalidate()
-  }
-  $script:SetFootRender = Add-UiRender {
-    [void](Get-UiReactive $script:SetState 'Msg' '')
-    [void](Get-UiReactive $script:SetState 'MsgErr' 0)
-    if ($form.IsDisposed) { return }
-    $l = $script:SetLayout
-    if ($null -eq $l) { $form.Invalidate(); return }
-    $band = New-Object Drawing.Rectangle -ArgumentList @(
-      0, [int]$l.ListBottom, [int]$l.Width, [int]([int]$l.FootHeight + 1))
-    $form.Invalidate($band)
-  }
+  [void](Add-UiAppEffect $script:SetApp {
+      [void](Get-UiAppSignal $script:SetApp 'Page' '')
+      [void](Get-UiAppSignal $script:SetApp 'Pending' 0)
+      Update-SetChrome
+      $form.Invalidate()
+    })
+  [void](Add-UiAppEffect $script:SetApp {
+      [void](Get-UiAppSignal $script:SetApp 'Msg' '')
+      [void](Get-UiAppSignal $script:SetApp 'MsgErr' 0)
+      if ($form.IsDisposed) { return }
+      $l = $script:SetLayout
+      if ($null -eq $l) { $form.Invalidate(); return }
+      $band = New-Object Drawing.Rectangle -ArgumentList @(
+        0, [int]$l.ListBottom, [int]$l.Width, [int]([int]$l.FootHeight + 1))
+      $form.Invalidate($band)
+    })
   Refresh-Settings
   # nothing is on screen yet, so the first pass is run here rather than posted
   [void](Invoke-UiFlush)
@@ -1595,13 +1595,11 @@ function Show-Settings {
     Stop-HotkeyRecord ([string]$script:StoreDir)
     Close-Choices
     End-Edit $true
-    # An effect holds a ScriptBlock, and that ScriptBlock holds this window: stopped here, or it
-    # would keep a disposed form alive for the rest of the session, one per open.
-    Remove-UiRender $script:SetRender
-    Remove-UiRender $script:SetFootRender
-    $script:SetRender = 0
-    $script:SetFootRender = 0
-    $script:SetState = $null
+    # An effect holds a ScriptBlock, and that ScriptBlock holds this window: the app gives back
+    # every effect and derived value it started, in one call, or the next open would find a
+    # disposed form still alive behind a registered effect.
+    Close-UiApp $script:SetApp
+    $script:SetApp = $null
     # the row tree is the only thing this window mounts; taking it down releases whatever the rows
     # hold, so a window opened a hundred times leaves nothing behind
     if ($null -ne $script:SetPageNode) { Unmount-UiComponent $script:SetPageNode }
