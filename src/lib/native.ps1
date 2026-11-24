@@ -249,16 +249,19 @@ function Save-UiaSelection([IntPtr]$hwnd, [IntPtr]$focus = [IntPtr]::Zero) {
   if ([int]$targetPid -le 0) { return @() }
   # A browser builds its text tree on the first ask, and right after another window closed it
   # can still answer with the element that window had: no pattern, or no selection, for a
-  # moment. Three asks cost nothing when the first one answers, and a missed open costs a
-  # paste at the first character (seen on the first open after a start).
-  for ($try = 1; $try -le 3; $try++) {
+  # moment. The retry is for that fast empty answer only - an ask that already took long means
+  # the tree is there and has nothing for us, so a second wait would buy nothing and the panel
+  # would open later for the person waiting on it.
+  $swAsk = [Diagnostics.Stopwatch]::StartNew()
+  for ($try = 1; $try -le 2; $try++) {
     $el = $null
     try { $el = [Windows.Automation.AutomationElement]::FocusedElement } catch { $el = $null }
     if ($null -ne $el -and [int]$el.Current.ProcessId -eq [int]$targetPid) {
       $saved = @(Read-TextSelection $el)
       if ($saved.Count -gt 0) { return $saved }
     }
-    if ($try -lt 3) { Start-Sleep -Milliseconds 80 }
+    if ($try -ge 2 -or $swAsk.ElapsedMilliseconds -gt 30) { break }
+    Start-Sleep -Milliseconds 40
   }
   return @()
 }
