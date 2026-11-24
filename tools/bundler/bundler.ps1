@@ -385,6 +385,13 @@ function Invoke-BundleEntry([string]$name) {
     $oneKey = $one.Trim()
     if ($oneKey) { $keep += $oneKey }
   }
+  # modules the bundle does not carry: the #@use edges into them describe how the two files meet
+  # at run time, and the copy list keeps them in the package as they are
+  $externals = @()
+  foreach ($one in @((EntryValue $name 'External') -split '[,;]')) {
+    $oneKey = ($one.Trim()) -replace '\\', '/'
+    if ($oneKey) { $externals += $oneKey }
+  }
 
   $options = @{
     Minify    = EntryBool $name 'Minify' (CfgBool 'Minify')
@@ -442,7 +449,7 @@ function Invoke-BundleEntry([string]$name) {
 
     # the declared import and export lists are checked before anything is rendered: a call to
     # something a module does not export is a mistake in the list, not in the output
-    $surface = Get-BundleSurfaceReport $mods.ToArray()
+    $surface = Get-BundleSurfaceReport $mods.ToArray() $externals
     Write-Field 'surface' ('' + $surface.Declared + ' of ' + $surface.Total + ' module(s) declare edges   ' + $surface.Edges + ' cross-module call(s)   ' + $surface.Exported + ' export(s)')
     foreach ($w in @($surface.Warnings)) { Write-Warn $w }
     if (@($surface.Problems).Count -gt 0) {
@@ -472,7 +479,12 @@ function Invoke-BundleEntry([string]$name) {
     if (-not $outDir) { $outDir = 'dist' }
     $outRoot = $outDir
     if (-not [IO.Path]::IsPathRooted($outRoot)) { $outRoot = Join-Path $root $outRoot }
-    $outPath = Join-Path $outRoot $to
+    # -Out names the file itself, which is what a caller staging a package needs: the build asks
+    # for the bundle where the package keeps it, not where a development run would. Without it the
+    # file lands under [build] OutDir at the path the entry declares.
+    if ([IO.Path]::IsPathRooted($Out)) { $outPath = $Out }
+    elseif ($Out) { $outPath = Join-Path $root $Out }
+    else { $outPath = Join-Path $outRoot $to }
     $outParent = Split-Path -Parent $outPath
     if (-not (Test-Path -LiteralPath $outParent)) { New-Item -ItemType Directory -Path $outParent -Force | Out-Null }
     $overwrite = CfgBool 'Overwrite'

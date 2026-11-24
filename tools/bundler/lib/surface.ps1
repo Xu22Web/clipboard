@@ -61,9 +61,15 @@ function Get-BundleDirectives($parsed) {
 # The whole check for one entry: the declared graph, what is wrong with it, and what it leaves
 # unused. Modules without directives are reported separately: they can be bundled (the inferred
 # walk is used for them) but they cannot be checked.
-function Get-BundleSurfaceReport($modules) {
+function Get-BundleSurfaceReport($modules, $externals = $null) {
   $problems = New-Object System.Collections.Generic.List[string]
   $warnings = New-Object System.Collections.Generic.List[string]
+
+  # a module an entry names under External= is not in the bundle: another file provides it at
+  # run time (the base layer the package still ships as lib\*.ps1). A #@use naming one of those
+  # is the edge between two files, not a module the list forgot.
+  $external = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
+  foreach ($one in @($externals)) { if ($one) { [void]$external.Add([string]$one) } }
 
   $byId = @{}
   $defs = @{}
@@ -95,6 +101,7 @@ function Get-BundleSurfaceReport($modules) {
     }
 
     foreach ($one in $uses) {
+      if ($external.Contains($one)) { continue }
       if (-not $byId.ContainsKey($one)) {
         $problems.Add(([string]$m.Id + ': uses ' + $one + ', which the entry does not carry'))
       }

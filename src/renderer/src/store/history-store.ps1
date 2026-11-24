@@ -15,7 +15,9 @@
 # read with the next keeps the array it was given: the panel holds it in one variable and
 # replaces it on refresh, which is what its query caches compare by reference.
 
-Define-UiStore 'history' {
+# the definition returns the store; nothing here reads it, and a module that is dot-sourced must
+# not answer anything, or every command that pulls the window layer would print it
+$null = Define-UiStore 'history' {
   param($ctx)
 
   $ctx.State.Rows = @()
