@@ -135,7 +135,7 @@ $Plugin = @{
           if (-not ($files -contains $one.FullName)) { $files += $one.FullName }
         }
       }
-      Write-Note ('sources      ' + $declared + ' from #part, ' + (@($files).Count - $declared) + ' appended')
+      Write-Field 'sources' ([string]$declared + ' from #part, ' + [string](@($files).Count - $declared) + ' appended')
       return $files
     }
   }

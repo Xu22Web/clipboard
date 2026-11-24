@@ -25,7 +25,7 @@ $Plugin = @{
           Script    = New-ScriptVariableMap $paths.ToArray()
           Global    = New-GlobalVariableMap $paths.ToArray()
         }
-        Write-Note ('names        ' + $ctx.Maps.Functions.Count + ' function(s), ' + $ctx.Maps.Script.Count + ' script variable(s), ' + $ctx.Maps.Global.Count + ' shared name(s)')
+        Write-Field 'names' ('' + $ctx.Maps.Functions.Count + ' function(s)   ' + $ctx.Maps.Script.Count + ' script variable(s)   ' + $ctx.Maps.Global.Count + ' shared name(s)')
       }
       $index = 0
       foreach ($m in @($modules)) {
@@ -34,8 +34,10 @@ $Plugin = @{
         $body = New-BundleModuleText $m
         $m.Kept = $null
         $m.Dropped = @()
+        $m.SizeBefore = (Get-Item -LiteralPath $m.Path).Length
         if (-not $ctx.Options.Minify -and -not $ctx.Options.Rename) {
           $m.Ast = (Get-BundleParse $body).Ast
+          $m.SizeAfter = $body.Length
           continue
         }
         $inPath = Join-Path $ctx.Tmp ('mod-' + $index + '.ps1')
@@ -47,6 +49,7 @@ $Plugin = @{
           [void](Invoke-MinifyFile -Path $inPath -OutPath $outPath -NoRename)
         }
         $rendered = [IO.File]::ReadAllText($outPath)
+        $m.SizeAfter = $rendered.Length
         $parsed = Get-BundleParse $rendered
         if ($parsed.Errors.Count -gt 0) {
           throw ([string]$m.Rel + ': the rewritten module does not parse (' + [string]$parsed.Errors[0].Message + ')')

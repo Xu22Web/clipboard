@@ -1029,6 +1029,8 @@ Every tool prints through `tools\utils\console.ps1`: `[..]` a step (cyan), `[ok]
 
 A module can state its own edges with two directives at the top of the file: `#@use <module id>, ...` for the modules it calls and `#@export <function>, ...` for what the rest of the program may call. They are comments on purpose - they describe the build, not the program, so the shipped copy runs the same file with no cost and nothing at run time has to understand them. With them the bundler checks the entry *before* building: a call to a function its module does not export, a call into a module the entry does not list (the mistake that otherwise only shows up as "module group too small"), an export naming a function that does not exist, and the same name exported twice. Modules without directives are left unchecked and only make the "would drop" answer unknown. `cli bundle -Inspect -Suggest` prints, for every module, the `#@use` and `#@export` lines its real calls imply.
 
+`cli bundle -All` builds every entry the file declares, one Windows PowerShell process per entry, up to `Workers=` in `bundler.ini` at a time (`0` = one per logical processor, capped at the number of entries). Each worker writes its own output and its own temp folder, and the logs are printed in the order the file declares the entries, so a parallel run reads like a serial one.
+
 ```powershell
 cli build                       # with cli.ini
 cli build -Config other.ini     # with another configuration

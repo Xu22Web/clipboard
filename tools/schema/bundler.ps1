@@ -19,6 +19,7 @@
     'bundler.Minify'    = @{ Type = 'bool'; Description = '1 = rewrite a bundle from its syntax tree' }
     'bundler.Rename'    = @{ Type = 'bool'; Description = '1 = rename internal names of a bundle' }
     'bundler.Treeshake' = @{ Type = 'bool'; Description = '1 = drop definitions no load-time path reaches' }
+    'bundler.Workers'   = @{ Type = 'int'; Minimum = 0; Maximum = 64; Optional = $true; Description = 'how many entries may be built side by side; 0 = one per processor' }
   }
   DynamicKeys = [ordered]@{
     'entry.'   = @{ Type = 'string'; Description = 'one key of an [entry.<name>] section' }

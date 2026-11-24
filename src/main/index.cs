@@ -36,6 +36,7 @@
 // #part ui/tray.cs
 // #part ui/tray-skin.cs
 // #part ui/tray-item.cs
+// #part ui/tray-menu.cs
 // #part ui/pin-list.cs
 // #part ui/shell.cs
 // #part ui/hot-window.cs

@@ -27,6 +27,8 @@ param(
   [string]$Entry = '',
   [string]$Config = '',
   [string]$Out = '',
+  [switch]$All,
+  [switch]$Worker,
   [switch]$Inspect,
   [switch]$Suggest,
   [switch]$Quiet,
@@ -91,7 +93,11 @@ function EntryBool([string]$name, [string]$key, [bool]$default) {
 function Get-EntryNames {
   $out = New-Object System.Collections.Generic.List[string]
   $seen = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
-  foreach ($k in @($cfg.Keys)) {
+  # a hashtable has no order, so the document is read again for its keys: the order an entry is
+  # built in (and its log printed in) is the one the file writes, not whatever the table yields
+  $ordered = @($cfg.Keys)
+  try { $ordered = @((Read-IniDoc ([IO.File]::ReadAllLines($Config, [Text.Encoding]::UTF8))).Keys) } catch { }
+  foreach ($k in $ordered) {
     $key = [string]$k
     if (-not $key.StartsWith('entry.', [StringComparison]::Ordinal)) { continue }
     $rest = $key.Substring(6)
@@ -134,6 +140,7 @@ function Get-RelativePath([string]$full) {
 # then fails to bind arguments to them after the function has returned (ArgumentException, with
 # no frame of its own to point at) - so the load has to happen where it is safe.
 $script:ProductHooks = @{}
+$script:ProductChains = @{}
 foreach ($productName in @(Get-ProductNames)) {
   $chain = ''
   foreach ($candidate in @(('product.' + $productName + '.Chain'), ('product.' + $productName))) {
@@ -141,6 +148,7 @@ foreach ($productName in @(Get-ProductNames)) {
   }
   if (-not $chain) { Write-Fail ('[product.' + $productName + '] has no Chain='); exit 1 }
   $hooks = @{}
+  $names = New-Object System.Collections.Generic.List[string]
   $dir = Join-Path $here 'plugins'
   foreach ($one in @($chain -split '[,;]')) {
     $name = $one.Trim()
@@ -156,9 +164,21 @@ foreach ($productName in @(Get-ProductNames)) {
       exit 1
     }
     foreach ($k in @($Plugin.Hooks.Keys)) { $hooks[[string]$k] = $Plugin.Hooks[$k] }
-    Write-Note ('plugin       ' + $name)
+    if (-not $names.Contains($name)) { $names.Add($name) }
   }
   $script:ProductHooks[$productName] = $hooks
+  $script:ProductChains[$productName] = ($names -join ', ')
+}
+
+# one detail line, the way tools\build.ps1 prints its settings: a short label in one column and
+# the value beside it, so a run reads as a block of facts under its step
+function Write-Field([string]$label, [string]$value) {
+  Write-Note ($label.PadRight(9) + $value)
+}
+
+function Get-BundleChain([string]$product) {
+  if ($script:ProductChains.ContainsKey($product)) { return $script:ProductChains[$product] }
+  return ''
 }
 
 function Get-BundleHooks([string]$product) {
@@ -321,10 +341,16 @@ function Invoke-BundleCompile([string]$name) {
 
   $sw = Start-Step
   Write-Step ('compile ' + $name)
-  Write-Note ('product      ' + $product + '   target ' + $(if ($ctx.Entry.Target) { $ctx.Entry.Target } else { 'library' }))
+  $target = 'library'
+  if ($ctx.Entry.Target) { $target = $ctx.Entry.Target }
+  Write-Field 'product' ($product + '   target ' + $target + '   optimize on')
+  Write-Field 'output' (Get-RelativePath $outPath)
+  Write-Field 'root' (Get-RelativePath (Join-Path $root $from))
+  Write-Field 'plugins' (Get-BundleChain $product)
   $files = @(& $hooks['part'] $ctx)
   $result = & $hooks['compile'] $ctx $files
-  Write-Done $sw ($outPath + '   ' + [Math]::Round($result.Bytes / 1024, 1) + ' KB   ' + $result.Files + ' file(s)')
+  $kb = [Math]::Round($result.Bytes / 1024, 1)
+  Write-Done $sw ('compiled ' + (Split-Path -Leaf $outPath) + '   ' + $kb + ' KB   ' + $result.Files + ' file(s)')
 }
 
 # ---------------------------------------------------------------- one entry
@@ -367,7 +393,9 @@ function Invoke-BundleEntry([string]$name) {
 
   $sw = Start-Step
   Write-Step ('bundle ' + $name)
-  Write-Note ('product      ' + $product + '   minify ' + $(if ($options.Minify) { 'yes' } else { 'no' }) + '   rename ' + $(if ($options.Rename) { 'yes' } else { 'no' }) + '   treeshake ' + $(if ($options.Treeshake) { 'yes' } else { 'no' }))
+  Write-Field 'product' ($product + '   minify ' + $(if ($options.Minify) { 'yes' } else { 'no' }) + '   rename ' + $(if ($options.Rename) { 'yes' } else { 'no' }) + '   treeshake ' + $(if ($options.Treeshake) { 'yes' } else { 'no' }))
+  Write-Field 'entry' ($to)
+  Write-Field 'plugins' (Get-BundleChain $product)
 
   $tmpRoot = Join-Path $env:TEMP ('bundle-' + $name + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
   New-Item -ItemType Directory -Path $tmpRoot -Force | Out-Null
@@ -397,12 +425,12 @@ function Invoke-BundleEntry([string]$name) {
           Dropped     = @()
         })
     }
-    Write-Note ('modules      ' + $mods.Count)
+    Write-Field 'modules' ([string]$mods.Count + ' module(s)')
 
     # the declared import and export lists are checked before anything is rendered: a call to
     # something a module does not export is a mistake in the list, not in the output
     $surface = Get-BundleSurfaceReport $mods.ToArray()
-    Write-Note ('surface      ' + $surface.Declared + ' of ' + $surface.Total + ' module(s) declare edges, ' + $surface.Edges + ' cross-module call(s), ' + $surface.Exported + ' export(s)')
+    Write-Field 'surface' ('' + $surface.Declared + ' of ' + $surface.Total + ' module(s) declare edges   ' + $surface.Edges + ' cross-module call(s)   ' + $surface.Exported + ' export(s)')
     foreach ($w in @($surface.Warnings)) { Write-Warn $w }
     if (@($surface.Problems).Count -gt 0) {
       foreach ($p in @($surface.Problems)) { Write-Fail $p }
@@ -443,10 +471,23 @@ function Invoke-BundleEntry([string]$name) {
     $after = ([string]$chunk.Text).Length
     $fromSource = 0
     if ($sourceBytes -gt 0) { $fromSource = [Math]::Round(100 * (1 - $after / $sourceBytes)) }
-    Write-Text ''
-    Write-Note ('  definitions  ' + $report.Functions + '   statements ' + $report.Shapes + '   dropped ' + $dropped)
-    Write-Note ('  ' + $to + '   sources ' + $sourceBytes + ' -> bundle ' + $after + '  (' + $fromSource + '% smaller)')
-    Write-Done $sw ('wrote ' + $outPath)
+
+    # the per-module rows tools\build.ps1 prints for a package: what each file was, what it
+    # became, and one total that says the same number the finished file has
+    if ($options.Minify -or $options.Rename) {
+      Write-Text ''
+      foreach ($m in $mods) {
+        $was = [int]$m.SizeBefore
+        $now = [int]$m.SizeAfter
+        $pct = 0
+        if ($was -gt 0) { $pct = [Math]::Round(100 * (1 - $now / $was)) }
+        Write-Text ('  {0,-30} {1,8} -> {2,7}  ({3}%)' -f ([string]$m.Id), $was, $now, $pct)
+      }
+      Write-Text ('  {0,-30} {1,8} -> {2,7}  ({3}%)' -f 'total', $sourceBytes, $after, $fromSource)
+      Write-Text ''
+    }
+    Write-Field 'verify' ('' + $report.Functions + ' definition(s)   ' + $report.Shapes + ' statement(s)   ' + $report.Commands + ' command(s)   ' + $dropped + ' dropped')
+    Write-Done $sw ('bundled ' + $name + '   ' + $after + ' bytes   ' + $mods.Count + ' module(s)')
   } finally {
     if (Test-Path -LiteralPath $tmpRoot) { Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue }
   }
@@ -457,12 +498,84 @@ if ($Inspect) {
   Invoke-BundleInspect
   exit 0
 }
+# ---------------------------------------------------------------- every entry, side by side
+# One entry is one process: the renderer bundles and the C# products share nothing but this
+# script, and a worker that dies takes only its own entry with it. A worker writes its output
+# where the serial build would, so a parallel run and a serial one leave the same tree behind.
+# The logs are printed in the order bundler.ini declares the entries, so a parallel build reads
+# like a serial one afterwards.
+function Invoke-BundleMany($all, [int]$workers) {
+  $sw = Start-Step
+  Write-Step ('bundle ' + $all.Count + ' entries')
+  Write-Field 'entries' ($all -join ', ')
+  Write-Field 'workers' ([string]$workers)
+  $logs = @{}
+  $running = @{}
+  $queue = New-Object System.Collections.Generic.Queue[string]
+  foreach ($n in $all) { $queue.Enqueue($n) }
+  $failed = New-Object System.Collections.Generic.List[string]
+  while ($queue.Count -gt 0 -or $running.Count -gt 0) {
+    while ($queue.Count -gt 0 -and $running.Count -lt $workers) {
+      $n = $queue.Dequeue()
+      $log = Join-Path $env:TEMP ('bundle-' + $n + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.log')
+      $logs[$n] = $log
+      $workerArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-Entry', $n, '-Worker')
+      if ($Config) { $workerArgs += @('-Config', $Config) }
+      if ($Out) { $workerArgs += @('-Out', $Out) }
+      if ($Quiet) { $workerArgs += @('-Quiet') }
+      $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $workerArgs -NoNewWindow -PassThru -RedirectStandardOutput $log
+      # without this the process object never reads its exit code back and every worker looks
+      # like it failed - measured on this PowerShell: ExitCode stays empty after HasExited
+      $proc.EnableRaisingEvents = $true
+      $running[$n] = $proc
+    }
+    Start-Sleep -Milliseconds 120
+    foreach ($n in @($running.Keys)) {
+      if (-not $running[$n].HasExited) { continue }
+      if ($running[$n].ExitCode -ne 0) { $failed.Add([string]$n) }
+      $running.Remove($n)
+    }
+  }
+  foreach ($n in $all) {
+    $text = ''
+    if ($logs.ContainsKey($n) -and (Test-Path -LiteralPath $logs[$n])) { $text = [IO.File]::ReadAllText($logs[$n]) }
+    foreach ($line in @($text -split "`r?`n")) { if ($line.Trim()) { Write-Raw $line } }
+    if ($logs.ContainsKey($n)) { Remove-Item -LiteralPath $logs[$n] -Force -ErrorAction SilentlyContinue }
+  }
+  if ($failed.Count -gt 0) {
+    foreach ($n in $failed) { Write-Fail ('entry ' + $n + ' failed') }
+    Write-Done $sw ('built ' + ($all.Count - $failed.Count) + ' of ' + $all.Count + ' entr(y/ies)')
+    return $false
+  }
+  Write-Done $sw ('built ' + $all.Count + ' entr(y/ies)   ' + $workers + ' worker(s)')
+  return $true
+}
+
+# ---------------------------------------------------------------- main
 $names = @(Get-EntryNames)
+if ($All) {
+  if ($names.Count -eq 0) { Write-Fail ('no [entry.*] in ' + (Split-Path -Leaf $Config)); exit 1 }
+  $workers = 0
+  $raw = Cfg 'Workers'
+  if ($raw) { [void][int]::TryParse($raw, [ref]$workers) }
+  if ($workers -le 0) { $workers = [Environment]::ProcessorCount }
+  if ($workers -gt $names.Count) { $workers = $names.Count }
+  if ($workers -le 1) {
+    $ok = $true
+    foreach ($n in $names) {
+      try { Invoke-BundleEntry $n } catch { Write-Fail $_.Exception.Message; $ok = $false }
+    }
+    if (-not $ok) { exit 1 }
+    exit 0
+  }
+  if (Invoke-BundleMany $names $workers) { exit 0 }
+  exit 1
+}
 if (-not $Entry) {
   if ($names.Count -eq 1) {
     $Entry = $names[0]
   } else {
-    Write-Fail ('no -Entry given; ' + (Split-Path -Leaf $Config) + ' declares: ' + ($names -join ', '))
+    Write-Fail ('no -Entry given; ' + (Split-Path -Leaf $Config) + ' declares: ' + ($names -join ', ') + '   (use -All)')
     exit 1
   }
 }
