@@ -631,6 +631,8 @@ clipboard config set entry-actions.Reveal 0
 | 失败处理 | 连接超时、往返超过 2 s 或版本不一致时静默回退到新进程，行为与没有该功能时一致 |
 | 关闭 | `-NoProxy` 开关，或环境变量 `CLIPBOARD_NO_PROXY=1` |
 
+窗口不直接调存储函数，而是调通道：同一张表里的 `Handler=` 说明哪个函数负责应答。`Invoke-Ipc 'list'` 在本进程里执行 `Get-Records`——一次函数调用，不拼帧、不拷贝；不是通道的名字、或通道没有 `Handler=` 时直接抛错，而不是碰巧跑起一个存在的函数。这就是面板允许使用的接口面：面板的七处刷新都走它，需要响应窗口的通道是这张表里的一行，而不是埋在绘制代码里的一个函数名。
+
 ### 提前编译的产物（可选）
 
 `cli client` 与 `cli assembly` 用系统自带的 .NET Framework 编译器各产出一个可选文件：`client.exe` 与 `lib\assembly\clipboard.dll`。两者缺失时程序照常运行：缺 `client.exe` 回退到脚本客户端，缺 `clipboard.dll` 时按 `lib\assembly\*.cs` 现场编译。
@@ -739,6 +741,7 @@ src/                    程序本体（打包只读这个目录）
   lib/usage.ps1           help 输出
   lib/dispatch.ps1        Invoke-Main：Initialize-Main（Apply-Config + 装配插件）→ Invoke-Dispatch
   lib/proxy.ps1           命令代理
+  lib/ipc.ps1             Invoke-Ipc：窗口调用的通道，由通道表映射到函数
   lib/assembly/clipboard.dll 类型库产物（不入库；cli assembly 生成）
 
   preload/                编译版客户端：拼请求帧、打印应答（产物 src\client.exe 不入库）

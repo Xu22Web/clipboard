@@ -632,6 +632,8 @@ Every command starts a PowerShell process, and most of that time goes into parsi
 | on failure | a connection timeout, a round trip over 2 s or a version mismatch silently falls back to a new process, exactly as without the feature |
 | off | the `-NoProxy` switch, or `CLIPBOARD_NO_PROXY=1` |
 
+A window does not call the store: it calls a channel, and `Handler=` in the same table says which function answers. `Invoke-Ipc 'list'` runs `Get-Records` in this process — one function call, no frame and no copy — and a name that is not a channel, or a channel without `Handler=`, throws instead of running something that happens to exist. That is the surface a panel is allowed to use; the panel's seven refreshes go through it, and a channel that has to answer a window is a row in this file rather than a function name buried in the drawing code.
+
 ### Precompiled parts (optional)
 
 `cli client` and `cli assembly` each produce one optional file with the .NET Framework compiler that ships with Windows: `client.exe` and `lib\assembly\clipboard.dll`. Without them the program still runs: no `client.exe` means the script client, no `clipboard.dll` means `lib\assembly\*.cs` is compiled on the spot.
@@ -740,6 +742,7 @@ src/                    the program (the only folder packaging reads)
   lib/usage.ps1           the help output
   lib/dispatch.ps1        Invoke-Main: Initialize-Main (Apply-Config + plugins) -> Invoke-Dispatch
   lib/proxy.ps1           the command proxy
+  lib/ipc.ps1             Invoke-Ipc: the channel a window calls, mapped to a function by the table
   lib/assembly/clipboard.dll the compiled library (not committed; cli assembly)
 
   preload/                the compiled client: it builds the request frame and prints the answer

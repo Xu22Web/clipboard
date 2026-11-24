@@ -29,7 +29,7 @@ $script:ProxyChannelsRoot = ''
 
 function Get-ProxyChannels([string]$Root) {
   if ($null -ne $script:ProxyChannels -and $script:ProxyChannelsRoot -eq $Root) { return $script:ProxyChannels }
-  $table = @{ Plugins = $false; Remote = @{} }
+  $table = @{ Plugins = $false; Remote = @{}; Handler = @{} }
   $path = ''
   if ($Root) { $path = Join-Path (Join-Path $Root 'ipc') 'channels.ini' }
   if ($path -and (Test-Path -LiteralPath $path)) {
@@ -44,12 +44,16 @@ function Get-ProxyChannels([string]$Root) {
       $eq = $t.IndexOf('=')
       if ($eq -lt 1) { continue }
       $key = $t.Substring(0, $eq).Trim().ToLowerInvariant()
-      $value = $t.Substring($eq + 1).Trim().ToLowerInvariant()
+      # a handler keeps the case it was written in: it is a function name a reader looks up,
+      # not a switch, and the error message is clearer with the name as the file spells it
+      $raw = $t.Substring($eq + 1).Trim()
+      $value = $raw.ToLowerInvariant()
       $on = @('1', 'true', 'yes', 'on') -contains $value
       if ($section -eq 'channels' -and $key -eq 'plugins') { $table.Plugins = $on; continue }
       if (-not $section.StartsWith('channel.')) { continue }
       if ($section.Length -le 8) { continue }
       if ($key -eq 'remote') { $table.Remote[$section.Substring(8)] = $on }
+      if ($key -eq 'handler') { $table.Handler[$section.Substring(8)] = $raw }
     }
   }
   $script:ProxyChannels = $table

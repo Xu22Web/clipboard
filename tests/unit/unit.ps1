@@ -100,7 +100,7 @@ function New-Sandbox([string]$name) {
   $dir = Join-Path $tmpRoot $name
   New-Item -ItemType Directory -Path $dir -Force | Out-Null
   Copy-Item -LiteralPath $clipPs1 -Destination $dir -Force
-  foreach ($sub in @('lib', 'utils', 'schema', 'plugins', 'themes', 'lang')) {
+  foreach ($sub in @('lib', 'utils', 'schema', 'plugins', 'themes', 'lang', 'ipc')) {
     $src = Join-Path $srcRoot $sub
     if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $dir -Recurse -Force }
   }
@@ -232,7 +232,7 @@ try {
           'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\panel\tray-menu', 'lib\serve', 'lib\shortcut',
           'lib\ui\layout', 'lib\ui\widgets', 'lib\ui\component', 'lib\ui\framework', 'lib\ui\views', 'lib\ui\setup', 'lib\ui\reactive',
           'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings',
-          'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch',
+          'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch', 'lib\ipc',
           'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey',
           'utils\query-words', 'utils\transfer', 'utils\apprules', 'utils\fileio',
           'utils\hash', 'utils\cfhtml', 'utils\image',
@@ -2193,6 +2193,20 @@ try {
       It 'the store starts with the tag and its layout version' {
         $rawHead = [IO.File]::ReadAllText($StoreFile)
         Expect ($rawHead.StartsWith($TAG + $RS + [string]$script:DataVersion)) ($rawHead.Substring(0, [Math]::Min(9, $rawHead.Length)) -replace [string][char]30, '<RS>')
+      }
+
+      # a window reaches the history by channel name, not by calling the store: the name, the
+      # function behind it and the refusal of everything else all come from channels.ini
+      It 'a window reads a channel and cannot read past one' {
+        $through = @(Invoke-Ipc 'list')
+        $direct = @(Get-Records)
+        Expect ($through.Count -eq $direct.Count) ([string]$through.Count + ' / ' + [string]$direct.Count)
+        # a command that is not part of the surface is refused instead of silently running
+        $refused = 0
+        foreach ($name in @('config', 'serve', 'nonesuch')) {
+          try { [void](Invoke-Ipc $name) } catch { $refused++ }
+        }
+        Expect ($refused -eq 3) ([string]$refused + ' of 3 refused')
       }
 
       Describe 'generic marks' {

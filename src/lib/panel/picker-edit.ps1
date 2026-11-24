@@ -346,7 +346,7 @@ function Complete-RowEdit([bool]$save) {
     return
   }
   Close-RowEdit
-  $script:Entries = @(Get-Records)
+  $script:Entries = @(Invoke-Ipc 'list')
   & $ctx.Refresh ([string]$ctx.Box.Text)
   # Put the cursor back on the row that was edited: it may sit outside the visible window, or
   # have dropped out of the search results because its new text no longer matches.
