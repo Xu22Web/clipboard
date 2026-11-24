@@ -417,23 +417,13 @@ function Draw-KeyChips($g, [int]$x, [int]$cy, $pairs, $keyColor, $actionColor, [
     $act = [string]$p[1]
     # measured with the format the text is drawn with: GenericTypographic leaves out the
     # padding GDI+ adds around a drawn string, and a rect that narrow cuts the last character
-    $kw = [single]$g.MeasureString($key, $font, $big, $formats.None).Width
     $aw = [single]$g.MeasureString($act, $font, $big, $formats.None).Width
-    $chipW = [int]($kw + (Px 14))
+    $chipW = Get-UiChipWidth $g $key $font (Px 14) $formats
     if (($x + $chipW + (Px 6) + $aw) -gt $limit) { return }
     $chipY = $cy - [int]($chipH / 2)
-    $kp = New-RoundPath $x $chipY $chipW $chipH (Px $script:Metric['CapRadius'])
-    $kb = New-Object Drawing.SolidBrush $ui.KeyCapBg
-    $g.FillPath($kb, $kp)
-    $kb.Dispose()
-    $kpen = New-Object Drawing.Pen $ui.KeyCapBorder, 1
-    $g.DrawPath($kpen, $kp)
-    $kpen.Dispose()
-    $kp.Dispose()
-    $kbr = New-Object Drawing.SolidBrush $keyColor
-    $kr = New-Object Drawing.RectangleF -ArgumentList @([single]$x, [single]$chipY, [single]$chipW, [single]$chipH)
-    $g.DrawString($key, $font, $kbr, $kr, $formats.Center)
-    $kbr.Dispose()
+    # the cap itself is a shared widget (lib\ui\widgets.ps1): the settings window draws a
+    # recorded chord with the same one
+    Draw-UiKeyChip $g $x $chipY $chipW $chipH $key $font $ui $keyColor (Px $script:Metric['CapRadius']) $formats
     $x = $x + $chipW + (Px 6)
     $ar = New-Object Drawing.RectangleF -ArgumentList @([single]$x, [single]$chipY, [single]$aw, [single]$chipH)
     $abr = New-Object Drawing.SolidBrush $actionColor

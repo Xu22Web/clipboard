@@ -60,6 +60,30 @@ function Draw-UiToggle($g, $pal, [int]$x, [int]$y, [int]$w, [int]$h, [double]$k,
   try { $g.FillEllipse($kb, $kx, $ky, $d, $d) } finally { $kb.Dispose() }
 }
 
+# One key cap and the action beside it: the chips the panel's footer draws, and the shape a
+# settings row shows a recorded chord in. The caller passes the format set it also measures
+# with - GenericTypographic leaves out the padding GDI+ adds around a drawn string, and a rect
+# measured with the padded numbers is a rect that cuts the last character.
+
+function Get-UiChipWidth($g, [string]$text, $font, [int]$padW, $formats) {
+  if ($null -eq $g -or $null -eq $font -or $null -eq $formats) { return 0 }
+  $big = New-Object Drawing.SizeF -ArgumentList @(1000, 100)
+  return [int]([single]$g.MeasureString($text, $font, $big, $formats.None).Width + $padW)
+}
+
+function Draw-UiKeyChip($g, [int]$x, [int]$y, [int]$w, [int]$h, [string]$text, $font, $pal, $ink, [int]$radius, $formats) {
+  if ($null -eq $g -or $null -eq $pal -or $null -eq $formats -or $w -le 0 -or $h -le 0) { return }
+  $path = New-RoundPath $x $y $w $h $radius
+  $bg = New-Object Drawing.SolidBrush $pal.KeyCapBg
+  try { $g.FillPath($bg, $path) } finally { $bg.Dispose() }
+  $pen = New-Object Drawing.Pen $pal.KeyCapBorder, 1
+  try { $g.DrawPath($pen, $path) } finally { $pen.Dispose() }
+  $path.Dispose()
+  $brush = New-Object Drawing.SolidBrush $ink
+  $rect = New-Object Drawing.RectangleF -ArgumentList @([single]$x, [single]$y, [single]$w, [single]$h)
+  try { $g.DrawString($text, $font, $brush, $rect, $formats.Center) } finally { $brush.Dispose() }
+}
+
 # A scrollbar thumb in its lane: no visible track, a rounded bar that widens and darkens as the
 # pointer comes near. $k is the hover ramp (0 at rest, 1 under the pointer), so every window
 # carrying one moves at the same speed. $lane is a box from lib\ui\layout.ps1 and $thumb is what
