@@ -338,7 +338,7 @@ Every ini in the repository uses the same syntax (`package.ini`, `cli.ini`, `cli
 | File | Purpose | Sections |
 |---|---|---|
 | `package.ini` | project metadata and commands, read by `cli` | `Name` / `Version` under `[package]`, the command names under `[scripts]` |
-| `cli.ini` | tool settings, read by `cli dev` / `cli build` / `cli test` / `cli bundle` | `[dev]` `[build]` `[test]` `[product.*]` `[entry.*]` |
+| `cli.ini` | tool settings, read by `cli dev` / `cli build` / `cli test` / `cli bundle` | `[dev]` `[build]` `[copy]` `[test]` `[product.*]` `[entry.*]` |
 | `clipboard.ini` | program settings, written by `config init` | base keys are ungrouped; plugin keys live in `[<plugin>]` (a flat `<plugin>.<Key>` still reads) |
 | `themes\*.ini` | theme definition | `[palette]` `[fonts]` `[metrics]` `[<plugin>]` |
 | `schema\*.ps1` | the schema of `clipboard.ini` and of a theme | — |
@@ -670,8 +670,8 @@ Layout, relative to the repository root:
 ```
 package.ini             project metadata and commands (Name / Version / the [scripts] names); read by cli
 cli.sh  cli.cmd  cli.ps1  the command entry points (sh / CMD / PowerShell) running package.ini
-cli.ini                 tool settings: [dev] watch and poll, [build] packaging, [test] workers,
-                        [product.*] plugin chains, [entry.*] one output each
+cli.ini                 tool settings: [dev] watch and poll, [build] packaging, [copy] the
+                        file list, [test] workers, [product.*] chains, [entry.*] outputs
 scripts/install.bat     config init -> migrate -> install (copied to the package root)
 scripts/uninstall.bat   stop -> uninstall purge (same)
 tools/build.ps1         packaging, by the [build] section of cli.ini, into dist\clipboard-<version>\
@@ -1044,12 +1044,17 @@ The `[build]` section of `cli.ini` (a top-level `build.OutDir=...` also works):
 | Key | Default | Meaning |
 |---|---|---|
 | `OutDir` | `dist` | output folder; a relative path is resolved against the repository root |
-| `BaseUrl` | `.` | the folder `Includes` / `Excludes` are relative to; `.` = the repository root, an absolute path works |
 | `Minify` | `1` | `1` = minify scripts and text files |
 | `Rename` | `1` | `1` = also rename internal functions and local variables; `0` = minify without renaming |
 | `Verify` | `1` | `1` = run the CLI tests against the package, delete it and fail when they fail; the suite prints straight to this terminal, part by part |
 | `Overwrite` | `1` | `1` = overwrite an existing folder of the same version; `0` = fail when it exists |
 | `Zip` | `0` | `1` = also write `clipboard-<version>.zip` |
+
+The `[copy]` section says what a release carries beside the outputs the entries produce (a top-level `copy.Includes=...` also works):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `BaseUrl` | `.` | the folder `Includes` / `Excludes` are relative to; `.` = the repository root, an absolute path works |
 | `Includes` | see below | the file list of the package, globs under `BaseUrl` like `[dev]`; required, and it has to contain `src/<Name>.ps1`, `.cmd` and `.sh` |
 | `Excludes` | empty | files to drop from the package, applied last |
 
@@ -1069,15 +1074,19 @@ Two more sections of the same file belong to `cli bundle`, and to `cli build` wh
 
 `cli bundle -Entry <name>` builds one entry and `-All` builds every one. `cli client` and `cli assembly` are entries `client` and `main` under their own names, and `cli build` compiles both through the same call, so no tool spells out a compiler flag of its own.
 
-`Includes` defaults to `src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat`.
+`[copy] Includes` defaults to `src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat`.
 
 ```ini
 # a lean package: one theme, with the documents, no minify, no verify
+[build]
 OutDir=D:\release
 Minify=0
 Rename=0
 Verify=0
 Overwrite=1
+
+[copy]
+BaseUrl=.
 Includes=src/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/win11-dark.ini,src/lang/en.ini,scripts/**.bat,README.md,LICENSE,docs/**/*
 Excludes=src/plugins/item-marks.ps1
 ```

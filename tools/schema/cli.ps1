@@ -23,16 +23,17 @@
     'dev.Excludes'  = @{ Type = 'list'; Pattern = '^[A-Za-z0-9_.*?/\-]+$'; Description = 'globs to leave out of Includes' }
 
     'build.OutDir'      = @{ Type = 'string'; Description = 'output folder, relative to the repository root' }
-    'build.BaseUrl'     = @{ Type = 'string'; Description = 'folder the include and exclude globs are relative to' }
     'build.Minify'      = @{ Type = 'bool'; Description = '1 = rewrite every .ps1 from its syntax tree' }
     'build.Rename'      = @{ Type = 'bool'; Description = '1 = also rename internal functions and local variables' }
     'build.Verify'      = @{ Type = 'bool'; Description = '1 = run the CLI suite against the package' }
     'build.Overwrite'   = @{ Type = 'bool'; Description = '1 = replace an existing clipboard-<version> folder' }
     'build.Zip'         = @{ Type = 'bool'; Description = '1 = also write clipboard-<version>.zip' }
-    'build.Includes'    = @{ Type = 'list'; Pattern = '^[A-Za-z0-9_.*?/\-]+$'; NonEmpty = $true; Description = 'the files to ship, as globs relative to BaseUrl: a .ps1 is minified, a .cs under a product folder is compiled, an .ini stripped of comments' }
-    'build.Excludes'    = @{ Type = 'list'; Pattern = '^[A-Za-z0-9_.*?/\-]+$'; Description = 'files to leave out of the package' }
     'build.Workers'     = @{ Type = 'int'; Minimum = 0; Maximum = 64; Optional = $true; Description = 'entries built side by side; left out or 0 = one per logical processor, 1 = one after another' }
     'build.Treeshake'   = @{ Type = 'bool'; Optional = $true; Description = '1 = drop the definitions no load-time path reaches; left out = keep everything' }
+
+    'copy.BaseUrl'  = @{ Type = 'string'; Description = 'folder the include and exclude globs are relative to' }
+    'copy.Includes' = @{ Type = 'list'; Pattern = '^[A-Za-z0-9_.*?/\-]+$'; NonEmpty = $true; Description = 'the files to ship, as globs relative to BaseUrl: a .ps1 is minified, a .cs under a product folder is compiled, an .ini stripped of comments' }
+    'copy.Excludes' = @{ Type = 'list'; Pattern = '^[A-Za-z0-9_.*?/\-]+$'; Description = 'files to leave out of the package' }
 
     'test.Groups'  = @{ Type = 'list'; Enum = @('unit', 'integration', 'e2e'); NonEmpty = $true; Description = 'groups a plain run covers' }
     'test.Workers' = @{ Type = 'int'; Minimum = 0; Maximum = 64; Optional = $true; Description = 'sandboxes that may run side by side; left out or 0 = one per logical processor' }

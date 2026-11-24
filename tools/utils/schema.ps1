@@ -78,8 +78,10 @@ function Convert-ToolSchemaValue($spec, [string]$raw) {
 # Every problem the file has against the schema, "" when it is clean. A key may be written
 # inside its section ("[dev]" + "Interval") or flat ("dev.Interval"); both read the same.
 #
-# $section limits the check to one section ("build"): a command validates what it reads, so a
-# temporary settings file only has to carry that section. Without it the whole file is checked.
+# $section limits the check to the sections a command reads, comma separated ("build,copy"): a
+# command validates what it uses, so a temporary settings file only has to carry those sections.
+# A short name is accepted when any of them declares it, which is how one command may read two
+# sections whose keys are written flat. Without $section the whole file is checked.
 #
 # The schema itself is checked first: with a mistyped table every value would pass, because
 # the value check falls back to "any string" for a type it does not recognise.
@@ -91,25 +93,38 @@ function Test-ToolConfigMap($schema, $map, [string]$fileName, [string]$section =
   }
   foreach ($p in @(Test-ToolSchemaFormat $schema)) { $out.Add(('schema: ' + $p)) }
   if ($out.Count -gt 0) { return $out.ToArray() }
-  $prefix = ''
-  if ($section) { $prefix = $section + '.' }
+  $prefixes = @()
+  foreach ($one in @($section -split '[,;]')) {
+    $name = $one.Trim()
+    if ($name) { $prefixes += ($name + '.') }
+  }
   foreach ($k in @($map.Keys)) {
     $key = [string]$k
-    if ($prefix) {
+    if ($prefixes.Count -gt 0) {
       if ($key.Contains('.')) {
         # a key of another section belongs to another command
-        if (-not $key.StartsWith($prefix)) { continue }
+        $owned = $false
+        foreach ($prefix in $prefixes) { if ($key.StartsWith($prefix)) { $owned = $true } }
+        if (-not $owned) { continue }
         if ($null -eq (Get-ToolSchemaSpec $schema $key)) { $out.Add(('unknown key: ' + $key)) }
         continue
       }
-      # a short name is this section's key written at the top level
-      if ($null -eq (Get-ToolSchemaSpec $schema ($prefix + $key))) { $out.Add(('unknown key: ' + $key)) }
+      # a short name is one of those sections' keys written at the top level
+      $known = $false
+      foreach ($prefix in $prefixes) {
+        if ($null -ne (Get-ToolSchemaSpec $schema ($prefix + $key))) { $known = $true }
+      }
+      if (-not $known) { $out.Add(('unknown key: ' + $key)) }
       continue
     }
     if ($null -eq (Get-ToolSchemaSpec $schema $key)) { $out.Add(('unknown key: ' + $key)) }
   }
   foreach ($k in @($schema['Keys'].Keys)) {
-    if ($prefix -and -not ([string]$k).StartsWith($prefix)) { continue }
+    if ($prefixes.Count -gt 0) {
+      $owned = $false
+      foreach ($prefix in $prefixes) { if (([string]$k).StartsWith($prefix)) { $owned = $true } }
+      if (-not $owned) { continue }
+    }
     $spec = $schema['Keys'][$k]
     $raw = ''
     if ($map.ContainsKey($k)) { $raw = [string]$map[$k] }

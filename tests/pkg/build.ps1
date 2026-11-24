@@ -33,8 +33,8 @@ $buildCfg = Join-Path $tmpRoot 'build-test.ini'
 # src\main existed this file carried four copies, and moving the type library out of lib\assembly
 # broke every one of them at once. The cases below then trim that list instead of restating it.
 . (Join-Path $repoRoot 'tools\utils\ini.ps1')
-$repoIncludes = [string](Import-IniMap (Join-Path $repoRoot 'cli.ini'))['build.Includes']
-if (-not $repoIncludes) { throw 'cli.ini has no [build] Includes to test against' }
+$repoIncludes = [string](Import-IniMap (Join-Path $repoRoot 'cli.ini'))['copy.Includes']
+if (-not $repoIncludes) { throw 'cli.ini has no [copy] Includes to test against' }
 # the client stays out of the default list so most cases skip a compile; cli.ini carries it
 $allFiles = 'Includes=' + (@(($repoIncludes -split ',') | Where-Object { $_ -notlike 'src/lib/client/*' }) -join ',')
 $withClient = 'Includes=' + $repoIncludes

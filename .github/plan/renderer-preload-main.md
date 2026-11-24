@@ -410,7 +410,8 @@ P0–P2 可以连续做，P3/P4 之间建议停一版（store 先落地，组件
 | Electron | 本项目 | 负责 | 不负责 |
 |---|---|---|---|
 | `vite` 可执行体 | `cli.ps1` + `package.ini` | 命令路由、参数校验、把命令交给对应脚本 | 任何构建细节 |
-| `electron.vite.config.ts` | `cli.ini`（`[entry.*]` / `[product.*]` / `[build]`） | 有哪些入口、每个入口用哪条插件链、产物落在哪、哪些文件随包复制 | 怎么压缩一个 .ps1、怎么编译 C#（都是插件） |
+| `electron.vite.config.ts` | `cli.ini`（`[entry.*]` / `[product.*]` / `[build]`） | 有哪些入口、每个入口用哪条插件链、产物落在哪 | 怎么压缩一个 .ps1、怎么编译 C#（都是插件） |
+| `electron-builder.yml` 的 `files` | `cli.ini` 的 `[copy]` | 哪些文件随包复制、从哪个目录算起、剔除哪些 | 每个文件怎么改写（pipeline 的处理器表） |
 | `vite build`（rollup 引擎） | `bundler.ps1` + `plugins/` | 一次「若干文件 → 一个产物」：解析、tree-shake、合并、压缩、编译、指纹校验 | 不认识"这是一个应用"，不决定包长什么样 |
 | `electron-builder` / `electron-forge` | `tools/build.ps1` | 一个**发布**：读配置 → 逐个入口交给 bundler（并行）→ 复制资产 → 跑打包副本自检 → zip → 汇报 | 怎么压缩一个 .ps1、怎么编译 C#（都是插件） |
 | `vite dev` 的 watcher | `tools/dev.ps1` | 监视 → 重建受影响的产品 → 重启常驻 | 自己算依赖图（问 bundler） |
@@ -426,7 +427,7 @@ P6 拆成三个提交：
 | 步骤 | 内容 | 退出条件 |
 |---|---|---|
 | P6a | `pipeline.ps1` 两张表搬进插件；`build.ps1` 的 stage 循环改成对每个入口调 bundler | 包内容与今天逐文件一致 |
-| P6b | `cli.ini [build] Includes/Excludes` → `[copy]` 段；dev 的 Includes 由 `bundler -List` 输出 | `cli dev` 重启行为不变 |
+| P6b | 完成：`cli.ini [build] Includes/Excludes` → `[copy]` 段（`build.ps1` 校验 `build,copy` 两段）。`[dev]` 的监听集**保持独立**：它比包宽（含 `package.ini` 与工具脚本），从 bundler 图推导会丢掉这部分 | `cli dev` 重启行为不变 |
 | P6c | dist 换成 `renderer/ preload/ main/`；改写 `tests/pkg` 的断言（已从 `cli.ini` 派生，改动面已缩小） | 34 条断言全绿 |
 
 ## 8. pinia 式 store 的 API 面

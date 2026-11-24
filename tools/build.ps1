@@ -10,7 +10,7 @@
       cli build                          settings from cli.ini
       cli build -Config other.ini         a different settings file
 
-  cli.ini holds the tooling settings: the [build] section is the output folder, whether to
+  cli.ini holds the tooling settings: [build] is the output folder, whether to
   minify and rename, whether to verify the result by running the CLI suite against it,
   whether to also write a zip; [dev] and [test] belong to the other two commands. The
   version is not a build option: package.ini owns it. The development copy reads it
@@ -20,7 +20,7 @@
   Two batch files from scripts\ are copied next to the program's entry: install.bat (config
   init + migrate + install) and uninstall.bat (stop + uninstall purge).
 
-  What goes in: the files cli.ini [build] Includes names, and only those. Nothing here knows
+  What goes in: the files cli.ini [copy] Includes names, and only those. Nothing here knows
   what a file is: tools\utils\pipeline.ps1 holds one table - a .ps1 is minified, a .cmd/.bat
   compressed, a .sh compressed, an .ini stripped of its comments, a .cs under a product folder
   compiled - and this script only walks the list. The default list is the program scripts, the
@@ -79,7 +79,7 @@ $cfg = Import-IniMap $Config
 # the wrong type or a number outside its range stops the build with the list of problems, so a
 # typo cannot turn into "the build quietly stopped minifying".
 . (Join-Path $root 'tools\utils\schema.ps1')
-$problems = @(Test-ToolConfigMap (Import-ToolSchema (Join-Path $root 'tools\schema\cli.ps1')) $cfg (Split-Path -Leaf $Config) 'build')
+$problems = @(Test-ToolConfigMap (Import-ToolSchema (Join-Path $root 'tools\schema\cli.ps1')) $cfg (Split-Path -Leaf $Config) 'build,copy')
 if ($problems.Count -gt 0) {
   foreach ($p in $problems) { Write-Fail $p }
   exit 1
@@ -99,8 +99,18 @@ function CfgBool([string]$key) {
   return @('1', 'true', 'yes', 'on') -contains (Cfg $key).ToLowerInvariant()
 }
 
-function CfgList([string]$key) {
-  return @(Split-GlobList (Cfg $key))
+# What a release carries is [copy], how it is produced is [build]: the copy list says which files
+# ship and where they are read from, the build section says how each of them is rewritten. A key
+# of the copy list may also be written with its dotted name at the top level, like a build one.
+function CopyCfg([string]$key) {
+  foreach ($candidate in @(('copy.' + $key), $key)) {
+    if ($cfg.ContainsKey($candidate)) { return [string]$cfg[$candidate] }
+  }
+  return ''
+}
+
+function CopyCfgList([string]$key) {
+  return @(Split-GlobList (CopyCfg $key))
 }
 
 # src\lib\base.ps1 keeps the version between two markers for the development run; a package
@@ -145,14 +155,14 @@ $wantZip = CfgBool 'Zip'
 . (Join-Path $root 'tools\utils\globs.ps1')
 # what to do with each file is one table, shared with the watcher
 . (Join-Path $root 'tools\utils\pipeline.ps1')
-$includeGlobs = CfgList 'Includes'
-$excludeGlobs = CfgList 'Excludes'
-# every glob is written relative to BaseUrl, which this same file sets: "." keeps them at the
-# repository root, so a shipped path reads like the one on disk (src\..., scripts\...)
-$baseSetting = (Cfg 'BaseUrl').Trim()
-if (-not $baseSetting) { Fail 'cli.ini [build] BaseUrl is empty' }
+$includeGlobs = CopyCfgList 'Includes'
+$excludeGlobs = CopyCfgList 'Excludes'
+# every glob is written relative to BaseUrl: "." keeps them at the repository root, so a shipped
+# path reads like the one on disk (src\..., scripts\...)
+$baseSetting = (CopyCfg 'BaseUrl').Trim()
+if (-not $baseSetting) { Fail 'cli.ini [copy] BaseUrl is empty' }
 $baseDir = Resolve-BaseDir $root $baseSetting
-if (-not (Test-Path -LiteralPath $baseDir)) { Fail ('cli.ini [build] BaseUrl does not exist: ' + $baseSetting) }
+if (-not (Test-Path -LiteralPath $baseDir)) { Fail ('cli.ini [copy] BaseUrl does not exist: ' + $baseSetting) }
 
 $swBuild = Start-Step
 Write-Step ('build ' + $name)
@@ -164,12 +174,12 @@ Write-Note ('files    ' + [string]$includeGlobs.Count + ' glob(s)   overwrite ' 
 if ((Test-Path -LiteralPath $dest) -and -not $overwrite) { Fail ('already exists: ' + $dest + '   (set Overwrite=1 to replace it)') }
 
 # ---------------------------------------------------------------- the file list
-# cli.ini [build] Includes is the package and Excludes removes from it: one expansion for both,
+# cli.ini [copy] Includes is the package and Excludes removes from it: one expansion for both,
 # through the same call the watcher uses, so the two tools agree on what a glob means.
 $pkgFiles = @(Expand-GlobList $baseDir $includeGlobs $excludeGlobs)
-if ($pkgFiles.Count -eq 0) { Fail 'cli.ini [build] Includes reaches no file' }
+if ($pkgFiles.Count -eq 0) { Fail 'cli.ini [copy] Includes reaches no file' }
 $dropped = @(Expand-GlobList $baseDir $includeGlobs @()).Count - $pkgFiles.Count
-if ($dropped -gt 0) { Write-Note ('excluded ' + [string]$dropped + ' file(s) listed in cli.ini [build] Excludes') }
+if ($dropped -gt 0) { Write-Note ('excluded ' + [string]$dropped + ' file(s) listed in cli.ini [copy] Excludes') }
 $scriptFiles = @($pkgFiles | Where-Object { $_ -like '*.ps1' })
 
 # ---------------------------------------------------------------- products (ahead of time)
@@ -215,7 +225,7 @@ foreach ($p in @(Get-ProductList)) {
 foreach ($p in @(Get-ProductList)) {
   if (-not $p.Required) { continue }
   if (-not ($productOut.ContainsKey($p.Out) -or $productSources.ContainsKey($p.Dir))) {
-    Fail ('cli.ini [build] Includes carries neither ' + $p.Dir + ' nor ' + $p.Out + ': a package cannot start without it')
+    Fail ('cli.ini [copy] Includes carries neither ' + $p.Dir + ' nor ' + $p.Out + ': a package cannot start without it')
   }
 }
 
@@ -337,7 +347,7 @@ try {
   foreach ($ext in @('.ps1', '.cmd', '.sh')) {
     $need = $app + $ext
     if (-not (Test-Path -LiteralPath (Join-Path $stage $need))) {
-      Fail ('cli.ini [build] Includes does not ship ' + $need)
+      Fail ('cli.ini [copy] Includes does not ship ' + $need)
     }
   }
 

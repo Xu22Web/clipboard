@@ -337,7 +337,7 @@ cli bundle       # 按 cli.ini 构建一个入口（-Inspect 列出无法内联�
 | 文件 | 用途 | 段 |
 |---|---|---|
 | `package.ini` | 项目元数据与命令，`cli` 读取 | `[package]` 的 `Name` / `Version`，`[scripts]` 的命令名 |
-| `cli.ini` | 工具配置，`cli dev` / `cli build` / `cli test` / `cli bundle` 读取 | `[dev]` `[build]` `[test]` `[product.*]` `[entry.*]` |
+| `cli.ini` | 工具配置，`cli dev` / `cli build` / `cli test` / `cli bundle` 读取 | `[dev]` `[build]` `[copy]` `[test]` `[product.*]` `[entry.*]` |
 | `clipboard.ini` | 程序设置，由 `config init` 生成 | 基础键不分组；插件键写在 `[<插件名>]` 段（平铺的 `<插件名>.<Key>` 仍可读） |
 | `themes\*.ini` | 主题定义 | `[palette]` `[fonts]` `[metrics]` `[<插件名>]` |
 | `schema\*.ps1` | `clipboard.ini` 与主题的 schema | — |
@@ -669,8 +669,8 @@ flowchart LR
 ```
 package.ini             项目元数据与命令：Name / Version / [scripts] 下的命令名（cli 读取）
 cli.sh  cli.cmd  cli.ps1   命令入口（sh / CMD / PowerShell），执行 package.ini 中的命令
-cli.ini                 工具配置：[dev] 监听与轮询、[build] 打包选项、[test] 并行度与分组、
-                        [product.*] 插件链、[entry.*] 每个产物一节
+cli.ini                 工具配置：[dev] 监听与轮询、[build] 打包选项、[copy] 文件清单、
+                        [test] 并行度与分组、[product.*] 插件链、[entry.*] 每个产物一节
 scripts/install.bat     安装脚本：config init → migrate → install（打包时复制到产物根目录）
 scripts/uninstall.bat   卸载脚本：stop → uninstall purge（同上）
 tools/build.ps1         打包脚本（按 cli.ini 的 [build] 段打包到 dist\clipboard-<version>\）
@@ -1041,12 +1041,17 @@ cli build -Config other.ini     # 换一份配置
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `OutDir` | `dist` | 输出目录；相对路径按仓库根解析 |
-| `BaseUrl` | `.` | `Includes` / `Excludes` 的相对目录；`.` = 仓库根，可写绝对路径 |
 | `Minify` | `1` | `1` = 压缩脚本与文本文件 |
 | `Rename` | `1` | `1` = 同时重命名内部函数与局部变量；`0` = 只压缩不改名 |
 | `Verify` | `1` | `1` = 打包后对产物运行一遍 CLI 测试，不通过则删掉产物并失败；套件的输出直接接到当前终端，逐分件显示进度 |
 | `Overwrite` | `1` | `1` = 覆盖同版本已存在的目录；`0` = 目录已存在时报错退出 |
 | `Zip` | `0` | `1` = 另外再打一个 `clipboard-<version>.zip` |
+
+`[copy]` 段说的是一个发布除入口产物之外还带什么（也可写成顶层的 `copy.Includes=...`）：
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `BaseUrl` | `.` | `Includes` / `Excludes` 的相对目录；`.` = 仓库根，可写绝对路径 |
 | `Includes` | 见下 | 产物文件清单，相对 `BaseUrl` 的通配，语法同 `[dev]`；必须写出且必须含 `src/<Name>.ps1`、`.cmd`、`.sh` |
 | `Excludes` | 空 | 从产物中剔除的文件，最后应用 |
 
@@ -1066,15 +1071,19 @@ cli build -Config other.ini     # 换一份配置
 
 `cli bundle -Entry <名称>` 构建一个入口，`-All` 构建全部。`cli client` 与 `cli assembly` 就是入口 `client` 与 `main`，`cli build` 也走同一个调用编译它们，所以编译器参数只有一处。
 
-`Includes` 默认 `src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat`。
+`[copy] Includes` 默认 `src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat`。
 
 ```ini
 # 精简包：一套主题 + 带文档，不压缩不验证
+[build]
 OutDir=D:\release
 Minify=0
 Rename=0
 Verify=0
 Overwrite=1
+
+[copy]
+BaseUrl=.
 Includes=src/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/win11-dark.ini,src/lang/en.ini,scripts/**.bat,README.md,LICENSE,docs/**/*
 Excludes=src/plugins/item-marks.ps1
 ```
