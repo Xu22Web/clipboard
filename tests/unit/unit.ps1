@@ -230,7 +230,7 @@ try {
         $requiredLib = @('lib\base', 'lib\native', 'lib\panel\focus', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
           'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\text', 'lib\panel\anim',
           'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\panel\tray-menu', 'lib\serve', 'lib\shortcut',
-          'lib\ui\layout', 'lib\ui\widgets',
+          'lib\ui\layout', 'lib\ui\widgets', 'lib\ui\component',
           'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings',
           'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch',
           'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey',
@@ -1107,6 +1107,129 @@ try {
         Expect (-not $plan.HasDataDir) 'nothing moves without DataDir'
         $moved = Get-SettingsSavePlan @{ DataDir = 'D:\clip' }
         Expect ($moved.HasDataDir -and $moved.DataDir -eq 'D:\clip') 'the store folder travels with DataDir'
+      }
+    }
+
+    # The runtime a tree of drawn components needs (lib\ui\component.ps1): one state table with
+    # a revision, a cache that outlives an open, a slot whose content arrives later, and the
+    # mount / update / unmount that a surface hangs its resources on.
+    Describe 'ui component runtime' {
+      It 'bumps the revision only when a value moves, and tells the watcher once' {
+        $store = New-UiStore @{ Page = 'Clipboard' }
+        $seen = New-Object System.Collections.Generic.List[string]
+        Add-UiWatcher $store { param($k, $v) $seen.Add([string]$k + '=' + [string]$v) }
+        $before = [int]$store.Revision
+        Expect (-not (Set-UiState $store 'Page' 'Clipboard')) 'writing the value it holds is not a change'
+        Expect ($store.Revision -eq $before) 'and the revision stays'
+        Expect (Set-UiState $store 'Page' 'Panel') 'another value is a change'
+        Expect ($store.Revision -eq ($before + 1)) 'the revision moves by one'
+        Expect ($seen.Count -eq 1 -and $seen[0] -eq 'Page=Panel') 'the watcher heard it once'
+      }
+
+      It 'keeps a built answer until it goes stale' {
+        $built = New-Object System.Collections.Generic.List[string]
+        $released = New-Object System.Collections.Generic.List[string]
+        $cache = New-UiKeepAlive 2 { param($v) $released.Add([string]$v) }
+        $build = { $built.Add('x'); 'panel' + $built.Count }
+        $first = Get-UiKeepAlive $cache 'panel' $build
+        $again = Get-UiKeepAlive $cache 'panel' $build
+        Expect ($first -eq $again -and $built.Count -eq 1) 'the second call reuses what was built'
+        $rebuilt = Get-UiKeepAlive $cache 'panel' $build { param($v) $true }
+        Expect ($rebuilt -eq 'panel2') 'a stale entry is built again'
+        Expect ($released.Count -eq 1 -and $released[0] -eq 'panel1') 'and the old one is released first'
+      }
+
+      It 'releases the oldest entry when the cache is full' {
+        $released = New-Object System.Collections.Generic.List[string]
+        $cache = New-UiKeepAlive 2 { param($v) $released.Add([string]$v) }
+        [void](Get-UiKeepAlive $cache 'a' { 'A' })
+        [void](Get-UiKeepAlive $cache 'b' { 'B' })
+        [void](Get-UiKeepAlive $cache 'c' { 'C' })
+        Expect ($released.Count -eq 1 -and $released[0] -eq 'A') 'the first one went'
+        Expect (-not (Test-UiKeepAliveHeld $cache 'a')) 'and it is no longer held'
+        Expect ((Test-UiKeepAliveHeld $cache 'b') -and (Test-UiKeepAliveHeld $cache 'c')) 'the two newest stay'
+      }
+
+      It 'draws a slot before its content arrives' {
+        $slot = New-UiAsync 'card'
+        Expect (Test-UiAsyncPending $slot) 'it starts pending'
+        [void](Set-UiAsyncResult $slot 'the page')
+        Expect (-not (Test-UiAsyncPending $slot) -and $slot.Value -eq 'the page') 'the result lands in it'
+        $bad = New-UiAsync 'card2'
+        [void](Set-UiAsyncFailed $bad 'no rtf to lay out')
+        Expect ($bad.Failed -and $bad.Note -eq 'no rtf to lay out') 'a failure carries its reason'
+      }
+
+      It 'mounts children first and unmounts them last in first out' {
+        $order = New-Object System.Collections.Generic.List[string]
+        $page = New-UiComponent 'page'
+        $one = Add-UiChild $page (New-UiComponent 'row')
+        $two = Add-UiChild $page (New-UiComponent 'row')
+        Add-UiHook $page 'mounted' { param($c) $order.Add('page+') }
+        Add-UiHook $page 'unmounted' { param($c) $order.Add('page-') }
+        Add-UiHook $one 'mounted' { param($c) $order.Add('one+') }
+        Add-UiHook $one 'unmounted' { param($c) $order.Add('one-') }
+        Add-UiHook $two 'unmounted' { param($c) $order.Add('two-') }
+        [void](Mount-UiComponent $page)
+        Unmount-UiComponent $page
+        Expect (($order -join ',') -eq 'one+,page+,two-,one-,page-') 'a surface is released before what it sits on'
+        Expect (-not (Test-UiComponentAlive $page) -and -not (Test-UiComponentAlive $one)) 'nothing is left alive'
+      }
+
+      It 'hands a change up and ignores an event nobody listens to' {
+        $got = New-Object System.Collections.Generic.List[string]
+        $row = New-UiComponent 'row'
+        Add-UiHandler $row 'tick' { param($p) $got.Add([string]$p) }
+        Expect (Invoke-UiEmit $row 'tick' 'transform') 'a handled event answers'
+        Expect ($got.Count -eq 1 -and $got[0] -eq 'transform') 'and carries what it was given'
+        Expect (-not (Invoke-UiEmit $row 'save' 'x')) 'an event with no handler is not an error'
+      }
+
+      It 'counts a box that did not move as no update' {
+        $hits = New-Object System.Collections.Generic.List[string]
+        $c = New-UiComponent 'row'
+        Add-UiHook $c 'updated' { param($x) $hits.Add('up') }
+        [void](Mount-UiComponent $c (New-UiBox 0 0 10 10))
+        Expect (-not (Update-UiComponent $c (New-UiBox 0 0 10 10))) 'the same box is nothing to do'
+        Expect ($hits.Count -eq 0) 'and the hook does not run'
+        Expect (Update-UiComponent $c (New-UiBox 0 0 20 10)) 'a wider box is an update'
+        Expect ($hits.Count -eq 1) 'the hook runs once'
+      }
+
+      It 'releases what a component opened when it goes' {
+        $c = New-UiComponent 'row'
+        $stream = New-Object System.IO.MemoryStream
+        Add-UiResource $c $stream
+        [void](Mount-UiComponent $c)
+        Unmount-UiComponent $c
+        # a disposed stream still reports its Length; writing to it is what says it is closed
+        $closed = $false
+        try { $stream.WriteByte(1) } catch { $closed = $true }
+        Expect $closed 'the handle is released, not left to the finalizer'
+        Expect ($c.Resources.Count -eq 0) 'and the record no longer holds it'
+      }
+
+      It 'keeps the components a keyed list still needs and drops the rest' {
+        $page = New-UiComponent 'page'
+        $keep = New-UiComponent 'row'
+        $keep.Key = 'b'
+        $gone = New-UiComponent 'row'
+        $gone.Key = 'a'
+        [void](Add-UiChild $page $keep)
+        [void](Add-UiChild $page $gone)
+        [void](Mount-UiComponent $page)
+        $made = New-Object System.Collections.Generic.List[string]
+        $specs = @('b', 'c')
+        $result = Sync-UiChildren $page $specs { param($s) $s } {
+          param($s)
+          $made.Add([string]$s)
+          New-UiComponent 'row'
+        }
+        Expect ($result.Reused -eq 1 -and $result.Created -eq 1 -and $result.Unmounted -eq 1) 'one kept, one built, one taken down'
+        Expect ($result.Children[0] -eq $keep) 'the kept component is the same object, not a copy'
+        Expect ($result.Children[1].Key -eq 'c' -and $made.Count -eq 1) 'only the new key was built'
+        Expect (-not (Test-UiComponentAlive $gone)) 'the one that left is unmounted'
+        Expect ($page.Children.Count -eq 2 -and [string]$page.Children[1].Key -eq 'c') 'the record holds the new order'
       }
     }
 
