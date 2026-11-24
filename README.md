@@ -746,6 +746,8 @@ src/                    the program (the only folder packaging reads)
   lib/ui/layout.ps1         cutting a box: inset, stack, columns, a scrollbar's thumb
   lib/ui/widgets.ps1        the controls: a switch, a scrollbar, a colour between two others
   lib/ui/component.ps1      the tree around them: store and revision, lifecycle, keep-alive, a slot that arrives later
+  lib/ui/framework.ps1      what a surface is written as: a keyed tree, the patch that keeps only what changed,
+                            and the walk that draws it
 
   lib/panel/              the panel stack, loaded only by commands that draw
   lib/panel/picker.ps1      the history panel: window, filter, list, keys, context menu, paste

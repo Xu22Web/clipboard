@@ -230,7 +230,7 @@ try {
         $requiredLib = @('lib\base', 'lib\native', 'lib\panel\focus', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
           'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\panel\picker-live', 'lib\text', 'lib\panel\anim',
           'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\panel\tray-menu', 'lib\serve', 'lib\shortcut',
-          'lib\ui\layout', 'lib\ui\widgets', 'lib\ui\component',
+          'lib\ui\layout', 'lib\ui\widgets', 'lib\ui\component', 'lib\ui\framework',
           'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings',
           'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch',
           'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey',
@@ -1221,8 +1221,7 @@ try {
         Expect ((Test-UiKeepAliveHeld $cache 'b') -and (Test-UiKeepAliveHeld $cache 'c')) 'the two newest stay'
       }
 
-      It 'can be filled without going through the build' {
-        $asked = New-Object System.Collections.Generic.List[string]
+      It 'can be filled without going through the build' {        $asked = New-Object System.Collections.Generic.List[string]
         $cache = New-UiKeepAlive 2
         Set-UiKeepAliveValue $cache 'page' 'rows'
         Expect (Test-UiKeepAliveHeld $cache 'page') 'the key is held'
@@ -1310,6 +1309,72 @@ try {
         Expect ($result.Children[1].Key -eq 'c' -and $made.Count -eq 1) 'only the new key was built'
         Expect (-not (Test-UiComponentAlive $gone)) 'the one that left is unmounted'
         Expect ($page.Children.Count -eq 2 -and [string]$page.Children[1].Key -eq 'c') 'the record holds the new order'
+      }
+    }
+
+    # A surface is a keyed tree (lib\ui\framework.ps1): the patch below is what keeps a page or a
+    # list from being rebuilt to change one value, at any depth.
+    Describe 'ui tree patch' {
+      BeforeAll {
+        $script:TreeKey = { param($s) [string]$s.Key }
+        $script:TreeMake = { param($spec) New-UiComponent ([string]$spec.Type) $spec.Props }
+      }
+
+      It 'keeps a node whose values did not move and updates the one that did' {
+        $page = New-UiComponent 'page'
+        [void](Mount-UiComponent $page)
+        $first = Sync-UiTree $page @(
+          @{ Key = 'a'; Type = 'row'; Props = @{ Text = 'one' } },
+          @{ Key = 'b'; Type = 'row'; Props = @{ Text = 'two' } }
+        ) $script:TreeKey $script:TreeMake
+        Expect ($first.Created -eq 2 -and $first.Updated -eq 0) 'both rows are built the first time'
+        $rowA = $first.Children[0]
+        $second = Sync-UiTree $page @(
+          @{ Key = 'a'; Type = 'row'; Props = @{ Text = 'one' } },
+          @{ Key = 'b'; Type = 'row'; Props = @{ Text = 'TWO' } }
+        ) $script:TreeKey $script:TreeMake
+        Expect ($second.Reused -eq 2 -and $second.Updated -eq 1 -and $second.Created -eq 0) 'only the changed row is touched'
+        Expect ($second.Children[0] -eq $rowA) 'the untouched row is the same object'
+        Expect ([string]$second.Children[1].Props.Text -eq 'TWO') 'the changed row carries the new value'
+      }
+
+      It 'patches grandchildren and takes down what left the tree' {
+        $page = New-UiComponent 'page'
+        [void](Mount-UiComponent $page)
+        $spec = @(
+          @{ Key = 'a'; Type = 'row'; Props = @{ }; Children = @(
+              @{ Key = 'a1'; Type = 'cell'; Props = @{ Text = 'x' } },
+              @{ Key = 'a2'; Type = 'cell'; Props = @{ Text = 'y' } }
+            ) }
+        )
+        $first = Sync-UiTree $page $spec $script:TreeKey $script:TreeMake
+        Expect ($first.Children[0].Children.Count -eq 2) 'the row holds its two cells'
+        $cell = $first.Children[0].Children[0]
+        $shorter = @(
+          @{ Key = 'a'; Type = 'row'; Props = @{ }; Children = @(
+              @{ Key = 'a1'; Type = 'cell'; Props = @{ Text = 'x' } }
+            ) }
+        )
+        $second = Sync-UiTree $page $shorter $script:TreeKey $script:TreeMake
+        Expect ($second.Unmounted -eq 1) 'the cell that left is taken down'
+        Expect ($second.Children[0].Children[0] -eq $cell) 'the cell that stayed is the same object'
+        Expect ($second.Children[0].Children.Count -eq 1) 'and the row no longer holds the other'
+      }
+
+      It 'draws a parent before its children and skips what is unmounted' {
+        $seen = New-Object System.Collections.Generic.List[string]
+        $page = New-UiComponent 'page'
+        [void](Mount-UiComponent $page)
+        [void](Sync-UiTree $page @(
+          @{ Key = 'a'; Type = 'row'; Props = @{ }; Children = @(@{ Key = 'a1'; Type = 'cell'; Props = @{ } }) }
+        ) $script:TreeKey $script:TreeMake)
+        $n = Render-UiTree $page { param($node) $seen.Add([string]$node.Type + ':' + [string]$node.Key) }
+        Expect ($n -eq 3) 'the page, the row and the cell are drawn'
+        Expect (($seen -join ',') -eq 'page:,row:a,cell:a1') 'a parent is drawn before its children'
+        Unmount-UiComponent $page
+        $after = New-Object System.Collections.Generic.List[string]
+        [void](Render-UiTree $page { param($node) $after.Add('x') })
+        Expect ($after.Count -eq 0) 'a taken-down tree draws nothing'
       }
     }
 
