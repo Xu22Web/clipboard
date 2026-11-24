@@ -486,3 +486,27 @@ $s.$onAction({ param($name, $args) }) # action 之前/之后，可包装
 | 通道粒度太细 | 绘制期间 IPC 往返拖慢 | 只有「取数据/写数据」进通道；绘制全部在 renderer |
 | C# 拆分后类型可见性 | `Add-Type` 回退路径编译失败 | P1 保留 `cb.native.cs` 一份到 P1 结束，`git revert` 即回滚 |
 | 34 条打包断言同时红 | 分不清是改造错还是断言过时 | P6 单独一个阶段，之前不改 dist 布局 |
+
+## 12. 落地情况（2026-11-24）
+
+P0–P6 已全部完成，三层的包内结构就是 §6 那张表：`renderer\app.ps1`（窗口层一个文件）、`renderer\src\windows\picker-geom.ps1`（External，单独随包）、`preload\client.exe`、`main\clipboard.dll`。
+
+§9 清单的现状：
+
+1. `src/clipboard.ps1` 的模块表 → `$windowModules` + `$groupModules`，包内单文件与源码多文件两种加载形态并存
+2. `tests/unit/unit.ps1` 的 `$requiredLib` → `renderer\src\core\*` + `renderer\src\windows\*`
+3. `cli.ini` → `[copy]` 段 + `[product.*]` + `[entry.*]`；`[dev]` 保持独立清单（P6b 的结论，它比包宽）
+4. `tools/dev.ps1` → 产品识别走 `tools\bundler\products.ps1`；监视集**不从 bundler 图推导**，理由同上
+5. `tools/shot.ps1` → 整目录复制 `src\`，新目录自动覆盖，无需改动
+6. `tests/pkg/build.ps1` → 36 条断言，涉及布局的已改为从 `cli.ini` 派生
+7. `README.md` / `README.zh-CN.md` → 文件树、模块清单、打包段落已同步，两份章节数一致
+8. `src/lang/*.ini` → 本轮未新增可见文案
+9. 压缩器实参转换 → 未新增此类代码
+10. `tools/bundler/` → 从不跟包走，`[copy] Includes` 不含 `tools/`
+
+两项判定为不做：
+
+- **P4 的显式 `Draw` / `Measure` / `Hit` 三件套**：`renderer\src\core\views.ps1` 的 box 矩形已经承担 Measure 与 Hit（`picks the topmost control under a point` 守着），`layout.ps1` 负责摆放，`widgets.ps1` 只留 Draw。再抽一层三件套是重复抽象。
+- **`docs` / `lang` / `themes` 走独立的 assets 插件**：`tools\bundler\assets.ps1` 的 handler 表已经是「一个文件进、一个文件出」的唯一出口，`build.ps1` 与 `dev.ps1` 都只问它。把它再包一层插件，得到的仍是同一张表。
+
+未来若要让 `build.ps1` 完全不碰文件（连复制都交给 bundler），才需要把这条链做成 entry；在那之前，`assets.ps1` + `products.ps1` + `build.ps1` 的 `switch` 是三处而非一处，但每一处都有单一的拥有者。
