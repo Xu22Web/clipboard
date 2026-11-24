@@ -353,17 +353,27 @@ function Get-SettingsRows($schema, [string]$group, $pending = $null) {
 
 # The groups that actually have rows, in table order. A group whose keys all disappeared from
 # the schema is not offered, so the left column never lists an empty page.
+#
+# This used to build every page's rows and keep the ones that came back non-empty, which cost
+# about 230 ms at every open of the window - ten pages of labels, help lines and choices, built
+# to answer a question about presence, and then built again for the page actually shown. All it
+# needs is whether a key of the group is still in the schema.
 function Get-SettingGroups($schema) {
   $out = New-Object System.Collections.Generic.List[string]
-  foreach ($g in @((Get-SettingGroupTable).Keys)) {
-    $rows = @(Get-SettingsRows $schema $g)
-    if ($rows.Count -gt 0) { $out.Add([string]$g) }
+  $table = Get-SettingGroupTable
+  $named = @{}
+  foreach ($g in @($table.Keys)) {
+    $has = $false
+    foreach ($one in @($table[$g])) {
+      # the argument is a plain variable: a cast written straight into a call is read as a
+      # second argument, and the lookup silently answers nothing
+      $key = [string]$one
+      $named[$key] = $true
+      if (-not $has -and $null -ne (Get-SchemaProperty $schema $key)) { $has = $true }
+    }
+    if ($has) { $out.Add([string]$g) }
   }
   # anything the table does not name is still reachable
-  $named = @{}
-  foreach ($k in @((Get-SettingGroupTable).Keys)) {
-    foreach ($key in @((Get-SettingGroupTable)[$k])) { $named[[string]$key] = $true }
-  }
   $loose = 0
   $props = Get-SchemaProperties $schema
   if ($null -ne $props) {
