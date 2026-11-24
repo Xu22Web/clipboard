@@ -523,6 +523,9 @@ Add-Type -AssemblyName System.Windows.Forms
 Load-Forms
 Add-Native
 Initialize-Dpi
+# the menu is worded from the language file, the same call the tray makes when it opens: the
+# copy carries the Language= this shot asked for, so a Chinese set is a Chinese menu
+if (Get-Command Sync-UiLanguage -ErrorAction SilentlyContinue) { [void](Sync-UiLanguage) }
 Apply-Theme
 $dm = New-TrayMenu (New-TrayMenuSkin)
 Update-TrayMenu $dm -Entries @(Get-Records).Count -Hotkey 'Ctrl+Alt+V' -Paused $false -Compact $false

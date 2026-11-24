@@ -94,8 +94,9 @@ function Get-PreviewInfo([string]$payload) {
   $at = $text.IndexOf("`n")
   while ($at -ge 0) { $lines++; $at = $text.IndexOf("`n", $at + 1) }
   $chars = if ($payload.Length -gt $script:PreviewChars) { $script:PreviewChars.ToString() + '+' } else { $payload.Length.ToString() }
-  $word = if ($lines -eq 1) { ' line' } else { ' lines' }
-  return ($kind + ' - ' + $chars + ' chars - ' + $lines + $word)
+  $kindWord = Get-UiText ('panel.preview.kind.' + $kind)
+  $linesWord = Get-UiTextCount 'panel.preview.lines' $lines
+  return (Get-UiText 'panel.preview.info' @($kindWord, $chars, $linesWord))
 }
 
 # Everything the card draws with, built once per panel: the geometry from the caller's

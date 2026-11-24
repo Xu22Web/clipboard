@@ -711,18 +711,20 @@ function Set-Mark([string]$payload, [string]$mark, [bool]$on) {
 # do change: the formatted sidecar goes (it described the old text, and pasting the old
 # formatting over new words is worse than pasting none), and the key is bumped so the row
 # and label caches redraw instead of serving the text they remember.
-#   @{ Ok; Payload; Text; Error }
+#   @{ Ok; Payload; Text; Error; Code }
+#   Code names the reason for a surface that words its own sentences (the panel's editor);
+#   Error is the English one the command line prints.
 function Update-RecordText([string]$payload, [string]$text) {
-  $res = @{ Ok = $false; Payload = $payload; Text = $text; Error = '' }
-  if ([string]::IsNullOrWhiteSpace($text)) { $res.Error = 'the text is empty'; return $res }
+  $res = @{ Ok = $false; Payload = $payload; Text = $text; Error = ''; Code = '' }
+  if ([string]::IsNullOrWhiteSpace($text)) { $res.Code = 'empty'; $res.Error = 'the text is empty'; return $res }
   if ([string]$text -ceq $payload) { $res.Ok = $true; return $res }
   $verdict = Use-StoreLock {
     $recs = @(Get-Records)
     $target = $null
     foreach ($rec in $recs) { if ($rec.Payload -ceq $payload) { $target = $rec; break } }
-    if ($null -eq $target) { return 'that entry is gone' }
+    if ($null -eq $target) { return 'gone' }
     # payload is identity: a second row with the same text could never be told apart
-    foreach ($rec in $recs) { if ($rec.Payload -ceq $text) { return 'another entry already says that' } }
+    foreach ($rec in $recs) { if ($rec.Payload -ceq $text) { return 'duplicate' } }
     $tick = [long]$target.Time
     # An edit writes two lines instead of the whole file: a tombstone for the old text, then
     # the row under its new text with the same tick and marks. The tombstone comes first
@@ -752,7 +754,15 @@ function Update-RecordText([string]$payload, [string]$text) {
     Save-Records $list.ToArray() | Out-Null
     return ''
   }
-  if ($verdict) { $res.Error = [string]$verdict; return $res }
+  if ($verdict) {
+    $res.Code = [string]$verdict
+    $res.Error = switch ([string]$verdict) {
+      'gone' { 'that entry is gone' }
+      'duplicate' { 'another entry already says that' }
+      default { [string]$verdict }
+    }
+    return $res
+  }
   $res.Ok = $true
   # an edit rewrites the text of a row without adding one: the log is the only trace that it
   # was this and not a capture

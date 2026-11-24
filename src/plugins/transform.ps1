@@ -146,7 +146,9 @@
       # GetNewClosure binds this mode into the block, the loop variable changes each pass
       $mode = [string]$m
       $out += @{
-        Label  = { param($rec) 'Transform as ' + [string](& (Get-PluginData 'transform' 'ModeLabel') $mode) }.GetNewClosure()
+        # the mode name stays as it is: it is the shape the output takes (camelCase, snake_case),
+        # and only the sentence around it is a word this language owns
+        Label  = { param($rec) Get-UiText 'plugin.transform.as' @([string](& (Get-PluginData 'transform' 'ModeLabel') $mode)) }.GetNewClosure()
         Test   = {
           param($rec)
           if ($null -eq $rec) { return $false }

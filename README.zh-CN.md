@@ -534,7 +534,7 @@ Plugins=item-marks,entry-actions
 | `Description` | 否 | 一句话说明，`clipboard config` 展示 |
 | `Commands` | 否 | `@{ 'open' = { param($value) ... } }` → `clipboard open <值>` |
 | `CommandHelp` / `CommandOrder` | 否 | 每个命令的一行说明（`clipboard help` 用）/ 打印顺序 |
-| `ContextMenu` | 否 | 右键菜单项数组；每项含 `Label`、`Test`（返回 `$false` 时不显示）、`Invoke`、可选的 `After = 'paste'`（动作结束后直接粘贴）。也可写成返回同构数组的脚本块，使项数跟随插件设置。`Invoke` 返回字符串时作为底部提示显示 |
+| `ContextMenu` | 否 | 右键菜单项数组；每项含 `Label`（文字可由语言包用 `plugin.<插件 Name>.<槽位>` 命名，缺键时用插件给的英文）、`Test`（返回 `$false` 时不显示）、`Invoke`、可选的 `After = 'paste'`（动作结束后直接粘贴）。也可写成返回同构数组的脚本块，使项数跟随插件设置。`Invoke` 返回字符串时作为底部提示显示 |
 | `PanelKeys` | 否 | 面板按键数组（`Key` / `Ctrl` / `Label` / `Test` / `Invoke`），不覆盖基础按键；`Invoke` 返回的字符串显示在底部提示行 |
 | `TypeGlyph` | 否 | `{ param($payload) ... }`，条目 → 行图标（返回空则不画）；第一个给出非空值的插件胜出 |
 | `QueryKinds` | 否 | 插件额外提供的 `type:` 名字（`@{ code = { param($payload) ... } }`），同名以先声明者为准 |

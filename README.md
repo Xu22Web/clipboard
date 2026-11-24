@@ -535,7 +535,7 @@ A plugin is one `.ps1` file returning a hashtable.
 | `Description` | no | one line, shown by `clipboard config` |
 | `Commands` | no | `@{ 'open' = { param($value) ... } }` → `clipboard open <value>` |
 | `CommandHelp` / `CommandOrder` | no | one line per command for `clipboard help` / the order they print in |
-| `ContextMenu` | no | context-menu rows; each has `Label`, `Test` (hidden when it returns `$false`), `Invoke` and an optional `After = 'paste'` (paste once the action ends). A script block returning the same shape is accepted, so the rows can follow the plugin's settings. A string `Invoke` returns becomes the footer note |
+| `ContextMenu` | no | context-menu rows; each has `Label` (a language file may name the words under `plugin.<Name>.<slot>`, the plugin's own English is the fallback), `Test` (hidden when it returns `$false`), `Invoke` and an optional `After = 'paste'` (paste once the action ends). A script block returning the same shape is accepted, so the rows can follow the plugin's settings. A string `Invoke` returns becomes the footer note |
 | `PanelKeys` | no | panel keys (`Key` / `Ctrl` / `Label` / `Test` / `Invoke`) that never override the base keys; a returned string lands in the footer |
 | `TypeGlyph` | no | `{ param($payload) ... }`, entry → row icon (nothing is drawn on an empty answer); the first plugin with a non-empty answer wins |
 | `QueryKinds` | no | extra `type:` names the plugin answers (`@{ code = { param($payload) ... } }`); the first declaration of a name wins |

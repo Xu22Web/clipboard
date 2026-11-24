@@ -63,10 +63,10 @@ function Get-ActionText($action, $record) {
       $text = [string](& $label $record)
       if ($text) { return $text }
     } catch { }
-    return 'Plugin action'
+    return (Get-UiTextOr 'plugin.fallback' 'Plugin action')
   }
   if ($label) { return [string]$label }
-  return 'Plugin action'
+  return (Get-UiTextOr 'plugin.fallback' 'Plugin action')
 }
 
 

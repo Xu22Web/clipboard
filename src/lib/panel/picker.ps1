@@ -494,9 +494,9 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
         $script:FootMode = 'hints'
         $script:FootMsg = ''
         $footL.Invalidate()
-        $count = ([string]$script:Filtered.Count) + ' of ' + ([string]$script:Entries.Count)
-        if ($script:StickyTop -gt 0) { $count = $count + '   ' + ([string]$script:StickyTop) + ' pinned' }
-        if ($script:CapturePaused) { $count = 'Paused: ' + $count }
+        $count = Get-UiText 'panel.foot.count' @([string]$script:Filtered.Count, [string]$script:Entries.Count)
+        if ($script:StickyTop -gt 0) { $count = $count + '   ' + (Get-UiText 'panel.foot.pinned' @([string]$script:StickyTop)) }
+        if ($script:CapturePaused) { $count = (Get-UiText 'panel.foot.paused' @($count)) }
         # the version sits at the right end of the same quiet label as the row count
         $footR.Text = $count + '   v' + $script:Version
       } catch { }

@@ -166,7 +166,7 @@
   }
   ContextMenu   = @(
     @{
-      Label  = { param($rec) if ($rec -and (Test-Mark $rec 'p')) { 'Remove pin' } else { 'Pin to top' } }
+      Label  = { param($rec) if ($rec -and (Test-Mark $rec 'p')) { Get-UiTextOr 'plugin.item-marks.unpin' 'Remove pin' } else { Get-UiTextOr 'plugin.item-marks.pin' 'Pin to top' } }
       Key    = 'Ctrl+P'
       Test   = { param($rec) $null -ne $rec }
       Invoke = {
@@ -182,7 +182,7 @@
       }
     }
     @{
-      Label  = { param($rec) if ($rec -and (Test-Mark $rec 's')) { 'Remove star' } else { 'Star' } }
+      Label  = { param($rec) if ($rec -and (Test-Mark $rec 's')) { Get-UiTextOr 'plugin.item-marks.unstar' 'Remove star' } else { Get-UiTextOr 'plugin.item-marks.star' 'Star' } }
       Key    = 'Ctrl+S'
       Test   = { param($rec) $null -ne $rec }
       Invoke = {
@@ -192,7 +192,7 @@
       }
     }
     @{
-      Label  = { param($rec) if ($rec -and (Test-Mark $rec 'h')) { 'Clear highlight' } else { 'Highlight' } }
+      Label  = { param($rec) if ($rec -and (Test-Mark $rec 'h')) { Get-UiTextOr 'plugin.item-marks.unhighlight' 'Clear highlight' } else { Get-UiTextOr 'plugin.item-marks.highlight' 'Highlight' } }
       Key    = 'Ctrl+H'
       Test   = { param($rec) $null -ne $rec }
       Invoke = {

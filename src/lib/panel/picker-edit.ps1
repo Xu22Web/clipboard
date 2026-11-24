@@ -258,10 +258,10 @@ function Begin-RowEdit {
       } catch { }
     })
 
-  $save = New-EditAction 'Save' $true (Px 76) (Px 26)
+  $save = New-EditAction (Get-UiText 'panel.edit.save') $true (Px 76) (Px 26)
   $save.SetBounds(($cw - $pad - (Px 76)), ($ch - (Px 46)), (Px 76), (Px 26))
   $save.Add_Click({ if ($null -ne $script:EditRow) { Request-RowEdit $true $script:EditRow.Box } })
-  $cancel = New-EditAction 'Cancel' $false (Px 76) (Px 26)
+  $cancel = New-EditAction (Get-UiText 'panel.edit.cancel') $false (Px 76) (Px 26)
   $cancel.SetBounds(($cw - $pad - (Px 76) - (Px 8) - (Px 76)), ($ch - (Px 46)), (Px 76), (Px 26))
   $cancel.Add_Click({ if ($null -ne $script:EditRow) { Request-RowEdit $false $script:EditRow.Box } })
 
@@ -338,8 +338,11 @@ function Complete-RowEdit([bool]$save) {
   # reason goes on the card's own error line instead of the footer
   $res = Update-RecordText $payload $text
   if (-not $res.Ok) {
-    try { $state.Err.Text = (Get-UiText 'panel.edit.notSaved' @([string]$res.Error)) } catch { }
-    & $ctx.Note ('[!] ' + [string]$res.Error) ([int]$script:Timing['FootWarn'])
+    # the store answers with a code as well as a sentence: the sentence is what the command line
+    # prints (English, like every other CLI line), the code is what this card words for itself
+    $why = Get-UiTextOr ('panel.edit.err.' + [string]$res.Code) ([string]$res.Error)
+    try { $state.Err.Text = (Get-UiText 'panel.edit.notSaved' @($why)) } catch { }
+    & $ctx.Note ('[!] ' + $why) ([int]$script:Timing['FootWarn'])
     return
   }
   Close-RowEdit

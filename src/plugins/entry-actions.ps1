@@ -333,7 +333,7 @@
   # entry and the Ctrl+O panel key, so both apply exactly the same rule.
   ContextMenu  = @(
     @{
-      Label  = 'Open link or path'
+      Label  = (Get-UiTextOr 'plugin.entry-actions.open' 'Open link or path')
       Test   = { param($rec) [bool](& (Get-PluginData 'entry-actions' 'CanOpen') $rec) }
       Invoke = { param($rec) if ($null -ne $rec) { [void](& (Get-PluginData 'entry-actions' 'OpenPayload') ([string]$rec.Payload)) } }
     }
