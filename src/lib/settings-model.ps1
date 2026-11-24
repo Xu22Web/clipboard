@@ -177,10 +177,13 @@ function Get-SettingHelp($schema, [string]$key) {
   if ($null -eq $spec) { return '' }
   # a read-only value is never typed here, so the line that would have described it says why
   if ($spec.Contains('ReadOnly')) {
+    # the reason is a sentence of the window like any other: the language file words it under
+    # settings.why.<Key>, and a language with none keeps the schema's own words
+    $reason = Get-UiTextOr ('settings.why.' + $key) ([string]$spec['ReadOnly'])
     # a row that opens a dialog is not read-only in the same sense: it is changed by picking, so
     # the line says what picking does instead of forbidding it
-    if ($spec.Contains('Pick')) { return (Get-UiText 'settings.help.pick' @([string]$spec['ReadOnly'])) }
-    return (Get-UiText 'settings.help.readonly' @([string]$spec['ReadOnly']))
+    if ($spec.Contains('Pick')) { return (Get-UiText 'settings.help.pick' @($reason)) }
+    return (Get-UiText 'settings.help.readonly' @($reason))
   }
   $d = ''
   if ($spec.Contains('Description')) { $d = [string]$spec['Description'] }
@@ -298,7 +301,7 @@ function Get-SettingsRows($schema, [string]$group, $pending = $null) {
         $enabled = $false
         # the reason is a sentence of the window, so the language file may word it - the identity
         # is the key that owns the row - and a language with none keeps the table's own words
-        $why = Get-UiTextOr ('why.' + [string]$owner.Key) ([string]$owner.Why)
+        $why = Get-UiTextOr ('settings.why.' + [string]$owner.Key) ([string]$owner.Why)
       }
     }
     $choices = @(Get-SettingChoices $schema $key)

@@ -158,6 +158,9 @@ function Show-Settings {
   # the row under the pointer, and whether the close button is: the only two hover states left
   $script:SetHover = -1
   $script:SetCloseHot = $false
+  $script:SetMinHot = $false
+  # where the pointer grabbed the header: a window with no title bar is moved by its own header
+  $script:SetDragFrom = $null
   # a shortcut row waiting for its chord, and the modifiers held so far
   $script:SetRecKey = ''
   $script:SetRecPreview = @()
@@ -274,7 +277,7 @@ function Show-Settings {
   }
 
   function Show-RowRefused($row) {
-    $why = Get-UiTextOr 'why.generic' 'this setting is not in effect'
+    $why = Get-UiTextOr 'settings.why.generic' 'this setting is not in effect'
     if ($row.ContainsKey('Why') -and $row.Why) { $why = [string]$row.Why }
     Show-Message ([string]$row.Label + ': ' + $why) $true
   }
@@ -867,6 +870,9 @@ function Show-Settings {
   }
 
   $form = New-Object Cb.FluentForm
+  # the resident and the panel reach this window through the script scope: a hotkey pressed while
+  # it is open asks it to step aside (see Hide-SettingsForPanel below)
+  $script:SetWindow = $form
   $form.Activates = $true
   $form.FormBorderStyle = 'None'
   $form.StartPosition = 'Manual'
@@ -1002,6 +1008,7 @@ function Show-Settings {
       }
       if ($listOnly) { return }
       # the close button, top right, where every window puts one
+      Draw-SettingsMin $g $pal $layout $script:SetMinHot
       Draw-SettingsClose $g $pal $layout $script:SetCloseHot
       # the footer is the window's own bar: the last change on the left, the actions on the right.
       # A page with nothing to act on (About) has no actions at all - a Save that can only ever be
@@ -1097,6 +1104,18 @@ function Show-Settings {
     $overClose = ($e.X -ge [int]$close.Left -and $e.X -le ([int]$close.Left + [int]$close.Width) -and
       $e.Y -ge [int]$close.Top -and $e.Y -le ([int]$close.Top + [int]$close.Height))
     if ($overClose -ne $script:SetCloseHot) { $script:SetCloseHot = $overClose; $form.Invalidate() }
+    $min = Get-SettingsMinRect $script:SetLayout
+    $overMin = ($e.X -ge [int]$min.Left -and $e.X -le ([int]$min.Left + [int]$min.Width) -and
+      $e.Y -ge [int]$min.Top -and $e.Y -le ([int]$min.Top + [int]$min.Height))
+    if ($overMin -ne $script:SetMinHot) { $script:SetMinHot = $overMin; $form.Invalidate() }
+    # a press on the header moves the window: there is no title bar to drag
+    if ($null -ne $script:SetDragFrom) {
+      $now = [Windows.Forms.Cursor]::Position
+      $form.Location = (New-Object Drawing.Point (
+          ([int]$script:SetDragFrom.Left + ($now.X - [int]$script:SetDragFrom.X)),
+          ([int]$script:SetDragFrom.Top + ($now.Y - [int]$script:SetDragFrom.Y))))
+      return
+    }
     # the footer actions light up under the pointer the way the edit card's buttons do
     $rects = @(Get-SettingsActionRects $script:SetLayout @($script:SetActions | ForEach-Object { [string]$_.Label }))
     $hotAction = -1
@@ -1135,10 +1154,25 @@ function Show-Settings {
 
   $form.Add_MouseUp({
     param($s, $e)
+    if ($null -ne $script:SetDragFrom) {
+      $script:SetDragFrom = $null
+      $form.Capture = $false
+      return
+    }
     if ($script:SetSbDrag -lt 0) { return }
     $script:SetSbDrag = -1
     $form.Capture = $false
     $form.Invalidate()
+  })
+
+  # A window in the taskbar is not listening. A chord being recorded ends when the window is put
+  # away, or the resident would keep handing the next hotkey to a window the user cannot see, and
+  # the history could not be opened until that recording timed out.
+  $form.Add_Resize({
+    param($s, $e)
+    if ($null -ne $script:SetDragFrom) { $script:SetDragFrom = $null; $form.Capture = $false }
+    if ($form.WindowState -ne [Windows.Forms.FormWindowState]::Minimized) { return }
+    if ($script:SetRecKey) { Cancel-Record }
   })
 
   $form.Add_MouseDown({
@@ -1193,6 +1227,20 @@ function Show-Settings {
     if ($e.X -ge [int]$close.Left -and $e.X -le ([int]$close.Left + [int]$close.Width) -and
       $e.Y -ge [int]$close.Top -and $e.Y -le ([int]$close.Top + [int]$close.Height)) {
       $form.Close()
+      return
+    }
+    $min = Get-SettingsMinRect $script:SetLayout
+    if ($e.X -ge [int]$min.Left -and $e.X -le ([int]$min.Left + [int]$min.Width) -and
+      $e.Y -ge [int]$min.Top -and $e.Y -le ([int]$min.Top + [int]$min.Height)) {
+      $form.WindowState = [Windows.Forms.FormWindowState]::Minimized
+      return
+    }
+    # the header is the title bar this window does not draw: a press on it moves the window, and
+    # the move is followed from the pointer's own position so a fast drag cannot outrun it
+    if ($e.Y -lt [int]$script:SetLayout.HeadHeight) {
+      $now = [Windows.Forms.Cursor]::Position
+      $script:SetDragFrom = @{ X = $now.X; Y = $now.Y; Left = $form.Left; Top = $form.Top }
+      $form.Capture = $true
       return
     }
     # the left column is a set of buttons, not a list to scroll
@@ -1385,6 +1433,7 @@ function Show-Settings {
     Close-Choices
     End-Edit $true
     try { $form.Dispose() } catch { }
+    $script:SetWindow = $null
     & $releaseSettings
     # one reload for the whole session, and only when a written key needed the resident to
     # read the file again (an install-only key does not)
@@ -1393,4 +1442,31 @@ function Show-Settings {
       $script:SettingsDirty = $false
     }
   }
+}
+
+# The panel and this window share one UI thread, and the window runs a modal loop. A hotkey pressed
+# while the window is open used to bring the window forward instead of showing the history; a
+# window that is not recording a chord now steps aside - minimised into the taskbar - so the panel
+# can open over it. The state it was in is kept, because it may have been maximised or already
+# lowered, and the restore puts that back.
+function Hide-SettingsForPanel {
+  $w = $script:SetWindow
+  if ($null -eq $w -or $w.IsDisposed) { return $false }
+  try {
+    $script:SetWindowState = $w.WindowState
+    $w.WindowState = [Windows.Forms.FormWindowState]::Minimized
+    return $true
+  } catch { return $false }
+}
+
+function Show-SettingsAfterPanel {
+  $w = $script:SetWindow
+  if ($null -eq $w -or $w.IsDisposed) { $script:SetWindowState = $null; return }
+  try {
+    $state = [Windows.Forms.FormWindowState]::Normal
+    if ($null -ne $script:SetWindowState) { $state = $script:SetWindowState }
+    $w.WindowState = $state
+    if ($state -ne [Windows.Forms.FormWindowState]::Minimized) { $w.Activate() }
+  } catch { }
+  $script:SetWindowState = $null
 }

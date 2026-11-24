@@ -8,13 +8,24 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     if (-not $Warm) { $script:PickerClose = $true }
     return
   }
-  # One modal window at a time in this process. The settings window runs a modal loop; opening
-  # the panel from inside that loop left two modal windows on one thread, the panel took the
-  # foreground and the settings window stopped taking input. A panel request while settings is
-  # open brings that window forward instead - the same thing the hotkey then does.
+  # One modal window at a time in this process: the settings window runs a modal loop, and opening
+  # the panel from inside that loop left two modal windows on one thread. A chord being recorded is
+  # the one case where the window keeps the front - the keys belong to the row being set - so only
+  # then does the request bring that window forward. Otherwise the window steps aside (minimised)
+  # and the panel opens over it, which is what pressing the hotkey asked for; it comes back when
+  # the panel closes.
+  $script:PickerOverSettings = $false
   if ((Get-Command Test-SettingsWindowOpen -ErrorAction SilentlyContinue) -and (Test-SettingsWindowOpen)) {
-    [void](Ring-SettingsAsk)
-    return
+    $recording = $false
+    if (Get-Command Test-HotkeyRecordRequested -ErrorAction SilentlyContinue) {
+      try { $recording = [bool](Test-HotkeyRecordRequested $script:StoreDir) } catch { $recording = $false }
+    }
+    if ($recording -or -not (Get-Command Hide-SettingsForPanel -ErrorAction SilentlyContinue)) {
+      [void](Ring-SettingsAsk)
+      return
+    }
+    $script:PickerOverSettings = [bool](Hide-SettingsForPanel)
+    if (-not $script:PickerOverSettings) { [void](Ring-SettingsAsk); return }
   }
   # A settings window in another process may have saved a language since this process started:
   # the panel is drawn from the words in force when it opens, so read the code first, and rebuild
@@ -1902,5 +1913,10 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     # an error can leave the window on screen with no loop left to serve it
     try { if ($form -and -not $form.IsDisposed) { $form.Close() } } catch { }
     $script:PickerOpen = $false
+    # the settings window that stepped aside comes back with the state it had
+    if ($script:PickerOverSettings) {
+      $script:PickerOverSettings = $false
+      if (Get-Command Show-SettingsAfterPanel -ErrorAction SilentlyContinue) { Show-SettingsAfterPanel }
+    }
   }
 }

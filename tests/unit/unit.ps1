@@ -3487,6 +3487,21 @@ try {
         }
       }
 
+      It 'a greyed row names its reason under settings.why' {
+        # The dependency table names the key that owns a row, and the window words the reason
+        # under settings.why.<Key>. Written without the prefix the key never matches, and the row
+        # kept drawing the table's English sentence in a Chinese window.
+        $t = Read-TextFile 'zh-CN'
+        Expect ($null -ne $t) 'zh-CN'
+        $missing = @()
+        $deps = Get-SettingEnabledBy
+        foreach ($k in @($deps.Keys)) {
+          $owner = $deps[$k]
+          if (-not $t.Map.ContainsKey('settings.why.' + [string]$owner.Key)) { $missing += [string]$owner.Key }
+        }
+        Expect ($missing.Count -eq 0) (@($missing | Select-Object -Unique) -join ', ')
+      }
+
       It 'a translation names every setting, group and unit the window draws' {
         # the window falls back to a spelling derived from the key, which is English by nature:
         # a language that means to be complete has to supply the words itself

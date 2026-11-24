@@ -964,8 +964,7 @@ function Get-SettingsCloseRect($layout) {
 }
 
 # A caption button: a faint cross that gains a hover fill, the way the panel's own buttons do.
-function Draw-SettingsClose($g, $pal, $layout, [bool]$hot) {
-  if ($null -eq $g -or $null -eq $pal) { return }
+function Draw-SettingsClose($g, $pal, $layout, [bool]$hot) {  if ($null -eq $g -or $null -eq $pal) { return }
   $r = Get-SettingsCloseRect $layout
   $radius = [int][Math]::Max(2, (Px 4))
   if ($hot) {
@@ -984,6 +983,41 @@ function Draw-SettingsClose($g, $pal, $layout, [bool]$hot) {
     $d = [int](Px 4)
     $g.DrawLine($pen, ($cx - $d), ($cy - $d), ($cx + $d), ($cy + $d))
     $g.DrawLine($pen, ($cx + $d), ($cy - $d), ($cx - $d), ($cy + $d))
+  } finally { $pen.Dispose() }
+}
+
+# The minimise button sits beside the close one, in the order a caption bar puts them.
+function Get-SettingsMinRect($layout) {
+  $size = [int]$layout.CloseSize
+  $left = [int]$layout.Width - (Px 8) - $size - (Px 4) - $size
+  return @{
+    Left = $left
+    Top = (Px 8)
+    Width = $size
+    Height = $size
+  }
+}
+
+# One rule across the middle, the glyph a window's own minimise button draws.
+function Draw-SettingsMin($g, $pal, $layout, [bool]$hot) {
+  if ($null -eq $g -or $null -eq $pal) { return }
+  $r = Get-SettingsMinRect $layout
+  $radius = [int][Math]::Max(2, (Px 4))
+  if ($hot) {
+    $brush = New-Object Drawing.SolidBrush $pal['HoverBg']
+    $path = New-RoundPath ([int]$r.Left) ([int]$r.Top) ([int]$r.Width) ([int]$r.Height) $radius
+    try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
+  }
+  $ink = $pal['Dim']
+  if ($hot) { $ink = $pal['Text'] }
+  $pen = New-Object Drawing.Pen $ink
+  $pen.StartCap = [Drawing.Drawing2D.LineCap]::Round
+  $pen.EndCap = [Drawing.Drawing2D.LineCap]::Round
+  try {
+    $cx = [int]$r.Left + [int]($r.Width / 2)
+    $cy = [int]$r.Top + [int]($r.Height / 2)
+    $d = [int](Px 4)
+    $g.DrawLine($pen, ($cx - $d), $cy, ($cx + $d), $cy)
   } finally { $pen.Dispose() }
 }
 
