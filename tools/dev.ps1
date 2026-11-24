@@ -86,26 +86,22 @@ if ($Interval -le 0) {
 # Both compiled products come from src\. A .cs file in Includes is a promise: the loop builds
 # its product before the first start and again after every save, so the file the program runs
 # never outlives the source. Which folder produces what is a table in tools\utils\pipeline.ps1,
-# shared with the build, so neither tool names a folder itself.
+# shared with the build, and the compile command is the entry that table names - neither tool
+# names a folder or a compiler itself.
 function Invoke-NativeBuild($products) {
   foreach ($p in @($products)) {
     if ($null -eq $p) { continue }
-    $compiler = Join-Path $root $p.Script
-    if (-not (Test-Path -LiteralPath $compiler)) { continue }
-    $out = Join-Path $srcDir $p.Out
-    $parent = Split-Path -Parent $out
-    if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
     $swProduct = Start-Step
-    $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $compiler -Out $out 2>&1
-    # the product script reports its own result inside the text below; it is not repeated here,
-    # only what it says when something went wrong is passed on
-    foreach ($line in @($log)) {
+    $r = Invoke-ProductBuild $p $bundler $srcDir
+    # the bundler reports its own stages; only what it says when something went wrong is passed
+    # on, and the step line here states the result
+    foreach ($line in @($r.Log)) {
       $text = ([string]$line).Trim()
       if (-not $text -or $text.StartsWith('[ok]')) { continue }
       Write-Note $text
     }
-    if (Test-Path -LiteralPath $out) {
-      $kb = [Math]::Round((Get-Item -LiteralPath $out).Length / 1KB, 1)
+    if ($r.Ok) {
+      $kb = [Math]::Round((Get-Item -LiteralPath $r.Out).Length / 1KB, 1)
       Write-Done $swProduct ('compiled ' + $p.Label + '   ' + $kb + ' KB')
     }
   }
@@ -125,6 +121,9 @@ $baseDir = Resolve-BaseDir $root $baseSetting
 if (-not (Test-Path -LiteralPath $baseDir)) { Fail ('cli.ini [dev] BaseUrl does not exist: ' + $baseSetting) }
 # a .cs in the list is what makes its product part of the loop
 . (Join-Path $root 'tools\utils\pipeline.ps1')
+# the table names the entry; this is the one program that builds it
+$bundler = Join-Path $root 'tools\bundler\bundler.ps1'
+if (-not (Test-Path -LiteralPath $bundler)) { Fail ('missing: ' + $bundler) }
 $watched = @(Expand-GlobList $baseDir $includeGlobs $excludeGlobs)
 if ($watched.Count -eq 0) { Fail 'cli.ini [dev] Includes reaches no file' }
 $watchedProducts = @{}

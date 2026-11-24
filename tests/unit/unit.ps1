@@ -431,6 +431,22 @@ try {
         Expect ($missingTool.Count -eq 0) ($missingTool -join ', ')
       } -Skip $script:StructMinified
 
+      # a product names the cli.ini entry that compiles it. Renaming an entry without this table
+      # leaves the .cs travelling as data and the product missing, which no test would notice:
+      # the package still starts, a second slower per command.
+      It 'every product names a C# entry cli.ini declares' {
+        . (Join-Path $repoRoot 'tools\utils\ini.ps1')
+        . (Join-Path $repoRoot 'tools\utils\pipeline.ps1')
+        $cfg = Import-IniMap (Join-Path $repoRoot 'cli.ini')
+        $bad = @()
+        foreach ($p in @(Get-ProductList)) {
+          $kind = 'entry.' + [string]$p.Entry + '.Kind'
+          if (-not $cfg.ContainsKey($kind)) { $bad += ([string]$p.Entry + ': no entry'); continue }
+          if ([string]$cfg[$kind] -ne 'cs') { $bad += ([string]$p.Entry + ': not Kind=cs') }
+        }
+        Expect ($bad.Count -eq 0) ($bad -join ', ')
+      } -Skip $script:StructMinified
+
       It 'package.ini declares every command' {
         $pkgText = ''
         if (Test-Path -LiteralPath (Join-Path $repoRoot 'package.ini')) { $pkgText = [IO.File]::ReadAllText((Join-Path $repoRoot 'package.ini')) }

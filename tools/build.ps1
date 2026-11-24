@@ -187,28 +187,25 @@ foreach ($f in $pkgFiles) {
   $productSources[$p.Dir].Add($f)
 }
 $productOut = @{}
+# the compile command belongs to the entry the table names, not to this script: pipeline.ps1
+# runs it through the bundler, and what comes back is a log and whether the file is there
+$bundler = Join-Path $root 'tools\bundler\bundler.ps1'
 foreach ($p in @(Get-ProductList)) {
   if (-not $productSources.ContainsKey($p.Dir)) { continue }
-  $built = Join-Path $srcRoot $p.Out
-  $compiler = Join-Path $root $p.Script
-  if (Test-Path -LiteralPath $compiler) {
-    $swProduct = Start-Step
-    $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $compiler -Out $built 2>&1
-    # The product script reports its own result, and this loop reports the step: forwarding its
-    # success line as well said the same thing twice, the first time indented as a detail. Only
-    # what it says when something went wrong is worth passing on.
-    foreach ($line in @($log)) {
-      $text = ([string]$line).Trim()
-      if (-not $text -or $text.StartsWith('[ok]')) { continue }
-      Write-Note $text
-    }
-    if (Test-Path -LiteralPath $built) {
-      $kb = [Math]::Round((Get-Item -LiteralPath $built).Length / 1KB, 1)
-      Write-Done $swProduct ('compiled ' + $p.Label + '   ' + $kb + ' KB')
-    }
+  $swProduct = Start-Step
+  $r = Invoke-ProductBuild $p $bundler $srcRoot
+  # The build reports the step and the bundler reports its stages; forwarding its success line
+  # as well said the same thing twice, the first time indented as a detail. Only what it says
+  # when something went wrong is worth passing on.
+  foreach ($line in @($r.Log)) {
+    $text = ([string]$line).Trim()
+    if (-not $text -or $text.StartsWith('[ok]')) { continue }
+    Write-Note $text
   }
-  if (Test-Path -LiteralPath $built) {
-    $productOut[$p.Out] = $built
+  if ($r.Ok) {
+    $kb = [Math]::Round((Get-Item -LiteralPath $r.Out).Length / 1KB, 1)
+    Write-Done $swProduct ('compiled ' + $p.Label + '   ' + $kb + ' KB')
+    $productOut[$p.Out] = $r.Out
   } else {
     Write-Note ('no ' + $p.Label + ' - its sources travel and the program compiles them')
     foreach ($s in @($productSources[$p.Dir])) { $plainFiles.Add($s) }

@@ -5,6 +5,7 @@
       cli bundle -Inspect              say which modules a bundle cannot inline
       cli bundle -Entry core           build one entry
       cli bundle -Entry core -Config x.ini
+      cli bundle -Entry core -From x.cs -Out y.dll    the same entry, another source
 
   A bundle is one file made of several modules. The stages are the ones a front-end bundler has,
   and each is a plugin under plugins\ so an entry only borrows the ones its product lists:
@@ -27,6 +28,9 @@ param(
   [string]$Entry = '',
   [string]$Config = '',
   [string]$Out = '',
+  # the root file of a C# entry, or the modules of a bundle, when a caller compiles a copy of
+  # the same source somewhere else (the test suite builds a client out of a temp src tree)
+  [string]$From = '',
   [switch]$All,
   [switch]$Worker,
   [switch]$Inspect,
@@ -315,6 +319,9 @@ function Invoke-BundleCompile([string]$name) {
   $from = EntryValue $name 'From'
   if (-not $product) { throw ('entry ' + $name + ' has no Product=') }
   if (-not $to) { throw ('entry ' + $name + ' has no To=') }
+  # -From names the root file of another copy of the same source; without it the entry's own
+  # From= is used, resolved against the repository root
+  if ($From) { $from = $From }
   if (-not $from) { throw ('entry ' + $name + ' has no From=') }
   $append = @()
   foreach ($one in @((EntryValue $name 'Append') -split '[,;]')) {
@@ -349,7 +356,9 @@ function Invoke-BundleCompile([string]$name) {
   if ($ctx.Entry.Target) { $target = $ctx.Entry.Target }
   Write-Field 'product' ($product + '   target ' + $target + '   optimize on')
   Write-Field 'output' (Get-RelativePath $outPath)
-  Write-Field 'root' (Get-RelativePath (Join-Path $root $from))
+  $rootShown = $from
+  if (-not [IO.Path]::IsPathRooted($rootShown)) { $rootShown = Join-Path $root $rootShown }
+  Write-Field 'root' (Get-RelativePath $rootShown)
   Write-Field 'plugins' (Get-BundleChain $product)
   $files = @(& $hooks['part'] $ctx)
   $result = & $hooks['compile'] $ctx $files

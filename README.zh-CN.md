@@ -337,7 +337,7 @@ cli bundle       # 按 cli.ini 构建一个入口（-Inspect 列出无法内联�
 | 文件 | 用途 | 段 |
 |---|---|---|
 | `package.ini` | 项目元数据与命令，`cli` 读取 | `[package]` 的 `Name` / `Version`，`[scripts]` 的命令名 |
-| `cli.ini` | 工具配置，`cli dev` / `cli build` / `cli test` 读取 | `[dev]` `[build]` `[test]` |
+| `cli.ini` | 工具配置，`cli dev` / `cli build` / `cli test` / `cli bundle` 读取 | `[dev]` `[build]` `[test]` `[product.*]` `[entry.*]` |
 | `clipboard.ini` | 程序设置，由 `config init` 生成 | 基础键不分组；插件键写在 `[<插件名>]` 段（平铺的 `<插件名>.<Key>` 仍可读） |
 | `themes\*.ini` | 主题定义 | `[palette]` `[fonts]` `[metrics]` `[<插件名>]` |
 | `schema\*.ps1` | `clipboard.ini` 与主题的 schema | — |
@@ -669,7 +669,8 @@ flowchart LR
 ```
 package.ini             项目元数据与命令：Name / Version / [scripts] 下的命令名（cli 读取）
 cli.sh  cli.cmd  cli.ps1   命令入口（sh / CMD / PowerShell），执行 package.ini 中的命令
-cli.ini                 工具配置：[dev] 监听与轮询、[build] 打包选项、[test] 并行度与分组
+cli.ini                 工具配置：[dev] 监听与轮询、[build] 打包选项、[test] 并行度与分组、
+                        [product.*] 插件链、[entry.*] 每个产物一节
 scripts/install.bat     安装脚本：config init → migrate → install（打包时复制到产物根目录）
 scripts/uninstall.bat   卸载脚本：stop → uninstall purge（同上）
 tools/build.ps1         打包脚本（按 cli.ini 的 [build] 段打包到 dist\clipboard-<version>\）
@@ -1047,7 +1048,23 @@ cli build -Config other.ini     # 换一份配置
 | `Overwrite` | `1` | `1` = 覆盖同版本已存在的目录；`0` = 目录已存在时报错退出 |
 | `Zip` | `0` | `1` = 另外再打一个 `clipboard-<version>.zip` |
 | `Includes` | 见下 | 产物文件清单，相对 `BaseUrl` 的通配，语法同 `[dev]`；必须写出且必须含 `src/<Name>.ps1`、`.cmd`、`.sh` |
-| `Excludes` | 空 | 从产物中剔除的文件，最后执行 |
+| `Excludes` | 空 | 从产物中剔除的文件，最后应用 |
+
+同一份文件里另两段属于 `cli bundle`，`cli build` 编译 C# 产品时也读。`[product.<名称>] Chain=` 声明一类产物经过的阶段：脚本合并是 `resolve, treeshake, merge, render, verify`，C# 产品是 `cs-part, cs-compile`。`[entry.<名称>]` 是一个产物。
+
+| 入口键 | 说明 |
+|---|---|
+| `Product` | 用哪个 `[product.*]` 的链构建 |
+| `To` | 产物写到哪里，相对仓库根 |
+| `Kind` | `cs` = 编译 C# 而不是合并脚本，此时改用 `From` 与 `Target` |
+| `From` | 根源文件；它写的 `#part` 决定参与编译的文件，且不得指到该文件所在目录之外 |
+| `Target` | `library`（默认）或 `exe` |
+| `Append` | 声明之外再追加的文件通配 |
+| `Modules` | （脚本合并）模块清单，按加载顺序 |
+| `Keep` | （脚本合并）不许被改名的名字 |
+| `Minify` `Rename` `Treeshake` | 逐入口覆盖 `[build]` 的取值 |
+
+`cli bundle -Entry <名称>` 构建一个入口，`-All` 构建全部。`cli client` 与 `cli assembly` 就是入口 `client` 与 `main`，`cli build` 也走同一个调用编译它们，所以编译器参数只有一处。
 
 `Includes` 默认 `src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat`。
 

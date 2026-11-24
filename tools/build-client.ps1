@@ -9,6 +9,11 @@
       cli client                        write src\client.exe
       cli client -Out dist\client.exe    write it somewhere else
 
+  The compiler and its flags are the bundler's client entry (cli.ini [entry.client], built by
+  tools\bundler\plugins\60-cs-compile.ps1), so this file only knows the command line. -Source
+  exists because the test suite compiles its own copy of the same file out of a temp src tree
+  instead of the repository's.
+
   The assembly (lib\assembly\clipboard.dll) is a separate product: tools\build-assembly.ps1
   builds that one.
 #>
@@ -20,31 +25,11 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 . (Join-Path $root 'tools\utils\console.ps1')
-. (Join-Path $root 'tools\utils\csc.ps1')
-if (-not $Source) { $Source = Join-Path $root 'src\lib\client\client.cs' }
-if (-not $Out) { $Out = Join-Path $root 'src\client.exe' }
+$bundler = Join-Path $root 'tools\bundler\bundler.ps1'
+if (-not (Test-Path -LiteralPath $bundler)) { Write-Fail ('missing: ' + $bundler); exit 1 }
 
-if (-not (Test-Path -LiteralPath $Source)) { Write-Fail ('missing: ' + $Source); exit 1 }
-
-$csc = Find-Csc
-if (-not $csc) {
-  Write-Fail 'no C# compiler found (looked for the .NET Framework 4 csc.exe)'
-  Write-Note 'the tool still works without it: the PowerShell client answers the same commands'
-  exit 1
-}
-
-$parent = Split-Path -Parent $Out
-if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-
-$sw = Start-Step
-$cscArgs = @('-nologo', '-optimize+', '-target:exe', ('-out:' + $Out), $Source)
-$output = & $csc @cscArgs 2>&1
-$code = $LASTEXITCODE
-Write-CscLog $output
-if ($code -ne 0 -or -not (Test-Path -LiteralPath $Out)) {
-  Write-Fail ('compile failed (' + $code + ')')
-  exit 1
-}
-
-$size = (Get-Item -LiteralPath $Out).Length
-Write-Done $sw ($Out + '   ' + [Math]::Round($size / 1024, 1) + ' KB')
+$bundlerArgs = @('-Entry', 'client')
+if ($Source) { $bundlerArgs += @('-From', $Source) }
+if ($Out) { $bundlerArgs += @('-Out', $Out) }
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bundler @bundlerArgs
+exit $LASTEXITCODE

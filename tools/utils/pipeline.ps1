@@ -23,11 +23,15 @@ $script:LibraryRules = @(
 
 # A folder whose C# is compiled into one file. Dir is the package folder (or a comma separated
 # list of them, since one product can be built from more than one tree), Ext the suffix of the
-# sources that belong to it, Script the compiler, Out where the product lands in the package,
-# Required whether a package without it cannot start.
+# sources that belong to it, Entry the cli.ini entry that compiles it, Out where the product
+# lands in the package, Required whether a package without it cannot start.
+#
+# Entry names the compile command; this table never runs a compiler. `cli bundle -Entry <name>`
+# compiles it (tools\bundler\plugins\60-cs-compile.ps1), so the compiler and its flags live in
+# one place and neither the build nor the watcher knows what a .cs costs to build.
 $script:Products = @(
-  @{ Dir = 'lib\client'; Ext = '.cs'; Script = 'tools\build-client.ps1'; Out = 'client.exe'; Label = 'client.exe'; Required = $false }
-  @{ Dir = 'main'; Ext = '.cs'; Script = 'tools\build-assembly.ps1'; Out = 'lib\assembly\clipboard.dll'; Label = 'lib\assembly\clipboard.dll'; Required = $true }
+  @{ Dir = 'lib\client'; Ext = '.cs'; Entry = 'client'; Out = 'client.exe'; Label = 'client.exe'; Required = $false }
+  @{ Dir = 'main'; Ext = '.cs'; Entry = 'main'; Out = 'lib\assembly\clipboard.dll'; Label = 'lib\assembly\clipboard.dll'; Required = $true }
 )
 
 # Files outside src\ keep the shape they have under the repository root (docs\ stays docs\).
@@ -98,4 +102,20 @@ function Get-SourceRel([string]$srcRoot, [string]$file) {
   $rootFull = [IO.Path]::GetFullPath($srcRoot).TrimEnd([char]92, [char]47) + [IO.Path]::DirectorySeparatorChar
   if (-not $full.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) { return '' }
   return $full.Substring($rootFull.Length)
+}
+
+# Compile one product into src\. The command is the cli.ini entry the table names, run by the
+# bundler, so neither the build nor the watcher knows how C# is compiled or what flags it wants.
+# A product that could not be built is not an error here: the caller decides what a missing
+# product means - the build lets its sources travel, the watcher waits for the next save.
+function Invoke-ProductBuild($product, [string]$bundler, [string]$srcRoot) {
+  $out = Join-Path $srcRoot ([string]$product.Out)
+  $parent = Split-Path -Parent $out
+  if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+  $log = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bundler -Entry ([string]$product.Entry) -Out $out 2>&1
+  return @{
+    Ok  = (Test-Path -LiteralPath $out)
+    Out = $out
+    Log = @($log)
+  }
 }

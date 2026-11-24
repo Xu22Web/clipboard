@@ -124,9 +124,16 @@ $Plugin = @{
   Hooks = @{
     part = {
       param($ctx)
-      $entry = Join-Path $ctx.Root ([string]$ctx.Entry.From)
+      # From= is written relative to the repository root, while a caller that compiles another
+      # copy of the same source hands over an absolute path: Join-Path would glue the two into
+      # one impossible path, so a rooted value is used as it stands.
+      $entry = [string]$ctx.Entry.From
+      if (-not [IO.Path]::IsPathRooted($entry)) { $entry = Join-Path $ctx.Root $entry }
       if (-not $entry -or -not (Test-Path -LiteralPath $entry)) { throw ('no root file: ' + [string]$ctx.Entry.From) }
-      $mainRoot = Join-Path $ctx.Root 'src\main'
+      # the folder a directive may not leave is the one the root file sits in: src\main for the
+      # type library, src\lib\client for the single-source client. A caller that compiles another
+      # copy of the same source moves the root, and the tree moves with it.
+      $mainRoot = Split-Path -Parent $entry
       $files = @(Resolve-CSharpParts $ctx.Root $entry $mainRoot)
       $declared = @($files).Count
       foreach ($glob in @($ctx.Entry.Append)) {

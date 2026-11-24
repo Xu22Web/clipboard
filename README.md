@@ -338,7 +338,7 @@ Every ini in the repository uses the same syntax (`package.ini`, `cli.ini`, `cli
 | File | Purpose | Sections |
 |---|---|---|
 | `package.ini` | project metadata and commands, read by `cli` | `Name` / `Version` under `[package]`, the command names under `[scripts]` |
-| `cli.ini` | tool settings, read by `cli dev` / `cli build` / `cli test` | `[dev]` `[build]` `[test]` |
+| `cli.ini` | tool settings, read by `cli dev` / `cli build` / `cli test` / `cli bundle` | `[dev]` `[build]` `[test]` `[product.*]` `[entry.*]` |
 | `clipboard.ini` | program settings, written by `config init` | base keys are ungrouped; plugin keys live in `[<plugin>]` (a flat `<plugin>.<Key>` still reads) |
 | `themes\*.ini` | theme definition | `[palette]` `[fonts]` `[metrics]` `[<plugin>]` |
 | `schema\*.ps1` | the schema of `clipboard.ini` and of a theme | — |
@@ -670,7 +670,8 @@ Layout, relative to the repository root:
 ```
 package.ini             project metadata and commands (Name / Version / the [scripts] names); read by cli
 cli.sh  cli.cmd  cli.ps1  the command entry points (sh / CMD / PowerShell) running package.ini
-cli.ini                 tool settings: [dev] watch and poll, [build] packaging, [test] workers
+cli.ini                 tool settings: [dev] watch and poll, [build] packaging, [test] workers,
+                        [product.*] plugin chains, [entry.*] one output each
 scripts/install.bat     config init -> migrate -> install (copied to the package root)
 scripts/uninstall.bat   stop -> uninstall purge (same)
 tools/build.ps1         packaging, by the [build] section of cli.ini, into dist\clipboard-<version>\
@@ -1027,7 +1028,7 @@ Every tool prints through `tools\utils\console.ps1`: `[..]` a step (cyan), `[ok]
 
 `cli build` runs `tools\build.ps1` and writes into `dist\clipboard-<version>\` (the version comes from `package.ini`).
 
-`cli bundle` is the second half of that tooling and is independent of it: it builds one *entry* - several modules as one file - with the stages named in that entry's `[product.<name>]` chain in `cli.ini` (`resolve`, `treeshake`, `merge`, `render`, `verify`) and the plugin files under `tools\bundler\plugins\`. The entries, the chains and the copy list all live in `cli.ini`, the way a vite project keeps its inputs and plugins in `vite.config`. A module boundary is always a parser node, never a line of text: a bundle is emitted statement by statement through each node's extent, then read back and compared with the modules it was built from. `cli bundle -Inspect` lists, for every file under `src\`, whether a bundle could inline it (a `param` block, a `begin`/`process`/`end` block or a `trap` cannot be glued into a larger script) and which modules call a name nothing can follow. Nothing in `dist\` from this command is shipped yet: `cli build` still packages the module tree. A module boundary is always a parser node, never a line of text: a bundle is emitted statement by statement through each node's extent, then read back and compared with the modules it was built from. `cli bundle -Inspect` lists, for every file under `src\`, whether a bundle could inline it (a `param` block, a `begin`/`process`/`end` block or a `trap` cannot be glued into a larger script) and which modules call a name nothing can follow. Nothing in `dist\` from this command is shipped yet: `cli build` still packages the module tree.
+`cli bundle` is the second half of that tooling and is independent of it: it builds one *entry* - several modules as one file - with the stages named in that entry's `[product.<name>]` chain in `cli.ini` (`resolve`, `treeshake`, `merge`, `render`, `verify`) and the plugin files under `tools\bundler\plugins\`. The entries, the chains and the copy list all live in `cli.ini`, the way a vite project keeps its inputs and plugins in `vite.config`. A module boundary is always a parser node, never a line of text: a bundle is emitted statement by statement through each node's extent, then read back and compared with the modules it was built from. `cli bundle -Inspect` lists, for every file under `src\`, whether a bundle could inline it (a `param` block, a `begin`/`process`/`end` block or a `trap` cannot be glued into a larger script) and which modules call a name nothing can follow. Nothing in `dist\` from this command is shipped yet: `cli build` still packages the module tree.
 
 A module can state its own edges with two directives at the top of the file: `#@use <module id>, ...` for the modules it calls and `#@export <function>, ...` for what the rest of the program may call. They are comments on purpose - they describe the build, not the program, so the shipped copy runs the same file with no cost and nothing at run time has to understand them. With them the bundler checks the entry *before* building: a call to a function its module does not export, a call into a module the entry does not list (the mistake that otherwise only shows up as "module group too small"), an export naming a function that does not exist, and the same name exported twice. Modules without directives are left unchecked and only make the "would drop" answer unknown. `cli bundle -Inspect -Suggest` prints, for every module, the `#@use` and `#@export` lines its real calls imply.
 
@@ -1051,6 +1052,22 @@ The `[build]` section of `cli.ini` (a top-level `build.OutDir=...` also works):
 | `Zip` | `0` | `1` = also write `clipboard-<version>.zip` |
 | `Includes` | see below | the file list of the package, globs under `BaseUrl` like `[dev]`; required, and it has to contain `src/<Name>.ps1`, `.cmd` and `.sh` |
 | `Excludes` | empty | files to drop from the package, applied last |
+
+Two more sections of the same file belong to `cli bundle`, and to `cli build` when it compiles the C# products. `[product.<name>] Chain=` names the stages one kind of output goes through: `resolve, treeshake, merge, render, verify` for a script bundle, `cs-part, cs-compile` for a C# product. `[entry.<name>]` is one output.
+
+| Entry key | Meaning |
+|---|---|
+| `Product` | the `[product.*]` whose chain builds it |
+| `To` | where the output is written, relative to the repository root |
+| `Kind` | `cs` = compile C# instead of bundling scripts; the entry then uses `From` and `Target` |
+| `From` | the root source; its `#part` lines decide the file list, and a directive may not leave that file's folder |
+| `Target` | `library` (default) or `exe` |
+| `Append` | further globs added to the file list, after the declared ones |
+| `Modules` | (script bundle) the modules, in load order |
+| `Keep` | (script bundle) names the bundle must not rename |
+| `Minify` `Rename` `Treeshake` | per-entry overrides of the `[build]` values |
+
+`cli bundle -Entry <name>` builds one entry and `-All` builds every one. `cli client` and `cli assembly` are entries `client` and `main` under their own names, and `cli build` compiles both through the same call, so no tool spells out a compiler flag of its own.
 
 `Includes` defaults to `src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat`.
 
