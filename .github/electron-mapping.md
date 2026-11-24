@@ -90,8 +90,73 @@ dot-source 读完。`picker-geom.ps1` 留在包外，因为 `status` 这类不�
 | `[entry.client]`（`Kind=cs`） | 一个 exe | `preload/client.exe` |
 | `[entry.main]`（`Kind=cs`） | 一个 dll | `main/clipboard.dll` |
 
+### 与 `electron.vite.config.ts` 的逐项对应
+
+一个 electron-vite 项目有三个顶层键，各带自己的插件与输入输出。把这个仓库的 `cli.ini`
+写成同样的形状，是下面这样：
+
+```ts
+export default defineConfig({
+  main: {                                  // [product.main] + [entry.main]
+    plugins: [csPart(), csCompile()],      // Chain=cs-part,cs-compile
+    build: { rollupOptions: {
+      input: 'src/main/index.cs',          // From=
+      output: { file: 'main/clipboard.dll' } // To=
+    } }
+  },
+  preload: {                               // [product.main] + [entry.client]
+    plugins: [csPart(), csCompile()],      // 同一条链，第二个产物
+    build: { rollupOptions: {
+      input: 'src/preload/client.cs',
+      output: { file: 'preload/client.exe' }
+    } }
+  },
+  renderer: {                              // [product.renderer] + [entry.app]
+    plugins: [resolve(), treeshake(), merge(), render(), verify()],
+    build: {
+      rollupOptions: {
+        input: [ /* Modules= 的二十八个文件 */ ],
+        external: [ /* External= 的十一个模块 */ ],
+        output: { file: 'renderer/app.ps1' }
+      },
+      minify: false,                       // Minify=0：压缩交给打包器侧
+      treeshake: false                     // [build] Treeshake=0
+    }
+  }
+})
+```
+
+| vite / electron-vite | `cli.ini` | 说明 |
+|---|---|---|
+| 三个顶层键 `main` / `preload` / `renderer` | `[product.<name>]` 与 `[entry.<name>]` 两层 | 见下面的差异说明 |
+| `plugins: [...]` | `Chain=resolve,treeshake,merge,render,verify` | 名字序列；`plugins\10-resolve.ps1` 的序号就是顺序，相当于 `enforce` 的粗粒度版本 |
+| `build.rollupOptions.input` | `Modules=`（脚本）/ `From=`（C#） | 脚本一侧是显式的文件清单，不是从入口跟 import |
+| `build.rollupOptions.output.file` | `To=` | C# 产品的 `To=` 同时是包内路径 |
+| `build.rollupOptions.external` | `External=` | 同名同义：这些模块不进产物，运行期按路径解析 |
+| `build.minify` | `[build] Minify`，入口可覆盖 `Minify=` | `0` 表示压缩推迟到打包器 |
+| `mangle.reserved`（terser） | `Keep=` | 不许改名的名字 |
+| `build.treeshake` | `[build] Treeshake` | `0` = 保留所有定义 |
+| `build.outDir` | `[build] OutDir` | 指向 `dist\`，包目录名由版本拼出 |
+| `server` / `watch` | `[dev] Interval` / `Includes` / `Excludes` | 没有 dev server，只有监视与重启 |
+| `define` | `package.ini` 的 `Version` | 打包时由 `version` handler 写成常量 |
+| electron-builder 的 `files` | `[copy] Includes` / `Excludes` | |
+| terser 的 `drop_console` 一类 | 无 | 没有需要按目标裁剪的调试语句 |
+
+三处结构上的差异：
+
+1. **顶层是「链」与「产物」两层，不是三个目标。** vite 里一个目标一个 build：一个 input、
+   一个 output、一套插件。这里两条链喂四个入口——`[product.renderer]` 同时喂
+   `[entry.app]`（入包）与 `[entry.core]`（只做校验），`[product.main]` 同时喂
+   `[entry.main]` 与 `[entry.client]`。合并成 `[target.*]` 会让 `Chain=` 在两处重复。
+2. **没有 `resolve.alias`。** 模块之间的引用由每个文件开头的 `#@use` 声明，路径由清单与
+   目录推导；别名会引入第二套名字来源。
+3. **打包器的选项不在 `cli.ini` 的入口段里。** `Overwrite`、`Verify`、`Zip`、`Workers`
+   属于「一个发布」，放在 `[build]`；vite 的配置里没有对应项，它们在 electron-builder 的
+   命令行上。
+
 `Ship=1` 的入口由 `build.ps1` 合并，然后与旁边的文件走同一张压缩/改名表——一个包里只有一个
-改名器，所以一个短名在包内处处同义。
+改名器，所以一个短名在包内处处同义。它也是唯一跨越「链」与「发布」两层的键：在
+electron-builder 里，这相当于把产物写进 `files`、把源目录排除掉。
 
 文件级处理落在 `tools/bundler/assets/`：每种文件一个 handler，`assets.ps1` 里的表决定哪个
 路径用哪个。`version` 那一行是链式的——先把 `lib/base.ps1` 的版本块换成常量，再交给
