@@ -739,13 +739,15 @@ src/                    程序本体（打包只读这个目录）
   lib/dispatch.ps1        Invoke-Main：Initialize-Main（Apply-Config + 装配插件）→ Invoke-Dispatch
   lib/proxy.ps1           命令代理
   lib/client/client.cs    编译版客户端源码
-  lib/assembly/*.cs       尚未迁走的类型库源码（cb.native.cs）
   lib/assembly/clipboard.dll 类型库产物（不入库；cli assembly 生成）
 
   main/                  类型库：一个目录一件事，统一由 index.cs 决定编译集合
   main/index.cs           决定编译集合的 #part 清单：没人引用的源文件根本不参与编译
   main/search/search.cs     Cb.Search，搜索框使用的行过滤
   main/reactivity/          Cb.ReactiveBag、Cb.Reactive、Cb.ComputedCell：陷阱、批量写入的调度、派生值
+  main/ui/win.cs          win32 表面：入口点、辅助功能接口、插入符定位
+  main/ui/                窗体、行表面、托盘与托盘菜单
+  main/media/             Cb.Rtf 与 Cb.Rich：图片块，以及把文档排进设备上下文
 
   lib/ui/                两个自绘窗口共用的盒子与控件
   lib/ui/layout.ps1        切盒子：内缩、纵向堆叠、横向分栏、滚动条滑块的尺寸与位置

@@ -740,15 +740,17 @@ src/                    the program (the only folder packaging reads)
   lib/dispatch.ps1        Invoke-Main: Initialize-Main (Apply-Config + plugins) -> Invoke-Dispatch
   lib/proxy.ps1           the command proxy
   lib/client/client.cs    the compiled client's source
-  lib/assembly/*.cs       the type library source that has not moved yet (cb.native.cs)
   lib/assembly/clipboard.dll the compiled library (not committed; cli assembly)
 
   main/                   the type library, one folder per job, compiled through index.cs
   main/index.cs           the #part list that decides what is compiled: a source nothing reaches
                             is not compiled at all
-  main/search/search.cs     Cb.Search, the row filter the search box runs
+  main/ui/win.cs            the win32 surface: entry points, the accessibility interface, the caret helpers
+  main/ui/                  the forms, the row surface, the tray and its menu
+  main/search/              Cb.Search, the row filter the search box runs
   main/reactivity/          Cb.ReactiveBag, Cb.Reactive and Cb.ComputedCell: the traps, the
                             scheduler that batches a write, and the derived value
+  main/media/               Cb.Rtf and Cb.Rich: picture blocks, and a document laid into a device context
 
   lib/ui/                 boxes and controls both drawn windows share
   lib/ui/layout.ps1         cutting a box: inset, stack, columns, a scrollbar's thumb

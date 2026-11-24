@@ -30,8 +30,8 @@ $buildCfg = Join-Path $tmpRoot 'build-test.ini'
 # the package is this one list, and the cases that trim it override this key. The assembly
 # sources are in the list because a package cannot start without that product or its source;
 # the client stays out of the default list so most cases skip a compile.
-$allFiles = 'Includes=src/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat'
-$withClient = 'Includes=src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat'
+$allFiles = 'Includes=src/**/*.ps1,src/main/**/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat'
+$withClient = 'Includes=src/**/*.ps1,src/lib/client/*.cs,src/main/**/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat'
 $buildDefaults = @('BaseUrl=.', 'Minify=1', 'Rename=1', 'Verify=0', 'Overwrite=1', 'Zip=0', $allFiles, 'Excludes=')
 function Write-BuildCfg([string]$outDir, [string[]]$override) {
   $lines = @('OutDir=' + $outDir) + $buildDefaults
@@ -277,7 +277,7 @@ Describe 'int' {
   Describe 'a trimmed list' {
     BeforeAll {
       $script:pkgOut2 = Join-Path $tmpRoot 'pkg2'
-      $oneTheme = 'Includes=src/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/win11-light.ini,scripts/**.bat,README.md,LICENSE,docs/**/*'
+      $oneTheme = 'Includes=src/**/*.ps1,src/main/**/*.cs,src/*.cmd,src/*.sh,src/themes/win11-light.ini,scripts/**.bat,README.md,LICENSE,docs/**/*'
       Write-BuildCfg $script:pkgOut2 @('Minify=0', $oneTheme, 'Excludes=src/plugins/item-marks.ps1')
       $script:bout2 = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
       $script:pkgDir2 = Join-Path $script:pkgOut2 ('clipboard-' + $programVersion)
@@ -302,7 +302,7 @@ Describe 'int' {
 
   Describe 'a list without the entry point' {
     It 'a list without clipboard.ps1 stops the build' {
-      $noEntry = 'Includes=src/lib/**/*.ps1,src/lib/assembly/*.cs,src/*.cmd,src/*.sh'
+      $noEntry = 'Includes=src/lib/**/*.ps1,src/main/**/*.cs,src/*.cmd,src/*.sh'
       Write-BuildCfg (Join-Path $tmpRoot 'pkg2') @('Minify=0', $noEntry)
       $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
       Expect (($out -join ' ') -match 'does not ship clipboard\.ps1') (($out | Select-Object -Last 1) -as [string])

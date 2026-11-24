@@ -27,7 +27,7 @@ $script:LibraryRules = @(
 # Required whether a package without it cannot start.
 $script:Products = @(
   @{ Dir = 'lib\client'; Ext = '.cs'; Script = 'tools\build-client.ps1'; Out = 'client.exe'; Label = 'client.exe'; Required = $false }
-  @{ Dir = 'lib\assembly,main'; Ext = '.cs'; Script = 'tools\build-assembly.ps1'; Out = 'lib\assembly\clipboard.dll'; Label = 'lib\assembly\clipboard.dll'; Required = $true }
+  @{ Dir = 'main'; Ext = '.cs'; Script = 'tools\build-assembly.ps1'; Out = 'lib\assembly\clipboard.dll'; Label = 'lib\assembly\clipboard.dll'; Required = $true }
 )
 
 # Files outside src\ keep the shape they have under the repository root (docs\ stays docs\).

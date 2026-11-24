@@ -1,7 +1,15 @@
+// src\main\ui\win.cs - the win32 surface: the entry points, the interfaces reached through it,
+// and the caret and target helpers built on both (see lib/native.ps1).
+//
+// Everything the platform layer needs from the OS is declared here once, so a PowerShell caller
+// reaches a real signature instead of a late-bound name: the handles are IntPtr, the strings are
+// UTF-16 the way the API takes them, and a call that answers by reference writes its numbers
+// back. The accessibility interface is declared rather than reached through IDispatch for
+// exactly that reason (measured on Chromium: accLocation through InvokeMember read 0,0 0x0).
+//
+// Compiled through src\main\index.cs; the namespace and the type name are unchanged.
 using System;
-using System.Collections;
 using System.Collections.Generic;
-using System.Dynamic;
 using System.Runtime.InteropServices;
 namespace Cb {
   // IAccessible declared here instead of being reached through late binding, because
@@ -944,29 +952,5 @@ namespace Cb {
     }
   }
   // Rtf moved to src\main\media\rtf.cs, with the note on why the braces are counted by hand.
-  // Rich moved to src\main\media\rich.cs, with the note on why the layout is done off screen.
-  // Shell moved to src\main\ui\shell.cs, with the note on why an AppUserModelID is declared.
-  // Tray moved to src\main\ui\tray.cs, with the note on why the icon is drawn rather than
-  // loaded and why each size is its own entry.
-  // HotWindow and FluentForm moved to src\main\ui\hot-window.cs and src\main\ui\fluent-form.cs.
-
-  // ---- the row surface: Cb.PinList and Cb.PinDrawEventArgs live in src\main\ui\ ----------
-  // pin-list.cs owns the scroll position, the wheel and the click; pin-draw-event-args.cs is
-  // what it hands the caller for one row. Same namespace, so nothing that used them changed.
-
-  // ---- the tray menu (lib/panel/tray-menu.ps1) -----------------------------------------
-  // Windows draws a menu in the system colours: a light surface with the system font, beside a
-  // panel and a settings window that are both drawn from one palette. This menu is drawn from
-  // that palette instead - the same surface and the same frame as the other windows, a glyph
-  // column, rows that light up the way a panel row does, a right-hand column for a hint or a
-  // switch, and hairlines instead of the system's etched separators.
-  //
-  // The numbers arrive already multiplied by the DPI scale, like every other pixel constant in
-  // the tool (utils/dpi.ps1), so nothing here has to know about scaling.
-  // TraySkin moved to src\main\ui\tray-skin.cs, and TrayItem to src\main\ui\tray-item.cs.
-  // TrayMenu and TrayMenuRenderer moved to src\main\ui\tray-menu.cs.
-
-  // Everything else that used to live in this file is compiled from src\main now: the win32
-  // surface stays below in Win, and search\, media\, reactivity\ and the rest of ui\ each have
-  // a file of their own. The namespace never changed, so no caller noticed.
 }
+
