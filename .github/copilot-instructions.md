@@ -89,5 +89,7 @@
 - 每节 2–5 条，每条一句、不换行续写；全文控制在约 15 行以内
 - 不写包体积、压缩测试、构建耗时、工作流步骤等过程数据
 - 用中文写；版本号、文件名、命令与设置键保持原样
-- 流程：改 `package.ini` 的 `Version` → 附注标签 `v<版本>` → 推 master 与标签 → 工作流按 `package.ini` 打包并建 Release（自动生成说明）→ 用 `gh release edit v<版本> --notes-file <文件>` 把说明覆盖为上面的模板内容
+- 每个版本存一份 `docs\release-notes\v<版本>.md`（文件名与标签一致，如 `v0.5.0.md`）；首个版本首行写「首个版本。」，没有内容的小节照常省略
+- 流程：改 `package.ini` 的 `Version` → 写 `docs\release-notes\v<版本>.md` → 附注标签 `v<版本>` → 推 master 与标签 → 工作流按 `package.ini` 打包并建 Release（自动生成说明）→ 用 `gh release edit v<版本> --notes-file docs\release-notes\v<版本>.md` 把说明覆盖为该文件
+- 旧版本的说明也以这两份文件为准：改了历史说明要同时改文件与对应的 GitHub Release
 

@@ -994,7 +994,7 @@ Nothing under `tools\` dot-sources a file in `src\`: `tools\utils\` carries the 
 
 Every tool prints through `tools\utils\console.ps1`: `[..]` a step (cyan), `[ok]` done with its time (green), `[!]` a warning (yellow), `[x]` a failure (red), with detail lines indented and dimmed; under a second the time is shown in ms. The levels are `silent < error < warn < info`: `-Quiet` keeps only `[!]` and `[x]`, `-Silent` only `[x]`, and `CLIPBOARD_LOG_LEVEL` sets a level for the whole shell (a switch wins). `cli dev -Timestamp` prefixes every line with `HH:mm:ss`. Redirected output, or `NO_COLOR`, leaves plain text and `FORCE_COLOR=1` keeps the colour; `cli nosuchcmd` suggests the closest command name.
 
-`README.md` and `README.zh-CN.md` are the documents for users; the plugin and theme pages live under `docs\<language>\`.
+`README.md` and `README.zh-CN.md` are the documents for users; the plugin and theme pages live under `docs\<language>\`, and `docs\release-notes\` holds one file per release, named after its tag (`v0.5.0.md`). A release note is written in Chinese only, and the same text is what the GitHub release shows.
 
 ## Packaging
 

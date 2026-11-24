@@ -994,7 +994,7 @@ Describe 'int' {
 
 工具的日志都经 `tools\utils\console.ps1` 输出：`[..]` 步骤（青）、`[ok]` 完成并附耗时（绿）、`[!]` 警告（黄）、`[x]` 失败（红），明细行缩进变暗；耗时不足一秒显示毫秒。级别为 `silent < error < warn < info`：`-Quiet` 只留 `[!]` 与 `[x]`，`-Silent` 只留 `[x]`，环境变量 `CLIPBOARD_LOG_LEVEL` 可为整条 shell 指定级别（命令行开关优先），`cli dev -Timestamp` 给每行加 `HH:mm:ss`。输出被重定向、或设置了 `NO_COLOR` 时只留纯文本，`FORCE_COLOR=1` 强制保留颜色；`cli nosuchcmd` 会给出最接近的命令名。
 
-`README.md` 是对外文档，插件与主题的说明页在 `docs\`。
+`README.md` 与 `README.zh-CN.md` 是对外文档，插件与主题的说明页在 `docs\<语言>\`；`docs\release-notes\` 按标签名放每个版本的发布说明（如 `v0.5.0.md`），只用中文，GitHub 上的发布说明与该文件一致。
 
 ## 打包分发
 
