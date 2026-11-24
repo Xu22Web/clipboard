@@ -129,10 +129,10 @@ if (-not $Library -and $Command -eq 'put' -and [string]::IsNullOrEmpty($Value)) 
 }
 $loadedModules = @{}
 if (-not $Library -and -not $NoProxy -and $env:CLIPBOARD_NO_PROXY -ne '1') {
-  # only the proxy itself: it needs no ini and no path, so the fast path never parses one
+  # only the proxy itself: it reads src\ipc\channels.ini, the one file that says what may cross
   . (Join-Path $Root 'lib\proxy.ps1')
   $loadedModules['lib\proxy'] = $true
-  Invoke-ProxyAttempt $Root $commandGroups $Command $Value $Sub $Arg $Count $PSBoundParameters
+  Invoke-ProxyAttempt $Root $Command $Value $Sub $Arg $Count $PSBoundParameters
 }
 #endregion
 

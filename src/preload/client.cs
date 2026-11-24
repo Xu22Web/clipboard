@@ -81,7 +81,10 @@ static class Client
     string cmd = pos[0];
     string name = cmd.ToLowerInvariant();
     if (name.Length == 0) return Fallback;
-    if (Array.IndexOf(Direct, name) >= 0) return Fallback;
+    // What may cross is one file, ipc\channels.ini, shared with the PowerShell half; a name
+    // it does not list is a plugin verb, which crosses when the file says so.
+    Channels channels = Channels.Load(Path.Combine(root, "ipc", "channels.ini"));
+    if (!channels.Allows(name)) return Fallback;
 
     string value = pos.Count > 1 ? pos[1] : "";
     string sub = pos.Count > 2 ? pos[2] : "";
@@ -115,12 +118,71 @@ static class Client
     return 0;
   }
 
-  // commands the resident never answers: they change settings, move the store, touch the
-  // registry, or are the resident itself. Same list as $script:ProxyDirectOnly in proxy.ps1.
-  static readonly string[] Direct = new string[] {
-    "config", "themes", "install", "uninstall", "serve", "stop", "ui", "settings", "edit",
-    "export", "import", "backup", "restore", "migrate"
-  };
+  // The channel table, read from ipc\channels.ini: one [channel.<name>] section per built-in
+  // command with Remote=1 (the resident answers it) or Remote=0 (the command line runs it), and
+  // [channels] Plugins=1 to let a verb with no section of its own cross. The same file is read
+  // by lib\proxy.ps1, so neither half can drift from the other.
+  //
+  // A missing or unreadable file refuses everything: this client then returns Fallback and the
+  // caller runs the command the slow way, which is the same answer a second later.
+  sealed class Channels
+  {
+    readonly Dictionary<string, bool> remote = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+    bool plugins;
+    static readonly Channels None = new Channels();
+
+    public bool Allows(string name)
+    {
+      bool listed;
+      if (remote.TryGetValue(name, out listed)) return listed;
+      if (!plugins) return false;
+      return Verb(name);
+    }
+
+    // the shape lib\proxy.ps1 accepts: a lower case verb, nothing else
+    static bool Verb(string s)
+    {
+      if (s.Length == 0) return false;
+      char c = s[0];
+      if (!(c >= 'a' && c <= 'z')) return false;
+      foreach (char ch in s)
+      {
+        bool ok = (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-';
+        if (!ok) return false;
+      }
+      return true;
+    }
+
+    public static Channels Load(string path)
+    {
+      try
+      {
+        if (!File.Exists(path)) return None;
+        Channels table = new Channels();
+        string section = "";
+        foreach (string raw in File.ReadAllLines(path))
+        {
+          string t = raw.Trim();
+          if (t.Length < 2 || t[0] == '#' || t[0] == ';') continue;
+          if (t[0] == '[' && t[t.Length - 1] == ']')
+          {
+            section = t.Substring(1, t.Length - 2).Trim().ToLowerInvariant();
+            continue;
+          }
+          int eq = t.IndexOf('=');
+          if (eq < 1) continue;
+          string key = t.Substring(0, eq).Trim().ToLowerInvariant();
+          string value = t.Substring(eq + 1).Trim().ToLowerInvariant();
+          bool on = value == "1" || value == "true" || value == "yes" || value == "on";
+          if (section == "channels" && key == "plugins") { table.plugins = on; continue; }
+          if (!section.StartsWith("channel.") || section.Length <= 8) continue;
+          if (key == "remote") table.remote[section.Substring(8)] = on;
+        }
+        return table;
+      }
+      catch { return None; }
+    }
+  }
 
   // the caller passes the folder as "%~dp0." (a trailing separator would escape the closing
   // quote in the batch file); the resident compares against the folder the way

@@ -359,6 +359,33 @@ try {
         Expect ($script:StructGroupFiles.Count -ge 15 -and $missingGroupFile.Count -eq 0) (($missingGroupFile -join ', ') + ' / ' + $script:StructGroupFiles.Count + ' modules')
       } -Skip $script:StructMinified
 
+      # what may cross the process boundary is one file, read by both halves; these two cases
+      # say the rule holds and that no built-in command can appear without stating its place
+      It 'the channel table decides what may cross' {
+        . (Join-Path $srcRoot 'lib\proxy.ps1')
+        Expect (Test-Proxyable 'list' $srcRoot) 'list is not proxied'
+        Expect (Test-Proxyable 'put' $srcRoot) 'put is not proxied'
+        Expect (-not (Test-Proxyable 'config' $srcRoot)) 'config is proxied'
+        Expect (-not (Test-Proxyable 'serve' $srcRoot)) 'serve is proxied'
+        Expect (-not (Test-Proxyable '-h' $srcRoot)) 'a flag is proxied'
+        # a plugin verb has no section of its own: the table's Plugins=1 is what lets it cross
+        Expect (Test-Proxyable 'pin' $srcRoot) 'a plugin verb is not proxied'
+        # a tool root without the file loses the fast path rather than the answer
+        Expect (-not (Test-Proxyable 'list' (Join-Path $srcRoot 'nonesuch'))) 'a missing table still proxied'
+      }
+
+      It 'every built-in command states whether it crosses' {
+        # a command with no section is treated as a plugin verb, so leaving one out would send
+        # it over the pipe by accident the day it starts moving settings or the store
+        . (Join-Path $srcRoot 'lib\proxy.ps1')
+        $table = Get-ProxyChannels $srcRoot
+        $unlisted = @($script:StructTableKeys | Where-Object { -not $table.Remote.ContainsKey($_) })
+        Expect ($script:StructTableKeys.Count -ge 15 -and $unlisted.Count -eq 0) ($unlisted -join ', ')
+        # and the inverse: a section that names nothing the dispatcher knows is stale
+        $stale = @($table.Remote.Keys | Where-Object { $script:StructTableKeys -notcontains $_ -and @('serve', 'ui', 'help') -notcontains $_ })
+        Expect ($stale.Count -eq 0) ($stale -join ', ')
+      }
+
       It 'every command can reach the functions it calls' {
         # `status` prints the panel size and shape, which needs picker-geom: without it the
         # one-shot path throws, reloads every group and registers the plugins a second time -

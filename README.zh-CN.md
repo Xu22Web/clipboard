@@ -622,12 +622,12 @@ clipboard config set entry-actions.Reveal 0
 
 ## 命令代理
 
-每条命令都要启动一个 PowerShell 进程，其中大部分时间用于解析本程序；常驻进程已完成这部分解析。可代理的命令因此通过命名管道交给常驻进程执行：
+每条命令都要启动一个 PowerShell 进程，其中大部分时间用于解析本程序；常驻进程已完成这部分解析。哪些命令可以改由常驻进程通过命名管道回答，只写在 `src\ipc\channels.ini`：一个内置命令一节 `[channel.<名称>]`，`Remote=1` 表示由常驻进程回答，`Remote=0` 表示由命令行自己执行；`[channels] Plugins=1` 让没有自己那一节的插件动词也能通过。`lib\proxy.ps1` 的两半都读它，`preload\client.cs` 也读它，所以不存在两份需要对齐的清单；文件缺失时什么都不放行，每条命令走慢路径，结果不变。
 
 | 项 | 说明 |
 |---|---|
-| 代理的命令 | `get` / `list` / `put` / `pick` / `del` / `clear` / `status` / `pause` / `resume` / `version` / `help`，以及所有插件动词 |
-| 直连的命令 | `config` / `themes` / `settings` / `install` / `uninstall` / `serve` / `stop` / `ui` / `edit` / `export` / `import` / `backup` / `restore` / `migrate`，它们改设置、换存储、动注册表或本身就是常驻进程 |
+| 代理的命令 | `get` / `list` / `put` / `pick` / `del` / `clear` / `status` / `pause` / `resume` / `version`（`Remote=1`），以及所有插件动词 |
+| 直连的命令 | `config` / `themes` / `settings` / `install` / `uninstall` / `serve` / `stop` / `ui` / `edit` / `export` / `import` / `backup` / `restore` / `migrate` / `help`（`Remote=0`），它们改设置、换存储、动注册表或本身就是常驻进程 |
 | 失败处理 | 连接超时、往返超过 2 s 或版本不一致时静默回退到新进程，行为与没有该功能时一致 |
 | 关闭 | `-NoProxy` 开关，或环境变量 `CLIPBOARD_NO_PROXY=1` |
 
@@ -743,6 +743,8 @@ src/                    程序本体（打包只读这个目录）
 
   preload/                编译版客户端：拼请求帧、打印应答（产物 src\client.exe 不入库）
   preload/client.cs       这里只有这一个源文件
+
+  ipc/channels.ini        哪些命令由常驻进程回答，lib\proxy.ps1 与 client.cs 都读它
 
   main/                  类型库：一个目录一件事，统一由 index.cs 决定编译集合
   main/index.cs           决定编译集合的 #part 清单：没人引用的源文件根本不参与编译
@@ -1073,7 +1075,7 @@ cli build -Config other.ini     # 换一份配置
 
 `cli bundle -Entry <名称>` 构建一个入口，`-All` 构建全部。`cli client` 与 `cli assembly` 就是入口 `client` 与 `main`，`cli build` 也走同一个调用编译它们，所以编译器参数只有一处。
 
-`[copy] Includes` 默认 `src/**/*.ps1,src/preload/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat`。
+`[copy] Includes` 默认 `src/**/*.ps1,src/preload/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,src/ipc/*.ini,scripts/**.bat`。
 
 ```ini
 # 精简包：一套主题 + 带文档，不压缩不验证

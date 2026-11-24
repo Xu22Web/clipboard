@@ -18,12 +18,44 @@
 # it runs inside the resident, where everything is loaded.
 
 $script:ProxyFrameLimit = 1048576
-# names the resident never answers: they change settings, move the store, touch the registry,
-# or are the resident itself
-$script:ProxyDirectOnly = @(
-  '', 'config', 'themes', 'install', 'uninstall', 'serve', 'stop', 'ui', 'settings', 'edit',
-  'export', 'import', 'backup', 'restore', 'migrate', '-h', '--help'
-)
+
+# What may cross the boundary is data, not code: src\ipc\channels.ini holds one section per
+# built-in command saying whether the resident answers it. The same file is read by
+# src\preload\client.cs, so the three readers agree by construction instead of by a comment
+# saying "same list as". A missing file refuses everything: the fast path is lost, never the
+# answer.
+$script:ProxyChannels = $null
+$script:ProxyChannelsRoot = ''
+
+function Get-ProxyChannels([string]$Root) {
+  if ($null -ne $script:ProxyChannels -and $script:ProxyChannelsRoot -eq $Root) { return $script:ProxyChannels }
+  $table = @{ Plugins = $false; Remote = @{} }
+  $path = ''
+  if ($Root) { $path = Join-Path (Join-Path $Root 'ipc') 'channels.ini' }
+  if ($path -and (Test-Path -LiteralPath $path)) {
+    $section = ''
+    foreach ($line in [IO.File]::ReadAllLines($path)) {
+      $t = $line.Trim()
+      if ($t.Length -lt 2 -or $t[0] -eq '#' -or $t[0] -eq ';') { continue }
+      if ($t[0] -eq '[' -and $t[$t.Length - 1] -eq ']') {
+        $section = $t.Substring(1, $t.Length - 2).Trim().ToLowerInvariant()
+        continue
+      }
+      $eq = $t.IndexOf('=')
+      if ($eq -lt 1) { continue }
+      $key = $t.Substring(0, $eq).Trim().ToLowerInvariant()
+      $value = $t.Substring($eq + 1).Trim().ToLowerInvariant()
+      $on = @('1', 'true', 'yes', 'on') -contains $value
+      if ($section -eq 'channels' -and $key -eq 'plugins') { $table.Plugins = $on; continue }
+      if (-not $section.StartsWith('channel.')) { continue }
+      if ($section.Length -le 8) { continue }
+      if ($key -eq 'remote') { $table.Remote[$section.Substring(8)] = $on }
+    }
+  }
+  $script:ProxyChannels = $table
+  $script:ProxyChannelsRoot = $Root
+  return $table
+}
 
 # The pipe one user talks over: one name per account, not per data folder. That keeps the
 # client cheap - it needs no ini and no path, so it can be up and connected before the module
@@ -41,14 +73,16 @@ function Get-ProxyPipeName {
   return ('clipboard-cmd-' + $hex)
 }
 
-# May this command be answered by the resident? A name the dispatcher knows is proxyable
-# unless it is on the direct list; a name it does not know is a plugin verb, and those read
-# and write entries exactly like the built-in ones do.
-function Test-Proxyable([string]$Command, $CommandGroups) {
+# May this command be answered by the resident? The channel table says so for every built-in
+# command; a name shaped like a verb with no section of its own is a plugin verb, and those
+# read and write entries exactly the way the built-in ones do.
+function Test-Proxyable([string]$Command, [string]$Root = '') {
   $name = ''
   if ($null -ne $Command) { $name = ([string]$Command).Trim().ToLowerInvariant() }
-  if ($script:ProxyDirectOnly -contains $name) { return $false }
-  if ($CommandGroups -and $CommandGroups.ContainsKey($name)) { return $true }
+  if (-not $Root) { $Root = $script:ProxyChannelsRoot }
+  $table = Get-ProxyChannels $Root
+  if ($table.Remote.ContainsKey($name)) { return [bool]$table.Remote[$name] }
+  if (-not $table.Plugins) { return $false }
   return ($name -match '^[a-z][a-z0-9_-]*$')
 }
 
@@ -106,8 +140,8 @@ function Get-ProxyField($Request, [string]$Name, [string]$Fallback = '') {
 # no resident answered, so the caller goes on to parse this program and run the command the
 # slow way. The request carries what the caller bound, so `config set key ""` stays different
 # from `config set key`.
-function Invoke-ProxyAttempt([string]$Root, $CommandGroups, [string]$Command, $Value, $Sub, $Arg, [int]$Count, $Bound) {
-  if (-not (Test-Proxyable $Command $CommandGroups)) { return }
+function Invoke-ProxyAttempt([string]$Root, [string]$Command, $Value, $Sub, $Arg, [int]$Count, $Bound) {
+  if (-not (Test-Proxyable $Command $Root)) { return }
   $switches = @()
   foreach ($s in @('Purge', 'All', 'Media', 'Replace')) {
     if ($Bound -and $Bound.ContainsKey($s) -and $Bound[$s]) { $switches += $s }
@@ -236,7 +270,7 @@ function Step-ProxyListener($Listener, [string]$Root) {
       if (-not $sameRoot) {
         $reply.code = 2
         $reply.err = 'wrong root'
-      } elseif (-not (Test-Proxyable (Get-ProxyField $request 'cmd') $null)) {
+      } elseif (-not (Test-Proxyable (Get-ProxyField $request 'cmd') $Root)) {
         $reply.code = 3
         $reply.err = 'not proxied'
       } else {

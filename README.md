@@ -623,12 +623,12 @@ What a plugin does when it loads and fails:
 
 ## Command proxy
 
-Every command starts a PowerShell process, and most of that time goes into parsing this program — which the resident has already done. The commands that can therefore run inside the resident by way of a named pipe:
+Every command starts a PowerShell process, and most of that time goes into parsing this program — which the resident has already done. Which commands may therefore run inside the resident by way of a named pipe is one file, `src\ipc\channels.ini`: one `[channel.<name>]` section per built-in command with `Remote=1` (the resident answers it) or `Remote=0` (the command line runs it), and `[channels] Plugins=1` to let a verb without a section of its own cross. `lib\proxy.ps1` reads it for both halves and `preload\client.cs` reads it too, so nothing has to keep two lists in step; a missing file crosses nothing and every command simply takes the slow path.
 
 | | |
 |---|---|
-| proxied | `get` / `list` / `put` / `pick` / `del` / `clear` / `status` / `pause` / `resume` / `version` / `help` and every plugin verb |
-| direct | `config` / `themes` / `settings` / `install` / `uninstall` / `serve` / `stop` / `ui` / `edit` / `export` / `import` / `backup` / `restore` / `migrate` — they change settings, swap the store, touch the registry or are the resident itself |
+| proxied | `get` / `list` / `put` / `pick` / `del` / `clear` / `status` / `pause` / `resume` / `version` and every plugin verb (`Remote=1`) |
+| direct | `config` / `themes` / `settings` / `install` / `uninstall` / `serve` / `stop` / `ui` / `edit` / `export` / `import` / `backup` / `restore` / `migrate` / `help` — they change settings, swap the store, touch the registry or are the resident itself (`Remote=0`) |
 | on failure | a connection timeout, a round trip over 2 s or a version mismatch silently falls back to a new process, exactly as without the feature |
 | off | the `-NoProxy` switch, or `CLIPBOARD_NO_PROXY=1` |
 
@@ -744,6 +744,8 @@ src/                    the program (the only folder packaging reads)
 
   preload/                the compiled client: it builds the request frame and prints the answer
   preload/client.cs       the only source here (not committed output: src\client.exe)
+
+  ipc/channels.ini        which commands the resident answers, read by lib\proxy.ps1 and client.cs
 
   main/                   the type library, one folder per job, compiled through index.cs
   main/index.cs           the #part list that decides what is compiled: a source nothing reaches
@@ -1076,7 +1078,7 @@ Two more sections of the same file belong to `cli bundle`, and to `cli build` wh
 
 `cli bundle -Entry <name>` builds one entry and `-All` builds every one. `cli client` and `cli assembly` are entries `client` and `main` under their own names, and `cli build` compiles both through the same call, so no tool spells out a compiler flag of its own.
 
-`[copy] Includes` defaults to `src/**/*.ps1,src/preload/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat`.
+`[copy] Includes` defaults to `src/**/*.ps1,src/preload/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,src/ipc/*.ini,scripts/**.bat`.
 
 ```ini
 # a lean package: one theme, with the documents, no minify, no verify

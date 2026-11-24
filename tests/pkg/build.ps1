@@ -185,6 +185,15 @@ Describe 'int' {
       if (-not (Test-Built $script:pkgDir $script:bout)) { return }
       Expect ((Test-Path -LiteralPath (Join-Path $script:pkgDir 'plugins\item-marks.ps1')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'themes\win11-dark.ini'))) 'plugins and themes have to travel'
     }
+    # both halves of the command proxy read src\ipc\channels.ini; without it in the package every
+    # command still answers, but each one pays the 2.5 s start instead of the pipe
+    It 'package keeps the channel table' {
+      if (-not (Test-Built $script:pkgDir $script:bout)) { return }
+      $table = Join-Path $script:pkgDir 'ipc\channels.ini'
+      if (-not (Test-Path -LiteralPath $table)) { Expect $false 'ipc\channels.ini has to travel'; return }
+      $remote = @([IO.File]::ReadAllLines($table) | Where-Object { $_ -match '^\s*Remote\s*=\s*1' })
+      Expect ($remote.Count -ge 5) ('channels with Remote=1: ' + [string]$remote.Count)
+    }
     # a language file is the one ini whose values are not ASCII: written with the plain encoder
     # it ships a page of "?", which a Chinese window would draw as its own name
     It 'a language file keeps its words in the package' {
