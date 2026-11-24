@@ -33,6 +33,10 @@
 // #part search/search.cs
 // #part media/rtf.cs
 // #part media/rich.cs
+// #part ui/tray.cs
+// #part ui/tray-skin.cs
+// #part ui/tray-item.cs
+// #part ui/pin-list.cs
 // #part ui/shell.cs
 // #part ui/hot-window.cs
 // #part ui/fluent-form.cs
