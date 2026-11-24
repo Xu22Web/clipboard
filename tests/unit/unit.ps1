@@ -420,7 +420,9 @@ try {
           'tools\bundler\lib\ast.ps1', 'tools\bundler\lib\graph.ps1', 'tools\bundler\lib\emit.ps1',
           'tools\bundler\plugins\10-resolve.ps1', 'tools\bundler\plugins\20-treeshake.ps1',
           'tools\bundler\plugins\30-merge.ps1', 'tools\bundler\plugins\40-render.ps1',
+          'tools\bundler\plugins\50-cs-part.ps1', 'tools\bundler\plugins\60-cs-compile.ps1',
           'tools\bundler\plugins\90-verify.ps1',
+          'src\main\index.cs', 'src\main\search\search.cs',
           'src\lib\client\client.cs', 'src\lib\assembly\cb.native.cs')
         $missingTool = @()
         foreach ($tool in $tooling) {
@@ -523,6 +525,29 @@ try {
           $decl = Get-BundleDirectives (Get-BundleParse $text)
           Expect ((@($decl.Uses) -join ',') -eq 'lib/ui/layout') (@($decl.Uses) -join ',')
           Expect ((@($decl.Exports) -join ',') -eq 'New-UiBox,Get-UiStack') (@($decl.Exports) -join ',')
+        }
+
+        # a directive is only a directive when it is a real line comment: a "#part" inside a
+        # string or a block comment must not pull a file into the compile set
+        It 'the C# part scanner ignores a #part that is not a line comment' {
+          . (Join-Path $repoRoot 'tools\bundler\plugins\50-cs-part.ps1')
+          $tmpIn = Join-Path ([IO.Path]::GetTempPath()) ('parts-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.cs')
+          try {
+            $q = [string][char]34
+            $sample = @(
+              ('var a = ' + $q + '// #part string.cs' + $q + ';'),
+              ('var b = @' + $q + '// #part verbatim.cs' + $q + ';'),
+              ('var c = $' + $q + '// #part interpolated.cs' + $q + ';'),
+              '/* // #part block.cs */',
+              ('var d = ' + $q + 'escape: // #part literal.cs' + $q + ';'),
+              '  // #part real.cs'
+            ) -join "`r`n"
+            [IO.File]::WriteAllText($tmpIn, $sample, $Utf8)
+            $parts = @(Get-CSharpParts $tmpIn)
+            Expect ((@($parts) -join ',') -eq 'real.cs') (@($parts) -join ',')
+          } finally {
+            Remove-Item -LiteralPath $tmpIn -Force -ErrorAction SilentlyContinue
+          }
         }
 
         It 'the bundler refuses a call to a function the owner does not export' {

@@ -6,10 +6,24 @@
 # No clipboard, no settings and no panel state beyond the DPI factor, so a command, the
 # picker and the resident loop can all call into this file.
 
-# The C# lives in lib\assembly (cb.native.cs) and can be compiled ahead of time into
-# lib\assembly\clipboard.dll by tools\build-assembly.ps1: a cold panel open takes 850 ms with
-# the assembly against 1050 ms compiling the source (measured, three runs each). A development
-# copy that never ran the build keeps the source path: no assembly, compile the .cs.
+# The C# is compiled from a file list, not from one file: the types live in lib\assembly
+# (what is left of cb.native.cs) and in main\ (the blocks that have moved to src\main, each
+# reached through src\main\index.cs). tools\build-assembly.ps1 compiles the same list ahead of
+# time into lib\assembly\clipboard.dll: a cold panel open takes 850 ms with the assembly against
+# 1050 ms compiling the source (measured, three runs each). A development copy that never ran
+# the build keeps the source path: no assembly, compile the files.
+function Get-NativeSourceFiles {
+  $out = New-Object System.Collections.Generic.List[string]
+  foreach ($rel in @('lib\assembly', 'main')) {
+    $dir = Join-Path $Root $rel
+    if (-not (Test-Path -LiteralPath $dir)) { continue }
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Recurse -File -Filter '*.cs' | Sort-Object FullName)) {
+      $out.Add($f.FullName)
+    }
+  }
+  return $out.ToArray()
+}
+
 function Test-NativeAssembly {
   if ($script:NativeAssemblyChecked) { return $script:NativeAssemblyOk }
   $script:NativeAssemblyChecked = $true
@@ -20,11 +34,8 @@ function Test-NativeAssembly {
     # source newer than the assembly means the file is stale: compile the source instead of
     # running C# that no longer matches this copy of the module
     $asmTime = (Get-Item -LiteralPath $asmPath).LastWriteTimeUtc
-    $csDir = Join-Path $Root 'lib\assembly'
-    if (Test-Path -LiteralPath $csDir) {
-      foreach ($f in @(Get-ChildItem -LiteralPath $csDir -Filter '*.cs' -File)) {
-        if ($f.LastWriteTimeUtc -gt $asmTime) { return $false }
-      }
+    foreach ($f in @(Get-NativeSourceFiles)) {
+      if ((Get-Item -LiteralPath $f).LastWriteTimeUtc -gt $asmTime) { return $false }
     }
     [void][Reflection.Assembly]::LoadFrom($asmPath)
     $script:NativeAssemblyOk = [bool]('Cb.Win' -as [type])
@@ -37,14 +48,13 @@ function Test-NativeAssembly {
 function Add-Native {
   if ($script:NativeReady) { return }
   if (Test-NativeAssembly) { $script:NativeReady = $true; return }
-  # The C# lives in lib\assembly. A packaged copy ships without it and runs from
-  # lib\assembly\clipboard.dll, so empty source here means the assembly went missing: say so
-  # instead of handing Add-Type "".
-  $cs = ''
-  $csPath = Join-Path $Root 'lib\assembly\cb.native.cs'
-  if (Test-Path -LiteralPath $csPath) { $cs = [IO.File]::ReadAllText($csPath) }
-  if (-not $cs) { throw 'lib\assembly\clipboard.dll is missing and this copy carries no C# source' }
-  Add-Type -TypeDefinition $cs -ReferencedAssemblies System.Windows.Forms, System.Drawing, System.Core -ErrorAction Stop
+  # A packaged copy ships without the sources and runs from lib\assembly\clipboard.dll, so an
+  # empty list here means the assembly went missing: say so instead of handing Add-Type nothing.
+  # The files are compiled together, the way the build compiles them - never concatenated, which
+  # would put one file's using directives after another file's declarations.
+  $files = @(Get-NativeSourceFiles)
+  if ($files.Count -eq 0) { throw 'lib\assembly\clipboard.dll is missing and this copy carries no C# source' }
+  Add-Type -Path $files -ReferencedAssemblies System.Windows.Forms, System.Drawing, System.Core -ErrorAction Stop
   $script:NativeReady = $true
 }
 

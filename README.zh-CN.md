@@ -739,8 +739,12 @@ src/                    程序本体（打包只读这个目录）
   lib/dispatch.ps1        Invoke-Main：Initialize-Main（Apply-Config + 装配插件）→ Invoke-Dispatch
   lib/proxy.ps1           命令代理
   lib/client/client.cs    编译版客户端源码
-  lib/assembly/*.cs       类型库源码（cb.native.cs）
+  lib/assembly/*.cs       尚未迁走的类型库源码（cb.native.cs）
   lib/assembly/clipboard.dll 类型库产物（不入库；cli assembly 生成）
+
+  main/                  类型库：一个目录一件事，统一由 index.cs 决定编译集合
+  main/index.cs           决定编译集合的 #part 清单：没人引用的源文件根本不参与编译
+  main/search/search.cs     Cb.Search，搜索框使用的行过滤
 
   lib/ui/                两个自绘窗口共用的盒子与控件
   lib/ui/layout.ps1        切盒子：内缩、纵向堆叠、横向分栏、滚动条滑块的尺寸与位置
@@ -993,7 +997,7 @@ Describe 'int' {
 | `cli shot` | 重新生成 `docs\<语言>\screenshot-*.png`：历史面板深浅两套、紧凑形态、悬停预览卡、托盘菜单、设置窗口 |
 | `cli build` | 打包到 `dist\` |
 | `cli client` | 编译 `lib\client\client.cs` → `src\client.exe`（可选） |
-| `cli assembly` | 编译 `lib\assembly\*.cs` → `src\lib\assembly\clipboard.dll`（可选） |
+| `cli assembly` | 编译 `src\main\index.cs` 的 `#part` 清单（加上尚未迁走的 `lib\assembly\*.cs`）→ `src\lib\assembly\clipboard.dll`（可选） |
 | `cli bundle` | 构建 `tools\bundler\bundler.ini` 声明的一个入口；`-Inspect` 列出哪些模块无法被内联及原因 |
 
 `cli.sh` / `cli.cmd` / `cli.ps1` 三个入口行为一致，均先把工作目录切到仓库根，再把余下参数追加到 `package.ini` 中对应的命令行。

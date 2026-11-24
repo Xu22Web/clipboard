@@ -385,6 +385,15 @@ dist/clipboard-0.5.0/
 |---|---|---|---|
 | **P0 骨架 + AST 合并** | M | 建空目录与 `bundler.ini`/`channels.ini` 雏形；`bundler.ps1` 只做一件事但做对：`resolve → ps1-treeshake → ps1-merge → ps1-rename → ps1-minify → ps1-verify` 全链跑通，产物等价今天的逐文件 minify；同时把现有全部模块过一遍§4.3.3 的拒绝清单，先拿到「不能内联」的真实名单；`clipboard.ps1` 改成双根解析 | 中。合并语义错误会静默生效，靠§4.5 四条指纹拦 |
 | **P1 main 拆分** | L | `cb.native.cs` 按分区拆成 `src/main/**`，`index.cs` 写 `#part`；`cs-part` + `cs-compile` 插件跑通；`Add-Type` 回退路径同步改 | 中。`Add-Native` 的类型可见性、`InternalsVisibleTo`、静态构造顺序 |
+
+P1 已落地（2026-11-24）：机制就位并可增量搬迁。
+
+- `tools/bundler/plugins/50-cs-part.ps1` 逐字符扫描 `// #part x.cs`（字符串、verbatim、插值、块注释里的同样文本不算），`60-cs-compile.ps1` 把闭包交给 csc；**从不生成拼接后的 .cs**。
+- `[entry.main]` 的 `Append=src/lib/assembly/*.cs` 承载尚未搬走的类型，`cli assembly` 与 `cli build` 都走它。
+- 首个搬迁：`Cb.Search` → `src/main/search/search.cs`（`cb.native.cs` 减少 41 行）。
+- `native.ps1` 的回退改成按文件列表 `Add-Type -Path`，并把 `main\**\*.cs` 的时间戳纳入新鲜度判断（否则改了新文件仍会用旧 dll）。
+- `pipeline.ps1` 的产品表支持 `Dir = 'lib\assembly,main'`；`cli.ini` 两份 Includes 带上 `src/main/**/*.cs`。
+- **剩余 15 个类型按同一手法逐个搬迁**；全部搬完后删掉 `Append=` 那一行与 `cb.native.cs`，再把 `native.ps1` 的 `lib\assembly` 目录扫描改成只认 `main\`。
 | **P2 通道与 preload** | M | `channels.ini` 填 30–40 条（覆盖 renderer 与 CLI 今天真正用到的）；`ipc-gen` 产出三处胶水 + 漂移测试；`utils/ipc.ps1` 两种传输 | 中。通道粒度太粗会把绘制也塞进 IPC |
 | **P3 store** | M | `New-StoreHost`/`defineStore`/`state·getters·actions`/`$subscribe`/`$patch`/`$reset`/`storeToRefs`；`plugins/persist.ps1` 负责写 ini；设置窗的 `Set*` 信号迁入 | 中。`$script:` 共享作用域一旦并成一个文件，变量名冲突会暴露（`$RS` 那类） |
 | **P4 组件** | L | 13 个组件按复用度排：tag/switch/icon/button → input/dropdown/multiselect/path/hotkey/hotkey-list → scroll-view/skeleton → context-menu/preview-popup。每个都有 `Draw/Measure/Hit` 三件套 + 一条单元用例 | 高。这是全部界面代码的再写法 |

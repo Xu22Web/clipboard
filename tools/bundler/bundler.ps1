@@ -26,6 +26,7 @@
 param(
   [string]$Entry = '',
   [string]$Config = '',
+  [string]$Out = '',
   [switch]$Inspect,
   [switch]$Suggest,
   [switch]$Quiet,
@@ -40,7 +41,7 @@ $root = Split-Path -Parent $tools
 
 . (Join-Path $tools 'utils\console.ps1')
 Set-LogLevelFrom -Quiet:$Quiet -Silent:$Silent
-foreach ($tool in @('utils\ini.ps1', 'utils\schema.ps1', 'utils\minify.ps1')) {
+foreach ($tool in @('utils\ini.ps1', 'utils\schema.ps1', 'utils\minify.ps1', 'utils\csc.ps1')) {
   $toolPath = Join-Path $tools $tool
   if (-not (Test-Path -LiteralPath $toolPath)) { Write-Fail ('missing: ' + $toolPath); exit 1 }
   . $toolPath
@@ -281,8 +282,55 @@ function Invoke-BundleInspect {
   Write-Done $sw ('inspected ' + $files.Count + ' module(s)')
 }
 
+# ---------------------------------------------------------------- one C# entry
+# The source list comes from the root file's #part lines; the compiler is given that list and
+# nothing else. A product with no source is not a smaller product, so both stages are required.
+function Invoke-BundleCompile([string]$name) {
+  $product = EntryValue $name 'Product'
+  $to = EntryValue $name 'To'
+  $from = EntryValue $name 'From'
+  if (-not $product) { throw ('entry ' + $name + ' has no Product=') }
+  if (-not $to) { throw ('entry ' + $name + ' has no To=') }
+  if (-not $from) { throw ('entry ' + $name + ' has no From=') }
+  $append = @()
+  foreach ($one in @((EntryValue $name 'Append') -split '[,;]')) {
+    $oneGlob = $one.Trim()
+    if ($oneGlob) { $append += $oneGlob }
+  }
+
+  $outPath = $to
+  if ([IO.Path]::IsPathRooted($Out)) { $outPath = $Out }
+  elseif ($Out) { $outPath = Join-Path $root $Out }
+  elseif (-not [IO.Path]::IsPathRooted($outPath)) { $outPath = Join-Path $root $outPath }
+
+  $hooks = Get-BundleHooks $product
+  foreach ($stage in @('part', 'compile')) { Test-BundleHook $hooks $stage }
+  $ctx = @{
+    Root  = $root
+    Tmp   = $env:TEMP
+    Entry = @{
+      Name       = $name
+      Product    = $product
+      From       = $from
+      Append     = $append
+      Target     = (EntryValue $name 'Target')
+      References = @()
+      Out        = $outPath
+    }
+  }
+
+  $sw = Start-Step
+  Write-Step ('compile ' + $name)
+  Write-Note ('product      ' + $product + '   target ' + $(if ($ctx.Entry.Target) { $ctx.Entry.Target } else { 'library' }))
+  $files = @(& $hooks['part'] $ctx)
+  $result = & $hooks['compile'] $ctx $files
+  Write-Done $sw ($outPath + '   ' + [Math]::Round($result.Bytes / 1024, 1) + ' KB   ' + $result.Files + ' file(s)')
+}
+
 # ---------------------------------------------------------------- one entry
 function Invoke-BundleEntry([string]$name) {
+  $kind = EntryValue $name 'Kind'
+  if ($kind -eq 'cs') { Invoke-BundleCompile $name; return }
   $product = EntryValue $name 'Product'
   $to = EntryValue $name 'To'
   if (-not $product) { throw ('entry ' + $name + ' has no Product=') }

@@ -21,12 +21,13 @@ $script:LibraryRules = @(
   @{ Match = '*';            Handler = 'copy' }
 )
 
-# A folder whose C# is compiled into one file. Dir is the package folder, Ext the suffix of the
+# A folder whose C# is compiled into one file. Dir is the package folder (or a comma separated
+# list of them, since one product can be built from more than one tree), Ext the suffix of the
 # sources that belong to it, Script the compiler, Out where the product lands in the package,
 # Required whether a package without it cannot start.
 $script:Products = @(
   @{ Dir = 'lib\client'; Ext = '.cs'; Script = 'tools\build-client.ps1'; Out = 'client.exe'; Label = 'client.exe'; Required = $false }
-  @{ Dir = 'lib\assembly'; Ext = '.cs'; Script = 'tools\build-assembly.ps1'; Out = 'lib\assembly\clipboard.dll'; Label = 'lib\assembly\clipboard.dll'; Required = $true }
+  @{ Dir = 'lib\assembly,main'; Ext = '.cs'; Script = 'tools\build-assembly.ps1'; Out = 'lib\assembly\clipboard.dll'; Label = 'lib\assembly\clipboard.dll'; Required = $true }
 )
 
 # Files outside src\ keep the shape they have under the repository root (docs\ stays docs\).
@@ -55,13 +56,19 @@ function Get-LibraryHandler([string]$rel) {
   return 'copy'
 }
 
-# the product a source file belongs to, or $null when it belongs to none
+# the product a source file belongs to, or $null when it belongs to none. A product may name
+# more than one folder: the type library is built from lib\assembly and from main, and both
+# count as "this file is part of the product, not another file to copy".
 function Get-ProductFor([string]$rel) {
   $path = ([string]$rel) -replace '/', '\'
   foreach ($p in @($script:Products)) {
-    $prefix = $p.Dir.TrimEnd([char]92) + '\'
-    if (-not $path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { continue }
-    if ($path -like ('*' + $p.Ext)) { return $p }
+    if ($path -notlike ('*' + $p.Ext)) { continue }
+    foreach ($one in @(([string]$p.Dir) -split '[,;]')) {
+      $dir = $one.Trim()
+      if (-not $dir) { continue }
+      $prefix = $dir.TrimEnd([char]92) + '\'
+      if ($path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { return $p }
+    }
   }
   return $null
 }

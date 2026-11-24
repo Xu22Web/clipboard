@@ -740,8 +740,13 @@ src/                    the program (the only folder packaging reads)
   lib/dispatch.ps1        Invoke-Main: Initialize-Main (Apply-Config + plugins) -> Invoke-Dispatch
   lib/proxy.ps1           the command proxy
   lib/client/client.cs    the compiled client's source
-  lib/assembly/*.cs       the type library source (cb.native.cs)
+  lib/assembly/*.cs       the type library source that has not moved yet (cb.native.cs)
   lib/assembly/clipboard.dll the compiled library (not committed; cli assembly)
+
+  main/                   the type library, one folder per job, compiled through index.cs
+  main/index.cs           the #part list that decides what is compiled: a source nothing reaches
+                            is not compiled at all
+  main/search/search.cs     Cb.Search, the row filter the search box runs
 
   lib/ui/                 boxes and controls both drawn windows share
   lib/ui/layout.ps1         cutting a box: inset, stack, columns, a scrollbar's thumb
@@ -994,7 +999,7 @@ Everything runs in a sandbox copy under `%TEMP%` and never touches the repositor
 | `cli shot` | regenerate the screenshots under `docs\<language>\`: both panel themes, the compact shape, the hover card, the tray menu, the settings window |
 | `cli build` | package into `dist\` |
 | `cli client` | compile `lib\client\client.cs` into `src\client.exe` (optional) |
-| `cli assembly` | compile `lib\assembly\*.cs` into `src\lib\assembly\clipboard.dll` (optional) |
+| `cli assembly` | compile the `#part` list in `src\main\index.cs` (plus the sources still in `lib\assembly`) into `src\lib\assembly\clipboard.dll` (optional) |
 | `cli bundle` | build one entry declared in `tools\bundler\bundler.ini`; `-Inspect` lists the modules a bundle cannot inline and why |
 
 `cli.sh` / `cli.cmd` / `cli.ps1` behave the same: they change to the repository root and append the remaining arguments to the matching line of `package.ini`.
