@@ -1,3 +1,5 @@
+#@use lib/text, utils/schema, lib/config, lib/settings-types, lib/ui/component, lib/ui/framework, lib/store
+#@export Get-SettingGroupTable, Get-SettingLabel, Get-SettingKind, Get-SettingRaw, Format-SettingText, Format-SettingListText, Get-SettingHelp, Get-SettingEnabledBy, New-SettingControlKey, Get-SettingControlKeyParts, Get-SettingGroupKeys, Get-SettingsRows, New-SettingRowTree, Update-SettingRows, Get-SettingGroups, Get-SettingGroupsWithPending, New-SettingInfoRow, Get-SettingAboutFacts, Get-SettingLeaf, Get-SettingAboutRows
 # lib/settings-model.ps1 - the rows a settings window shows.
 #
 # The settings live in schema\clipboard.ps1, which knows a type, a range, a default and a

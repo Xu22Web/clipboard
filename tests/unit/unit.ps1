@@ -416,6 +416,11 @@ try {
           'tools\build-client.ps1', 'tools\build-assembly.ps1',
           'tools\utils\minify.ps1', 'tools\utils\ini.ps1', 'tools\utils\globs.ps1', 'tools\utils\csc.ps1',
           'tools\utils\console.ps1', 'tools\utils\pipeline.ps1',
+          'tools\bundler\bundler.ps1', 'tools\bundler\bundler.ini', 'tools\schema\bundler.ps1',
+          'tools\bundler\lib\ast.ps1', 'tools\bundler\lib\graph.ps1', 'tools\bundler\lib\emit.ps1',
+          'tools\bundler\plugins\10-resolve.ps1', 'tools\bundler\plugins\20-treeshake.ps1',
+          'tools\bundler\plugins\30-merge.ps1', 'tools\bundler\plugins\40-render.ps1',
+          'tools\bundler\plugins\90-verify.ps1',
           'src\lib\client\client.cs', 'src\lib\assembly\cb.native.cs')
         $missingTool = @()
         foreach ($tool in $tooling) {
@@ -432,7 +437,7 @@ try {
         $sm = [regex]::Match($pkgText, '(?ms)^\s*\[scripts\]\s*$(.*?)(?=^\s*\[|\z)')
         if ($sm.Success) { $scriptBlock = $sm.Groups[1].Value }
         $noCmd = @()
-        foreach ($cmd in @('Dev', 'Build', 'Client', 'Assembly', 'Test', 'Shot')) {
+        foreach ($cmd in @('Dev', 'Build', 'Client', 'Assembly', 'Bundle', 'Test', 'Shot')) {
           if (-not ($scriptBlock -match ('(?m)^' + $cmd + '=\S'))) { $noCmd += $cmd }
         }
         Expect (($pkgText -match '(?m)^Name=\S') -and ($pkgText -match '(?m)^Version=\d+\.\d+\.\d+') -and $noCmd.Count -eq 0) ($noCmd -join ', ')
@@ -473,6 +478,67 @@ try {
             Remove-Item -LiteralPath $tmpIn, $tmpOut -Force -ErrorAction SilentlyContinue
           }
         } -Skip $script:StructMinified
+      }
+
+      # the bundler merges modules by their syntax tree, so the three things a wrong merge
+      # breaks first are its own checks: a module that cannot be inlined, the order the merge
+      # emits, and a definition that went missing between the modules and the bundle
+      if (Test-Path -LiteralPath (Join-Path $repoRoot 'tools\bundler\lib\ast.ps1')) {
+        It 'the bundler refuses a module it cannot inline' {
+          . (Join-Path $repoRoot 'tools\bundler\lib\ast.ps1')
+          $withParam = Get-BundleParse ("param(`$x)" + "`r`n" + 'function f { }')
+          $plain = Get-BundleParse 'function f { }'
+          $withTrap = Get-BundleParse ('function f { }' + "`r`n" + 'trap { }')
+          Expect ((Get-BundleRejectReason $withParam) -match 'param block') (Get-BundleRejectReason $withParam)
+          Expect ((Get-BundleRejectReason $withParam -Entry) -eq '') 'the entry may declare parameters'
+          Expect ((Get-BundleRejectReason $plain) -eq '') (Get-BundleRejectReason $plain)
+          Expect ((Get-BundleRejectReason $withTrap) -match 'trap') (Get-BundleRejectReason $withTrap)
+        }
+
+        It 'the bundler emits the modules in the order the list names' {
+          . (Join-Path $repoRoot 'tools\bundler\lib\ast.ps1')
+          . (Join-Path $repoRoot 'tools\bundler\lib\emit.ps1')
+          $first = @{ Ast = (Get-BundleParse 'function First { }').Ast; Functions = @('First'); Kept = $null }
+          $second = @{ Ast = (Get-BundleParse 'function Second { }').Ast; Functions = @('Second'); Kept = $null }
+          $chunk = New-BundleChunk @($first, $second)
+          Expect ((@($chunk.Functions) -join ',') -eq 'First,Second') (@($chunk.Functions) -join ',')
+          Expect (([string]$chunk.Text).IndexOf('Second') -gt ([string]$chunk.Text).IndexOf('First')) ([string]$chunk.Text)
+        }
+
+        It 'the bundler notices a definition missing from the bundle' {
+          . (Join-Path $repoRoot 'tools\bundler\lib\ast.ps1')
+          . (Join-Path $repoRoot 'tools\bundler\lib\emit.ps1')
+          $expected = @{ Functions = @('First'); Commands = @(); Shapes = @('FunctionDefinitionAst') }
+          $same = Get-BundleFingerprint 'function First { }'
+          $missing = Get-BundleFingerprint 'function Other { }'
+          Expect ((@(Compare-BundleFingerprint $expected $same)).Count -eq 0) 'an identical bundle was reported as different'
+          Expect ((@(Compare-BundleFingerprint $expected $missing)).Count -gt 0) 'a missing definition was not reported'
+        }
+
+        It 'the bundler reads import and export declarations from tokens, not from text' {
+          . (Join-Path $repoRoot 'tools\bundler\lib\ast.ps1')
+          . (Join-Path $repoRoot 'tools\bundler\lib\surface.ps1')
+          $text = ('#@use lib/ui/layout' + "`r`n" + '#@export New-UiBox, Get-UiStack' + "`r`n" +
+            'function New-UiBox { }' + "`r`n" + 'Get-UiStack' + "`r`n" + '$note = "#@export NotAFunction"')
+          $decl = Get-BundleDirectives (Get-BundleParse $text)
+          Expect ((@($decl.Uses) -join ',') -eq 'lib/ui/layout') (@($decl.Uses) -join ',')
+          Expect ((@($decl.Exports) -join ',') -eq 'New-UiBox,Get-UiStack') (@($decl.Exports) -join ',')
+        }
+
+        It 'the bundler refuses a call to a function the owner does not export' {
+          . (Join-Path $repoRoot 'tools\bundler\lib\ast.ps1')
+          . (Join-Path $repoRoot 'tools\bundler\lib\surface.ps1')
+          $owner = @{ Id = 'a'; Ast = (Get-BundleParse 'function Helper { }').Ast; Functions = @('Helper'); Uses = @(); Exports = @() }
+          $caller = @{ Id = 'b'; Ast = (Get-BundleParse 'Helper').Ast; Functions = @(); Uses = @('a'); Exports = @() }
+          $open = Get-BundleSurfaceReport @($owner, $caller)
+          Expect ((@($open.Problems).Count -gt 0) -eq $false) 'an undeclared module was enforced'
+          $owner.Exports = @('Helper')
+          $closed = Get-BundleSurfaceReport @($owner, $caller)
+          Expect (@($closed.Problems).Count -eq 0) (@($closed.Problems) -join '; ')
+          $owner.Exports = @('Other')
+          $bad = Get-BundleSurfaceReport @($owner, $caller)
+          Expect (@($bad.Problems).Count -gt 0) 'a call to an unexported function was accepted'
+        }
       }
 
       It 'the program and the tooling parse ini the same way' {

@@ -1,3 +1,5 @@
+#@use lib/ui/component, lib/ui/views
+#@export Get-UiSetupState, Get-UiSetupContext, Merge-UiSetupProps, Add-UiSetupHook, Use-UiSlot, Invoke-UiSlot, New-UiSetupView, Get-UiSetupContextOf
 # lib/ui/setup.ps1 - a component declared the way <script setup> declares one.
 #
 # A component here is still a node (lib\ui\views.ps1) whose kind decides how it draws. What was

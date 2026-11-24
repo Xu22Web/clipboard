@@ -50,6 +50,7 @@ cli test         # run every self test
 cli build        # package into dist\clipboard-<version>\
 cli client       # compile the optional native client src\client.exe
 cli assembly     # compile the optional type library src\lib\assembly\clipboard.dll
+cli bundle       # build one entry from tools\bundler\bundler.ini (-Inspect lists what cannot be inlined)
 ```
 
 `cli` has two entries: `cli.sh` (Git Bash / MSYS, `./cli.sh`) and `cli.cmd` (CMD, `cli`). Command names are case-insensitive; the remaining arguments are appended to the matching line of `package.ini`, for example `cli test -Unit`, `cli build -Config other.ini`.
@@ -994,6 +995,7 @@ Everything runs in a sandbox copy under `%TEMP%` and never touches the repositor
 | `cli build` | package into `dist\` |
 | `cli client` | compile `lib\client\client.cs` into `src\client.exe` (optional) |
 | `cli assembly` | compile `lib\assembly\*.cs` into `src\lib\assembly\clipboard.dll` (optional) |
+| `cli bundle` | build one entry declared in `tools\bundler\bundler.ini`; `-Inspect` lists the modules a bundle cannot inline and why |
 
 `cli.sh` / `cli.cmd` / `cli.ps1` behave the same: they change to the repository root and append the remaining arguments to the matching line of `package.ini`.
 
@@ -1015,6 +1017,10 @@ Every tool prints through `tools\utils\console.ps1`: `[..]` a step (cyan), `[ok]
 ## Packaging
 
 `cli build` runs `tools\build.ps1` and writes into `dist\clipboard-<version>\` (the version comes from `package.ini`).
+
+`cli bundle` is the second half of that tooling and is independent of it: it builds one *entry* - several modules as one file - with the stages declared in `tools\bundler\bundler.ini` (`resolve`, `treeshake`, `renderModule`, `merge`, `renderChunk`, `verify`) and the plugin files under `tools\bundler\plugins\`. A module boundary is always a parser node, never a line of text: a bundle is emitted statement by statement through each node's extent, then read back and compared with the modules it was built from. `cli bundle -Inspect` lists, for every file under `src\`, whether a bundle could inline it (a `param` block, a `begin`/`process`/`end` block or a `trap` cannot be glued into a larger script) and which modules call a name nothing can follow. Nothing in `dist\` from this command is shipped yet: `cli build` still packages the module tree.
+
+A module can state its own edges with two directives at the top of the file: `#@use <module id>, ...` for the modules it calls and `#@export <function>, ...` for what the rest of the program may call. They are comments on purpose - they describe the build, not the program, so the shipped copy runs the same file with no cost and nothing at run time has to understand them. With them the bundler checks the entry *before* building: a call to a function its module does not export, a call into a module the entry does not list (the mistake that otherwise only shows up as "module group too small"), an export naming a function that does not exist, and the same name exported twice. Modules without directives are left unchecked and only make the "would drop" answer unknown. `cli bundle -Inspect -Suggest` prints, for every module, the `#@use` and `#@export` lines its real calls imply.
 
 ```powershell
 cli build                       # with cli.ini

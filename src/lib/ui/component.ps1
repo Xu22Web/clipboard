@@ -1,3 +1,4 @@
+#@export Copy-UiTable, New-UiKeepAlive, Remove-UiKeepAlive, Set-UiKeepAliveValue, Get-UiKeepAlive, New-UiComponent, Add-UiHook, Add-UiHandler, Invoke-UiEmit, Invoke-UiHook, Mount-UiComponent, Update-UiComponent, Unmount-UiComponent
 # lib/ui/component.ps1 - components, their lifecycle, and the store behind them.
 #
 # Both drawn windows are one form each, so a "component" here is not a control: it is a record

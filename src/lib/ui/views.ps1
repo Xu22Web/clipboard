@@ -1,3 +1,5 @@
+#@use lib/ui/component, lib/ui/framework, lib/ui/widgets, utils/dpi
+#@export Register-UiView, Get-UiViewKind, New-UiView, Test-UiViewEnabled, Get-UiViewProp, Set-UiViewState, Test-UiViewState, Draw-UiView, Hit-UiViewList, Get-UiViewRect, Update-UiViewHot, Sync-UiViews
 # lib/ui/views.ps1 - a control as a record: what it is, what it holds, where it is, how it draws.
 #
 # component.ps1 gives a node a lifecycle, framework.ps1 gives a tree of them a patch. What was

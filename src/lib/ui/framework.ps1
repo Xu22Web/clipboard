@@ -1,3 +1,5 @@
+#@use lib/ui/component
+#@export Get-UiPropsKey, Test-UiNodeStale, Sync-UiTree, Render-UiTree, Get-UiNodeValues
 # lib/ui/framework.ps1 - the tree a surface is written as, and the patch that keeps it.
 #
 # A surface here is a tree of nodes: a node carries a type, a key, the values it was built from

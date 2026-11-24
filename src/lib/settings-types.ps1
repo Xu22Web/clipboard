@@ -1,3 +1,5 @@
+#@use utils/schema, lib/settings-model, lib/text, lib/themes, lib/theme-stub, lib/plugin/plugins
+#@export Get-SettingChordList, Get-SettingChoiceKeys, Format-SendKeyName, Convert-SendKeysToChord, Get-SettingChordAdded, Get-SettingChordRemoved, Get-SettingChordKeys, Format-ChordKeyCap, Format-ChordValue, Test-ChordUsable, Get-SettingNumberView, Convert-SettingNumberInput, Get-SettingChoiceLabels, Get-SettingChoices, Get-SettingPluginNames, Get-PluginCaption, Split-SettingList, Get-SettingListOn, Get-SettingListToggled, Convert-SettingInput
 # lib/settings-types.ps1 - what a value means when it is edited, per kind of setting.
 #
 # The window knows four behaviours (bool, number, text and a value picked from a list) and the

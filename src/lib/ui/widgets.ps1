@@ -1,3 +1,5 @@
+#@use utils/dpi, lib/panel/anim, lib/panel/picker-draw
+#@export Get-UiBlend, Draw-UiToggle, Get-UiChipWidth, Draw-UiKeyChip, Draw-UiScrollbar, Draw-UiButton, Draw-UiIconButton, Draw-UiCross, Draw-UiPlus
 # lib/ui/widgets.ps1 - the controls the drawn windows share.
 #
 # A widget is a rectangle plus a state, drawn by one function and hit-tested elsewhere against
