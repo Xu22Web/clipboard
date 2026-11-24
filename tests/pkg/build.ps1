@@ -27,11 +27,17 @@ $build = Join-Path $repoRoot 'tools\build.ps1'
 $buildCfg = Join-Path $tmpRoot 'build-test.ini'
 # every [build] key has to be present: the build reads cli.ini and refuses to invent a default,
 # so each case starts from the whole section and overrides what it tests.
-# the package is this one list, and the cases that trim it override this key. The assembly
-# sources are in the list because a package cannot start without that product or its source;
-# the client stays out of the default list so most cases skip a compile.
-$allFiles = 'Includes=src/**/*.ps1,src/main/**/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat'
-$withClient = 'Includes=src/**/*.ps1,src/lib/client/*.cs,src/main/**/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat'
+#
+# The include list itself is READ from cli.ini instead of being written again here. It is the one
+# fact that says what a package is, and a copy of it drifts the moment a folder moves: before
+# src\main existed this file carried four copies, and moving the type library out of lib\assembly
+# broke every one of them at once. The cases below then trim that list instead of restating it.
+. (Join-Path $repoRoot 'tools\utils\ini.ps1')
+$repoIncludes = [string](Import-IniMap (Join-Path $repoRoot 'cli.ini'))['build.Includes']
+if (-not $repoIncludes) { throw 'cli.ini has no [build] Includes to test against' }
+# the client stays out of the default list so most cases skip a compile; cli.ini carries it
+$allFiles = 'Includes=' + (@(($repoIncludes -split ',') | Where-Object { $_ -notlike 'src/lib/client/*' }) -join ',')
+$withClient = 'Includes=' + $repoIncludes
 $buildDefaults = @('BaseUrl=.', 'Minify=1', 'Rename=1', 'Verify=0', 'Overwrite=1', 'Zip=0', $allFiles, 'Excludes=')
 function Write-BuildCfg([string]$outDir, [string[]]$override) {
   $lines = @('OutDir=' + $outDir) + $buildDefaults
@@ -277,7 +283,8 @@ Describe 'int' {
   Describe 'a trimmed list' {
     BeforeAll {
       $script:pkgOut2 = Join-Path $tmpRoot 'pkg2'
-      $oneTheme = 'Includes=src/**/*.ps1,src/main/**/*.cs,src/*.cmd,src/*.sh,src/themes/win11-light.ini,scripts/**.bat,README.md,LICENSE,docs/**/*'
+      # one theme instead of the glob, plus the docs: the difference the case is about
+      $oneTheme = ($allFiles -replace 'src/themes/\*\.ini', 'src/themes/win11-light.ini') + ',README.md,LICENSE,docs/**/*'
       Write-BuildCfg $script:pkgOut2 @('Minify=0', $oneTheme, 'Excludes=src/plugins/item-marks.ps1')
       $script:bout2 = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
       $script:pkgDir2 = Join-Path $script:pkgOut2 ('clipboard-' + $programVersion)
@@ -302,7 +309,9 @@ Describe 'int' {
 
   Describe 'a list without the entry point' {
     It 'a list without clipboard.ps1 stops the build' {
-      $noEntry = 'Includes=src/lib/**/*.ps1,src/main/**/*.cs,src/*.cmd,src/*.sh'
+      # the entry point is the one glob taken out: everything else still ships, so the build
+      # gets far enough to complain about the launcher
+      $noEntry = 'Includes=' + (@(($repoIncludes -split ',') | Where-Object { $_ -ne 'src/**/*.ps1' }) -join ',')
       Write-BuildCfg (Join-Path $tmpRoot 'pkg2') @('Minify=0', $noEntry)
       $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $build -Config $buildCfg 2>&1
       Expect (($out -join ' ') -match 'does not ship clipboard\.ps1') (($out | Select-Object -Last 1) -as [string])

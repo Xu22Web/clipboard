@@ -31,8 +31,17 @@
     'build.Zip'         = @{ Type = 'bool'; Description = '1 = also write clipboard-<version>.zip' }
     'build.Includes'    = @{ Type = 'list'; Pattern = '^[A-Za-z0-9_.*?/\-]+$'; NonEmpty = $true; Description = 'the files to ship, as globs relative to BaseUrl: a .ps1 is minified, a .cs under a product folder is compiled, an .ini stripped of comments' }
     'build.Excludes'    = @{ Type = 'list'; Pattern = '^[A-Za-z0-9_.*?/\-]+$'; Description = 'files to leave out of the package' }
+    'build.Workers'     = @{ Type = 'int'; Minimum = 0; Maximum = 64; Optional = $true; Description = 'entries built side by side; left out or 0 = one per logical processor, 1 = one after another' }
+    'build.Treeshake'   = @{ Type = 'bool'; Optional = $true; Description = '1 = drop the definitions no load-time path reaches; left out = keep everything' }
 
     'test.Groups'  = @{ Type = 'list'; Enum = @('unit', 'integration', 'e2e'); NonEmpty = $true; Description = 'groups a plain run covers' }
     'test.Workers' = @{ Type = 'int'; Minimum = 0; Maximum = 64; Optional = $true; Description = 'sandboxes that may run side by side; left out or 0 = one per logical processor' }
+  }
+  # The build targets, the way a vite config names its inputs and plugins: one section per
+  # product (the plugin chain that turns files into that kind of output) and one per entry (one
+  # output: what it is made of and where it lands).
+  DynamicKeys = [ordered]@{
+    'entry.'   = @{ Type = 'string'; Description = 'one key of an [entry.<name>] section' }
+    'product.' = @{ Type = 'string'; NonEmpty = $true; Description = 'the plugin chain of a [product.<name>] section' }
   }
 }

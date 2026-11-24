@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 <#
-  tools\bundler\bundler.ps1 - build a bundle out of the module list bundler.ini names.
+  tools\bundler\bundler.ps1 - build a bundle out of the module list cli.ini names.
 
       cli bundle -Inspect              say which modules a bundle cannot inline
       cli bundle -Entry core           build one entry
@@ -9,7 +9,7 @@
   A bundle is one file made of several modules. The stages are the ones a front-end bundler has,
   and each is a plugin under plugins\ so an entry only borrows the ones its product lists:
 
-      resolve       which files, in which order                 (bundler.ini)
+      resolve       which files, in which order                 (cli.ini [entry.*])
       treeshake     which definitions a load-time path reaches   (the AST)
       renderModule  minify and rename one module, original names (tools\utils\minify.ps1)
       merge         the modules as one text, statement by statement through the AST
@@ -20,7 +20,7 @@
   Nothing here searches for "function", splits on blank lines or replaces a comment marker.
 
   Driving it from the package build and from the watcher is a later step: today the package
-  build still walks cli.ini [build] Includes, and this tool builds the entries bundler.ini
+  build still walks cli.ini [build] Includes, and this tool builds the entries cli.ini
   declares so the merge can be proved before the package layout changes.
 #>
 param(
@@ -55,18 +55,22 @@ foreach ($lib in @('ast', 'graph', 'emit', 'surface')) {
 }
 
 # ---------------------------------------------------------------- settings
-if (-not $Config) { $Config = Join-Path $here 'bundler.ini' }
+# The configuration is the repository's one config file, cli.ini, the way a vite project keeps
+# its entries and plugins in vite.config. This script is the engine that reads that file (rollup
+# behind the config), and `-Config` exists so a test can point it at a copy without touching the
+# repository's own.
+if (-not $Config) { $Config = Join-Path $root 'cli.ini' }
 if (-not (Test-Path -LiteralPath $Config)) { Write-Fail ('missing settings file: ' + $Config); exit 1 }
 $cfg = Import-IniMap $Config
-$problems = @(Test-ToolConfigMap (Import-ToolSchema (Join-Path $tools 'schema\bundler.ps1')) $cfg (Split-Path -Leaf $Config))
+$problems = @(Test-ToolConfigMap (Import-ToolSchema (Join-Path $tools 'schema\cli.ps1')) $cfg (Split-Path -Leaf $Config))
 if ($problems.Count -gt 0) {
   foreach ($p in $problems) { Write-Fail $p }
   exit 1
 }
 
-# a bundler key may be written inside [bundler] or with its dotted name at the top level
+# a bundler key is written inside [build] like every other switch of a build
 function Cfg([string]$key) {
-  foreach ($candidate in @(('bundler.' + $key), $key)) {
+  foreach ($candidate in @(('build.' + $key), $key)) {
     if ($cfg.ContainsKey($candidate)) { return [string]$cfg[$candidate] }
   }
   return ''
@@ -89,7 +93,7 @@ function EntryBool([string]$name, [string]$key, [bool]$default) {
   return @('1', 'true', 'yes', 'on') -contains $raw.ToLowerInvariant()
 }
 
-# the entry names, in the order bundler.ini declares them
+# the entry names, in the order cli.ini declares them
 function Get-EntryNames {
   $out = New-Object System.Collections.Generic.List[string]
   $seen = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
@@ -109,7 +113,7 @@ function Get-EntryNames {
   return $out.ToArray()
 }
 
-# the product names, in the order bundler.ini declares them
+# the product names, in the order cli.ini declares them
 function Get-ProductNames {
   $out = New-Object System.Collections.Generic.List[string]
   $seen = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
@@ -132,7 +136,7 @@ function Get-RelativePath([string]$full) {
 }
 
 # ---------------------------------------------------------------- plugins
-# bundler.ini names a chain per product; every plugin file declares one $Plugin table with a
+# cli.ini names a chain per product; every plugin file declares one $Plugin table with a
 # Name and the hooks it supplies.
 #
 # The files are loaded HERE, at the script's own scope, once. A plugin that is dot-sourced
@@ -502,7 +506,7 @@ if ($Inspect) {
 # One entry is one process: the renderer bundles and the C# products share nothing but this
 # script, and a worker that dies takes only its own entry with it. A worker writes its output
 # where the serial build would, so a parallel run and a serial one leave the same tree behind.
-# The logs are printed in the order bundler.ini declares the entries, so a parallel build reads
+# The logs are printed in the order cli.ini declares the entries, so a parallel build reads
 # like a serial one afterwards.
 function Invoke-BundleMany($all, [int]$workers) {
   $sw = Start-Step

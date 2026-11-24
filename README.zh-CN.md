@@ -50,7 +50,7 @@ cli test         # 运行全部自测
 cli build        # 打包到 dist\clipboard-<version>\
 cli client       # 编译可选的原生客户端 src\client.exe
 cli assembly     # 编译可选的类型库 src\lib\assembly\clipboard.dll
-cli bundle       # 按 tools\bundler\bundler.ini 构建一个入口（-Inspect 列出无法内联的模块）
+cli bundle       # 按 cli.ini 构建一个入口（-Inspect 列出无法内联的模块）
 ```
 
 `cli` 有两个入口：`cli.sh`（Git Bash / MSYS，`./cli.sh`）与 `cli.cmd`（CMD，`cli`）；命令名不区分大小写，其余参数追加到 `package.ini` 对应行，例如 `cli test -Unit`、`cli build -Config other.ini`。
@@ -1001,7 +1001,7 @@ Describe 'int' {
 | `cli build` | 打包到 `dist\` |
 | `cli client` | 编译 `lib\client\client.cs` → `src\client.exe`（可选） |
 | `cli assembly` | 编译 `src\main\index.cs` 的 `#part` 清单（加上尚未迁走的 `lib\assembly\*.cs`）→ `src\lib\assembly\clipboard.dll`（可选） |
-| `cli bundle` | 构建 `tools\bundler\bundler.ini` 声明的一个入口；`-Inspect` 列出哪些模块无法被内联及原因 |
+| `cli bundle` | 构建 `cli.ini` 声明的一个入口；`-All` 构建全部入口；`-Inspect` 列出哪些模块无法被内联及原因 |
 
 `cli.sh` / `cli.cmd` / `cli.ps1` 三个入口行为一致，均先把工作目录切到仓库根，再把余下参数追加到 `package.ini` 中对应的命令行。
 
@@ -1024,11 +1024,11 @@ Describe 'int' {
 
 `cli build` 调用 `tools\build.ps1`，产物写入 `dist\clipboard-<version>\`（版本取自 `package.ini`）。
 
-`cli bundle` 是同一套工具链的另一半，与 `cli build` 互不依赖：它把多个模块合成**一个入口文件**，阶段由 `tools\bundler\bundler.ini` 声明（`resolve`、`treeshake`、`renderModule`、`merge`、`renderChunk`、`verify`），实现放在 `tools\bundler\plugins\`。模块边界一律取自解析器节点而不是文本：产物按每条语句的 extent 逐条取出，最后重新解析并与参与合并的模块逐项比对。`cli bundle -Inspect` 会列出 `src\` 下每个文件能否被内联（带 `param` 块、`begin`/`process`/`end` 块或 `trap` 的模块无法粘进更大的脚本），以及哪些模块调用了无法追踪的名字。该命令写入 `dist\` 的内容目前都不随包发布：`cli build` 仍然按模块树打包。
+`cli bundle` 是同一套工具链的另一半，与 `cli build` 互不依赖：它把多个模块合成**一个入口文件**，阶段由 `cli.ini` 中该入口的 `[product.<名称>]` 链声明（`resolve`、`treeshake`、`merge`、`render`、`verify`），实现放在 `tools\bundler\plugins\`。入口、插件链与复制清单都在 `cli.ini`，与 vite 项目把输入和插件写在 `vite.config` 中同一种分工。模块边界一律取自解析器节点而不是文本：产物按每条语句的 extent 逐条取出，最后重新解析并与参与合并的模块逐项比对。`cli bundle -Inspect` 会列出 `src\` 下每个文件能否被内联（带 `param` 块、`begin`/`process`/`end` 块或 `trap` 的模块无法粘进更大的脚本），以及哪些模块调用了无法追踪的名字。该命令写入 `dist\` 的内容目前都不随包发布：`cli build` 仍然按模块树打包。
 
 模块可以用开头两条指令说明自己的边界：`#@use <模块 id>, ...` 列出它调用的模块，`#@export <函数>, ...` 列出其它模块可以调用它的哪些函数。它们故意写成注释：描述的是构建而不是程序，发布出去的副本照旧直接运行同一份文件、零成本，运行时也不需要理解它们。有了声明，bundler 在构建之前就能检查：调用了所属模块没导出的函数、调用了入口没带的模块（即平时只在运行时才露面的「module group too small」）、导出里写了不存在的函数、同一个名字被两个模块导出。没写声明的模块不参与校验，只会让「会被丢弃」的结论变成未知。`cli bundle -Inspect -Suggest` 会按真实调用关系打印每个模块该写的那两行，复制即可。
 
-`cli bundle -All` 构建文件里声明的全部入口：每个入口一个独立的 Windows PowerShell 进程，同时最多 `bundler.ini` 的 `Workers=` 个（`0` 表示按逻辑处理器数，且不超过入口数）。每个 worker 写自己的产物与自己的临时目录，日志按文件声明顺序输出，所以并行跑出来的样子与串行一致。
+`cli bundle -All` 构建文件里声明的全部入口：每个入口一个独立的 Windows PowerShell 进程，同时最多 `cli.ini` 的 `[build] Workers=` 个（`0` 表示按逻辑处理器数，且不超过入口数）。每个 worker 写自己的产物与自己的临时目录，日志按文件声明顺序输出，所以并行跑出来的样子与串行一致。
 
 ```powershell
 cli build                       # 用 cli.ini

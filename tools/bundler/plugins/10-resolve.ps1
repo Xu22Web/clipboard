@@ -2,7 +2,7 @@
 <#
   tools\bundler\plugins\10-resolve.ps1 - which files a bundle is made of, and in which order.
 
-  The order is the one bundler.ini writes, never the order the file system returns: dot-sourcing
+  The order is the one cli.ini writes, never the order the file system returns: dot-sourcing
   runs the modules in order and a later definition wins, so the merged bundle has to run them in
   the same order to mean the same thing.
 #>

@@ -416,7 +416,7 @@ try {
           'tools\build-client.ps1', 'tools\build-assembly.ps1',
           'tools\utils\minify.ps1', 'tools\utils\ini.ps1', 'tools\utils\globs.ps1', 'tools\utils\csc.ps1',
           'tools\utils\console.ps1', 'tools\utils\pipeline.ps1',
-          'tools\bundler\bundler.ps1', 'tools\bundler\bundler.ini', 'tools\schema\bundler.ps1',
+          'tools\bundler\bundler.ps1',
           'tools\bundler\lib\ast.ps1', 'tools\bundler\lib\graph.ps1', 'tools\bundler\lib\emit.ps1',
           'tools\bundler\plugins\10-resolve.ps1', 'tools\bundler\plugins\20-treeshake.ps1',
           'tools\bundler\plugins\30-merge.ps1', 'tools\bundler\plugins\40-render.ps1',
@@ -455,7 +455,9 @@ try {
             $l = $line.Trim()
             if ($l.Length -eq 0 -or $l.StartsWith('#') -or $l.StartsWith(';')) { continue }
             if ($l.StartsWith('[')) {
-              if ($l -cnotmatch '^\[[a-z-]+\]$') { $badIni += ($iniRel + ': ' + $l) }
+              # a section is a lower case word, or a lower case word and one lower case name
+              # (`[product.renderer]`, `[entry.core]`): the name is the entry's, never a key
+              if ($l -cnotmatch '^\[[a-z-]+(\.[a-z0-9_-]+)?\]$') { $badIni += ($iniRel + ': ' + $l) }
               continue
             }
             if ($l -cnotmatch '^[A-Z][A-Za-z0-9]*=') { $badIni += ($iniRel + ': ' + $l) }

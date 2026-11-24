@@ -64,7 +64,6 @@ src/
   utils/  schema/  lang/  themes/  plugins/    （保留原位：纯函数与数据不属三层）
 tools/
   bundler/
-    bundler.ini                 入口 + 每个产品的插件链
     bundler.ps1                 编排：读配置 → 解析图 → 跑插件钩子 → 写 dist
     plugins/
       resolve.ps1     ps1-load 的模块解析（读 #requires 与模块表）
@@ -122,7 +121,9 @@ $r = Invoke-Ipc 'store.get' @{ Id = 3 }     # -> @{ Ok = $true; Value = ...; Err
 
 ## 4. bundler 设计（参考 rollup 的钩子，vite 的入口）
 
-### 4.1 `tools/bundler/bundler.ini`
+### 4.1 `cli.ini` 的 `[entry.*]` / `[product.*]`
+
+§6.5 已经把这部分并进 `cli.ini`（对照 Electron 的 `electron.vite.config.ts`）：入口、插件链与复制清单都在同一份配置里，`cli.ini` 就是 vite.config，`bundler.ps1` + `plugins/` 是它背后的 rollup。下面用分节写法表达同一件事，实际文件见仓库根的 `cli.ini`。
 
 ```ini
 [bundler]
@@ -190,7 +191,7 @@ To=clipboard.ps1
 Inject=channels
 ```
 
-键全部进 `tools/schema/bundler.ps1`，与 `tools/schema/cli.ps1` 同一套 `Test-ToolConfigMap`，拼错即停。
+键全部进 `tools/schema/cli.ps1`（含 `DynamicKeys` 的 `entry.` / `product.`），与其它 `cli.ini` 键同一套 `Test-ToolConfigMap`，拼错即停。
 
 ### 4.2 插件接口
 
@@ -383,7 +384,7 @@ dist/clipboard-0.5.0/
 
 | 阶段 | 规模 | 内容 | 风险 |
 |---|---|---|---|
-| **P0 骨架 + AST 合并** | M | 建空目录与 `bundler.ini`/`channels.ini` 雏形；`bundler.ps1` 只做一件事但做对：`resolve → ps1-treeshake → ps1-merge → ps1-rename → ps1-minify → ps1-verify` 全链跑通，产物等价今天的逐文件 minify；同时把现有全部模块过一遍§4.3.3 的拒绝清单，先拿到「不能内联」的真实名单；`clipboard.ps1` 改成双根解析 | 中。合并语义错误会静默生效，靠§4.5 四条指纹拦 |
+| **P0 骨架 + AST 合并** | M | 建空目录与 `cli.ini` 的 `[product.*]`/`[entry.*]` 雏形、`channels.ini`；`bundler.ps1` 只做一件事但做对：`resolve → ps1-treeshake → ps1-merge → ps1-rename → ps1-minify → ps1-verify` 全链跑通，产物等价今天的逐文件 minify；同时把现有全部模块过一遍§4.3.3 的拒绝清单，先拿到「不能内联」的真实名单；`clipboard.ps1` 改成双根解析 | 中。合并语义错误会静默生效，靠§4.5 四条指纹拦 |
 | **P1 main 拆分** | L | `cb.native.cs` 按分区拆成 `src/main/**`，`index.cs` 写 `#part`；`cs-part` + `cs-compile` 插件跑通；`Add-Type` 回退路径同步改 | 中。`Add-Native` 的类型可见性、`InternalsVisibleTo`、静态构造顺序 |
 
 P1 已落地（2026-11-24）：机制就位并可增量搬迁。
@@ -403,6 +404,30 @@ P1 已落地（2026-11-24）：机制就位并可增量搬迁。
 | **P6 bundler 完整** | L | 插件拆齐、`docs`/`lang`/`themes` 走 assets 插件、`dev.ps1` 监视器改读 bundler 图、`shot.ps1` 找新路径、`tests/pkg/build.ps1` 34 条断言改写、README×2 | 中。断言改写量大但机械 |
 
 P0–P2 可以连续做，P3/P4 之间建议停一版（store 先落地，组件再吃它）。
+
+## 7.5 cli / bundler / build.ps1 谁来做什么（对照 Electron）
+
+| Electron | 本项目 | 负责 | 不负责 |
+|---|---|---|---|
+| `vite` 可执行体 | `cli.ps1` + `package.ini` | 命令路由、参数校验、把命令交给对应脚本 | 任何构建细节 |
+| `electron.vite.config.ts` | `cli.ini`（`[entry.*]` / `[product.*]` / `[build]`） | 有哪些入口、每个入口用哪条插件链、产物落在哪、哪些文件随包复制 | 怎么压缩一个 .ps1、怎么编译 C#（都是插件） |
+| `vite build`（rollup 引擎） | `bundler.ps1` + `plugins/` | 一次「若干文件 → 一个产物」：解析、tree-shake、合并、压缩、编译、指纹校验 | 不认识"这是一个应用"，不决定包长什么样 |
+| `electron-builder` / `electron-forge` | `tools/build.ps1` | 一个**发布**：读配置 → 逐个入口交给 bundler（并行）→ 复制资产 → 跑打包副本自检 → zip → 汇报 | 怎么压缩一个 .ps1、怎么编译 C#（都是插件） |
+| `vite dev` 的 watcher | `tools/dev.ps1` | 监视 → 重建受影响的产品 → 重启常驻 | 自己算依赖图（问 bundler） |
+
+三条边界规则：
+
+1. **一个 key 只属于一个文件**：入口 / 插件链 / 复制清单、行为开关 → `cli.ini`；命令行 → `package.ini`；单个文件怎么处理 → `plugins/`。
+2. **`build.ps1` 不再有自己的文件类型表**：`pipeline.ps1` 的 `LibraryRules` / `Products` 全部搬进 `bundler/plugins/assets.ps1` 与 `cs-compile.ps1`，`build.ps1` 只问结果。它现在既知道怎么压缩 `.ps1`，又知道包长什么样，这是两层混在一起的根源。
+3. **dev 的监视集合由 bundler 的图给出**，不再抄一份 `Includes`。
+
+P6 拆成三个提交：
+
+| 步骤 | 内容 | 退出条件 |
+|---|---|---|
+| P6a | `pipeline.ps1` 两张表搬进插件；`build.ps1` 的 stage 循环改成对每个入口调 bundler | 包内容与今天逐文件一致 |
+| P6b | `cli.ini [build] Includes/Excludes` → `[copy]` 段；dev 的 Includes 由 `bundler -List` 输出 | `cli dev` 重启行为不变 |
+| P6c | dist 换成 `renderer/ preload/ main/`；改写 `tests/pkg` 的断言（已从 `cli.ini` 派生，改动面已缩小） | 34 条断言全绿 |
 
 ## 8. pinia 式 store 的 API 面
 
@@ -429,14 +454,14 @@ $s.$onAction({ param($name, $args) }) # action 之前/之后，可包装
 
 1. `src/clipboard.ps1` 的模块表 → 改成入口表（`$rendererEntries`）
 2. `tests/unit/unit.ps1` 的 `$requiredLib` → 新路径清单
-3. `cli.ini` `[build] Includes/Excludes` → 换成 `bundler.ini` 的入口；`[dev]` 同步
+3. `cli.ini` `[build] Includes/Excludes` → 换成 `[entry.*]` 的入口与 `[copy]` 段；`[dev]` 同步
 4. `tools/dev.ps1`（406 行）的监视器与产品识别 → 改读 bundler 图
 5. `tools/shot.ps1`（559 行）里窗口脚本路径
 6. `tests/pkg/build.ps1` 34 条断言（布局、`lib\` 前缀、docs 分节、`client.exe` 位置）
 7. `README.md` + `README.zh-CN.md` 文件树与模块清单（两份必须一致）
 8. `src/lang/*.ini`：新组件的 `settings.*` / `mark.*` 键两种语言同时加
 9. 压缩器：新代码里**任何实参位置的 `[类型]` 转换都要先赋变量**（已踩两次）
-10. `tools/bundler/` 新增时：`docs`/`tools` 不进包，但「打包器本身」要不要跟包走由 `bundler.ini` 的 `ShipTools=0` 显式写出
+10. `tools/bundler/` 新增时：`docs`/`tools` 不进包，但「打包器本身」要不要跟包走由 `[build] ShipTools=0` 显式写出
 
 ## 10. 明确的非目标
 
