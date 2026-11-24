@@ -62,10 +62,18 @@ function New-UiStoreObject($Context) {
   # the bag and the watchers, for a getter, an action, or a caller that wants to diff it
   $store | Add-Member -MemberType ScriptProperty -Name Context -Value { $Context }.GetNewClosure()
   $store | Add-Member -MemberType ScriptProperty -Name State -Value { $Context.State }.GetNewClosure()
+  # State is readable as a property, the way pinia exposes it: a window asks for Rows instead of
+  # for the bag. Read only, because a write has to go through an action so the watchers hear it;
+  # the key set is fixed at definition time, which is why it is read here and not in the getter
+  # loop. -Force lets a getter below reuse a name it computes from the state.
+  foreach ($key in @($Context.State.Keys)) {
+    $name = [string]$key
+    $store | Add-Member -MemberType ScriptProperty -Name $name -Value { $Context.State[$name] }.GetNewClosure() -Force
+  }
   foreach ($key in @($Context.Getters.Keys)) {
     $name = [string]$key
     $getter = $Context.Getters[$key]
-    $store | Add-Member -MemberType ScriptProperty -Name $name -Value { & $getter $this }.GetNewClosure()
+    $store | Add-Member -MemberType ScriptProperty -Name $name -Value { & $getter $this }.GetNewClosure() -Force
   }
   foreach ($key in @($Context.Actions.Keys)) {
     $name = [string]$key

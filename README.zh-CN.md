@@ -633,7 +633,7 @@ clipboard config set entry-actions.Reveal 0
 
 窗口不直接调存储函数，而是调通道：同一张表里的 `Handler=` 说明哪个函数负责应答。`Invoke-Ipc 'list'` 在本进程里执行 `Get-Records`——一次函数调用，不拼帧、不拷贝；不是通道的名字、或通道没有 `Handler=` 时直接抛错，而不是碰巧跑起一个存在的函数。这就是面板允许使用的接口面：面板的七处刷新都走它，需要响应窗口的通道是这张表里的一行，而不是埋在绘制代码里的一个函数名。
 
-窗口与通道之间是 store，面板的行从它取：`Use-UiStore 'history'` 给出拥有那份行的唯一个对象，`Refresh` 读通道并保留结果，`Rows` 把同一个数组交回而不复制（查询缓存靠引用比较前后两次读取），`Count` / `IsEmpty` 在读取时计算。store 只在 `renderer\src\store\` 定义一次，第二个窗口拿到的是同一份状态而不是副本。
+窗口与通道之间是 store，面板的行从它取：`Use-UiStore 'history'` 给出拥有那份行的唯一个对象，`Refresh` 读通道并保留结果，`Rows` 把那份状态读回来（每次读取一份新数组，属性经管道返回值），`Count` / `IsEmpty` 在读取时计算。store 只在 `renderer\src\store\` 定义一次，第二个窗口拿到的是同一份状态而不是副本。删除也归 store：`Remove` 走 `del` 通道，真删掉了才重读。
 
 ### 提前编译的产物（可选）
 
@@ -753,7 +753,7 @@ src/                    程序本体（打包只读这个目录）
 
   renderer/src/store/     窗口读写的那份状态
     define.ps1            Define-UiStore / Use-UiStore：一个 store 一个对象，含 getter 与 action
-    history-store.ps1     历史：Rows / Count / IsEmpty / Refresh / Clear
+    history-store.ps1     历史：Rows / Count / IsEmpty / Refresh / Clear / Remove
 
   main/                  类型库：一个目录一件事，统一由 index.cs 决定编译集合
   main/index.cs           决定编译集合的 #part 清单：没人引用的源文件根本不参与编译

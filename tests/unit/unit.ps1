@@ -2219,13 +2219,13 @@ try {
         Expect ($rows.Count -eq @(Get-Records).Count) ([string]$rows.Count + ' rows')
         Expect ($history.Count -eq $rows.Count) ([string]$history.Count)
         Expect (($history.IsEmpty) -eq ($rows.Count -eq 0)) 'the empty getter disagrees with the count'
-        # the row array is the stored one, not a copy: the panel compares reads by reference
-        Expect ([object]::ReferenceEquals($history.Rows, $history.Rows)) 'Rows answers a new array each read'
         $heard = 0
         $hook = $history.Subscribe({ param($changed) $script:StoreHeard++ })
         $script:StoreHeard = 0
         $history.Clear()
         Expect ($script:StoreHeard -eq 1) ([string]$script:StoreHeard + ' changes heard')
+        # Rows reads the state, so a write through an action is what a window sees next
+        Expect (@($history.Rows).Count -eq 0) ([string]@($history.Rows).Count + ' rows after Clear')
         $history.Refresh()
         Expect ($script:StoreHeard -eq 2) ([string]$script:StoreHeard + ' changes heard')
         $null = $hook
@@ -2233,6 +2233,23 @@ try {
         $threw = $false
         try { [void](Use-UiStore 'nonesuch') } catch { $threw = $true }
         Expect $threw 'an undefined store name was handed back'
+      }
+
+      # a store write goes through the channel too, and only a real delete re-reads
+      It 'a store write removes a row and keeps the rows honest' {
+        $history = Use-UiStore 'history'
+        Add-Item 'store-remove-probe'
+        # refresh after the write: Rows is the snapshot that read took, not a live query
+        $before = @($history.Refresh()).Count
+        $victim = @($history.Rows | Where-Object { $_.Payload -eq 'store-remove-probe' })[0]
+        Expect ($null -ne $victim) ('the probe never reached the store: ' + ([string]$before) + ' rows, ' + ((@($history.Rows | ForEach-Object { [string]$_.Payload }) -join '|')))
+        $answer = [string]$history.Remove($victim.Payload)
+        Expect ($answer -eq 'removed') ('Remove answered ' + $answer)
+        Expect (@($history.Rows).Count -eq $before - 1) ([string]@($history.Rows).Count + ' of ' + [string]$before)
+        # a payload that is not there changes nothing, and the count stays where it was
+        $again = [string]$history.Remove('no such payload')
+        Expect ($again -ne 'removed') ('a missing payload answered ' + $again)
+        Expect (@($history.Rows).Count -eq $before - 1) ([string]@($history.Rows).Count + ' after a refused delete')
       }
 
       Describe 'generic marks' {

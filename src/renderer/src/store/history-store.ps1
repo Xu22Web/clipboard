@@ -7,12 +7,13 @@
 #
 #   $history = Use-UiStore 'history'
 #   $rows = $history.Refresh()     # reads the channel, keeps the result, answers it
-#   $history.Rows                  # the same array, until the next refresh replaces it
+#   $history.Rows                  # what the last write left, until the next refresh
 #   $history.Count                 # how many there are, computed when read
 #
-# Rows is a ScriptProperty over the state bag, not a copy: the panel compares one read with the
-# next by reference to decide whether its query caches still apply, and a copy would make every
-# keystroke rebuild them.
+# Rows reads the state bag, so it is never stale - but each read is a fresh array, because a
+# ScriptProperty hands its value back through the pipeline. A caller that wants to compare one
+# read with the next keeps the array it was given: the panel holds it in one variable and
+# replaces it on refresh, which is what its query caches compare by reference.
 
 Define-UiStore 'history' {
   param($ctx)
@@ -39,5 +40,18 @@ Define-UiStore 'history' {
     param($s)
     $s.Context.State.Rows = @()
     Invoke-UiStoreChange $s.Context @('Rows')
+  }
+
+  # Delete one entry and keep the rows honest. The channel answers what happened - 'removed',
+  # or 'protected:<mark>' when a plugin keeps the row - and only a real delete re-reads, so a
+  # refused one costs nothing.
+  & $ctx.Action 'Remove' {
+    param($s, $payload)
+    $result = [string](Invoke-Ipc 'del' ([string]$payload))
+    if ($result -eq 'removed') {
+      $s.Context.State.Rows = @(Invoke-Ipc 'list')
+      Invoke-UiStoreChange $s.Context @('Rows')
+    }
+    return $result
   }
 }

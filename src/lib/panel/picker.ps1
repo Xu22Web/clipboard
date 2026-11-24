@@ -920,7 +920,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     function Del-Index([int]$idx) {
       if ($idx -lt 0 -or $idx -ge $script:Filtered.Count) { return }
       $victim = $script:Filtered[$idx]
-      $removed = Remove-Record $victim.Payload
+      $removed = [string]$script:History.Remove($victim.Payload)
       if ($removed -like 'protected:*') {
         # only the plugin that declared the mark knows how to remove it
         $pm = $removed.Substring(10)
@@ -939,7 +939,8 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       if ($removed -eq 'removed') {
         if ($script:UndoOn) { $script:UndoRec = $victim; $script:UndoIdx = $idx }
       }
-      $script:Entries = @($script:History.Refresh())
+      # the store re-read only when something was deleted, so its rows are what the panel shows
+      $script:Entries = @($script:History.Rows)
       if ($removed -eq 'removed') { Write-Log ('deleted entry (' + $victim.Payload.Length + ' chars), left ' + $script:Entries.Count) }
       Update-List $txt.Text
       if ($script:Filtered.Count -gt 0) { $lst.SelectedIndex = [Math]::Min($idx, $script:Filtered.Count - 1) }
