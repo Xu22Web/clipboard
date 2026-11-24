@@ -93,17 +93,8 @@ function Draw-SettingsChrome($g, $pal, $layout, [string]$title, [string]$subtitl
   } finally { $pen.Dispose() }
 }
 
-# A colour part way between two others, for a transition that moves rather than switches.
-# Alpha is interpolated too, so a border can fade out while the fill it sits on changes.
-function Get-SettingsBlend($from, $to, [double]$k) {
-  if ($k -le 0) { return $from }
-  if ($k -ge 1) { return $to }
-  return [Drawing.Color]::FromArgb(
-    [int][Math]::Round([double]$from.A + ([double]$to.A - [double]$from.A) * $k),
-    [int][Math]::Round([double]$from.R + ([double]$to.R - [double]$from.R) * $k),
-    [int][Math]::Round([double]$from.G + ([double]$to.G - [double]$from.G) * $k),
-    [int][Math]::Round([double]$from.B + ([double]$to.B - [double]$from.B) * $k))
-}
+# A colour part way between two others lives in lib\ui\widgets.ps1 (Get-UiBlend), with the
+# switches and scrollbars it paints; the settings window keeps no copy of it.
 
 # The glyph a page's row carries, from the same icon face the panel and the tray use (Segoe
 # Fluent Icons, MDL2 on Win10). The mapping is by the schema's group name - the identity the
@@ -193,39 +184,10 @@ function Draw-SettingsSide($g, $pal, $layout, $groups, [int]$selected, $pendingG
 }
 
 # A Win11 switch: a pill track and a round knob. $k is how far the switch has travelled, so a
-# flip can be drawn on its way instead of landing in one frame; 0 and 1 are the two resting
-# states. On: the accent track, the surface colour as the knob (bright track, dark knob in the
-# dark theme and the other way round in the light one, because both tokens invert together).
+# The switch itself is a shared widget (lib\ui\widgets.ps1, Draw-UiToggle), so the panel, the
+# tray or a later surface can carry the same control; what stays here is where it is put.
 function Draw-SettingsToggle($g, $pal, [int]$x, [int]$y, [int]$w, [int]$h, [double]$k, [bool]$enabled = $true) {
-  if ($null -eq $g -or $null -eq $pal) { return }
-  $track = Get-SettingsBlend $pal['Field'] $pal['Accent'] $k
-  $knob = Get-SettingsBlend $pal['Text'] $pal['Surface'] $k
-  if (-not $enabled) {
-    # a switch that cannot take effect keeps its shape and loses its colour
-    $track = $pal['Field']
-    $knob = $pal['Faint']
-  }
-  $brush = New-Object Drawing.SolidBrush $track
-  $path = New-RoundPath $x $y $w $h ([int]($h / 2))
-  try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
-  if ($k -lt 0.99) {
-    # the off track needs an edge: the field colour sits within a few percent of the surface
-    $edgeColour = Scale-Alpha $pal['FieldBorder'] (1.0 - $k)
-    if ($edgeColour.A -gt 0) {
-      $pen = New-Object Drawing.Pen $edgeColour
-      $edge = New-RoundPath $x $y $w $h ([int]($h / 2))
-      try { $g.DrawPath($pen, $edge) } finally { $edge.Dispose(); $pen.Dispose() }
-    }
-  }
-  # Win11 measures the thumb at 12 px inside a 20 px track, 4 px in from either end: a thumb that
-  # almost fills the track reads as a different control.
-  $d = [Math]::Min((Px 12), ($h - (Px 4)))
-  $from = $x + (Px 4)
-  $to = $x + $w - $d - (Px 4)
-  $kx = [int][Math]::Round($from + (($to - $from) * $k))
-  $ky = $y + [int](($h - $d) / 2)
-  $kb = New-Object Drawing.SolidBrush $knob
-  try { $g.FillEllipse($kb, $kx, $ky, $d, $d) } finally { $kb.Dispose() }
+  Draw-UiToggle $g $pal $x $y $w $h $k $enabled
 }
 
 # Where a control sits vertically: on the label's line, not in the middle of the card. With two
@@ -1030,14 +992,11 @@ function Get-SettingsScrollThumb($layout, [int]$rows, [int]$visible, [int]$scrol
   $top = [int]$layout.ListTop
   $track = [int]$layout.ListBottom - $top
   if ($track -lt (Px 24)) { return $null }
-  $len = [int][Math]::Max((Px 24), [int]($track * ($visible / [double]$rows)))
-  if ($len -gt $track) { $len = $track }
+  # the same three numbers every scrollbar in the tool turns into a thumb (lib\ui\layout.ps1)
   $span = [Math]::Max(1, ($rows * [int]$layout.RowHeight) - $track)
-  $room = $track - $len
-  $off = [int][Math]::Round($room * ($scroll / [double]$span))
-  if ($off -lt 0) { $off = 0 }
-  if ($off -gt $room) { $off = $room }
-  return @{ Top = ($top + $off); Len = $len; TrackTop = $top; TrackLen = $track; Span = $span }
+  $m = Get-UiScrollMetrics $track ($visible / [double]$rows) $scroll $span (Px 24)
+  if ($null -eq $m) { return $null }
+  return @{ Top = ($top + $m.Top); Len = $m.Len; TrackTop = $top; TrackLen = $track; Span = $span }
 }
 
 # the lane a pointer may grab, which is wider than the three pixels the thumb occupies
@@ -1053,13 +1012,6 @@ function Get-SettingsScrollLane($layout) {
 # the two windows move at the same speed.
 function Draw-SettingsScrollbar($g, $pal, $layout, $thumb, [double]$k) {
   if ($null -eq $g -or $null -eq $pal -or $null -eq $thumb) { return }
-  if ($k -lt 0) { $k = 0 }
-  if ($k -gt 1) { $k = 1 }
-  $w = [int][Math]::Round((Px 3) + ($k * ((Px 5) - (Px 3))))
-  $alpha = [int][Math]::Round(110 + ($k * 80))
-  $x = [int]$layout.SbLeft + [int](([int]$layout.SbLane - $w) / 2)
-  $ink = $pal['Dim']
-  $brush = New-Object Drawing.SolidBrush ([Drawing.Color]::FromArgb($alpha, $ink.R, $ink.G, $ink.B))
-  $path = New-RoundPath $x ([int]$thumb.Top) $w ([int]$thumb.Len) ([Math]::Max(1, [int]($w / 2)))
-  try { $g.FillPath($brush, $path) } finally { $path.Dispose(); $brush.Dispose() }
+  $lane = New-UiBox ([int]$layout.SbLeft) ([int]$layout.ListTop) ([int]$layout.SbLane) ([int]$layout.ListBottom - [int]$layout.ListTop)
+  Draw-UiScrollbar $g $pal $lane $thumb $k
 }

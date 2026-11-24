@@ -740,6 +740,10 @@ src/                    程序本体（打包只读这个目录）
   lib/assembly/*.cs       类型库源码（cb.native.cs）
   lib/assembly/clipboard.dll 类型库产物（不入库；cli assembly 生成）
 
+  lib/ui/                两个自绘窗口共用的盒子与控件
+  lib/ui/layout.ps1        切盒子：内缩、纵向堆叠、横向分栏、滚动条滑块的尺寸与位置
+  lib/ui/widgets.ps1       控件本身：开关、滚动条、两色之间的混色
+
   lib/panel/              面板栈：只在绘制命令中加载
   lib/panel/picker.ps1      历史面板：窗体、过滤、列表、按键、右键菜单、粘贴
   lib/panel/picker-geom.ps1 面板纯计算：行数、数字快选、窗口位置、命中

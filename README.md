@@ -741,6 +741,10 @@ src/                    the program (the only folder packaging reads)
   lib/assembly/*.cs       the type library source (cb.native.cs)
   lib/assembly/clipboard.dll the compiled library (not committed; cli assembly)
 
+  lib/ui/                 boxes and controls both drawn windows share
+  lib/ui/layout.ps1         cutting a box: inset, stack, columns, a scrollbar's thumb
+  lib/ui/widgets.ps1        the controls: a switch, a scrollbar, a colour between two others
+
   lib/panel/              the panel stack, loaded only by commands that draw
   lib/panel/picker.ps1      the history panel: window, filter, list, keys, context menu, paste
   lib/panel/picker-geom.ps1 the panel's arithmetic: rows, quick keys, placement, hit tests

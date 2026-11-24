@@ -230,6 +230,7 @@ try {
         $requiredLib = @('lib\base', 'lib\native', 'lib\panel\focus', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
           'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\text', 'lib\panel\anim',
           'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\panel\tray-menu', 'lib\serve', 'lib\shortcut',
+          'lib\ui\layout', 'lib\ui\widgets',
           'lib\settings-model', 'lib\settings-types', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings',
           'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch',
           'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey',
@@ -960,6 +961,96 @@ try {
       $o = New-Object System.Collections.Generic.List[string]
       foreach ($r in @(Get-Records)) { $o.Add($r.Payload) }
       return $o.ToArray()
+    }
+
+    # The two drawn windows place their furniture by cutting boxes and filling them, and both
+    # scrollbars are the same three numbers (lib\ui\layout.ps1). These are the rules the
+    # settings window and the panel lean on.
+    Describe 'ui boxes' {
+      It 'moves the edges of a box in' {
+        $box = New-UiBox 10 20 200 100
+        $all = Get-UiInset $box 4
+        Expect ($all.Left -eq 14 -and $all.Top -eq 24 -and $all.Width -eq 192 -and $all.Height -eq 92) 'all four edges'
+        $mixed = Get-UiInset $box 4 0 0 6
+        Expect ($mixed.Left -eq 14 -and $mixed.Top -eq 20 -and $mixed.Width -eq 196 -and $mixed.Height -eq 94) 'left and bottom only'
+      }
+
+      It 'sizes a thumb by the visible part and stops it at both ends of the lane' {
+        $top = Get-UiScrollMetrics 400 0.25 0 300 24
+        Expect ($top.Len -eq 100 -and $top.Top -eq 0) 'a quarter shown at the top'
+        $mid = Get-UiScrollMetrics 400 0.25 150 300 24
+        Expect ($mid.Top -eq 150) 'half way down a lane with 300 px of travel'
+        $end = Get-UiScrollMetrics 400 0.25 9999 300 24
+        Expect ($end.Top -eq 300) 'the end of the lane, not past it'
+        $thin = Get-UiScrollMetrics 400 0.01 0 300 24
+        Expect ($thin.Len -eq 24) 'a thumb is never thinner than what a pointer can grab'
+        Expect ($null -eq (Get-UiScrollMetrics 400 1.0 0 300 24)) 'no thumb when the content fits'
+      }
+    }
+
+    Describe 'ui box model' {
+      It 'puts the border and the padding inside the slot and the margin outside it' {
+        $style = New-UiStyle @{ Margin = 4; Border = 1; Padding = 8 }
+        $boxes = Get-UiBoxModel (New-UiBox 0 0 100 50) $style
+        Expect ($boxes.Border.Left -eq 4 -and $boxes.Border.Width -eq 92) 'the margin moves the border box in'
+        Expect ($boxes.Padding.Left -eq 5 -and $boxes.Padding.Height -eq 40) 'the border sits inside that'
+        Expect ($boxes.Content.Left -eq 13 -and $boxes.Content.Width -eq 74 -and $boxes.Content.Height -eq 24) 'the padding sits inside the border'
+      }
+
+      It 'reads one, two and four edge numbers the way CSS does' {
+        $one = Get-UiEdges 6
+        Expect ($one[0] -eq 6 -and $one[1] -eq 6 -and $one[2] -eq 6 -and $one[3] -eq 6) 'one number, four edges'
+        $two = Get-UiEdges @(2, 6)
+        Expect ($two[0] -eq 2 -and $two[1] -eq 6 -and $two[2] -eq 2 -and $two[3] -eq 6) 'two numbers are vertical then horizontal'
+        $four = Get-UiEdges @(1, 2, 3, 4)
+        Expect ($four[0] -eq 1 -and $four[1] -eq 2 -and $four[2] -eq 3 -and $four[3] -eq 4) 'top, right, bottom, left'
+      }
+
+      It 'stacks a column and lets the automatic child take what is left' {
+        $box = New-UiBox 0 0 200 120
+        $col = New-UiStyle @{ Flow = 'column'; Gap = 6 }
+        $items = @(
+          (New-UiStyle @{ Height = 20 }),
+          (New-UiStyle @{ }),
+          (New-UiStyle @{ Height = 20 })
+        )
+        $laid = @(Get-UiFlow $box $col $items)
+        Expect ($laid.Count -eq 3) 'three children'
+        Expect ($laid[1].Top -eq 26 -and $laid[1].Height -eq 68) 'the middle one takes 120 - 40 - 12'
+        Expect ($laid[2].Top -eq 100 -and $laid[2].Height -eq 20) 'the last one lands after it'
+        Expect ($laid[0].Width -eq 200) 'a child with no width stretches across the column'
+      }
+
+      It 'holds a child to its min and max' {
+        $box = New-UiBox 0 0 200 200
+        $col = New-UiStyle @{ Flow = 'column' }
+        $clamped = @(Get-UiFlow $box $col @((New-UiStyle @{ MaxHeight = 30; MinHeight = 10 })))
+        Expect ($clamped[0].Height -eq 30) 'the automatic height stops at the maximum'
+        $small = @(Get-UiFlow $box $col @((New-UiStyle @{ Height = 4; MinHeight = 12 })))
+        Expect ($small[0].Height -eq 12) 'a fixed height is raised to the minimum'
+      }
+
+      It 'aligns across the flow and justifies along it' {
+        $box = New-UiBox 0 0 200 100
+        $end = New-UiStyle @{ Flow = 'column'; Align = 'end' }
+        $one = @(Get-UiFlow $box $end @((New-UiStyle @{ Width = 50; Height = 10 })))
+        Expect ($one[0].Left -eq 150) 'aligned to the far edge'
+        $center = New-UiStyle @{ Flow = 'column'; Justify = 'center' }
+        $mid = @(Get-UiFlow $box $center @((New-UiStyle @{ Height = 20 })))
+        Expect ($mid[0].Top -eq 40) 'centred along the column'
+        $spread = New-UiStyle @{ Flow = 'column'; Justify = 'space-between' }
+        $both = @(Get-UiFlow $box $spread @((New-UiStyle @{ Height = 20 }), (New-UiStyle @{ Height = 20 })))
+        Expect ($both[0].Top -eq 0 -and $both[1].Top -eq 80) 'pushed to the two ends'
+      }
+
+      It 'lays a row out left to right with a gap' {
+        $box = New-UiBox 0 0 200 40
+        $row = New-UiStyle @{ Flow = 'row'; Gap = 10 }
+        $laid = @(Get-UiFlow $box $row @((New-UiStyle @{ Width = 60 }), (New-UiStyle @{ })))
+        Expect ($laid[0].Left -eq 0 -and $laid[0].Width -eq 60) 'the fixed one'
+        Expect ($laid[1].Left -eq 70 -and $laid[1].Width -eq 130) 'the automatic one takes the rest'
+        Expect ($laid[1].Height -eq 40) 'a row stretches its children across the height'
+      }
     }
 
     # the settings file the rows write and read: the tool keeps it beside its own script
