@@ -74,6 +74,27 @@ if (-not $Config) { $Config = Join-Path $root 'cli.ini' }
 if (-not (Test-Path -LiteralPath $Config)) { Fail ('missing settings file: ' + $Config) }
 $cfg = Import-IniMap $Config
 
+# An entry marked Ship=1 is a package file rather than a check: its modules are merged into one
+# script and the copy below leaves them out, so the package carries one copy of each.
+$shipEntries = @{}
+foreach ($entryKey in @($cfg.Keys)) {
+  $entryMatch = [regex]::Match([string]$entryKey, '^entry\.([A-Za-z0-9_-]+)\.Ship$')
+  if (-not $entryMatch.Success) { continue }
+  if (@('1', 'true', 'yes', 'on') -notcontains ([string]$cfg[$entryKey]).ToLowerInvariant()) { continue }
+  $entryName = $entryMatch.Groups[1].Value
+  $shipTo = ([string]$cfg[('entry.' + $entryName + '.To')]) -replace '/', '\'
+  if (-not $shipTo) { Fail ('[entry.' + $entryName + '] is Ship=1 but names no To=') }
+  $shipMods = New-Object System.Collections.Generic.List[string]
+  foreach ($one in @(([string]$cfg[('entry.' + $entryName + '.Modules')]) -split ',')) {
+    $text = $one.Trim()
+    if (-not $text) { continue }
+    $shipMods.Add((($text -replace '^src/', '') -replace '/', '\'))
+  }
+  if ($shipMods.Count -eq 0) { Fail ('[entry.' + $entryName + '] is Ship=1 but lists no Modules=') }
+  $shipEntries[$entryName] = @{ Rel = $shipTo; Modules = $shipMods.ToArray() }
+}
+$bundler = Join-Path $root 'tools\bundler\bundler.ps1'
+
 # cli.ini is the only place a build setting may live. It is checked against
 # tools\schema\cli.ps1 before anything else happens: a missing key, an unknown key, a value of
 # the wrong type or a number outside its range stops the build with the list of problems, so a
@@ -180,7 +201,41 @@ $pkgFiles = @(Expand-GlobList $baseDir $includeGlobs $excludeGlobs)
 if ($pkgFiles.Count -eq 0) { Fail 'cli.ini [copy] Includes reaches no file' }
 $dropped = @(Expand-GlobList $baseDir $includeGlobs @()).Count - $pkgFiles.Count
 if ($dropped -gt 0) { Write-Note ('excluded ' + [string]$dropped + ' file(s) listed in cli.ini [copy] Excludes') }
-$scriptFiles = @($pkgFiles | Where-Object { $_ -like '*.ps1' })
+
+# ---------------------------------------------------------------- shipped entries
+# A shipped entry is merged here, before the rename tables are built: the bundle is one more
+# script the package carries, so it has to be minified and renamed by the same tables as the
+# files beside it. Two renamers - one in the bundler, one here - would hand the same short name
+# to two different things, which is what a package cannot survive.
+$shipProducts = @{}
+if ($shipEntries.Count -gt 0) {
+  $shipTmp = Join-Path $env:TEMP ('ships-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+  New-Item -ItemType Directory -Path $shipTmp -Force | Out-Null
+  foreach ($entryName in @($shipEntries.Keys | Sort-Object)) {
+    $shipOne = $shipEntries[$entryName]
+    $shipFile = Join-Path $shipTmp ($entryName + '.ps1')
+    $swShip = Start-Step
+    Write-Step ('bundling ' + $shipOne.Rel)
+    $shipLog = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bundler -Entry $entryName -Out $shipFile 2>&1
+    if (-not (Test-Path -LiteralPath $shipFile)) {
+      foreach ($line in @($shipLog)) {
+        $text = ([string]$line).Trim()
+        if ($text) { Write-Note $text }
+      }
+      Fail ('the bundler wrote no ' + $shipOne.Rel + ' - a package cannot start without it')
+    }
+    $shipKb = [Math]::Round((Get-Item -LiteralPath $shipFile).Length / 1KB, 1)
+    Write-Done $swShip ('merged ' + $shipOne.Rel + '   ' + $shipKb + ' KB')
+    $shipProducts[$shipFile] = $shipOne.Rel
+  }
+}
+# what a shipped entry already carries as one file: those modules are neither copied nor renamed
+$shipSources = @{}
+foreach ($entryName in @($shipEntries.Keys)) {
+  foreach ($one in @($shipEntries[$entryName].Modules)) { $shipSources[([string]$one).ToLowerInvariant()] = $true }
+}
+$scriptFiles = @($pkgFiles | Where-Object { $_ -like '*.ps1' -and -not $shipSources.ContainsKey((Get-PackageRel $_).ToLowerInvariant()) })
+$scriptFiles += @($shipProducts.Keys)
 
 # ---------------------------------------------------------------- products (ahead of time)
 # A .cs under a product folder means "compile this folder into one file": the list decides
@@ -196,10 +251,12 @@ foreach ($f in $pkgFiles) {
   if (-not $productSources.ContainsKey($p.Dir)) { $productSources[$p.Dir] = New-Object System.Collections.Generic.List[string] }
   $productSources[$p.Dir].Add($f)
 }
+# the merged bundles are ordinary scripts from here on: the loop below stages them at the path
+# their entry names
+foreach ($f in @($shipProducts.Keys)) { $plainFiles.Add($f) }
 $productOut = @{}
 # the compile command belongs to the entry the table names, not to this script: pipeline.ps1
 # runs it through the bundler, and what comes back is a log and whether the file is there
-$bundler = Join-Path $root 'tools\bundler\bundler.ps1'
 foreach ($p in @(Get-ProductList)) {
   if (-not $productSources.ContainsKey($p.Dir)) { continue }
   $swProduct = Start-Step
@@ -283,7 +340,10 @@ try {
   $after = 0
   $rows = New-Object System.Collections.Generic.List[object]
   foreach ($f in $plainFiles) {
-    $rel = Get-PackageRel $f
+    # a merged bundle keeps the path its entry names, not the one it was built at
+    if ($shipProducts.ContainsKey($f)) { $rel = [string]$shipProducts[$f] } else { $rel = Get-PackageRel $f }
+    # a module the bundle already carries is not copied as well
+    if ($shipSources.ContainsKey($rel.ToLowerInvariant())) { continue }
     $target = Join-Path $stage $rel
     $parent = Split-Path -Parent $target
     if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
@@ -389,12 +449,10 @@ if ($verify) {
   if (-not (Test-Path -LiteralPath $suite)) { Fail ('test suite not found: ' + $suite) }
   $swVerify = Start-Step
   Write-Step 'running the CLI suite against the package'
-  # no -Serial: the driver sees that -Source is not src\ and keeps the cli parts one at a time
-  # (a packaged copy has no fake clipboard), while the packaging part still runs beside them
-  # The suite stays attached to this console instead of being piped into a variable: it prints
-  # a row per part and a block with everything that failed, and capturing the stream turned a
-  # run of several minutes into one silent line. A failing part says why on its own row.
-  & powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -File $suite -Integration -Source $dest
+  # -Serial: the packaging part runs the package's own copy, which drives the machine clipboard,
+  # and a CLI part that reads the clipboard at the same moment fails on timing rather than on
+  # behaviour. One part at a time is slower but is the only reading that can be trusted.
+  & powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -File $suite -Integration -Source $dest -Serial
   $code = $LASTEXITCODE
   if ($code -ne 0) {
     Remove-Item -LiteralPath $dest -Recurse -Force -ErrorAction SilentlyContinue

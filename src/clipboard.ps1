@@ -72,11 +72,21 @@ $baseModules = @(
 # one group per job: the files a job can reach, and nothing else. Storing an entry and getting
 # it back are one job - the capture pipeline (clip), the payload files (blobs), the image and
 # formatted-text sidecars (media, cfhtml) and the paste modifiers all live in it.
+#
+# The window layer is its own list because a package carries it as one file: [entry.app] in
+# cli.ini merges exactly these modules into renderer\app.ps1, and the build leaves them out of
+# the copy. A working copy has no such file, so the same list is loaded module by module - one
+# list, two shapes, and nothing to keep in step by hand.
+$windowBundle = 'renderer\app'
+$windowModules = @('renderer\src\core\draw', 'lib\ipc', 'renderer\src\store\define', 'renderer\src\store\history-store', 'renderer\src\windows\media-render', 'renderer\src\windows\anim', 'renderer\src\windows\picker-draw', 'renderer\src\windows\picker-edit', 'renderer\src\windows\pinlist', 'renderer\src\windows\preview', 'renderer\src\windows\focus', 'renderer\src\windows\picker', 'renderer\src\windows\picker-live', 'renderer\src\core\layout', 'renderer\src\core\widgets', 'renderer\src\core\component', 'renderer\src\core\framework', 'renderer\src\core\views', 'renderer\src\core\setup', 'renderer\src\core\reactive', 'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'renderer\src\windows\settings-draw', 'renderer\src\windows\settings-edit', 'renderer\src\windows\settings', 'renderer\src\windows\tray-menu')
 $groupModules = @{
   store    = @('utils\hash', 'utils\image', 'utils\cfhtml', 'lib\store', 'lib\entry', 'lib\query', 'lib\select', 'lib\clip', 'lib\media', 'lib\blobs', 'lib\cfhtml', 'lib\modifiers', 'lib\apprules', 'utils\query-words')
   transfer = @('lib\transfer', 'utils\transfer', 'lib\migrate')
   config   = @('lib\config', 'lib\config-template', 'lib\shortcut', 'utils\dpi')
-  panel    = @('renderer\src\core\draw', 'utils\image', 'lib\ipc', 'renderer\src\store\define', 'renderer\src\store\history-store', 'renderer\src\windows\media-render', 'renderer\src\windows\anim', 'renderer\src\windows\picker-draw', 'renderer\src\windows\picker-edit', 'renderer\src\windows\pinlist', 'renderer\src\windows\preview', 'renderer\src\windows\focus', 'renderer\src\windows\picker', 'renderer\src\windows\picker-geom', 'renderer\src\windows\picker-live', 'renderer\src\core\layout', 'renderer\src\core\widgets', 'renderer\src\core\component', 'renderer\src\core\framework', 'renderer\src\core\views', 'renderer\src\core\setup', 'renderer\src\core\reactive', 'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'renderer\src\windows\settings-draw', 'renderer\src\windows\settings-edit', 'renderer\src\windows\settings', 'renderer\src\windows\tray-menu', 'lib\serve')
+  # utils\image stays in the store group, and picker-geom in panelgeom: the window layer uses
+  # both, but so do `list` and `status`, and a command that opens no window must not load the
+  # bundle to get them - they travel as their own files
+  panel    = @('utils\image', 'renderer\src\windows\picker-geom') + $windowModules + @('lib\serve')
   # panelgeom: the arithmetic `status` prints; settings: the palette, the frame helpers and focus
   panelgeom = @('renderer\src\windows\picker-geom')
   settings = @('renderer\src\core\draw', 'renderer\src\core\layout', 'renderer\src\core\widgets', 'renderer\src\core\component', 'renderer\src\core\framework', 'renderer\src\core\views', 'renderer\src\core\setup', 'renderer\src\core\reactive', 'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'renderer\src\windows\anim', 'renderer\src\windows\picker-draw', 'renderer\src\windows\picker-geom', 'renderer\src\windows\focus', 'renderer\src\windows\settings-draw', 'renderer\src\windows\settings-edit', 'renderer\src\windows\settings')
@@ -114,6 +124,18 @@ elseif ($commandGroups.ContainsKey($Command)) { $wantGroups = @($commandGroups[$
 $requiredModules = New-Object System.Collections.Generic.List[string]
 foreach ($m in $baseModules) { $requiredModules.Add($m) }
 foreach ($g in $wantGroups) { foreach ($m in $groupModules[$g]) { $requiredModules.Add($m) } }
+# A package carries the window layer as one file, so the command that opens a window parses one
+# file instead of thirty. Which shape is here decides the load, and a command that never opens a
+# window does not pay for the bundle.
+$bundlePath = Join-Path $Root ($windowBundle + '.ps1')
+$bundleCovered = @{}
+foreach ($m in $windowModules) { $bundleCovered[[string]$m] = $true }
+$bundleLoaded = $false
+if (Test-Path -LiteralPath $bundlePath) {
+  foreach ($m in $requiredModules) {
+    if ($bundleCovered.ContainsKey([string]$m)) { $bundleLoaded = $true; break }
+  }
+}
 
 #region command proxy
 # The resident process has already parsed all of this. When it is up and the command is one
@@ -138,6 +160,8 @@ if (-not $Library -and -not $NoProxy -and $env:CLIPBOARD_NO_PROXY -ne '1') {
 
 foreach ($module in $requiredModules) {
   if ($loadedModules.ContainsKey($module)) { continue }
+  # the bundle already defines these, and loading a module over it would only cost a parse
+  if ($bundleLoaded -and $bundleCovered.ContainsKey([string]$module)) { continue }
   $modulePath = Join-Path $Root ($module + '.ps1')
   if (-not (Test-Path -LiteralPath $modulePath)) {
     Write-Host ('[x] missing: ' + $modulePath)
@@ -146,6 +170,8 @@ foreach ($module in $requiredModules) {
   }
   . $modulePath
 }
+# the window layer as one file, when the package carries it that way
+if ($bundleLoaded) { . $bundlePath }
 # optional layers: without them the tool runs on the built-in palette and the base commands
 $themeModule = Join-Path $libDir 'themes.ps1'
 if (Test-Path -LiteralPath $themeModule) { . $themeModule }

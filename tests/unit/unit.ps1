@@ -316,10 +316,12 @@ try {
     Describe 'entry point' {
       It 'stays an entry point' {
         $entryLines = @([IO.File]::ReadAllLines($script:StructEntryPath)).Count
-        # 224, not 200: the entry also decides whether the resident answers the command instead
-        # of a fresh process (the proxy block), which is a table plus a few lines of glue, and
-        # `status` needs a group of its own for the panel geometry it prints
-        Expect ($entryLines -le 224) ([string]$entryLines + ' lines')
+        # 250, not 224: the window layer keeps its own list here, because a package carries it as
+        # one file (renderer\app.ps1) and a working copy loads the same list module by module -
+        # one list, two shapes. The entry also decides whether the resident answers the command
+        # instead of a fresh process (the proxy block), and `status` needs a group of its own
+        # for the panel geometry it prints
+        Expect ($entryLines -le 250) ([string]$entryLines + ' lines')
       } -Skip $script:StructMinified
 
       It 'computes the tool root once' {

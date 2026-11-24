@@ -31,14 +31,17 @@ function Write-Log([string]$msg) {
     if ($script:LogPending -lt 0 -or $script:LogPending -ge $script:LogCheckEvery) {
       $script:LogPending = 0
       $len = 0
-      try { $len = [long](Get-Item -LiteralPath $LogFile).Length } catch { $len = 0 }
+      # -ErrorAction SilentlyContinue: a missing log file is the normal first run, and a
+      # non-terminating error would print over whatever the user asked for
+      try { $len = [long](Get-Item -LiteralPath $LogFile -ErrorAction SilentlyContinue).Length } catch { $len = 0 }
       $script:LogSize = $len
     }
     if ($script:LogSize -gt $script:LogMaxBytes) {
       $keep = [int]($script:LogMaxBytes / 2)
       $tail = ''
       try {
-        $all = [IO.File]::ReadAllText($LogFile, $Utf8)
+        $all = ''
+        if (Test-Path -LiteralPath $LogFile) { $all = [IO.File]::ReadAllText($LogFile, $Utf8) }
         if ($all.Length -gt $keep) { $tail = $all.Substring($all.Length - $keep) }
         # start on a line boundary, so the first line is not a fragment of one
         $nl = $tail.IndexOf([char]10)
@@ -50,7 +53,7 @@ function Write-Log([string]$msg) {
       # has is used - log.ps1 loads before the formatters do.
       [IO.File]::AppendAllText($LogFile, ((Get-Date -Format 'MM-dd HH:mm:ss') + ' log rotated (kept the last ' + [string]$keep + ' bytes)' + [Environment]::NewLine), $Utf8)
       # what is there now, so the next line does not truncate the file again
-      try { $script:LogSize = [long](Get-Item -LiteralPath $LogFile).Length } catch { $script:LogSize = 0 }
+      try { $script:LogSize = [long](Get-Item -LiteralPath $LogFile -ErrorAction SilentlyContinue).Length } catch { $script:LogSize = 0 }
     }
     [IO.File]::AppendAllText($LogFile, $line, $Utf8)
     $bytes = $Utf8.GetByteCount($line)

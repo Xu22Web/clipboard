@@ -1038,9 +1038,9 @@ Describe 'int' {
 
 ## 打包分发
 
-`cli build` 调用 `tools\build.ps1`，产物写入 `dist\clipboard-<version>\`（版本取自 `package.ini`）。
+`cli build` 调用 `tools\build.ps1`，产物写入 `dist\clipboard-<version>\`（版本取自 `package.ini`）。包内有 `renderer\app.ps1`、没有 `renderer\src\`：窗口层在那里就是一个文件，命令要开窗时 `clipboard.ps1` 一次 dot-source 读完它。留在包外的模块（基础层，以及 `status` 这类命令不画图也要用的两个）仍以自己的文件随包。
 
-`cli bundle` 是同一套工具链的另一半，与 `cli build` 互不依赖：它把多个模块合成**一个入口文件**，阶段由 `cli.ini` 中该入口的 `[product.<名称>]` 链声明（`resolve`、`treeshake`、`merge`、`render`、`verify`），实现放在 `tools\bundler\plugins\`。入口、插件链与复制清单都在 `cli.ini`，与 vite 项目把输入和插件写在 `vite.config` 中同一种分工。模块边界一律取自解析器节点而不是文本：产物按每条语句的 extent 逐条取出，最后重新解析并与参与合并的模块逐项比对。`cli bundle -Inspect` 会列出 `src\` 下每个文件能否被内联（带 `param` 块、`begin`/`process`/`end` 块或 `trap` 的模块无法粘进更大的脚本），以及哪些模块调用了无法追踪的名字。该命令写入 `dist\` 的内容目前都不随包发布：`cli build` 仍然按模块树打包。
+`cli bundle` 是同一套工具链的另一半，与 `cli build` 互不依赖：它把多个模块合成**一个入口文件**，阶段由 `cli.ini` 中该入口的 `[product.<名称>]` 链声明（`resolve`、`treeshake`、`merge`、`render`、`verify`），实现放在 `tools\bundler\plugins\`。入口、插件链与复制清单都在 `cli.ini`，与 vite 项目把输入和插件写在 `vite.config` 中同一种分工。模块边界一律取自解析器节点而不是文本：产物按每条语句的 extent 逐条取出，最后重新解析并与参与合并的模块逐项比对。`cli bundle -Inspect` 会列出 `src\` 下每个文件能否被内联（带 `param` 块、`begin`/`process`/`end` 块或 `trap` 的模块无法粘进更大的脚本），以及哪些模块调用了无法追踪的名字。标了 `Ship=1` 的入口由 `cli build` 自己跑：先合并，再与旁边的文件用同一张表压缩与改名，所以包里窗口层是一个文件（`renderer\app.ps1`），它的模块不再随包复制。
 
 模块可以用开头两条指令说明自己的边界：`#@use <模块 id>, ...` 列出它调用的模块，`#@export <函数>, ...` 列出其它模块可以调用它的哪些函数。它们故意写成注释：描述的是构建而不是程序，发布出去的副本照旧直接运行同一份文件、零成本，运行时也不需要理解它们。有了声明，bundler 在构建之前就能检查：调用了所属模块没导出的函数、调用了入口没带的模块（即平时只在运行时才露面的「module group too small」）、导出里写了不存在的函数、同一个名字被两个模块导出。没写声明的模块不参与校验，只会让「会被丢弃」的结论变成未知。`cli bundle -Inspect -Suggest` 会按真实调用关系打印每个模块该写的那两行，复制即可。
 

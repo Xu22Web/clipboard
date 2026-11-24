@@ -39,6 +39,24 @@ if (-not $repoIncludes) { throw 'cli.ini has no [copy] Includes to test against'
 $allFiles = 'Includes=' + (@(($repoIncludes -split ',') | Where-Object { $_ -notlike 'src/preload/*' }) -join ',')
 $withClient = 'Includes=' + $repoIncludes
 $buildDefaults = @('BaseUrl=.', 'Minify=1', 'Rename=1', 'Verify=0', 'Overwrite=1', 'Zip=0', $allFiles, 'Excludes=')
+# the entries and the product chains travel with the test config: the package build runs them,
+# so a config without them would describe a different package. They are READ from cli.ini for
+# the same reason the include list is.
+function Get-BundleSectionLines {
+  $lines = New-Object System.Collections.Generic.List[string]
+  $active = $false
+  foreach ($raw in [IO.File]::ReadAllLines((Join-Path $repoRoot 'cli.ini'))) {
+    $trim = $raw.Trim()
+    if ($trim -match '^\[(.+)\]$') {
+      $section = $Matches[1]
+      $active = ($section -like 'entry.*') -or ($section -like 'product.*')
+      if ($active) { $lines.Add($raw) }
+      continue
+    }
+    if ($active) { $lines.Add($raw) }
+  }
+  return $lines.ToArray()
+}
 function Write-BuildCfg([string]$outDir, [string[]]$override) {
   $lines = @('OutDir=' + $outDir) + $buildDefaults
   foreach ($line in @($override)) {
@@ -48,7 +66,9 @@ function Write-BuildCfg([string]$outDir, [string[]]$override) {
     $kept += $line
     $lines = $kept
   }
-  [IO.File]::WriteAllLines($buildCfg, $lines, $Utf8)
+  # the entry and product sections go after every flat key: an override written below a
+  # "[section]" line would be read as a key of that section
+  [IO.File]::WriteAllLines($buildCfg, (@($lines) + @(Get-BundleSectionLines)), $Utf8)
 }
 
 # The rows below need the package to exist: a build that failed says so once per row instead of
@@ -99,7 +119,21 @@ Describe 'int' {
     }
     It 'package keeps the program files' {
       if (-not (Test-Built $script:pkgDir $script:bout)) { return }
-      Expect ((Test-Path -LiteralPath (Join-Path $script:pkgDir 'clipboard.ps1')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'clipboard.cmd')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'lib\plugin\plugins.ps1')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'renderer\src\windows\picker.ps1'))) 'the entry file, the launcher and the modules have to travel'
+      Expect ((Test-Path -LiteralPath (Join-Path $script:pkgDir 'clipboard.ps1')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'clipboard.cmd')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'lib\plugin\plugins.ps1')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'renderer\app.ps1'))) 'the entry file, the launcher, the base modules and the window bundle have to travel'
+    }
+    # the modules an entry names do not come along as files as well: the list is read from
+    # cli.ini, so a module that moves out of the bundle follows without touching this check
+    It 'the window layer ships as one file' {
+      if (-not (Test-Built $script:pkgDir $script:bout)) { return }
+      $entryModules = [string](Import-IniMap (Join-Path $repoRoot 'cli.ini'))['entry.app.Modules']
+      $copiedTwice = @()
+      foreach ($one in @($entryModules -split ',')) {
+        $text = $one.Trim()
+        if (-not $text) { continue }
+        $rel = ($text -replace '^src/', '') -replace '/', '\'
+        if (Test-Path -LiteralPath (Join-Path $script:pkgDir $rel)) { $copiedTwice += $rel }
+      }
+      Expect ($copiedTwice.Count -eq 0) ('still copied beside the bundle: ' + ($copiedTwice -join ', '))
     }
     # A function named inside a here-string is text the rename pass cannot rewrite: the string
     # keeps the spelling it was written with, so the package has to define that name as well.
