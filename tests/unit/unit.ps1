@@ -230,7 +230,7 @@ try {
         $requiredLib = @('lib\base', 'lib\native', 'lib\panel\focus', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
           'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\panel\picker-live', 'lib\text', 'lib\panel\anim',
           'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\panel\tray-menu', 'lib\serve', 'lib\shortcut',
-          'lib\ui\layout', 'lib\ui\widgets', 'lib\ui\component', 'lib\ui\framework', 'lib\ui\views', 'lib\ui\reactive',
+          'lib\ui\layout', 'lib\ui\widgets', 'lib\ui\component', 'lib\ui\framework', 'lib\ui\views', 'lib\ui\setup', 'lib\ui\reactive',
           'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings',
           'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch',
           'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey',
@@ -1665,6 +1665,51 @@ try {
         Expect (-not (Set-UiAppSignal $app 'Pending' 9)) 'and a write after closing does nothing'
         Close-UiApp $app
         Expect $true 'closing twice is not an error'
+      }
+    }
+
+    # A component declared the way <script setup> declares one (lib\ui\setup.ps1): props in, a
+    # setup function that answers its bindings, hooks registered while it runs, and content the
+    # owner supplies through a slot.
+    Describe 'ui setup' {
+      It 'runs the setup with its props and keeps what it returned' {
+        $made = New-UiSetupView 'chrome' @{ Density = 1 } {
+          param($ctx)
+          $d = Use-UiProp $ctx 'Density' 1
+          $script:SetupSaw = 'd=' + [string]$d
+          return @{ Density = $d }
+        }
+        $node = & $made @{ Key = 'x'; Props = @{ Density = 2 } }
+        Expect ($script:SetupSaw -eq 'd=2') 'the caller values win over the component defaults'
+        Expect (([string]$node.Key -eq 'x') -and ([string]$node.Type -eq 'chrome')) 'it is a view node under that key'
+        $bindings = Get-UiSetupBindings $node
+        Expect (($null -ne $bindings) -and ([int]$bindings.Density -eq 2)) 'and it keeps what setup returned'
+      }
+
+      It 'attaches the hooks setup registered and refuses a stray one' {
+        $script:SetupHits = New-Object System.Collections.Generic.List[string]
+        $made = New-UiSetupView 'row' @{ } {
+          param($ctx)
+          On-UiMounted { param($n, $a) $script:SetupHits.Add('mount:' + [string]$n.Key) }
+          On-UiUnmounted { param($n, $a) $script:SetupHits.Add('gone:' + [string]$n.Key) }
+          return @{ }
+        }
+        $node = & $made @{ Key = 'k' }
+        [void](Mount-UiComponent $node)
+        Unmount-UiComponent $node
+        Expect (($script:SetupHits -join ',') -eq 'mount:k,gone:k') ('hits ' + ($script:SetupHits -join ','))
+        Expect (-not (On-UiMounted { })) 'outside a setup there is nothing to attach it to'
+      }
+
+      It 'asks its owner for content through a scoped slot' {
+        $made = New-UiSetupView 'list' @{ } {
+          param($ctx)
+          return @{ Slot = (Use-UiSlot $ctx 'row') }
+        }
+        $node = & $made @{ Key = 'l'; Slots = @{ row = { param($scope) 'row-' + [string]$scope.Index } } }
+        $ctx = Get-UiSetupContextOf $node
+        Expect ([string](Invoke-UiSlot $ctx 'row' @{ Index = 3 }) -eq 'row-3') 'the child passes its own scope'
+        Expect ([string](Invoke-UiSlot $ctx 'missing' $null 'fallback') -eq 'fallback') 'a slot nobody supplied falls back'
       }
     }
 

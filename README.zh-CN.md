@@ -750,6 +750,8 @@ src/                    程序本体（打包只读这个目录）
                            悬停是一次 diff，只答出需要重绘的那块矩形
   lib/ui/reactive.ps1      数据这一半：带陷阱的信号（Cb.ReactiveBag）、effect、派生值，
                            一批写入只 flush 一次
+  lib/ui/setup.ps1         控件写成一份声明：带默认值的 props、返回自身绑定的函数体、
+                           就地登记的挂载钩子，以及由调用方填充的具名插槽
 
   lib/panel/              面板栈：只在绘制命令中加载
   lib/panel/picker.ps1      历史面板：窗体、过滤、列表、按键、右键菜单、粘贴

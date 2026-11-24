@@ -76,10 +76,10 @@ $groupModules = @{
   store    = @('utils\hash', 'utils\image', 'utils\cfhtml', 'lib\store', 'lib\entry', 'lib\query', 'lib\select', 'lib\clip', 'lib\media', 'lib\blobs', 'lib\cfhtml', 'lib\modifiers', 'lib\apprules', 'utils\query-words')
   transfer = @('lib\transfer', 'utils\transfer', 'lib\migrate')
   config   = @('lib\config', 'lib\config-template', 'lib\shortcut', 'utils\dpi')
-  panel    = @('utils\image', 'lib\panel\media-render', 'lib\panel\anim', 'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\focus', 'lib\panel\picker', 'lib\panel\picker-geom', 'lib\panel\picker-live', 'lib\ui\layout', 'lib\ui\widgets', 'lib\ui\component', 'lib\ui\framework', 'lib\ui\views', 'lib\ui\reactive', 'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings', 'lib\panel\tray-menu', 'lib\serve')
+  panel    = @('utils\image', 'lib\panel\media-render', 'lib\panel\anim', 'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\focus', 'lib\panel\picker', 'lib\panel\picker-geom', 'lib\panel\picker-live', 'lib\ui\layout', 'lib\ui\widgets', 'lib\ui\component', 'lib\ui\framework', 'lib\ui\views', 'lib\ui\setup', 'lib\ui\reactive', 'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings', 'lib\panel\tray-menu', 'lib\serve')
   # panelgeom: the arithmetic `status` prints; settings: the palette, the frame helpers and focus
   panelgeom = @('lib\panel\picker-geom')
-  settings = @('lib\ui\layout', 'lib\ui\widgets', 'lib\ui\component', 'lib\ui\framework', 'lib\ui\views', 'lib\ui\reactive', 'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'lib\panel\anim', 'lib\panel\picker-draw', 'lib\panel\picker-geom', 'lib\panel\focus', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings')
+  settings = @('lib\ui\layout', 'lib\ui\widgets', 'lib\ui\component', 'lib\ui\framework', 'lib\ui\views', 'lib\ui\setup', 'lib\ui\reactive', 'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'lib\panel\anim', 'lib\panel\picker-draw', 'lib\panel\picker-geom', 'lib\panel\focus', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings')
 }
 # what each command can reach. A name that is not listed here is a plugin verb: those read and
 # write entries, so they get the store group.

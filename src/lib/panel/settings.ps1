@@ -163,7 +163,31 @@ function Show-Settings {
   # (lib\ui\views.ps1), kept on one parent so the patch can leave the ones that did not change
   # alone. Their boxes come from the layout, their hover from the node's own state: a pointer
   # crossing Save repaints Save, not the window.
-  $script:SetChrome = New-UiView 'chrome' '' @{ }
+  #
+  # The parent is declared the way <script setup> declares a component (lib\ui\setup.ps1): it takes
+  # its content from the window through a slot, so the button row does not know what the buttons
+  # are, and the window does not have to call it whenever the set changes.
+  $script:SetChromeFactory = New-UiSetupView 'chrome' @{ } {
+    param($ctx)
+    return @{ Slot = (Use-UiSlot $ctx 'actions') }
+  }
+  $script:SetChrome = & $script:SetChromeFactory @{
+    Key = ''
+    Slots = @{
+      actions = {
+        param($scope)
+        # A page with nothing to act on (About) has no actions at all - a Save that can only ever
+        # be disabled says the window is broken rather than that the page is a statement. A
+        # read-only row with a folder picker still stages a value, so the pick counts.
+        $actionable = @($script:SetRows | Where-Object {
+            (-not $_.Locked) -or ($_.ContainsKey('Pick') -and [string]$_.Pick)
+          })
+        $script:SetActionSpecs = @()
+        if ($actionable.Count -gt 0) { $script:SetActionSpecs = @($script:SetActions) }
+        return $script:SetActionSpecs
+      }
+    }
+  }
   [void](Mount-UiComponent $script:SetChrome)
   # the controls the rows own (a chord line's delete cross, the plus that adds one), kept apart
   # from the rows themselves so a hover on one of them invalidates 16 x 16 and nothing else
@@ -310,7 +334,10 @@ function Show-Settings {
     # The buttons say what the rows just said. Writing the signals is what tells the render
     # effect; it is not called from here, so every caller of a refresh gets the same single
     # update and none of them has to remember it.
-    [void](Set-UiAppSignal $script:SetApp 'Page' [string]$page)
+    # the page has to be a plain variable: a cast written straight into the call is glued to the
+    # literal before it by the package minifier, and the package then does not parse
+    $pageNow = [string]$page
+    [void](Set-UiAppSignal $script:SetApp 'Page' $pageNow)
     [void](Set-UiAppSignal $script:SetApp 'Pending' @($script:SetPending).Count)
     Request-UiFlush
     # a different page or a different staged set changes which lines exist at all
@@ -323,8 +350,11 @@ function Show-Settings {
   # queues the effect, and the effect repaints the bar instead of the window.
   function Sync-SetMessage {
     if (-not (Test-UiAppOpen $script:SetApp)) { return }
-    [void](Set-UiAppSignal $script:SetApp 'Msg' ([string]$script:SetMsg))
-    [void](Set-UiAppSignal $script:SetApp 'MsgErr' ([int]$script:SetMsgErr))
+    $msgNow = [string]$script:SetMsg
+    $msgErrNow = 0
+    if ($script:SetMsgErr) { $msgErrNow = 1 }
+    [void](Set-UiAppSignal $script:SetApp 'Msg' $msgNow)
+    [void](Set-UiAppSignal $script:SetApp 'MsgErr' $msgErrNow)
     Request-UiFlush
   }
 
@@ -422,18 +452,16 @@ function Show-Settings {
   # the footer actions whose words and enabled state follow the staged set. The patch keeps the
   # ones that stayed, so a refresh does not throw away a button's hover.
   function Update-SetChrome {
-    # A page with nothing to act on (About) has no actions at all - a Save that can only ever be
-    # disabled says the window is broken rather than that the page is a statement. A read-only
-    # row with a folder picker still stages a value, so the pick counts as something to act on.
-    $actionable = @($script:SetRows | Where-Object {
-        (-not $_.Locked) -or ($_.ContainsKey('Pick') -and [string]$_.Pick)
-      })
-    $script:SetActionSpecs = @()
-    if ($actionable.Count -gt 0) { $script:SetActionSpecs = @($script:SetActions) }
+    # the window owns what the buttons say; the chrome asks for it, and is told only the scope
+    # those answers depend on
+    $acts = @(Invoke-UiSlot (Get-UiSetupContextOf $script:SetChrome) 'actions' @{
+          Page    = [string]$script:SetPage
+          Pending = @($script:SetPending).Count
+        })
     $specs = New-Object System.Collections.Generic.List[object]
     $specs.Add(@{ Key = 'close'; Type = 'icon'; Props = @{ Glyph = 'close'; Enabled = $true } })
     $specs.Add(@{ Key = 'min'; Type = 'icon'; Props = @{ Glyph = 'min'; Enabled = $true } })
-    foreach ($a in @($script:SetActionSpecs)) {
+    foreach ($a in $acts) {
       $key = [string]$a.Key
       $specs.Add(@{ Key = $key; Type = 'button'; Props = @{
             Label = [string]$a.Label; Primary = [bool]$a.Primary; Enabled = (Test-SettingsActionOn $key) } })

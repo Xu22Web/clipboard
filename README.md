@@ -752,6 +752,8 @@ src/                    the program (the only folder packaging reads)
                             and a hover diff answers the rectangle that has to be repainted
   lib/ui/reactive.ps1       the data half: signals with traps (Cb.ReactiveBag), effects, derived values,
                             and one flush per batch of writes
+  lib/ui/setup.ps1          a control written as a declaration: props with defaults, the body that
+                            returns its bindings, ambient lifecycle hooks, and named slots a caller fills
 
   lib/panel/              the panel stack, loaded only by commands that draw
   lib/panel/picker.ps1      the history panel: window, filter, list, keys, context menu, paste
