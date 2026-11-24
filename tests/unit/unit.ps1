@@ -608,11 +608,16 @@ try {
           [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\picker-live.ps1'))
         $script:StructDrawText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\picker-draw.ps1'))
         $winText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'native.ps1'))
-        # the platform C# lives in lib\assembly (a package ships only the compiled
-        # lib\assembly\clipboard.dll), so the check reads the repository source even when
-        # -Source points at a package
-        $winCs = Join-Path $defaultSource 'lib\assembly\cb.native.cs'
-        if (Test-Path -LiteralPath $winCs) { $winText += [IO.File]::ReadAllText($winCs) }
+        # the platform C# is compiled from src\main (the #part list) plus whatever is still in
+        # lib\assembly, and a package ships only the compiled lib\assembly\clipboard.dll - so
+        # the check reads every C# source of the repository copy, whatever file holds it
+        foreach ($csDir in @('lib\assembly', 'main')) {
+          $csPath = Join-Path $defaultSource $csDir
+          if (-not (Test-Path -LiteralPath $csPath)) { continue }
+          foreach ($csFile in @(Get-ChildItem -LiteralPath $csPath -Recurse -File -Filter '*.cs' | Sort-Object FullName)) {
+            $winText += [IO.File]::ReadAllText($csFile.FullName)
+          }
+        }
         $script:StructWinText = $winText
       }
 

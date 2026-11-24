@@ -27,4 +27,13 @@
 // this list (bundler.ini, [entry.main] Append=). When the folder is empty that line goes away
 // and the assembly is made of this list alone.
 
+// #part reactivity/reactive-bag.cs
+// #part reactivity/reactive.cs
+// #part reactivity/computed-cell.cs
 // #part search/search.cs
+// #part media/rtf.cs
+// #part media/rich.cs
+// #part ui/shell.cs
+// #part ui/hot-window.cs
+// #part ui/fluent-form.cs
+// #part ui/pin-draw-event-args.cs

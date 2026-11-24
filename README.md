@@ -747,6 +747,8 @@ src/                    the program (the only folder packaging reads)
   main/index.cs           the #part list that decides what is compiled: a source nothing reaches
                             is not compiled at all
   main/search/search.cs     Cb.Search, the row filter the search box runs
+  main/reactivity/          Cb.ReactiveBag, Cb.Reactive and Cb.ComputedCell: the traps, the
+                            scheduler that batches a write, and the derived value
 
   lib/ui/                 boxes and controls both drawn windows share
   lib/ui/layout.ps1         cutting a box: inset, stack, columns, a scrollbar's thumb

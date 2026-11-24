@@ -391,6 +391,8 @@ P1 已落地（2026-11-24）：机制就位并可增量搬迁。
 - `tools/bundler/plugins/50-cs-part.ps1` 逐字符扫描 `// #part x.cs`（字符串、verbatim、插值、块注释里的同样文本不算），`60-cs-compile.ps1` 把闭包交给 csc；**从不生成拼接后的 .cs**。
 - `[entry.main]` 的 `Append=src/lib/assembly/*.cs` 承载尚未搬走的类型，`cli assembly` 与 `cli build` 都走它。
 - 首个搬迁：`Cb.Search` → `src/main/search/search.cs`（`cb.native.cs` 减少 41 行）。
+- 第二批：反应式三件套 → `src/main/reactivity/{reactive-bag,reactive,computed-cell}.cs`（再减 335 行，`cb.native.cs` 现 1974 行）。**
+- 删除大段时必须「删完立刻看文件尾」：一次替换把命名空间闭合 `}` 一起吃掉了，编译只会报「应输入 `}`」，看不出是哪一步。
 - `native.ps1` 的回退改成按文件列表 `Add-Type -Path`，并把 `main\**\*.cs` 的时间戳纳入新鲜度判断（否则改了新文件仍会用旧 dll）。
 - `pipeline.ps1` 的产品表支持 `Dir = 'lib\assembly,main'`；`cli.ini` 两份 Includes 带上 `src/main/**/*.cs`。
 - **剩余 15 个类型按同一手法逐个搬迁**；全部搬完后删掉 `Append=` 那一行与 `cb.native.cs`，再把 `native.ps1` 的 `lib\assembly` 目录扫描改成只认 `main\`。
