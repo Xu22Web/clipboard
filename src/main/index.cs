@@ -17,7 +17,7 @@
 //   clip\        reading and writing the clipboard itself            (lib\clip.ps1)
 //   media\       pictures, formatted text, the caches beside them    (lib\media.ps1)
 //   search\      the row filter a query runs against                 (lib\query.ps1)
-//   ui\          win32, the forms, the tray, the pin list            (lib\panel\*)
+//   ui\          win32, the forms, the tray, the pin list            (renderer\src\windows\*)
 //   utils\       paths, logging, hashing, time                       (lib\base.ps1, utils\*)
 
 // The directive is a line comment on purpose: it is read by a scanner that knows what a string

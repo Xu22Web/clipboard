@@ -11,7 +11,7 @@
 #
 # Everything here is storage plus decode. Nothing in this file draws, and nothing touches a
 # Graphics or a bitmap: the thumb file, the two bitmap caches and the three preview pictures
-# live in lib/panel/media-render.ps1, which only the panel and the card load. The CF_HTML buffer
+# live in renderer/src/windows/media-render.ps1, which only the panel and the card load. The CF_HTML buffer
 # itself - inlining the pictures a copy points at, and writing them back out for a paste - is
 # lib/cfhtml.ps1: this file owns the files, that one owns the clipboard format. The byte formats
 # that need no file - a png header, a CF_DIB turned into a bmp - are utils/image.ps1.
@@ -275,7 +275,7 @@ function Remove-OrphanMedia($records) {
 
 # ---- the bitmaps drawn on screen -------------------------------------------
 # Get-ImageThumbPath, Write-ImageThumb, the two bitmap caches, scaling and the three preview
-# pictures live in lib/panel/media-render.ps1: only the panel and the card call them, and the
+# pictures live in renderer/src/windows/media-render.ps1: only the panel and the card call them, and the
 # capture path never needs GDI+.
 
 # bytes -> something drawable: a png goes straight in, a CF_DIB block needs the file header the

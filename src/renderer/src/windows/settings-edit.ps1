@@ -1,4 +1,4 @@
-# lib/panel/settings-edit.ps1 - editing one setting in place.
+# renderer\src\windows\settings-edit.ps1 - editing one setting in place.
 #
 # A value is edited in a real TextBox laid over the row, not by drawing a caret: the same
 # reason the panel's row editor uses one - an input method needs a real control to compose

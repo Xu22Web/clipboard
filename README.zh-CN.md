@@ -777,22 +777,22 @@ src/                    程序本体（打包只读这个目录）
     setup.ps1            控件写成一份声明：带默认值的 props、返回自身绑定的函数体、
                          就地登记的挂载钩子，以及由调用方填充的具名插槽
 
-  lib/panel/              面板栈：只在绘制命令中加载
-  lib/panel/picker.ps1      历史面板：窗体、过滤、列表、按键、右键菜单、粘贴
-  lib/panel/picker-geom.ps1 面板纯计算：行数、数字快选、窗口位置、命中
-  lib/panel/picker-live.ps1 面板显示期间的行为：可见行数、滑块、插入符、搜索框与页脚；放在文件作用域，
-                           一次打开不再重新编译
-  lib/panel/picker-draw.ps1 可复用绘制：按键胶囊、搜索命中着色
-  lib/panel/picker-edit.ps1 就地编辑（F2）
-  lib/panel/pinlist.ps1     自绘列表控件 Cb.PinList
-  lib/panel/preview.ps1     悬停预览卡片
-  lib/panel/anim.ps1        过渡动画的数值层
-  lib/panel/focus.ps1      取前台与交还前台、松开仍按住的修饰键
-  lib/panel/media-render.ps1 图片与富文本的位图与缓存
-  lib/panel/settings.ps1    设置窗口：分组栏、行列表、按键与鼠标、保存后重载常驻
-  lib/panel/settings-draw.ps1 设置窗口的绘制：分组栏、行、Fluent 开关、页脚
-  lib/panel/settings-edit.ps1 设置的就地编辑：叠在行上的输入框、写回与校验
-  lib/panel/tray-menu.ps1   托盘菜单：调色板与字体来自主题，行由 Cb.TrayItem 自绘
+  renderer/src/windows/  窗口：只在绘制命令中加载
+    picker.ps1           历史面板：窗体、过滤、列表、按键、右键菜单、粘贴
+    picker-geom.ps1      面板纯计算：行数、数字快选、窗口位置、命中
+    picker-live.ps1      面板显示期间的行为：可见行数、滑块、插入符、搜索框与页脚；放在文件作用域，
+                         一次打开不再重新编译
+    picker-draw.ps1      可复用绘制：按键胶囊、搜索命中着色
+    picker-edit.ps1      就地编辑（F2）
+    pinlist.ps1          自绘列表控件 Cb.PinList
+    preview.ps1          悬停预览卡片
+    anim.ps1             过渡动画的数值层
+    focus.ps1            取前台与交还前台、松开仍按住的修饰键
+    media-render.ps1     图片与富文本的位图与缓存
+    settings.ps1         设置窗口：分组栏、行列表、按键与鼠标、保存后重载常驻
+    settings-draw.ps1    设置窗口的绘制：分组栏、行、Fluent 开关、页脚
+    settings-edit.ps1    设置的就地编辑：叠在行上的输入框、写回与校验
+    tray-menu.ps1        托盘菜单：调色板与字体来自主题，行由 Cb.TrayItem 自绘
 
   lib/plugin/             插件层：三个文件要么全有要么全无
   lib/plugin/plugins.ps1         插件运行时

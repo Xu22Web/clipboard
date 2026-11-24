@@ -1,4 +1,4 @@
-// src/main/ui/tray.cs - the tray icon, drawn instead of loaded (see lib/panel/tray-menu.ps1).
+// src/main/ui/tray.cs - the tray icon, drawn instead of loaded (see renderer/src/windows/tray-menu.ps1).
 //
 // There is no asset to ship, and every size is rendered at its own resolution rather than scaled
 // down from one bitmap, which is what makes a bitmap icon look soft at 125% and 150% scaling.

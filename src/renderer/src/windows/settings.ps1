@@ -1,4 +1,4 @@
-# lib/panel/settings.ps1 - the settings window: one function owns its lifecycle.
+# renderer\src\windows\settings.ps1 - the settings window: one function owns its lifecycle.
 #
 # The window is the same object the history panel is: a Cb.FluentForm with a rounded region, a
 # custom paint, the theme's palette and the shared type ramp. What differs is what it does not
@@ -6,7 +6,7 @@
 # because a settings window is a place the user returns to rather than a flyout.
 #
 # Values are staged, not written: every change lands in one pending table that the rows are
-# drawn from, and Save writes the whole table in one pass (lib/panel/settings-edit.ps1). The
+# drawn from, and Save writes the whole table in one pass (renderer/src/windows/settings-edit.ps1). The
 # resident process is reloaded once, when the window closes after a save: restarting it per
 # keystroke would make the window unusable, and restarting it on a change nobody kept would be
 # work for nothing.
@@ -43,7 +43,7 @@ function Ring-SettingsAsk([string]$name = '') {
 }
 
 # Is a settings window open in this session? Its lock exists only while one is, so asking is
-# opening it and letting go again. The picker asks before it opens: see lib\panel\picker.ps1.
+# opening it and letting go again. The picker asks before it opens: see renderer\src\windows\picker.ps1.
 function Test-SettingsWindowOpen([string]$name = '') {
   $lock = Open-SettingsLock $name
   if ($null -eq $lock) { return $true }

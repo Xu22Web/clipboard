@@ -1,4 +1,4 @@
-# lib/panel/picker.ps1 - the history panel. One function owns the whole window lifecycle (create,
+# renderer\src\windows\picker.ps1 - the history panel. One function owns the whole window lifecycle (create,
 # filter, draw, keys, paste); the standalone pieces live in picker-geom / entry / plugins.
 
 function Show-Picker([switch]$Warm, [switch]$Tray) {
@@ -437,7 +437,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     $form.Controls.Add($sbar)
     $form.Controls.Add($foot)
     $form.Controls.Add($head)
-    # The functions that run while the panel is up live at file scope (lib\panel\picker-live.ps1),
+    # The functions that run while the panel is up live at file scope (renderer\src\windows\picker-live.ps1),
     # so their bodies are compiled once per process instead of once per open. They read the
     # controls from here; nothing else in this function changes hands.
     $script:PanelForm = $form
@@ -470,7 +470,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
       $form.Top = [int]$pb.Top
     }
 
-    # shortcut hints as Fluent key chips: [key] action, built in lib/panel/picker-draw.ps1
+    # shortcut hints as Fluent key chips: [key] action, built in renderer/src/windows/picker-draw.ps1
     $footL.Add_Paint({
         param($s, $e)
         try {
@@ -992,7 +992,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     }
 
     # The row menu is the tray menu's twin: the same skin, the same rounded rows and the same
-    # hairline separators. lib/panel/tray-menu.ps1 owns the layout and the row helpers, and
+    # hairline separators. renderer/src/windows/tray-menu.ps1 owns the layout and the row helpers, and
     # Cb.TrayMenu paints it (lib/assembly/cb.native.cs), so a right click beside the panel does
     # not open a window drawn in the system colours.
     $cmSkin = New-TrayMenuSkin (Px 252)
@@ -1132,21 +1132,21 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     # the loop below does not dismiss the panel on the very click that chose the item.
     $cm.Add_Closed({ $script:MenuClosedAt = Get-Date })
 
-    # one StringFormat set per process, shared with the drawing helpers in lib/panel/picker-draw.ps1
+    # one StringFormat set per process, shared with the drawing helpers in renderer/src/windows/picker-draw.ps1
     $sfSet = New-PickerStringFormats
     $bgBrush = New-Object Drawing.SolidBrush $ui.Surface
-    # One brush per colour lives in lib/panel/picker-draw.ps1, so reopening builds nothing.
+    # One brush per colour lives in renderer/src/windows/picker-draw.ps1, so reopening builds nothing.
     $sfEll = $sfSet.Ellipsis
     $sfNone = $sfSet.None
     $sfRight = $sfSet.Right
     $sfCenter = $sfSet.Center
     $sfSeg = $sfSet.Seg
-    # the hover card (lib/panel/preview.ps1): geometry and brushes once per panel, never per
+    # the hover card (renderer/src/windows/preview.ps1): geometry and brushes once per panel, never per
     # hover; it ellipsizes like the rows, because a Win11 flyout never cuts text mid-glyph
     $pvCfg = New-PreviewConfig $ui $sfEll $fBody $fSmall
 
     # draw one label in pieces so the matched tokens can be tinted; the tail is trimmed
-    # with an ellipsis once the available width is exhausted (lib/panel/picker-draw.ps1)
+    # with an ellipsis once the available width is exhausted (renderer/src/windows/picker-draw.ps1)
 
     $lst.Add_DrawItem({
         param($s, $e)
@@ -1310,7 +1310,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
           $g.DrawString(('Ctrl+' + (Get-QuickKeyLabel $offset)), $fSmall, (Get-Brush $capInk), $capRect, $sfCenter)
         }
       })
-    # Hover preview (lib/panel/preview.ps1): it waits for the cursor to rest and prepares a record's
+    # Hover preview (renderer/src/windows/preview.ps1): it waits for the cursor to rest and prepares a record's
     # text once, so sweeping the list costs a timestamp per row and nothing else.
     $pv = New-PreviewState
     $script:PvAt = Get-Date; $script:PvIdx = -1
@@ -1366,7 +1366,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     $deb = New-Object Windows.Forms.Timer
     $deb.Interval = [int]$script:Timing['Debounce']
     $deb.Add_Tick({ $deb.Stop(); Update-List $txt.Text })
-    # F2 edits the selected entry in place; the editor lives in lib/panel/picker-edit.ps1
+    # F2 edits the selected entry in place; the editor lives in renderer/src/windows/picker-edit.ps1
     Set-PickerEditHost $form $lst $txt $ui $fBody { param($q) Update-List $q } { param($m, $ms) Set-Foot $m ([int]$ms) } { param($t) $t.Focus() }
     function Flush-List { if ($deb.Enabled) { $deb.Stop(); Update-List $txt.Text } }
     $txt.Add_TextChanged({ $script:CaretEnd = 0; Sync-Placeholder; Sync-SearchCaret; $deb.Stop(); $deb.Start() })
@@ -1570,7 +1570,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
         if (((Get-Date) - $script:ShownAt).TotalMilliseconds -gt [int]$script:Timing['CloseOnBlur']) { $form.Close() }
       })
 
-    # The panel owns the foreground from Show() on (lib\panel\focus.ps1), so the box is not
+    # The panel owns the foreground from Show() on (renderer\src\windows\focus.ps1), so the box is not
     # focused until the user types into it.
     $script:ImeCheckAt = Get-Date; $script:Composing = $false
     $script:ShellCheckAt = Get-Date
@@ -1746,7 +1746,7 @@ function Show-Picker([switch]$Warm, [switch]$Tray) {
     # GDI handles this panel owns: the row background brush and the region the form paints with
     try { $bgBrush.Dispose() } catch { }
     try { $rgn = $form.Region; $form.Dispose(); if ($null -ne $rgn) { $rgn.Dispose() } } catch { }
-    # The functions in lib\panel\picker-live.ps1 read the controls from the script scope; the
+    # The functions in renderer\src\windows\picker-live.ps1 read the controls from the script scope; the
     # window they belong to is gone, so nothing may keep pointing at a disposed control.
     $script:PanelForm = $null
     $script:PanelList = $null

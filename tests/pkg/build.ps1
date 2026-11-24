@@ -99,7 +99,7 @@ Describe 'int' {
     }
     It 'package keeps the program files' {
       if (-not (Test-Built $script:pkgDir $script:bout)) { return }
-      Expect ((Test-Path -LiteralPath (Join-Path $script:pkgDir 'clipboard.ps1')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'clipboard.cmd')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'lib\plugin\plugins.ps1')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'lib\panel\picker.ps1'))) 'the entry file, the launcher and the modules have to travel'
+      Expect ((Test-Path -LiteralPath (Join-Path $script:pkgDir 'clipboard.ps1')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'clipboard.cmd')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'lib\plugin\plugins.ps1')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'renderer\src\windows\picker.ps1'))) 'the entry file, the launcher and the modules have to travel'
     }
     # A function named inside a here-string is text the rename pass cannot rewrite: the string
     # keeps the spelling it was written with, so the package has to define that name as well.

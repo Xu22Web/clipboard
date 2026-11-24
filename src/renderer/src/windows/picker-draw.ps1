@@ -1,5 +1,5 @@
 #@use renderer/src/core/draw
-# lib/panel/picker-draw.ps1 - the panel's reusable drawing pieces.
+# renderer\src\windows\picker-draw.ps1 - the panel's reusable drawing pieces.
 #
 # Everything here takes a Graphics (or a window, for the one region helper) plus plain
 # values: no list, no per-open state. That is what makes these callable from anywhere (and

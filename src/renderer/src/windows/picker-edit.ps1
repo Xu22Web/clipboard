@@ -1,4 +1,4 @@
-# lib/panel/picker-edit.ps1 - fix an entry without pasting it first.
+# renderer\src\windows\picker-edit.ps1 - fix an entry without pasting it first.
 #
 # The editor is a TextBox laid over the list inside the panel itself, and it takes the real
 # focus while it is open: the panel already owns the keyboard, so the keys arrive there.

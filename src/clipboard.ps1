@@ -51,7 +51,7 @@ $libDir = Join-Path $Root 'lib'
 # anything while loading (the defaults and the settings schema); the order below matters for
 # those two and is otherwise for readers.
 #
-# Paths are relative to the tool root, so a module can sit in lib\, in lib\panel\ or in
+# Paths are relative to the tool root, so a module can sit in lib\, in renderer\src\windows\ or in
 # utils\. The utils\ files are the pure helpers: utils\ini parses text into a document,
 # utils\inifile reads a file once and writes a key back, utils\schema validates a value
 # against src\schema\, utils\hash names a file after its content, utils\cfhtml reads and
@@ -76,10 +76,10 @@ $groupModules = @{
   store    = @('utils\hash', 'utils\image', 'utils\cfhtml', 'lib\store', 'lib\entry', 'lib\query', 'lib\select', 'lib\clip', 'lib\media', 'lib\blobs', 'lib\cfhtml', 'lib\modifiers', 'lib\apprules', 'utils\query-words')
   transfer = @('lib\transfer', 'utils\transfer', 'lib\migrate')
   config   = @('lib\config', 'lib\config-template', 'lib\shortcut', 'utils\dpi')
-  panel    = @('renderer\src\core\draw', 'utils\image', 'lib\ipc', 'renderer\src\store\define', 'renderer\src\store\history-store', 'lib\panel\media-render', 'lib\panel\anim', 'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\focus', 'lib\panel\picker', 'lib\panel\picker-geom', 'lib\panel\picker-live', 'renderer\src\core\layout', 'renderer\src\core\widgets', 'renderer\src\core\component', 'renderer\src\core\framework', 'renderer\src\core\views', 'renderer\src\core\setup', 'renderer\src\core\reactive', 'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings', 'lib\panel\tray-menu', 'lib\serve')
+  panel    = @('renderer\src\core\draw', 'utils\image', 'lib\ipc', 'renderer\src\store\define', 'renderer\src\store\history-store', 'renderer\src\windows\media-render', 'renderer\src\windows\anim', 'renderer\src\windows\picker-draw', 'renderer\src\windows\picker-edit', 'renderer\src\windows\pinlist', 'renderer\src\windows\preview', 'renderer\src\windows\focus', 'renderer\src\windows\picker', 'renderer\src\windows\picker-geom', 'renderer\src\windows\picker-live', 'renderer\src\core\layout', 'renderer\src\core\widgets', 'renderer\src\core\component', 'renderer\src\core\framework', 'renderer\src\core\views', 'renderer\src\core\setup', 'renderer\src\core\reactive', 'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'renderer\src\windows\settings-draw', 'renderer\src\windows\settings-edit', 'renderer\src\windows\settings', 'renderer\src\windows\tray-menu', 'lib\serve')
   # panelgeom: the arithmetic `status` prints; settings: the palette, the frame helpers and focus
-  panelgeom = @('lib\panel\picker-geom')
-  settings = @('renderer\src\core\draw', 'renderer\src\core\layout', 'renderer\src\core\widgets', 'renderer\src\core\component', 'renderer\src\core\framework', 'renderer\src\core\views', 'renderer\src\core\setup', 'renderer\src\core\reactive', 'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'lib\panel\anim', 'lib\panel\picker-draw', 'lib\panel\picker-geom', 'lib\panel\focus', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings')
+  panelgeom = @('renderer\src\windows\picker-geom')
+  settings = @('renderer\src\core\draw', 'renderer\src\core\layout', 'renderer\src\core\widgets', 'renderer\src\core\component', 'renderer\src\core\framework', 'renderer\src\core\views', 'renderer\src\core\setup', 'renderer\src\core\reactive', 'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'renderer\src\windows\anim', 'renderer\src\windows\picker-draw', 'renderer\src\windows\picker-geom', 'renderer\src\windows\focus', 'renderer\src\windows\settings-draw', 'renderer\src\windows\settings-edit', 'renderer\src\windows\settings')
 }
 # what each command can reach. A name that is not listed here is a plugin verb: those read and
 # write entries, so they get the store group.

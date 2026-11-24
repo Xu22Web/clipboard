@@ -1,5 +1,5 @@
 // src/main/ui/tray-item.cs - one row of the tray menu, painted whole (see
-// lib/panel/tray-menu.ps1).
+// renderer/src/windows/tray-menu.ps1).
 //
 // The strip never draws a row, so the layout of a row (glyph, label, hint or switch) lives in
 // exactly one place. A header row is the same layout without the hover state - it names the menu

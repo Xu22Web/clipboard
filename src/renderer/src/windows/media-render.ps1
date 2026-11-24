@@ -1,8 +1,8 @@
-# lib/panel/media-render.ps1 - turning stored media into bitmaps: the hover card's picture, the
+# renderer\src\windows\media-render.ps1 - turning stored media into bitmaps: the hover card's picture, the
 # small copy a row shows in its icon slot, and the thumb file both of them decode from.
 #
 # lib/media.ps1 owns the files and knows nothing about drawing; this module reads them and
-# only the panel (`lib/panel/picker.ps1`) and the card (`lib/panel/preview.ps1`) call it. Keeping the two
+# only the panel (`renderer/src/windows/picker.ps1`) and the card (`renderer/src/windows/preview.ps1`) call it. Keeping the two
 # apart means the capture path never loads GDI+ code it does not use. Reading a png header
 # without decoding the picture is utils/image.ps1, which needs no GDI+ at all.
 #

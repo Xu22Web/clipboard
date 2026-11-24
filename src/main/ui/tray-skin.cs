@@ -1,5 +1,5 @@
 // src/main/ui/tray-skin.cs - the palette, fonts and metrics a tray menu row is drawn with (see
-// lib/panel/tray-menu.ps1).
+// renderer/src/windows/tray-menu.ps1).
 //
 // Windows draws a menu in the system colours: a light surface with the system font, beside a
 // panel and a settings window that are both drawn from one palette. This menu is drawn from that
@@ -34,7 +34,7 @@ namespace Cb {
     public System.Drawing.Font Body;
     public System.Drawing.Font Small;
     public System.Drawing.Font Glyph;
-    // the 96 dpi fallback for a menu built without a skin from the tool: lib\panel\tray-menu.ps1
+    // the 96 dpi fallback for a menu built without a skin from the tool: renderer\src\windows\tray-menu.ps1
     // resolves every one of these through Px(), and that is what the resident uses
     public int Width = 222;
     public int RowHeight = 28;
@@ -48,7 +48,7 @@ namespace Cb {
     public int Bottom = 4;
     // how far an icon moves down to sit on the optical centre of the words beside it: a text
     // line's ink sits below the middle of its box and an icon's ink above its own. Filled in from
-    // one measurement by lib\panel\tray-menu.ps1, not per glyph.
+    // one measurement by renderer\src\windows\tray-menu.ps1, not per glyph.
     public int IconDrop = 0;
     public int SeparatorInset = 9;
     // MenuFlyoutSeparator is a 1 px rectangle with a -4,1,-4,1 padding, so the row it occupies is

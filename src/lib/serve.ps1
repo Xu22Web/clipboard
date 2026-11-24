@@ -203,7 +203,7 @@ function Invoke-ServeOnce {
 
     # The menu is built once and read every time it opens: the count on its header, the hotkey
     # and the two switches come from the Opening handler, so they never go stale while the tray
-    # lives. The look is lib\panel\tray-menu.ps1 - the panel's palette, frame and row rhythm.
+    # lives. The look is renderer\src\windows\tray-menu.ps1 - the panel's palette, frame and row rhythm.
     $iShow = $dm.Show
     $iShow.Add_Click({ try { Show-Picker -Tray } catch { Write-Log ('tray open: ' + $_.Exception.Message) } })
     # The two panel shapes are a user preference, not a momentary state, so the tick writes the
@@ -248,7 +248,7 @@ function Invoke-ServeOnce {
     # The settings window is opened here, in the resident: a process of its own costs a PowerShell
     # start (2.0 s measured) for a window that is built in 0.9 s. What that cannot allow is two
     # modal windows on this one thread, so Show-Picker refuses while the window is open and brings
-    # it forward instead - see lib\panel\picker.ps1.
+    # it forward instead - see renderer\src\windows\picker.ps1.
     $iSettings = $dm.Settings
     $iSettings.Add_Click({
         try {

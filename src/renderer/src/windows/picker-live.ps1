@@ -1,4 +1,4 @@
-# lib/panel/picker-live.ps1 - the panel's controls while the window is up.
+# renderer\src\windows\picker-live.ps1 - the panel's controls while the window is up.
 #
 # Show-Picker builds a window, runs it, and disposes it; the functions that run during that -
 # rows on screen, the thumb, the caret, the chrome around the search field - used to be defined

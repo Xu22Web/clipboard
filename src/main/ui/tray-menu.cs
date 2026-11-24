@@ -1,5 +1,5 @@
 // src/main/ui/tray-menu.cs - the strip the tray rows sit on, and the renderer that paints what a
-// row cannot (see lib/panel/tray-menu.ps1).
+// row cannot (see renderer/src/windows/tray-menu.ps1).
 //
 // The strip paints only the surface, the frame and the separators. The region is rounded when the
 // menu opens, so the silhouette matches the panel's instead of the square one a menu gets, and the
@@ -34,7 +34,7 @@ namespace Cb {
     // works out where it goes (flip above the cursor near the bottom edge) from the size it has
     // at that moment, and a menu that is still the one-row placeholder is placed as if it were
     // 32 px tall and then grows off the screen - the first right click after a start landed 27
-    // px too low because of exactly that. lib\panel\tray-menu.ps1 calls it once the rows are in.
+    // px too low because of exactly that. renderer\src\windows\tray-menu.ps1 calls it once the rows are in.
     public void Fit() {
       try {
         int top = System.Math.Max(0, Skin.Top - Padding.Top);
@@ -75,7 +75,7 @@ namespace Cb {
       Invalidate();
     }
 
-    // the same ring the panel's frame is drawn with (lib/panel/picker-draw.ps1)
+    // the same ring the panel's frame is drawn with (renderer/src/windows/picker-draw.ps1)
     public static void Frame(System.Drawing.Graphics g, int w, int h, int radius, System.Drawing.Color color) {
       if (w < 6 || h < 6) { return; }
       int t = 1;
@@ -127,7 +127,7 @@ namespace Cb {
     // per opening, so its final size only exists after Show() returns: a tall one near the bottom
     // edge is pushed inside the working area instead of flipped (measured: pointer at y=622, menu
     // 482..1031 on a 1032 px work area, the pointer 140 px inside it). The rule is
-    // Get-MenuPlacement in lib/panel/picker-geom.ps1, where it can be checked without a screen;
+    // Get-MenuPlacement in renderer/src/windows/picker-geom.ps1, where it can be checked without a screen;
     // the menu only asks it where to go. The tray menu sets no placer and keeps the built-in one.
     public System.Func<System.Drawing.Point, System.Drawing.Size, System.Drawing.Point> Placer;
 

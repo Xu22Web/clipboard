@@ -1,4 +1,4 @@
-# lib/panel/preview.ps1 - the hover preview: a card beside the panel that shows the head of the
+# renderer\src\windows\preview.ps1 - the hover preview: a card beside the panel that shows the head of the
 # entry under the cursor.
 #
 # Hover changes many times a second while the mouse sweeps the list, so nothing here may run

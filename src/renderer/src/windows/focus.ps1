@@ -1,4 +1,4 @@
-# lib/panel/focus.ps1 - the foreground and the keyboard focus the panel borrows while it is open.
+# renderer\src\windows\focus.ps1 - the foreground and the keyboard focus the panel borrows while it is open.
 #
 # The panel activates like any other window: it opens in front, the search field takes the real
 # focus as soon as the user types, and keys reach it because the panel owns them - no keyboard

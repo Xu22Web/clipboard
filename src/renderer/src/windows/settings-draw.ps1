@@ -1,4 +1,4 @@
-# lib/panel/settings-draw.ps1 - the settings window's drawing.
+# renderer\src\windows\settings-draw.ps1 - the settings window's drawing.
 #
 # Every function here takes a Graphics plus plain values: no window, no list, no state. The
 # pieces are the same ones the history panel uses (Draw-PanelFrame for the silhouette, the

@@ -1,4 +1,4 @@
-# lib/panel/tray-menu.ps1 - the tray menu, drawn the way the panel and the settings window are.
+# renderer\src\windows\tray-menu.ps1 - the tray menu, drawn the way the panel and the settings window are.
 #
 # The menu used to be a plain ContextMenuStrip: Windows draws those in the system colours, so
 # beside a Fluent panel it read as somebody else's window. What it is now is the same surface,
@@ -176,7 +176,7 @@ function New-TrayMenu {
 # Where a menu whose rows are rebuilt per opening has to place itself. Its final size only exists
 # once it has opened, and the system then pushes a tall menu inside the work area instead of
 # flipping it (measured: pointer at y=622, menu 482..1031 on a 1032 px work area). The rule is
-# Get-MenuPlacement in lib/panel/picker-geom.ps1, the same arithmetic the panel places itself with;
+# Get-MenuPlacement in renderer/src/windows/picker-geom.ps1, the same arithmetic the panel places itself with;
 # this only hands it the pointer, the size and the screen the pointer is on, so every menu that
 # needs it shares one implementation and one test.
 function New-TrayMenuPlacer {

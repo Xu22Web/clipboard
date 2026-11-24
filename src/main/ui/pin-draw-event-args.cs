@@ -1,5 +1,5 @@
 // src/main/ui/pin-draw-event-args.cs - what Cb.PinList hands its caller for one row (see
-// lib/panel/pinlist.ps1).
+// renderer/src/windows/pinlist.ps1).
 //
 // Compiled through src\main\index.cs; the namespace and the type name are unchanged.
 using System;

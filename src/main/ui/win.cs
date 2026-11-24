@@ -203,7 +203,7 @@ namespace Cb {
     // a control re-shows its caret after every keystroke, so the caller repeats this
     [DllImport("user32.dll")] public static extern bool HideCaret(IntPtr h);
     // HideCaret counts: a caret that was hidden twice needs two ShowCaret calls before a
-    // control can show it again. lib/panel/picker.ps1 keeps the count.
+    // control can show it again. renderer/src/windows/picker.ps1 keeps the count.
     [DllImport("user32.dll")] public static extern bool ShowCaret(IntPtr h);
     // where a window is on screen, as a rectangle the geometry helpers can read. Empty for a
     // window that is gone, minimised or has no area, so the caller keeps its own fallback.

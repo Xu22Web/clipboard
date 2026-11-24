@@ -783,22 +783,22 @@ src/                    the program (the only folder packaging reads)
                           returns its bindings, ambient lifecycle hooks, and named slots a caller
                           fills
 
-  lib/panel/              the panel stack, loaded only by commands that draw
-  lib/panel/picker.ps1      the history panel: window, filter, list, keys, context menu, paste
-  lib/panel/picker-geom.ps1 the panel's arithmetic: rows, quick keys, placement, hit tests
-  lib/panel/picker-live.ps1 rows on screen, the thumb, the caret and the chrome, at file scope so
-                           one open does not compile them again
-  lib/panel/picker-draw.ps1 shared drawing: key caps, search hits
-  lib/panel/picker-edit.ps1 the in-place editor (F2)
-  lib/panel/pinlist.ps1     the self-drawn list control Cb.PinList
-  lib/panel/preview.ps1     the hover preview card
-  lib/panel/anim.ps1        the animation numbers
-  lib/panel/focus.ps1       taking and returning the foreground, releasing held modifiers
-  lib/panel/media-render.ps1 bitmaps and caches for pictures and formatted text
-  lib/panel/settings.ps1    the settings window: groups, rows, keys and mouse, reload after saving
-  lib/panel/settings-draw.ps1 drawing the settings window: side column, rows, switches, footer
-  lib/panel/settings-edit.ps1 editing in place: the input over a row, writing back, validation
-  lib/panel/tray-menu.ps1   the tray menu: palette and fonts from the theme, rows drawn by Cb.TrayItem
+  renderer/src/windows/   the windows, loaded only by commands that draw
+    picker.ps1            the history panel: window, filter, list, keys, context menu, paste
+    picker-geom.ps1       the panel's arithmetic: rows, quick keys, placement, hit tests
+    picker-live.ps1       rows on screen, the thumb, the caret and the chrome, at file scope so
+                          one open does not compile them again
+    picker-draw.ps1       shared drawing: key caps, search hits
+    picker-edit.ps1       the in-place editor (F2)
+    pinlist.ps1           the self-drawn list control Cb.PinList
+    preview.ps1           the hover preview card
+    anim.ps1              the animation numbers
+    focus.ps1             taking and returning the foreground, releasing held modifiers
+    media-render.ps1      bitmaps and caches for pictures and formatted text
+    settings.ps1          the settings window: groups, rows, keys and mouse, reload after saving
+    settings-draw.ps1     drawing the settings window: side column, rows, switches, footer
+    settings-edit.ps1     editing in place: the input over a row, writing back, validation
+    tray-menu.ps1         the tray menu: palette and fonts from the theme, rows drawn by Cb.TrayItem
 
   lib/plugin/             the plugin layer: all three files or none
   lib/plugin/plugins.ps1         the plugin runtime

@@ -215,6 +215,9 @@ try {
     BeforeAll {
       $script:StructEntryPath = Join-Path $srcRoot 'clipboard.ps1'
       $script:StructLibPath = Join-Path $srcRoot 'lib'
+      # the windows sit under renderer\src\windows: a check that reads the panel's source asks
+      # there, and the modules that stayed in lib keep answering from lib
+      $script:StructWinPath = Join-Path $srcRoot 'renderer\src\windows'
       $files = @()
       if (Test-Path -LiteralPath $script:StructLibPath) { $files = @(Get-ChildItem -LiteralPath $script:StructLibPath -Filter '*.ps1' -File -Recurse | Sort-Object -Property Name) }
       $utilsPath = Join-Path $srcRoot 'utils'
@@ -227,11 +230,11 @@ try {
     Describe 'module set' {
       It 'every required module exists' {
         # the entry file names these by relative path; a package must carry all of them
-        $requiredLib = @('lib\base', 'lib\native', 'lib\panel\focus', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
-          'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'lib\panel\picker-geom', 'lib\panel\picker-live', 'lib\text', 'lib\panel\anim',
-          'lib\panel\picker-draw', 'lib\panel\picker-edit', 'lib\panel\media-render', 'lib\panel\pinlist', 'lib\panel\preview', 'lib\panel\picker', 'lib\panel\tray-menu', 'lib\serve', 'lib\shortcut',
+        $requiredLib = @('lib\base', 'lib\native', 'renderer\src\windows\focus', 'lib\theme-stub', 'lib\settings', 'lib\marks', 'lib\ordering',
+          'lib\media', 'lib\cfhtml', 'lib\clip', 'lib\blobs', 'lib\store', 'lib\migrate', 'lib\transfer', 'lib\modifiers', 'lib\apprules', 'lib\entry', 'lib\query', 'lib\select', 'renderer\src\windows\picker-geom', 'renderer\src\windows\picker-live', 'lib\text', 'renderer\src\windows\anim',
+          'renderer\src\windows\picker-draw', 'renderer\src\windows\picker-edit', 'renderer\src\windows\media-render', 'renderer\src\windows\pinlist', 'renderer\src\windows\preview', 'renderer\src\windows\picker', 'renderer\src\windows\tray-menu', 'lib\serve', 'lib\shortcut',
           'renderer\src\core\draw', 'renderer\src\core\layout', 'renderer\src\core\widgets', 'renderer\src\core\component', 'renderer\src\core\framework', 'renderer\src\core\views', 'renderer\src\core\setup', 'renderer\src\core\reactive',
-          'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'lib\panel\settings-draw', 'lib\panel\settings-edit', 'lib\panel\settings',
+          'lib\settings-model', 'lib\settings-types', 'lib\settings-vm', 'lib\hotkey-record', 'renderer\src\windows\settings-draw', 'renderer\src\windows\settings-edit', 'renderer\src\windows\settings',
           'lib\config', 'lib\config-template', 'lib\usage', 'lib\dispatch', 'lib\ipc',
           'renderer\src\store\define', 'renderer\src\store\history-store',
           'utils\ini', 'utils\inifile', 'utils\schema', 'utils\log', 'utils\time', 'utils\format', 'utils\dpi', 'utils\hotkey',
@@ -395,7 +398,7 @@ try {
         $groupBlock = ($entryText -split '\$groupModules = @\{')[1]
         if ($groupBlock) { $groupBlock = ($groupBlock -split "\r?\n\}")[0] }
         $need = @{
-          'status' = @('lib\panel\picker-geom')
+          'status' = @('renderer\src\windows\picker-geom')
           'list'   = @('lib\store')
           'config' = @('lib\config-template')
         }
@@ -642,7 +645,7 @@ try {
       } -Skip $script:StructMinified
     }
 
-    # The panel takes the foreground when it opens (lib/panel/focus.ps1), so the keyboard and the
+    # The panel takes the foreground when it opens (renderer/src/windows/focus.ps1), so the keyboard and the
     # focus are real: the list starts with them and the filter row gets them as soon as the user
     # types. Closing hands the foreground back where it came from.
     Describe 'panel' {
@@ -650,9 +653,9 @@ try {
         # the panel's behaviour is written in two files: the window itself, and the functions
         # that run while it is up (picker-live.ps1). The checks below ask what the code does,
         # not which of the two holds it.
-        $script:StructPickerText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\picker.ps1')) + "`n" +
-          [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\picker-live.ps1'))
-        $script:StructDrawText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\picker-draw.ps1'))
+        $script:StructPickerText = [IO.File]::ReadAllText((Join-Path $script:StructWinPath 'picker.ps1')) + "`n" +
+          [IO.File]::ReadAllText((Join-Path $script:StructWinPath 'picker-live.ps1'))
+        $script:StructDrawText = [IO.File]::ReadAllText((Join-Path $script:StructWinPath 'picker-draw.ps1'))
         $winText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'native.ps1'))
         # the platform C# is compiled from src\main (the #part list) plus whatever is still in
         # lib\assembly, and a package ships only the compiled lib\assembly\clipboard.dll - so
@@ -710,7 +713,7 @@ try {
         # the panel is refused the foreground while another process owns it, and the documented
         # workaround (AttachThreadInput) is worth writing once, not twice
         Expect ($script:StructPickerText -match 'Take-Foreground') 'the paste does not use Take-Foreground'
-        $khText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\focus.ps1'))
+        $khText = [IO.File]::ReadAllText((Join-Path $script:StructWinPath 'focus.ps1'))
         Expect ($khText -match '(?s)function Take-Foreground') 'Take-Foreground missing'
         Expect ($khText -match '(?s)function Take-Foreground[^\r\n]*\{(?:(?!function ).){0,1600}AttachThreadInput') 'Take-Foreground never attaches the queues'
       }
@@ -725,7 +728,7 @@ try {
         # Control.ModifierKeys reads the calling thread's key state, so waiting on it alone would
         # send Ctrl+V with Alt still down
         $modText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'modifiers.ps1'))
-        $khText = [IO.File]::ReadAllText((Join-Path $script:StructLibPath 'panel\focus.ps1'))
+        $khText = [IO.File]::ReadAllText((Join-Path $script:StructWinPath 'focus.ps1'))
         Expect ($modText -match '(?s)function Get-HeldModifier\s*\{.{0,400}GetAsyncKeyState') 'the modifier wait does not read the real key state'
         Expect ($modText -match 'function Test-Modifiers-Up\s*\{\s*return \(\(Get-HeldModifier\)') 'Test-Modifiers-Up still reads the thread key state'
         Expect ($khText -match '(?s)function Release-HeldModifiers') 'no Release-HeldModifiers'
@@ -1020,7 +1023,7 @@ try {
       It 'the Shown handler leaves the search box unlit' {
         # the panel already owns the foreground, so the only thing the handler must not do is
         # paint the field as focused: the caret there would be a caret nobody is using
-        $pickerAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $script:StructLibPath 'panel\picker.ps1'), [ref]$null, [ref]$null)
+        $pickerAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $script:StructWinPath 'picker.ps1'), [ref]$null, [ref]$null)
         $shownBlocks = @($pickerAst.FindAll({
               param($node)
               $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
@@ -5335,7 +5338,7 @@ try {
     Save-Records @()
   }
 
-    # the drawing helpers live in lib/panel/picker-draw.ps1 and take a Graphics plus plain values,
+    # the drawing helpers live in renderer/src/windows/picker-draw.ps1 and take a Graphics plus plain values,
     # so they can be exercised without a window - that is what "no form state" buys.
     # Unit only (the helpers come from the -Library load) and source only: a packaged copy
     # has renamed internals, so the names do not exist there.
