@@ -696,7 +696,7 @@ tests/unit/unit.ps1     结构与单元测试（进程内 dot-source）
 tests/cli/*.ps1         命令行分件
 tests/pkg/build.ps1     打包
 tests/e2e/*.ps1         真实常驻进程与命名管道
-docs/<语言>/             界面截图与插件、主题说明页（en、zh-cn）
+docs/<语言>/             界面截图与插件、主题说明页（en、zh-cn）；release-notes/ 按版本各一份发布说明
 dist/                   打包产物（不入库）
 
 src/                    程序本体（打包只读这个目录）

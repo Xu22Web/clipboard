@@ -697,7 +697,7 @@ tests/unit/unit.ps1     structure and unit tests (dot-sourced in-process)
 tests/cli/*.ps1         command-line parts
 tests/pkg/build.ps1     packaging
 tests/e2e/*.ps1         the real resident and the named pipe
-docs/                   screenshots (en / zh-cn) and the plugin and theme pages
+docs/                   screenshots (en / zh-cn), the plugin and theme pages, and release-notes/ per release
 dist/                   package output (not committed)
 
 src/                    the program (the only folder packaging reads)
