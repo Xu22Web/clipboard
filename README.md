@@ -704,6 +704,7 @@ packages/builder/assets.ps1   what happens to one file: which handler rewrites i
 packages/builder/assets/*.ps1 one handler per kind of file: script, version, batch, shell, ini, copy
 packages/test/          the suite runner: config.ps1 + index.ps1
 packages/module/        the module layer: specifier, import graph and the export check
+packages/module/bin/module.ps1  `run module`: run one script with the import and export statements live
 packages/*/package.ini  each package's identity: name, version, description, licence, engine, entry, exports
 packages/*/README.md    what that package is for, and its file table
 packages/*/LICENSE      the same MIT licence as the repository root
@@ -1043,8 +1044,9 @@ Everything runs in a sandbox copy under `%TEMP%` and never touches the repositor
 | `run client` | compile `preload\client.cs` into `src\preload\client.exe` (optional) |
 | `run assembly` | compile the `#part` list in `src\main\index.cs` into `src\main\clipboard.dll` (optional) |
 | `run bundle` | build one target declared in `builder.cli.config.ps1`; `-All` builds every one of them; `-Inspect` lists the modules a bundle cannot inline and why |
+| `run module` | run one script with `Use-Module` / `Export-Function` live: `run module <entry.ps1> [args]`, `-Check` reports instead of running, `-List` prints the load order |
 
-`run.sh` / `run.cmd` / `run.ps1` behave the same: they change to the repository root and append the remaining arguments to the matching line of `package.ini`. `dev`, `build` and `bundle` belong to `builder-cli` (the build tool), `test` to `builder-test`, and `client`, `assembly`, `bench` and `shot` are plain scripts the table runs by path.
+`run.sh` / `run.cmd` / `run.ps1` behave the same: they change to the repository root and append the remaining arguments to the matching line of `package.ini`. `dev`, `build` and `bundle` belong to `builder-cli` (the build tool), `test` to `builder-test`, `module` to `module` (the module layer's own command), and `client`, `assembly`, `bench` and `shot` are plain scripts the table runs by path.
 
 `run dev` keeps the resident running and restarts it when a file changes; it ends when the resident is stopped from outside (the tray's Exit, `clipboard stop`) or when you press `Ctrl+C`, and the restart after a `config set` does not count as an exit. A terminal killed outright needs a manual `clipboard stop`. What it watches is the `[files] Files` list of `builder.ini` (a `!` prefix excludes), plus `packages\**\*.ps1`, `builder.ini`, `builder.cli.config.ps1` and `package.ini`:
 

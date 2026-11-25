@@ -175,6 +175,30 @@ Describe 'the parse cache' {
   }
 }
 
+Describe 'the module command' {
+  It 'runs an entry that imports the file beside it' {
+    $leaf = Join-Path $modDir 'run-b.ps1'
+    $entry = Join-Path $modDir 'run-a.ps1'
+    [IO.File]::WriteAllText($leaf, "function Add-Numbers(`$x, `$y) { `$x + `$y }`r`nExport-Function Add-Numbers`r`n", $utf8)
+    [IO.File]::WriteAllText($entry, ". (Use-Module './run-b' `$PSCommandPath)`r`n'sum = ' + (Add-Numbers 3 4)`r`n", $utf8)
+    $bin = Join-Path $repoRoot 'packages\module\bin\module.ps1'
+    $out = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bin $entry 2>&1)
+    $code = $LASTEXITCODE
+    $text = ($out -join ' ')
+    Expect (($code -eq 0) -and ($text -like '*sum = 7*')) ($code.ToString() + ' ' + $text)
+  }
+
+  It 'reports instead of running when an import names nothing' {
+    $entry = Join-Path $modDir 'run-bad.ps1'
+    [IO.File]::WriteAllText($entry, ". (Use-Module './nope' `$PSCommandPath)`r`n'ran'`r`n", $utf8)
+    $bin = Join-Path $repoRoot 'packages\module\bin\module.ps1'
+    $out = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bin -Check $entry 2>&1)
+    $code = $LASTEXITCODE
+    $text = ($out -join ' ')
+    Expect (($code -eq 1) -and ($text -like '*run-bad.ps1:1*')) ($code.ToString() + ' ' + $text)
+  }
+}
+
 Describe 'the module table' {
   It 'names files that exist and imports that resolve' {
     $entry = Join-Path $repoRoot 'src\clipboard.ps1'

@@ -451,7 +451,7 @@ try {
           'packages\test\index.ps1', 'packages\test\config.ps1', 'packages\test\utils\console.ps1', 'packages\test\bin\test.ps1',
           'packages\module\index.ps1', 'packages\module\lib\specifier.ps1',
           'packages\module\lib\graph.ps1', 'packages\module\lib\order.ps1',
-          'packages\module\lib\exports.ps1',
+          'packages\module\lib\exports.ps1', 'packages\module\bin\module.ps1',
           'packages\cli\utils\minify.ps1', 'packages\cli\utils\ini.ps1', 'packages\cli\utils\globs.ps1', 'packages\cli\utils\csc.ps1',
           'packages\cli\utils\console.ps1',
           'packages\bundler\bundler.ps1', 'packages\builder\assets.ps1',

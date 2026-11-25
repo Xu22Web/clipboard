@@ -703,6 +703,7 @@ packages/builder/assets.ps1   文件处理表：按路径决定用哪个 handler
 packages/builder/assets/*.ps1 每种文件类型一个 handler：script、version、batch、shell、ini、copy
 packages/test/          自测驱动：config.ps1 + index.ps1
 packages/module/        模块层：specifier、导入图与导出校验
+packages/module/bin/module.ps1  `run module`：带着导入导出语句运行一个脚本
 packages/*/package.ini  每个包的身份：名称、版本、描述、许可证、运行环境、入口、导出
 packages/*/README.md    该包的职责与文件清单
 packages/*/LICENSE      与仓库根相同的 MIT 许可证
@@ -1036,8 +1037,9 @@ Describe 'int' {
 | `run client` | 编译 `preload\client.cs` → `src\preload\client.exe`（可选） |
 | `run assembly` | 编译 `src\main\index.cs` 的 `#part` 清单 → `src\main\clipboard.dll`（可选） |
 | `run bundle` | 构建 `builder.cli.config.ps1` 声明的一个目标；`-Entry` 指定目标名；`-Inspect` 列出哪些模块无法被内联及原因 |
+| `run module` | 带着 `Use-Module` / `Export-Function` 语句运行一个脚本：`run module <入口.ps1> [参数]`；`-Check` 只报告不运行，`-List` 打印加载顺序 |
 
-`run.sh` / `run.cmd` / `run.ps1` 三个入口行为一致，均先把工作目录切到仓库根，再把余下参数追加到 `package.ini` 中对应的命令行。`dev` / `build` / `bundle` 属于 `builder-cli`（构建工具），`test` 属于 `builder-test`，`client` / `assembly` / `bench` / `shot` 则是表中按路径直接运行的普通脚本。
+`run.sh` / `run.cmd` / `run.ps1` 三个入口行为一致，均先把工作目录切到仓库根，再把余下参数追加到 `package.ini` 中对应的命令行。`dev` / `build` / `bundle` 属于 `builder-cli`（构建工具），`test` 属于 `builder-test`，`module` 属于 `module`（模块层自己的命令），`client` / `assembly` / `bench` / `shot` 则是表中按路径直接运行的普通脚本。
 
 `run dev` 持续运行常驻进程，文件变化后重启；被外部停止（托盘退出、`clipboard stop`）或按 `Ctrl+C` 时结束，`config set` 引起的自动重启不触发退出。终端被直接杀掉时需手动 `clipboard stop`。监视范围取自 `builder.ini` 的 `[files] Files`（`!` 前缀为排除），另加 `packages\**\*.ps1`、`builder.ini`、`builder.cli.config.ps1`、`package.ini`：
 

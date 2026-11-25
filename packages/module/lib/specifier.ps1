@@ -9,7 +9,11 @@
 #   name/of/module      a module id under src\ - the form #@use has always used
 #
 # A .ps1 suffix is optional everywhere; it is added when the name has none.
+#
+# The root may be empty: a relative specifier is answered from the file that writes it and needs
+# no repository, which is what lets a script run from a scratch folder import the file beside it.
 function Get-ModulePackagesRoot([string]$root) {
+  if (-not $root) { return '' }
   return (Join-Path $root 'packages')
 }
 
@@ -99,7 +103,7 @@ function Resolve-ModuleSpecifier([string]$spec, [string]$from, [string]$root, [s
 
   # ---------------------------------------------------------------- package, or a file inside one
   $parts = @($target -split '[\\/]' | Where-Object { $_ })
-  if ($parts.Count -gt 0) {
+  if ($parts.Count -gt 0 -and $packagesRoot) {
     $pkgDir = Join-Path $packagesRoot $parts[0]
     if (Test-Path -LiteralPath $pkgDir -PathType Container) {
       $pkg = Read-ModulePackage $pkgDir
@@ -130,6 +134,10 @@ function Resolve-ModuleSpecifier([string]$spec, [string]$from, [string]$root, [s
   }
 
   # ---------------------------------------------------------------- a module id under src
+  if (-not $root) {
+    $answer.Problem = 'no module root for ' + $target + ' (a relative ./ name needs none)'
+    return $answer
+  }
   $srcRoot = Join-Path $root 'src'
   $answer.Kind = 'id'
   $answer.Id = ($target -replace '\\', '/')
