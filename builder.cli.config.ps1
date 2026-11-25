@@ -1,9 +1,10 @@
 # builder.cli.config.ps1 - what this repository builds, shaped like electron.vite.config.ts.
 #
-# The file is a PowerShell expression that returns one ordered table: Bundler and Watch hold the
-# settings every target starts from, and every other key is a target - the keys inside it are
-# the ones a target accepts. dot-sourcing it gives the shape back, so a wrong name is reported
-# by the loader - packages\cli\config.ps1 - with the list of accepted keys.
+# The file is a PowerShell expression that returns one ordered table: every key is a target, and
+# the keys inside it are the ones a target accepts. Bundler and Watch may be written as well, but
+# only to change a default - those live in packages\cli\config.ps1. dot-sourcing the file gives
+# the shape back, so a wrong name is reported by the loader - packages\cli\config.ps1 - with the
+# list of accepted keys.
 #
 #   Preset      one of the shapes packages\cli\plugins\presets.ps1 defines; the keys
 #               below it override what the preset says, an empty value included
@@ -24,25 +25,12 @@
 
 [ordered]@{
 
-  # What every target does unless its own keys override it. These are build settings, so they
-  # sit next to the targets the way electron-vite keeps them in electron.vite.config.ts - a
-  # package.ini is package metadata, which is package.json's job.
+  # Bundler and Watch are optional: every key they can carry already has a default in
+  # packages\cli\config.ps1, the way vite keeps its defaults in source and a project's
+  # vite.config.ts writes only what it changes. Name a key here to change it for this build:
   #
-  # Minify rewrites a .ps1 from its syntax tree, Rename also shortens internal names, Treeshake
-  # drops the definitions no load-time path reaches (rolldown's default as well), and Workers is
-  # how many targets `cli bundle -All` builds at once (0 = one per logical processor).
-  Bundler = [ordered]@{
-    Minify    = $true
-    Rename    = $true
-    Treeshake = $true
-    Workers   = 0
-  }
-
-  # How often `cli dev` looks at the tree, in ms. What it watches comes from builder.ini Files
-  # plus the tooling itself.
-  Watch = [ordered]@{
-    Interval = 600
-  }
+  #   Bundler = @{ Treeshake = $false; Workers = 2 }
+  #   Watch   = @{ Interval = 300 }
 
   Main = [ordered]@{
 

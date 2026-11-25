@@ -1044,7 +1044,7 @@ Everything runs in a sandbox copy under `%TEMP%` and never touches the repositor
 - `BaseUrl` (`[directories]` of `builder.ini`): the folder the globs are relative to, `.` = the repository root (the default); an absolute path works.
 - `Files`: globs under `BaseUrl`, written in minimatch's language: `*` and `?` stay inside one name, `**` as a path portion recurses (`src/**` is every file under it), `[abc]` is a character class and `{a,b}` a choice. A `!pattern` removes what it reaches and the list applies in order, so a later pattern can put a file back. A new or deleted file counts as a change, and a missing file a dot-source line points at prints `[!] missing:`.
 - A `.cs` in the list is compiled once before the start, and afterwards only the side that changed: `src/main/*.cs` → `src\main\clipboard.dll`, `src/preload/*.cs` → `src\preload\client.exe`; taking it out of the list stops the compile. The resident is stopped before compiling, or the dll is locked.
-- `Interval` (`Watch` of `builder.cli.config.ps1`): the poll interval in ms (600 by default). The restart waits for one quiet interval, so a save that writes in several steps restarts once.
+- `Interval`: the poll interval in ms, 600 unless `Watch = @{ Interval = 300 }` is written in `builder.cli.config.ps1`. The restart waits for one quiet interval, so a save that writes in several steps restarts once.
 
 `cli bench` copies `src\` into `%TEMP%` and points `DataDir` at a temporary folder, so capture, save, parse and filter can be measured while a resident is running (`-Records` changes the store size, `-Json` / `-Out` make runs comparable); panel opening and paste injection need a real desktop and are not part of it. `cli shot` copies `src\` into `%PUBLIC%`, seeds an example history and starts the copy's resident to capture the panel, the tray menu and the settings window. The copy carries its own named objects (`Local\clipboard.shot.*`), so a resident already running is unaffected and neither the real history nor the real settings reach a screenshot; `-Part` picks the surface, `-Theme` the theme and `-PreviewRow` the row the card is taken from.
 
@@ -1062,7 +1062,7 @@ Every tool prints through `packages\cli\utils\console.ps1`: `[..]` a step (cyan)
 
 A module can state its own edges with two directives at the top of the file: `#@use <module id>, ...` for the modules it calls and `#@export <function>, ...` for what the rest of the program may call. They are comments on purpose - they describe the build, not the program, so the shipped copy runs the same file with no cost and nothing at run time has to understand them. With them the bundler checks the entry *before* building: a call to a function its module does not export, a call into a module the entry does not list (the mistake that otherwise only shows up as "module group too small"), an export naming a function that does not exist, and the same name exported twice. Modules without directives are left unchecked and only make the "would drop" answer unknown. `cli bundle -Inspect -Suggest` prints, for every module, the `#@use` and `#@export` lines its real calls imply.
 
-`cli bundle -All` builds every target the file declares, one Windows PowerShell process per target, up to `Workers` in its `Bundler` section at a time (`0` = one per logical processor, capped at the number of targets). Each worker writes its own output and its own temp folder, and the logs are printed in the order the file declares the targets, so a parallel run reads like a serial one.
+`cli bundle -All` builds every target the file declares, one Windows PowerShell process per target, up to `Workers` at a time (`0` = one per logical processor, capped at the number of targets; the default and the rest of `Bundler` live in `packages\cli\config.ps1`, and a `Bundler = @{ Workers = 2 }` section overrides it). Each worker writes its own output and its own temp folder, and the logs are printed in the order the file declares the targets, so a parallel run reads like a serial one.
 
 ```powershell
 cli build                          # builder.cli.config.ps1 + builder.ini
@@ -1086,7 +1086,7 @@ A target in `builder.cli.config.ps1` (a PowerShell expression returning one orde
 | `Target` | `library` (default) or `exe`, for a C# target |
 | `Append` | further globs added to a C# target's file list, after the declared ones |
 | `Keep` | names the bundle must not rename |
-| `Minify` `Rename` `Treeshake` | per-target overrides of `Bundler` in `builder.cli.config.ps1` |
+| `Minify` `Rename` `Treeshake` | per-target overrides; the defaults live in `packages\cli\config.ps1`, and a `Bundler` section in `builder.cli.config.ps1` changes them for every target |
 
 `builder.ini` holds electron-builder's three keys and nothing else:
 

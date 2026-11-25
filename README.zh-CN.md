@@ -1037,7 +1037,7 @@ Describe 'int' {
 - `BaseUrl`（`builder.ini` 的 `[directories]`）：通配的基准目录，`.` = 仓库根（默认），可写绝对路径。
 - `Files`：相对 `BaseUrl` 的通配，语法为 minimatch：`*` 与 `?` 不跨目录，`**` 作为路径段时递归（`src/**` 即其下全部文件），`[abc]` 是字符集，`{a,b}` 是备选；`!` 前缀移除它命中的文件，列表按顺序生效，所以后面的通配可以再把它加回来。新增与删除也算变化，入口 dot-source 行指向的缺失文件会打印 `[!] missing:`。
 - 清单里的 `.cs` 在启动前编译一次，之后哪边变了只重编那一边：`src/main/*.cs` → `src\main\clipboard.dll`，`src/preload/*.cs` → `src\preload\client.exe`；移出清单即不编译。编译前先停常驻进程，否则 dll 被占用。
-- `Interval`（`builder.cli.config.ps1` 的 `Watch`）：轮询间隔（毫秒，默认 600）。连续一个间隔无变化才重启，一次保存分多步写入只重启一次。
+- `Interval`：轮询间隔（毫秒），默认 600；在 `builder.cli.config.ps1` 写 `Watch = @{ Interval = 300 }` 可改。连续一个间隔无变化才重启，一次保存分多步写入只重启一次。
 
 `cli bench` 在 `%TEMP%` 下复制 `src\` 并把 `DataDir` 指向临时目录，可在常驻进程运行时测量捕获、保存、解析与过滤的耗时（`-Records` 改库规模，`-Json` / `-Out` 便于对比）；面板打开与粘贴注入需要真实桌面，不在其中。`cli shot` 把 `src\` 复制到 `%PUBLIC%`，写入示例历史后启动副本里的常驻进程，截取面板、托盘菜单与设置窗口。副本使用自己的命名对象（`Local\clipboard.shot.*`），已在运行的常驻进程不受影响，真实历史与配置不进入截图；`-Part` 选界面、`-Theme` 选主题、`-PreviewRow` 指定预览卡取自哪一行。
 
@@ -1055,7 +1055,7 @@ Describe 'int' {
 
 模块可以用开头两条指令说明自己的边界：`#@use <模块 id>, ...` 列出它调用的模块，`#@export <函数>, ...` 列出其它模块可以调用它的哪些函数。它们故意写成注释：描述的是构建而不是程序，发布出去的副本照旧直接运行同一份文件、零成本，运行时也不需要理解它们。有了声明，bundler 在构建之前就能检查：调用了所属模块没导出的函数、调用了入口没带的模块（即平时只在运行时才露面的「module group too small」）、导出里写了不存在的函数、同一个名字被两个模块导出。没写声明的模块不参与校验，只会让「会被丢弃」的结论变成未知。`cli bundle -Inspect -Suggest` 会按真实调用关系打印每个模块该写的那两行，复制即可。
 
-`cli bundle -All` 构建文件里声明的全部目标：每个目标一个独立的 Windows PowerShell 进程，同时最多 `Bundler` 段 `Workers` 个（`0` 表示按逻辑处理器数，且不超过目标数）。每个 worker 写自己的产物与自己的临时目录，日志按文件声明顺序输出，所以并行跑出来的样子与串行一致。
+`cli bundle -All` 构建文件里声明的全部目标：每个目标一个独立的 Windows PowerShell 进程，同时最多 `Workers` 个（`0` 表示按逻辑处理器数，且不超过目标数；默认值与 `Bundler` 其余键在 `packages\cli\config.ps1`，写 `Bundler = @{ Workers = 2 }` 可覆盖）。每个 worker 写自己的产物与自己的临时目录，日志按文件声明顺序输出，所以并行跑出来的样子与串行一致。
 
 ```powershell
 cli build                          # builder.cli.config.ps1 + builder.ini
@@ -1079,7 +1079,7 @@ cli build -BuilderConfig other.ini # 换一份发布描述
 | `Target` | C# 目标取 `library`（默认）或 `exe` |
 | `Append` | C# 目标在声明之外再追加的通配 |
 | `Keep` | 不许被改名的名字 |
-| `Minify` `Rename` `Treeshake` | 逐目标覆盖 `builder.cli.config.ps1` 的 `Bundler` |
+| `Minify` `Rename` `Treeshake` | 逐目标覆盖；默认值在 `packages\cli\config.ps1`，`builder.cli.config.ps1` 的 `Bundler` 段可对所有目标改写 |
 
 `builder.ini` 只有 electron-builder 的三个键：
 

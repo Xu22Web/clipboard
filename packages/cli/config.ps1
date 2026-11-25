@@ -63,9 +63,8 @@ function Resolve-CliConfig {
     throw ((Split-Path -Leaf $ConfigFile) + ' must return one table of targets')
   }
 
-  # the settings the config states once, instead of every target saying them again. They come
-  # from the same file as the targets because they are build settings: a package.ini is package
-  # metadata, which is package.json's job.
+  # The defaults of the whole tooling, in one place: a config file names a key here only to
+  # change it, the way a vite.config writes build.minify only when it is not the default.
   $bundler = @{ Minify = $true; Rename = $true; Treeshake = $true; Workers = 0 }
   $watch = @{ Interval = 600 }
   if ($doc.Contains('Bundler')) {
