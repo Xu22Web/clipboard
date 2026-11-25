@@ -15,11 +15,15 @@
   way "shot": "node tools/shot.js" runs a plain script. A line that starts with neither runs as
   written.
 #>
-[CmdletBinding()]
-param(
-  [Parameter(Position = 0)][string]$Command = '',
-  [Parameter(ValueFromRemainingArguments = $true)][string[]]$Rest
-)
+# No param block on purpose: a script with [CmdletBinding()] binds -Out, -OutVariable, -ErrorAction
+# and their prefixes to its own common parameters before the command line is ever built, so
+# "run modulebench -Out base.json" used to fail in the launcher instead of reaching the tool.
+# $args keeps the words exactly as they arrived, and the first one is the command.
+$argv = @($args)
+$Command = ''
+$Rest = @()
+if ($argv.Count -gt 0) { $Command = [string]$argv[0] }
+if ($argv.Count -gt 1) { $Rest = @($argv[1..($argv.Count - 1)]) }
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSCommandPath

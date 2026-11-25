@@ -1038,6 +1038,7 @@ Describe 'int' {
 | `run assembly` | 编译 `src\main\index.cs` 的 `#part` 清单 → `src\main\clipboard.dll`（可选） |
 | `run bundle` | 构建 `builder.cli.config.ps1` 声明的一个目标；`-Entry` 指定目标名；`-Inspect` 列出哪些模块无法被内联及原因 |
 | `run module` | 带着 `Use-Module` / `Export-Function` 语句运行一个脚本：`run module <入口.ps1> [参数]`；`-Check` 只报告不运行，`-List` 打印加载顺序 |
+| `run modulebench` | 给模块层计时：单次解析重复调用、单链（短文件与长文件）与混合扇形的图与加载顺序、诊断扫描；`-Depth` / `-Width` / `-FanDepth` / `-Functions` 改变生成的形状，`-Json` / `-Out` 输出 JSON |
 
 `run module` 启动一个脚本的方式与 node 启动文件一样：入口自己导入所需，每条导入都写明带后缀的文件。`.ps1` 是代码模块 —— ts 与 js 扮演的角色：文件在调用方作用域里执行，函数就落在导入它的代码旁边（`. (Use-Module './b.ps1' $PSCommandPath)`）。`.ini` 是数据模块 —— json 扮演的角色：文件只被读取而不执行，导入返回嵌套表（`$conf = Use-Module './settings.ini' $PSCommandPath`）。不猜测后缀：缺后缀或后缀不属于本层时，报错面会带上写它的文件与行号。`-Check` 只打印这些行、不运行；`-List` 打印脚本的加载顺序，数据文件是边而不是步骤。
 

@@ -79,13 +79,10 @@ function Get-ModuleDiagnostics([string]$entry, [string]$root, $alias = $null, [s
   foreach ($one in @($graph.Cycles)) { $problems.Add($one) }
 
   foreach ($node in @($graph.Nodes)) {
-    $tokens = $null
-    $errors = $null
-    $ast = [System.Management.Automation.Language.Parser]::ParseFile([string]$node.Path, [ref]$tokens, [ref]$errors)
+    # the function names came out of the same syntax-tree walk that found the edges: parsing the
+    # file a second time only to list them again was the most expensive thing this pass did
     $set = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
-    foreach ($f in @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))) {
-      [void]$set.Add([string]$f.Name)
-    }
+    foreach ($f in @($node.Statements.Defined)) { [void]$set.Add([string]$f) }
     foreach ($one in @($node.Statements.Exports)) {
       if ($one.From) { continue }
       foreach ($name in @($one.Names)) {

@@ -19,9 +19,26 @@
 function Get-ModuleStatementAst($ast) {
   $uses = New-Object System.Collections.Generic.List[object]
   $exports = New-Object System.Collections.Generic.List[object]
-  if ($null -eq $ast) { return @{ Uses = @(); Exports = @() } }
+  $defined = New-Object System.Collections.Generic.List[string]
+  if ($null -eq $ast) { return @{ Uses = @(); Exports = @(); Defined = @() } }
 
-  foreach ($cmd in @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true))) {
+  # one walk for both questions: the calls that write an edge and the functions the file defines.
+  # Asking the tree twice doubled the cost of a long file, and the second answer never changed.
+  $nodes = @($ast.FindAll({ param($n)
+    if ($n -is [System.Management.Automation.Language.CommandAst]) { return $true }
+    if ($n -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
+      return (($n.Parent -is [System.Management.Automation.Language.NamedBlockAst]) -and
+              ($n.Parent.Parent -is [System.Management.Automation.Language.ScriptBlockAst]) -and
+              ($null -eq $n.Parent.Parent.Parent))
+    }
+    return $false
+  }, $true))
+
+  foreach ($cmd in $nodes) {
+    if ($cmd -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
+      $defined.Add([string]$cmd.Name)
+      continue
+    }
     $name = ''
     try { $name = [string]$cmd.GetCommandName() } catch { $name = '' }
     $line = [int]$cmd.Extent.StartLineNumber
@@ -77,7 +94,7 @@ function Get-ModuleStatementAst($ast) {
   }
 
   # the comment forms were read beside the statements above
-  return @{ Uses = $uses.ToArray(); Exports = $exports.ToArray() }
+  return @{ Uses = $uses.ToArray(); Exports = $exports.ToArray(); Defined = $defined.ToArray() }
 }
 
 # The comment form, kept for files that have not been moved to statements yet. One function so
@@ -104,19 +121,27 @@ function Get-ModuleCommentDirectives($parsed) {
       $exports.Add(@{ Names = $names; Default = ''; All = $false; From = ''; Line = $line })
     }
   }
-  return @{ Uses = $uses.ToArray(); Exports = $exports.ToArray() }
+  return @{ Uses = $uses.ToArray(); Exports = $exports.ToArray(); Defined = @() }
 }
 
 # One file's statements, statements first and the comment form merged in. Uses carry a line;
-# an export from a comment carries the line of the token.
+# an export from a comment carries the line of the token. Defined is the list of functions the
+# file defines - the diagnostics pass asks for it, and asking the tree twice cost as much as the
+# first walk did.
 function Get-ModuleStatements([string]$path) {
-  $empty = @{ Uses = @(); Exports = @() }
-  if (-not $path -or -not (Test-Path -LiteralPath $path)) { return $empty }
+  $empty = @{ Uses = @(); Exports = @(); Defined = @() }
+  if (-not $path -or -not [IO.File]::Exists($path)) { return $empty }
   $tokens = $null
   $errors = $null
   $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
   $found = Get-ModuleStatementAst $ast
-  $comments = Get-ModuleCommentDirectives @{ Tokens = $tokens }
+
+  # the comment form is rare: one string search skips the token walk for every file that does not
+  # carry one, which is all of the generated and most of the hand-written code
+  $comments = @{ Uses = @(); Exports = @() }
+  $raw = ''
+  try { $raw = [IO.File]::ReadAllText($path) } catch { $raw = '' }
+  if ($raw.Contains('#@')) { $comments = Get-ModuleCommentDirectives @{ Tokens = $tokens } }
 
   $uses = New-Object System.Collections.Generic.List[object]
   $seenUse = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
@@ -128,7 +153,7 @@ function Get-ModuleStatements([string]$path) {
   $exports = New-Object System.Collections.Generic.List[object]
   foreach ($one in @($found.Exports)) { $exports.Add($one) }
   foreach ($one in @($comments.Exports)) { $exports.Add($one) }
-  return @{ Uses = $uses.ToArray(); Exports = $exports.ToArray() }
+  return @{ Uses = $uses.ToArray(); Exports = $exports.ToArray(); Defined = @($found.Defined) }
 }
 
 # The older shape: names only, no lines. Kept because the bundler comparison and older tests read it.

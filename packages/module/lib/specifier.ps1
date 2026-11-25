@@ -21,7 +21,7 @@ function Get-ModulePackagesRoot([string]$root) {
 # all a specifier needs, and a package that is not there is a missing import, not a crash.
 function Read-ModulePackage([string]$dir) {
   $file = Join-Path $dir 'package.ini'
-  if (-not (Test-Path -LiteralPath $file)) { return $null }
+  if (-not [IO.File]::Exists($file)) { return $null }
   $map = @{}
   $section = ''
   foreach ($line in [IO.File]::ReadAllLines($file, [Text.Encoding]::UTF8)) {
@@ -86,15 +86,18 @@ function Get-ModulePathKind([string]$path) {
 # names, so the suffix is part of the name. A missing suffix is a mistake to report, not a hole to
 # fill - the same name may be a script, an ini file and a json file, and picking one for the caller
 # is how a build reads the wrong thing.
+#
+# Existence is asked of [IO.File] rather than of Test-Path: a resolver runs once per import line
+# and twice more per candidate, and the cmdlet's own plumbing costs more than the call it makes.
 function Resolve-ModulePath([string]$base, [string]$target) {
   if (-not $base) { $base = (Get-Location).Path }
-  if (Test-Path -LiteralPath $base -PathType Leaf) { $base = Split-Path -Parent $base }
+  if ([IO.File]::Exists($base)) { $base = Split-Path -Parent $base }
   $path = [IO.Path]::GetFullPath((Join-Path $base ($target -replace '/', '\')))
   $kind = Get-ModulePathKind $path
   if (-not $kind) {
     return @{ Path = $path; Kind = ''; Problem = 'no suffix: write ' + $target + '.ps1 or ' + $target + '.ini' }
   }
-  if (-not (Test-Path -LiteralPath $path)) {
+  if (-not [IO.File]::Exists($path)) {
     return @{ Path = $path; Kind = $kind; Problem = 'no such file: ' + $target }
   }
   return @{ Path = $path; Kind = $kind; Problem = '' }
@@ -118,8 +121,6 @@ function Resolve-ModuleSpecifier([string]$spec, [string]$from, [string]$root, [s
   }
   $answer.Export = $export
 
-  $packagesRoot = Get-ModulePackagesRoot $root
-
   # ---------------------------------------------------------------- relative
   if ($target.StartsWith('./') -or $target.StartsWith('../') -or $target.StartsWith('.\') -or $target.StartsWith('..\')) {
     $answer.Kind = 'local'
@@ -132,11 +133,15 @@ function Resolve-ModuleSpecifier([string]$spec, [string]$from, [string]$root, [s
     return $answer
   }
 
+  # the package table is only needed from here on: a relative import never reads it, and this
+  # function runs once per import line of every module
+  $packagesRoot = Get-ModulePackagesRoot $root
+
   # ---------------------------------------------------------------- package, or a file inside one
   $parts = @($target -split '[\\/]' | Where-Object { $_ })
   if ($parts.Count -gt 0 -and $packagesRoot) {
     $pkgDir = Join-Path $packagesRoot $parts[0]
-    if (Test-Path -LiteralPath $pkgDir -PathType Container) {
+    if ([IO.Directory]::Exists($pkgDir)) {
       $pkg = Read-ModulePackage $pkgDir
       $answer.Package = $parts[0]
       if ($parts.Count -eq 1) {
@@ -156,7 +161,7 @@ function Resolve-ModuleSpecifier([string]$spec, [string]$from, [string]$root, [s
       if ($null -eq $pkg) { $answer.Problem = 'package ' + $parts[0] + ' has no package.ini'; return $answer }
       if ($answer.Kind -eq 'package-file' -and $hit.Problem) { $answer.Problem = $parts[0] + ': ' + $hit.Problem; return $answer }
       if ($answer.Kind -eq 'package') { $answer.PathKind = (Get-ModulePathKind $answer.Path) }
-      if (-not (Test-Path -LiteralPath $answer.Path)) { $answer.Problem = 'no such file in ' + $parts[0] + ': ' + $answer.Id; return $answer }
+      if (-not [IO.File]::Exists($answer.Path)) { $answer.Problem = 'no such file in ' + $parts[0] + ': ' + $answer.Id; return $answer }
       if ($export) {
         $declared = Get-ModulePackageValue $pkg 'Exports' $Conditions
         $names = @($declared -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
@@ -177,7 +182,8 @@ function Resolve-ModuleSpecifier([string]$spec, [string]$from, [string]$root, [s
   $answer.Kind = 'id'
   $answer.Id = ($target -replace '\\', '/')
   $answer.Path = [IO.Path]::GetFullPath((Add-ModuleSuffix (Join-Path $srcRoot ($target -replace '/', '\'))))
+  $answer.PathKind = (Get-ModulePathKind $answer.Path)
   if ($export) { $answer.Problem = 'only a package can be asked for one export' }
-  elseif (-not (Test-Path -LiteralPath $answer.Path)) { $answer.Problem = 'no module with that id under src: ' + $target }
+  elseif (-not [IO.File]::Exists($answer.Path)) { $answer.Problem = 'no module with that id under src: ' + $target }
   return $answer
 }
