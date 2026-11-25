@@ -98,6 +98,12 @@ Describe 'int' {
 
   Describe 'the package' {
     BeforeAll {
+      # a chunk's name carries its hash, so a name an earlier build left in out\ has to be gone
+      # after the next one: every build owns the folder its Output= names
+      $staleDir = Join-Path (Join-Path $repoRoot 'out') 'renderer'
+      if (-not (Test-Path -LiteralPath $staleDir)) { New-Item -ItemType Directory -Path $staleDir -Force | Out-Null }
+      $script:stale = Join-Path $staleDir '__stale.ps1'
+      [IO.File]::WriteAllText($script:stale, '# left by an earlier build', $Utf8)
       Write-BuildCfg $pkgOut @($withClient)
       $script:bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build build -BuilderConfig $buildCfg 2>&1
       # the package folder is named after the version package.ini declares
@@ -112,6 +118,17 @@ Describe 'int' {
     }
     It 'build.ps1 writes a folder named after the program version' {
       Expect (Test-Path -LiteralPath $script:pkgDir) (($script:bout | Select-Object -Last 1) -as [string])
+    }
+    It 'out is rebuilt on every build' {
+      if (-not (Test-Built $script:pkgDir $script:bout)) { return }
+      Expect (-not (Test-Path -LiteralPath $script:stale)) 'a file left in out\ by an earlier run has to be gone'
+    }
+    It 'the resolved configuration is written beside the package' {
+      if (-not (Test-Built $script:pkgDir $script:bout)) { return }
+      $effective = Join-Path $pkgOut 'builder-effective-config.ini'
+      $effectiveText = ''
+      if (Test-Path -LiteralPath $effective) { $effectiveText = [IO.File]::ReadAllText($effective) }
+      Expect (($effectiveText -match ('Version=' + [regex]::Escape($programVersion))) -and ($effectiveText -match 'Packages=')) 'electron-builder writes its resolved config beside the output'
     }
     It 'package keeps the program files' {
       if (-not (Test-Built $script:pkgDir $script:bout)) { return }

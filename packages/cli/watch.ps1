@@ -56,38 +56,40 @@ function Invoke-Cli([string[]]$cliArgs) {
 
 # ---------------------------------------------------------------- settings
 # What the loop watches is the file list a package is built from (builder.ini [files]) and the
-# poll interval is this package's own default (packages\cli\package.ini [watch]). Both are read
-# with the tooling's own parser, so a tool script never loads a module out of src\.
+# poll interval is a build setting (Watch in builder.cli.config.ps1). Both are read with the
+# tooling's own parser, so a tool script never loads a module out of src\.
 . (Join-Path $root 'packages\cli\utils\globs.ps1')
 $cfgFile = Join-Path $root 'builder.ini'
 if (-not (Test-Path -LiteralPath $cfgFile)) { Fail ('missing settings file: ' + $cfgFile) }
 $cfg = Import-IniMap $cfgFile
-$selfCfg = Import-IniMap (Join-Path $root 'packages\cli\package.ini')
+# the poll interval is a build setting, so it comes from the file that declares the build
+$watchCfg = @{ Interval = 600 }
+$configPath = Join-Path $root 'builder.cli.config.ps1'
+if (Test-Path -LiteralPath $configPath) {
+  $cfgDoc = & $configPath
+  if ($cfgDoc -is [System.Collections.IDictionary] -and $cfgDoc.Contains('Watch')) {
+    $given = $cfgDoc['Watch']
+    if ($given -is [System.Collections.IDictionary] -and $given.Contains('Interval')) {
+      $i = 0
+      [void][int]::TryParse(([string]$given['Interval']).Trim(), [ref]$i)
+      if ($i -gt 0) { $watchCfg['Interval'] = $i }
+    }
+  }
+}
 
-# One list, two halves: builder.ini writes electron-builder's patterns, where a leading "!" is an
-# exclusion. dev watches exactly that set, so a folder added under src\ is picked up without
-# touching this file.
-$includeGlobs = New-Object System.Collections.Generic.List[string]
-$excludeGlobs = New-Object System.Collections.Generic.List[string]
+# One list, kept in one piece: builder.ini writes electron-builder's patterns, where a leading
+# "!" excludes, and the position matters - a later include can put a file back. dev watches that
+# same set, so a folder added under src\ is picked up without touching this file.
+$globs = New-Object System.Collections.Generic.List[string]
 $fileList = ''
 foreach ($candidate in @('files.Files', 'Files')) {
   if ($cfg.ContainsKey($candidate)) { $fileList = [string]$cfg[$candidate]; break }
 }
-foreach ($one in @($fileList -split ',')) {
-  $pattern = $one.Trim()
-  if (-not $pattern) { continue }
-  if ($pattern.StartsWith('!')) { $excludeGlobs.Add($pattern.Substring(1).Trim()) }
-  else { $includeGlobs.Add($pattern) }
-}
+foreach ($one in @(Split-GlobList $fileList)) { $globs.Add([string]$one) }
 
-# -Interval overrides the file for a single run; without the switch the package decides
-if ($Interval -le 0) {
-  $Interval = 600
-  foreach ($candidate in @('watch.Interval', 'Interval')) {
-    if ($selfCfg.ContainsKey($candidate)) { [void][int]::TryParse(([string]$selfCfg[$candidate]).Trim(), [ref]$Interval); break }
-  }
-  if ($Interval -le 0) { $Interval = 600 }
-}
+# -Interval overrides the file for a single run; without the switch the config decides
+if ($Interval -le 0) { $Interval = [int]$watchCfg['Interval'] }
+if ($Interval -le 0) { $Interval = 600 }
 
 # Both compiled products come from src\. A .cs file in the list is a promise: the loop builds
 # its products before the first start and again after every save, so the file the program runs
@@ -122,7 +124,7 @@ foreach ($candidate in @('directories.BaseUrl', 'BaseUrl')) {
 if (-not $baseSetting) { $baseSetting = '.' }
 $baseDir = Resolve-BaseDir $root $baseSetting
 if (-not (Test-Path -LiteralPath $baseDir)) { Fail ('builder.ini [directories] BaseUrl does not exist: ' + $baseSetting) }
-$watched = @(Expand-GlobList $baseDir $includeGlobs.ToArray() $excludeGlobs.ToArray())
+$watched = @(Expand-GlobList $baseDir $globs.ToArray())
 if ($watched.Count -eq 0) { Fail 'builder.ini [files] Files reaches no file' }
 # the tooling is part of the loop as well: a saved tool script or a rewritten build file changes
 # the program being run, so it is watched on top of the file list
@@ -168,7 +170,7 @@ function Get-DotSourceTargets([string]$file) {
 # edit, not a no-op.
 function Get-WatchSet {
   $files = @{}
-  foreach ($f in @(Expand-GlobList $baseDir $includeGlobs $excludeGlobs)) { $files[$f] = $true }
+  foreach ($f in @(Expand-GlobList $baseDir $globs.ToArray())) { $files[$f] = $true }
   $missing = New-Object System.Collections.Generic.List[string]
   $seen = @{}
   $queue = New-Object System.Collections.Generic.Queue[string]

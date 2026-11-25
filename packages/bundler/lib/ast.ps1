@@ -90,6 +90,19 @@ function Get-BundleLookupNames($ast) {
   return $out.ToArray()
 }
 
+# Function names written inside a string literal, including a here-string. The text is data: no
+# later pass can rewrite it, so a name it spells has to stay defined - the same conservative rule
+# rolldown applies to code it cannot analyse. Names that are no definition are ignored by the walk.
+function Get-BundleStringNames($ast) {
+  $out = New-Object System.Collections.Generic.List[string]
+  foreach ($s in @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true))) {
+    foreach ($m in [regex]::Matches([string]$s.Value, '(?<![A-Za-z0-9_-])[A-Z][A-Za-z0-9]+-[A-Z][A-Za-z0-9]+')) {
+      $out.Add($m.Value)
+    }
+  }
+  return $out.ToArray()
+}
+
 # Does the module invoke a scriptblock it was handed? "& $cb" may run any function of the module
 # through a closure, so the walk keeps every definition of that module - the module, not the
 # whole bundle.

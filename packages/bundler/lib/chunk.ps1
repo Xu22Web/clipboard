@@ -77,6 +77,7 @@ function Split-BundleChunks($closures) {
 
 # Eight hex characters of the content's sha256, which is what a bundler puts in a file name: the
 # name changes when the bytes change, so a cache and a browser (or a dot-source list) can trust it.
+# rolldown reaches the same shape with hashCharacters=hex; its default hash is url-safe base64.
 function Get-BundleHash([string]$text) {
   $sha = [System.Security.Cryptography.SHA256]::Create()
   try {
@@ -89,11 +90,37 @@ function Get-BundleHash([string]$text) {
   }
 }
 
-# Output= may carry [name] and [hash]; a template without them is used as it is.
+# Output= may carry [name], [hash] and [hash:N], the placeholders rolldown's entryFileNames and
+# chunkFileNames take; [hash:N] keeps N characters, and N beyond the hash keeps all of it.
 function Format-BundleOutput([string]$template, [string]$name, [string]$hash) {
   $out = [string]$template
   if (-not $out) { $out = '[name].ps1' }
   $out = $out.Replace('[name]', [string]$name)
-  $out = $out.Replace('[hash]', [string]$hash)
-  return $out
+  $evaluator = [System.Text.RegularExpressions.MatchEvaluator]{
+    param($m)
+    if (-not $m.Groups[1].Success) { return [string]$hash }
+    $n = [int]$m.Groups[1].Value
+    if ($n -le 0 -or $n -ge ([string]$hash).Length) { return [string]$hash }
+    return ([string]$hash).Substring(0, $n)
+  }
+  return [regex]::Replace($out, '\[hash(?::(\d+))?\]', $evaluator)
+}
+
+# rolldown's chunkFileNames default is '[name]-[hash]', while entryFileNames defaults to
+# '[name]': a shared chunk keeps the folder and the extension its target writes and only changes
+# the name, so an entry and a shared piece can never collide on one file name.
+function Get-BundleChunkDefault([string]$entryTemplate) {
+  $template = [string]$entryTemplate
+  if (-not $template) { return '[name]-[hash].ps1' }
+  $slash = [Math]::Max($template.LastIndexOf('/'), $template.LastIndexOf([char]92))
+  $dir = ''
+  $file = $template
+  if ($slash -ge 0) {
+    $dir = $template.Substring(0, $slash + 1)
+    $file = $template.Substring($slash + 1)
+  }
+  $ext = '.ps1'
+  $dot = $file.LastIndexOf('.')
+  if ($dot -ge 0 -and $dot -lt ($file.Length - 1)) { $ext = $file.Substring($dot) }
+  return ($dir + '[name]-[hash]' + $ext)
 }

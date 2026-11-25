@@ -22,7 +22,7 @@
 
   This file reads no configuration. packages\cli resolves cli.ini and writes the target file;
   a JSON document with Root, OutDir, Workers and a Targets list is the whole of this file's
-  input, which is the same split rollup keeps from vite.
+  input, which is the same split rolldown keeps from vite.
 #>
 param(
   # the resolved input: { Root, OutDir, Workers, Targets: [...] }
@@ -65,7 +65,7 @@ foreach ($lib in @('ast', 'graph', 'emit', 'surface', 'chunk')) {
 # ---------------------------------------------------------------- the target file
 # What to build arrives as a document, not as a config file: packages\cli reads cli.ini, decides
 # the chain, the sources, the output path and the three rewrite switches, and writes them here.
-# That is the split rollup keeps from vite - the engine is handed a resolved input and knows
+# That is the split rolldown keeps from vite - the engine is handed a resolved input and knows
 # nothing about the file it came from.
 #
 #   { "Root": "...", "OutDir": "dist", "Workers": 0,
@@ -149,6 +149,34 @@ function Get-RelativePath([string]$full) {
   $base = $root.TrimEnd([char]92, [char]47) + [IO.Path]::DirectorySeparatorChar
   if ($full.StartsWith($base, [StringComparison]::OrdinalIgnoreCase)) { return $full.Substring($base.Length) }
   return $full
+}
+
+# OutDir is disposable: a build owns the folder under it that its Output= names, so every run
+# starts from an empty one. A chunk's file name carries its content hash, so a name left by an
+# earlier build would otherwise sit beside the new one for good - the same rule electron's outDir
+# follows. Only a path inside OutDir is cleared: an absolute Output= or -Out names a file that
+# belongs to whoever wrote it.
+function Reset-SpecOutPath([string]$path) {
+  if (-not $path) { return }
+  $outDir = Get-SpecOutDir
+  $full = $path
+  if (-not [IO.Path]::IsPathRooted($full)) { $full = Join-Path $outDir $full }
+  $full = [IO.Path]::GetFullPath($full)
+  $base = $outDir.TrimEnd([char]92, [char]47) + [IO.Path]::DirectorySeparatorChar
+  if (-not $full.StartsWith($base, [StringComparison]::OrdinalIgnoreCase)) {
+    # what vite says about an outDir outside the project root: it is not emptied, and the run
+    # does not pretend otherwise
+    Write-Warn ('Output= ' + (Get-RelativePath $full) + ' is outside ' + (Get-RelativePath $outDir) + ': that folder is not cleared')
+    return
+  }
+  $under = $full.Substring($base.Length)
+  # Output= names the file and the folder above it; that folder is the part the build owns
+  $cut = $under.IndexOfAny([char[]]@([char]92, [char]47))
+  if ($cut -lt 1) { return }
+  $folder = Join-Path $outDir $under.Substring(0, $cut)
+  if (-not (Test-Path -LiteralPath $folder)) { return }
+  Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction SilentlyContinue
+  Write-Note ('cleared ' + (Get-RelativePath $folder))
 }
 
 # ---------------------------------------------------------------- plugins
@@ -372,6 +400,8 @@ function Invoke-BundleCompile($t) {
   if (-not [IO.Path]::IsPathRooted($rootShown)) { $rootShown = Join-Path $root $rootShown }
   Write-Field 'root' (Get-RelativePath $rootShown)
   Write-Field 'plugins' (Get-BundleChain $chain)
+  # the target's folder under OutDir is rebuilt from scratch; -Out names a file elsewhere
+  if (-not $Out) { Reset-SpecOutPath $outPath }
   $files = @(& $hooks['part'] $ctx)
   $result = & $hooks['compile'] $ctx $files
   $kb = [Math]::Round($result.Bytes / 1024, 1)
@@ -438,9 +468,12 @@ function Invoke-BundleEntry($t) {
   if ($kind -eq 'cs') { Invoke-BundleCompile $t; return }
   $to = TargetValue $t 'Output'
   if (-not $to) { throw ('target ' + $name + ' has no Output=') }
-  # a chunk more than one entry loads has its own template, the way rollup separates
-  # entryFileNames from chunkFileNames; without one it falls back to Output=
-  $toChunk = TargetValue $t 'ChunkOutput'  $modules = @()
+  # a chunk more than one entry loads has its own template, the way rolldown separates
+  # entryFileNames from chunkFileNames; without one the default is '[name]-[hash]' in the folder
+  # and extension the entry template names
+  $toChunk = TargetValue $t 'ChunkOutput'
+  if (-not $toChunk) { $toChunk = Get-BundleChunkDefault $to }
+  $modules = @()
   foreach ($one in @((TargetValue $t 'Input') -split '[,;]')) {
     $rel = $one.Trim()
     if (-not $rel) { continue }
@@ -539,6 +572,8 @@ function Invoke-BundleEntry($t) {
       }
 
       $outRoot = Get-SpecOutDir
+      # every chunk of this target lands under one folder, and the run owns all of it
+      Reset-SpecOutPath $to
       # the name of a chunk changes with its content, so the loader reads the names from here
       # instead of hard-coding one that goes stale on the next edit
       $written = [ordered]@{}
@@ -567,7 +602,7 @@ function Invoke-BundleEntry($t) {
         # and goes under the chunk template, which is where the shared pieces belong
         $isEntry = $entryNames.ContainsKey(([string]$pieceName).ToLowerInvariant())
         $template = $to
-        if (-not $isEntry -and $toChunk) { $template = $toChunk }
+        if (-not $isEntry) { $template = $toChunk }
         $rel = Format-BundleOutput $template (( [string]$pieceName).ToLowerInvariant()) $hash
         $outPath = $rel
         if (-not [IO.Path]::IsPathRooted($outPath)) { $outPath = Join-Path $outRoot $rel }
@@ -664,10 +699,13 @@ function Invoke-BundleEntry($t) {
     $outRoot = Get-SpecOutDir
     # -Out names the file itself, which is what a caller staging a package needs: `cli build`
     # asks for the bundle where the package keeps it, not where a development run would. Without
-    # it the file lands under OutDir at the path the target declares.
+    # it the file lands under OutDir at the path the target declares, and that folder is rebuilt.
     if ([IO.Path]::IsPathRooted($Out)) { $outPath = $Out }
     elseif ($Out) { $outPath = Join-Path $root $Out }
-    else { $outPath = Join-Path $outRoot $to }
+    else {
+      $outPath = Join-Path $outRoot $to
+      Reset-SpecOutPath $outPath
+    }
     $outParent = Split-Path -Parent $outPath
     if (-not (Test-Path -LiteralPath $outParent)) { New-Item -ItemType Directory -Path $outParent -Force | Out-Null }
     [IO.File]::WriteAllText($outPath, [string]$chunk.Text, (New-Object System.Text.UTF8Encoding $false))

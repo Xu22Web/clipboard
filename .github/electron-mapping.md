@@ -120,7 +120,7 @@ export default defineConfig({
         output: { file: 'renderer/app.ps1' }
       },
       minify: false,                       // Minify=0：压缩交给打包器侧
-      treeshake: false                     // [build] Treeshake=0
+      treeshake: true                      // Bundler.Treeshake=1（rolldown 的默认）
     }
   }
 })
@@ -135,7 +135,7 @@ export default defineConfig({
 | `build.rollupOptions.external` | `External=` | 同名同义：这些模块不进产物，运行期按路径解析 |
 | `build.minify` | `[build] Minify`，入口可覆盖 `Minify=` | `0` 表示压缩推迟到打包器 |
 | `mangle.reserved`（terser） | `Keep=` | 不许改名的名字 |
-| `build.treeshake` | `[build] Treeshake` | `0` = 保留所有定义 |
+| `build.treeshake` | `Bundler` 的 `Treeshake` | `1` = 丢弃没有加载路径的定义（默认），`0` = 保留所有定义 |
 | `build.outDir` | `[build] OutDir` | 指向 `dist\`，包目录名由版本拼出 |
 | `server` / `watch` | `[dev] Interval` / `Includes` / `Excludes` | 没有 dev server，只有监视与重启 |
 | `define` | `package.ini` 的 `Version` | 打包时由 `version` handler 写成常量 |

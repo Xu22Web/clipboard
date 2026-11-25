@@ -11,15 +11,17 @@ function Get-BuilderFileList {
   )
   $all = @(Split-GlobList ([string]$Config[$Setting]))
   if ($all.Count -eq 0) { throw ('builder.ini [' + $Setting + '] is empty') }
+  # the order is what electron-builder reads: a pattern adds, a "!pattern" removes, and a later
+  # pattern can put a file back. A list of exclusions only would reach nothing, so it is refused.
   $include = @($all | Where-Object { -not $_.StartsWith('!') })
-  $exclude = @($all | Where-Object { $_.StartsWith('!') } | ForEach-Object { $_.Substring(1) })
   if ($include.Count -eq 0) { throw ('builder.ini [' + $Setting + '] lists only exclusions') }
-  $files = @(Expand-GlobList $BaseDir $include $exclude)
+  $files = @(Expand-GlobList $BaseDir $all)
   if ($files.Count -eq 0) { throw ('builder.ini [' + $Setting + '] reaches no file') }
   return @{
-    Include = $include
-    Exclude = $exclude
-    Files   = $files
-    Dropped = (@(Expand-GlobList $BaseDir $include @()).Count - $files.Count)
+    Patterns = $all
+    Include  = $include
+    Exclude  = @($all | Where-Object { $_.StartsWith('!') } | ForEach-Object { $_.Substring(1) })
+    Files    = $files
+    Dropped  = (@(Expand-GlobList $BaseDir $include).Count - $files.Count)
   }
 }

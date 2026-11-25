@@ -1035,9 +1035,9 @@ Describe 'int' {
 `cli dev` 持续运行常驻进程，文件变化后重启；被外部停止（托盘退出、`clipboard stop`）或按 `Ctrl+C` 时结束，`config set` 引起的自动重启不触发退出。终端被直接杀掉时需手动 `clipboard stop`。监视范围取自 `builder.ini` 的 `[files] Files`（`!` 前缀为排除），另加 `packages\**\*.ps1`、`builder.ini`、`builder.cli.config.ps1`、`package.ini`：
 
 - `BaseUrl`（`builder.ini` 的 `[directories]`）：通配的基准目录，`.` = 仓库根（默认），可写绝对路径。
-- `Files`：相对 `BaseUrl` 的通配，`*` 与 `?` 匹配单个文件名，`**` 递归；新增与删除也算变化，入口 dot-source 行指向的缺失文件会打印 `[!] missing:`。
+- `Files`：相对 `BaseUrl` 的通配，语法为 minimatch：`*` 与 `?` 不跨目录，`**` 作为路径段时递归（`src/**` 即其下全部文件），`[abc]` 是字符集，`{a,b}` 是备选；`!` 前缀移除它命中的文件，列表按顺序生效，所以后面的通配可以再把它加回来。新增与删除也算变化，入口 dot-source 行指向的缺失文件会打印 `[!] missing:`。
 - 清单里的 `.cs` 在启动前编译一次，之后哪边变了只重编那一边：`src/main/*.cs` → `src\main\clipboard.dll`，`src/preload/*.cs` → `src\preload\client.exe`；移出清单即不编译。编译前先停常驻进程，否则 dll 被占用。
-- `Interval`（`packages\cli\package.ini` 的 `[watch]`）：轮询间隔（毫秒，默认 600）。连续一个间隔无变化才重启，一次保存分多步写入只重启一次。
+- `Interval`（`builder.cli.config.ps1` 的 `Watch`）：轮询间隔（毫秒，默认 600）。连续一个间隔无变化才重启，一次保存分多步写入只重启一次。
 
 `cli bench` 在 `%TEMP%` 下复制 `src\` 并把 `DataDir` 指向临时目录，可在常驻进程运行时测量捕获、保存、解析与过滤的耗时（`-Records` 改库规模，`-Json` / `-Out` 便于对比）；面板打开与粘贴注入需要真实桌面，不在其中。`cli shot` 把 `src\` 复制到 `%PUBLIC%`，写入示例历史后启动副本里的常驻进程，截取面板、托盘菜单与设置窗口。副本使用自己的命名对象（`Local\clipboard.shot.*`），已在运行的常驻进程不受影响，真实历史与配置不进入截图；`-Part` 选界面、`-Theme` 选主题、`-PreviewRow` 指定预览卡取自哪一行。
 
@@ -1049,13 +1049,13 @@ Describe 'int' {
 
 ## 打包分发
 
-`cli build` 会跑 `builder.cli.config.ps1` 声明的每个目标，产物写入 `dist\clipboard-<version>\`（版本取自 `package.ini`）。窗口层按打包器的分块方式构建：每个入口单独求闭包，每个模块带上能到达它的入口集合，集合相同的模块才能合成一块。窗口自己的块落到 `renderer\<name>.<hash>.ps1`，多个窗口共用的块落到 `renderer\assets\<name>-<hash>.ps1`，`renderer\manifest.ini` 按加载顺序列出它们以及每块携带的模块；命令要开窗时 `clipboard.ps1` 按这份清单逐个 dot-source。只有窗口层自有的模块不再随包：基础层或 `status` 这类命令要用的模块仍以自己的文件随包，被入口声明为 external 的模块从不合并。两个 C# 产品的落点同一规则：`main\clipboard.dll` 与 `preload\client.exe`，一个进程一个目录。
+`cli build` 会跑 `builder.cli.config.ps1` 声明的每个目标，产物写入 `dist\clipboard-<version>\`（版本取自 `package.ini`）。窗口层按打包器的分块方式构建：每个入口单独求闭包，每个模块带上能到达它的入口集合，集合相同的模块才能合成一块。窗口自己的块落到 `renderer\<name>.<hash>.ps1`，多个窗口共用的块落到 `renderer\assets\<name>-<hash>.ps1`，`renderer\manifest.ini` 按加载顺序列出它们以及每块携带的模块；命令要开窗时 `clipboard.ps1` 按这份清单逐个 dot-source。只有窗口层自有的模块不再随包：基础层或 `status` 这类命令要用的模块仍以自己的文件随包，被入口声明为 external 的模块从不合并。两个 C# 产品的落点同一规则：`main\clipboard.dll` 与 `preload\client.exe`，一个进程一个目录。每个目标在 `out\` 下占一个目录（`OutDir=`，默认 `out`），构建前先清空该目录再写入，所以带旧 hash 的块不会与新的并排留着；`Output=` 写成绝对路径或用 `-Out` 指定文件时不按此规则处理。
 
 `cli bundle` 是同一套工具链的另一半，与 `cli build` 互不依赖：它构建 `builder.cli.config.ps1` 声明的目标，阶段由每个目标的 `Plugins` 链声明（`resolve`、`treeshake`、`merge`、`render`、`verify`），实现放在 `packages\bundler\plugins\`。`Input` 可以是一个路径、一组文件，或 `key = @{ Entry = '<路径>' }` 的表；入口表从调用图取模块，不再手写文件清单。模块边界一律取自解析器节点而不是文本：产物按每条语句的 extent 逐条取出，最后重新解析并与参与合并的模块逐项比对。`cli bundle -Inspect` 会列出 `src\` 下每个文件能否被内联（带 `param` 块、`begin`/`process`/`end` 块或 `trap` 的模块无法粘进更大的脚本），以及哪些模块调用了无法追踪的名字。标了 `Ship` 的目标由 `cli build` 自己跑：先分块合并，再与旁边的文件用同一张表压缩与改名，所以包里窗口层是 `renderer\<name>.<hash>.ps1` 加 `renderer\assets\`，被合并的模块不再复制。
 
 模块可以用开头两条指令说明自己的边界：`#@use <模块 id>, ...` 列出它调用的模块，`#@export <函数>, ...` 列出其它模块可以调用它的哪些函数。它们故意写成注释：描述的是构建而不是程序，发布出去的副本照旧直接运行同一份文件、零成本，运行时也不需要理解它们。有了声明，bundler 在构建之前就能检查：调用了所属模块没导出的函数、调用了入口没带的模块（即平时只在运行时才露面的「module group too small」）、导出里写了不存在的函数、同一个名字被两个模块导出。没写声明的模块不参与校验，只会让「会被丢弃」的结论变成未知。`cli bundle -Inspect -Suggest` 会按真实调用关系打印每个模块该写的那两行，复制即可。
 
-`cli bundle -All` 构建文件里声明的全部目标：每个目标一个独立的 Windows PowerShell 进程，同时最多 `packages\cli\package.ini` 的 `[bundler] Workers=` 个（`0` 表示按逻辑处理器数，且不超过目标数）。每个 worker 写自己的产物与自己的临时目录，日志按文件声明顺序输出，所以并行跑出来的样子与串行一致。
+`cli bundle -All` 构建文件里声明的全部目标：每个目标一个独立的 Windows PowerShell 进程，同时最多 `Bundler` 段 `Workers` 个（`0` 表示按逻辑处理器数，且不超过目标数）。每个 worker 写自己的产物与自己的临时目录，日志按文件声明顺序输出，所以并行跑出来的样子与串行一致。
 
 ```powershell
 cli build                          # builder.cli.config.ps1 + builder.ini
@@ -1079,7 +1079,7 @@ cli build -BuilderConfig other.ini # 换一份发布描述
 | `Target` | C# 目标取 `library`（默认）或 `exe` |
 | `Append` | C# 目标在声明之外再追加的通配 |
 | `Keep` | 不许被改名的名字 |
-| `Minify` `Rename` `Treeshake` | 逐目标覆盖 `packages\cli\package.ini` 的 `[bundler]` |
+| `Minify` `Rename` `Treeshake` | 逐目标覆盖 `builder.cli.config.ps1` 的 `Bundler` |
 
 `builder.ini` 只有 electron-builder 的三个键：
 
@@ -1088,11 +1088,13 @@ cli build -BuilderConfig other.ini # 换一份发布描述
 | `Compression` | `maximum` | `store` 原样入包，`normal` 按语法树重写每个 `.ps1`，`maximum` 另把内部函数与局部变量改短 |
 | `directories.Output` | `dist` | 发布写到哪个目录；其中的包目录名取自 `package.ini` 的 `Version` |
 | `directories.BaseUrl` | `.` | `Files` 与输出目录的相对基准；`.` = 仓库根，可写绝对路径 |
-| `files.Files` | 见下 | 产物文件清单，语法同 electron-builder：`**/*` 递归，`!` 前缀为排除 |
+| `files.Files` | 见下 | 产物文件清单，语法为 electron-builder 的 minimatch：`*` 与 `?` 不跨目录，`**` 作为路径段递归，`{a,b}` 是备选；`!` 前缀移除，列表按顺序生效 |
+
+`cli build` 还会在 `directories.output` 下、包目录旁写出 `builder-effective-config.ini`：本次构建解析出的设置与打包的版本号。它就是 electron-builder 的 `builder-effective-config.yaml`，改用本仓库统一的格式。
 
 `cli bundle -Entry <名称>` 构建一个目标，`-All` 构建全部。`cli client` 与 `cli assembly` 分别编译 `Preload` 与 `Main` 目标，`cli build` 也走同一个调用，所以编译器参数只有一处。
 
-`[files] Files` 默认 `src/**/*.ps1,src/**/*.cs,src/**/*.ini,src/**/*.cmd,src/**/*.sh,scripts/**/*.bat`。发布剔除什么用 `!` 表达；任何通配都到不了的目录（`src\data\`、`tests\`、`dist\`、`.git`）本就不在清单里。
+`[files] Files` 默认 `src/**/*.ps1,src/**/*.cs,src/**/*.ini,src/**/*.cmd,src/**/*.sh,scripts/**/*.bat`。发布剔除什么用 `!` 表达，且列表按顺序生效，所以写在它后面的通配可以把文件再加回；任何通配都到不了的目录（`src\data\`、`tests\`、`dist\`、`.git`）本就不在清单里。
 
 ```ini
 # 精简发布：一套主题 + 带文档，只压缩不改名

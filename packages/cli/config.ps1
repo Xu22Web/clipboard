@@ -63,22 +63,30 @@ function Resolve-CliConfig {
     throw ((Split-Path -Leaf $ConfigFile) + ' must return one table of targets')
   }
 
-  # the package's own defaults, written once instead of on every target
-  $self = Read-PackageFile (Join-Path $script:CliHome 'package.ini')
-  $bundler = @{ Minify = $true; Rename = $true; Treeshake = $false; Workers = 0 }
+  # the settings the config states once, instead of every target saying them again. They come
+  # from the same file as the targets because they are build settings: a package.ini is package
+  # metadata, which is package.json's job.
+  $bundler = @{ Minify = $true; Rename = $true; Treeshake = $true; Workers = 0 }
   $watch = @{ Interval = 600 }
-  foreach ($key in @('Minify', 'Rename', 'Treeshake')) {
-    if ($self.Map.ContainsKey('bundler.' + $key)) { $bundler[$key] = ConvertTo-Flag ([string]$self.Map['bundler.' + $key]) }
+  if ($doc.Contains('Bundler')) {
+    $given = $doc['Bundler']
+    if ($null -eq $given -or -not ($given -is [System.Collections.IDictionary])) { throw 'Bundler must be a table of keys' }
+    foreach ($key in @('Minify', 'Rename', 'Treeshake')) {
+      if ($given.Contains($key)) { $bundler[$key] = ConvertTo-Flag $given[$key] }
+    }
+    if ($given.Contains('Workers')) {
+      $w = 0
+      [void][int]::TryParse(([string]$given['Workers']).Trim(), [ref]$w)
+      $bundler['Workers'] = $w
+    }
   }
-  if ($self.Map.ContainsKey('bundler.Workers')) {
-    $w = 0
-    [void][int]::TryParse(([string]$self.Map['bundler.Workers']).Trim(), [ref]$w)
-    $bundler['Workers'] = $w
-  }
-  if ($self.Map.ContainsKey('watch.Interval')) {
-    $i = 0
-    [void][int]::TryParse(([string]$self.Map['watch.Interval']).Trim(), [ref]$i)
-    if ($i -gt 0) { $watch['Interval'] = $i }
+  if ($doc.Contains('Watch')) {
+    $given = $doc['Watch']
+    if ($null -ne $given -and $given -is [System.Collections.IDictionary] -and $given.Contains('Interval')) {
+      $i = 0
+      [void][int]::TryParse(([string]$given['Interval']).Trim(), [ref]$i)
+      if ($i -gt 0) { $watch['Interval'] = $i }
+    }
   }
 
   $names = New-Object System.Collections.Generic.List[string]
@@ -86,6 +94,8 @@ function Resolve-CliConfig {
   $bad = New-Object System.Collections.Generic.List[string]
   foreach ($key in @($doc.Keys)) {
     $name = [string]$key
+    # the two settings sections are not targets
+    if (@('bundler', 'watch') -contains $name.ToLowerInvariant()) { continue }
     $def = $doc[$key]
     if ($null -eq $def) { $bad.Add(($name + ': the section is empty')); continue }
     if (-not ($def -is [System.Collections.IDictionary])) { $bad.Add(($name + ': a target is a table of keys')); continue }
@@ -165,7 +175,7 @@ function Resolve-CliConfig {
         $parts = @($value | ForEach-Object { [string]$_ } | Where-Object { $_.Trim() })
         $t['Scan'] = ($parts -join ',')
       } elseif ($field -eq 'Output' -and $value -is [System.Collections.IDictionary]) {
-        # rollup's entryFileNames / chunkFileNames: an entry chunk keeps the entry's own name,
+        # rolldown's entryFileNames / chunkFileNames: an entry chunk keeps the entry's own name,
         # a chunk more than one entry loads goes to its own folder
         if ($value.Contains('Entry')) { $t['Output'] = ([string]$value['Entry']).Trim() }
         if ($value.Contains('Chunk')) { $t['ChunkOutput'] = ([string]$value['Chunk']).Trim() }

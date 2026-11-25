@@ -265,6 +265,23 @@ try {
   Move-Item -LiteralPath $stage -Destination $dest
   $count = @(Get-ChildItem -LiteralPath $dest -Recurse -File).Count
   Write-Done $swStage ('staged ' + $name + '   ' + $count + ' files')
+
+  # electron-builder writes the resolved configuration beside the package
+  # (builder-effective-config.yaml) so a build can be read back; this is the same file in the
+  # format the rest of this repository reads, and it sits in Output= rather than in the package
+  $effective = New-Object System.Collections.Generic.List[string]
+  $effective.Add('[directories]')
+  $effective.Add('Output=' + $outSetting)
+  $effective.Add('BaseUrl=' + $baseSetting)
+  $effective.Add('[files]')
+  $effective.Add('Files=' + (@($includeGlobs) -join ','))
+  $effective.Add('[build]')
+  $effective.Add('Version=' + $version)
+  $effective.Add('Compression=' + $compression)
+  $effective.Add('Packages=' + $count)
+  $effectivePath = Join-Path $outDir 'builder-effective-config.ini'
+  [IO.File]::WriteAllLines($effectivePath, $effective.ToArray(), (New-Object System.Text.UTF8Encoding $false))
+  Write-Note ('config   ' + (Split-Path -Leaf $effectivePath) + '   (written beside the package)')
 } catch {
   Write-Fail $_.Exception.Message
   exit 1

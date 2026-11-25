@@ -49,13 +49,15 @@ function Get-BundleReachable($modules, [string[]]$keep) {
   }
 
   # roots: every call made by a statement that runs at load time, every name the module asks
-  # for by string, and every definition of a module that invokes a scriptblock it was handed
+  # for by string, every name a string spells out, and every definition of a module that invokes
+  # a scriptblock it was handed
   foreach ($m in @($modules)) {
     foreach ($s in @(Get-BundleStatements $m.Ast)) {
       if ($s -is [System.Management.Automation.Language.FunctionDefinitionAst]) { continue }
       foreach ($name in @(Get-BundleCommandNames $s)) { & $mark $name }
       foreach ($name in @(Get-BundleLookupNames $s)) { & $mark $name }
     }
+    foreach ($name in @(Get-BundleStringNames $m.Ast)) { & $mark $name }
     if ($m.BlockInvoke) {
       foreach ($name in @($m.Functions)) { & $mark $name }
     }
