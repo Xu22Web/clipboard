@@ -35,7 +35,9 @@ function Invoke-CliBundle {
   $bundlerScript = Join-Path (Split-Path -Parent (Get-CliHome)) 'bundler\bundler.ps1'
   if (-not (Test-Path -LiteralPath $bundlerScript)) { Write-Fail ('missing: ' + $bundlerScript); return 1 }
 
-  $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $bundlerScript)
+  # the engine is a process of its own, started by the module layer like any other tool
+  $moduleBin = Join-Path (Split-Path -Parent (Get-CliHome)) 'module\bin\module.ps1'
+  $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $moduleBin, $bundlerScript)
   $specFile = ''
   try {
     if ($Inspect) {

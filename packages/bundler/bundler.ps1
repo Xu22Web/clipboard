@@ -792,7 +792,7 @@ function Invoke-BundleMany($all, [int]$workers) {
       $specs[$n] = $specFile
       $doc = @{ Root = $root; OutDir = (Get-SpecOutDir); Workers = 1; Targets = @($byName[$n]) }
       [IO.File]::WriteAllText($specFile, ($doc | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding $false))
-      $workerArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-TargetFile', $specFile, '-Worker')
+      $workerArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path (Split-Path -Parent $here) 'module\bin\module.ps1'), $PSCommandPath, '-TargetFile', $specFile, '-Worker')
       if ($Quiet) { $workerArgs += @('-Quiet') }
       $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $workerArgs -NoNewWindow -PassThru -RedirectStandardOutput $log
       # without this the process object never reads its exit code back and every worker looks

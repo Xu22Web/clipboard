@@ -57,9 +57,15 @@ $ErrorActionPreference = 'Stop'
 $testsRoot = $PSCommandPath | Split-Path -Parent
 $repoRoot = Split-Path -Parent $testsRoot
 
+# the suite is normally started by the module layer (packages\test\index.ps1 does that); a caller
+# that runs this file straight from PowerShell gets the layer loaded here instead
+if (-not (Get-Command -Name 'Use-Module' -CommandType Function -ErrorAction SilentlyContinue)) {
+  . (Join-Path $repoRoot 'packages\module\index.ps1')
+}
+
 # one reporter for the rows this driver prints; the parts print their own through the same
 # file, so a line reads the same whichever process wrote it
-. (Join-Path $testsRoot 'lib\reporter.ps1')
+. (Use-Module './lib/reporter.ps1' $PSCommandPath)
 if (-not $Reporter) {
   if ($Verbose_Log) { $Reporter = 'verbose' } else { $Reporter = 'default' }
 }
@@ -80,8 +86,7 @@ if (Test-Path -LiteralPath $versionFile) {
 # test.config.ps1 is the project's vitest config: the driver needs Groups and Workers from it,
 # and packages\test\config.ps1 is the loader that says what the file may contain. A file the
 # loader rejects is a broken file rather than something to guess a default for.
-. (Join-Path $repoRoot 'packages\module\index.ps1')
-. (Join-Path $repoRoot 'packages\test\config.ps1')
+. (Use-Module '../packages/test/config.ps1' $PSCommandPath)
 $script:tc = $null
 try { $script:tc = Get-TestConfig -Root $repoRoot }
 catch {
@@ -249,7 +254,8 @@ function Update-TestAssembly {
   if (-not $stale) { return }
   $builder = Join-Path $repoRoot 'packages\cli\assembly.ps1'
   if (-not (Test-Path -LiteralPath $builder)) { return }
-  $null = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $builder 2>&1
+  $moduleBin = Join-Path $repoRoot 'packages\module\bin\module.ps1'
+  $null = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $moduleBin $builder 2>&1
   if (-not (Test-Path -LiteralPath $dll)) { Write-Host '[..] no C# compiler here: the parts compile the sources at run time' }
 }
 Update-TestAssembly
@@ -285,6 +291,8 @@ function Save-TestTotals {
 function Start-Part($job) {
   $out = Join-Path $tmpRoot ($job.Name + '.json')
   $progress = Join-Path $tmpRoot ($job.Name + '.progress')
+  # a part is started as a script file: it is self-contained (harness.ps1 loads the module layer
+  # itself), so the driver does not need to put anything in front of it
   $cliArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', $job.File)
   if ($job.Args) { $cliArgs += $job.Args }
   if ($Source) { $cliArgs += @('-Source', $Source) }

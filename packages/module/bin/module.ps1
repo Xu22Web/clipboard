@@ -132,6 +132,12 @@ $ModuleHostRoot = $root
 # An argument list cannot be handed over as an array: splatting an array binds by position, so
 # '-Part module' arrives as one name and one stray word. The line is rebuilt instead, a switch left
 # bare and everything else quoted, which is what the command line already meant.
+#
+# The entry runs in this script's own scope, the way a dot-source would. For a tool that is what
+# makes it a single layer - the command file, the packages it imports and its $script: state are
+# one process. It is not what every script wants: a file that keeps its own $script: records (the
+# test parts, tests\run.ps1) must run as a script file of its own, and those bootstrap the module
+# layer from their own first line instead of being started from here.
 function Format-ModuleArgument([string]$one) {
   if ($one -match '^--?[A-Za-z]') { return $one }
   if ($one -eq '') { return "''" }

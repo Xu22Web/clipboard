@@ -18,8 +18,13 @@ $script:Results = New-Object System.Collections.Generic.List[object]
 $script:Harness = @{ Timings = (New-Object System.Collections.Generic.List[object]) }
 
 # loaded here rather than by every part: every row prints through it, and so does the summary
-# a part prints when it is run by hand
-. (Join-Path $PSScriptRoot 'reporter.ps1')
+# a part prints when it is run by hand. The import is a statement, so the module layer has to be
+# here first: a part is its own process and may be started by hand or by the driver.
+$repoHome = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+if (-not (Get-Command -Name 'Use-Module' -CommandType Function -ErrorAction SilentlyContinue)) {
+  . (Join-Path $repoHome 'packages\module\index.ps1')
+}
+. (Use-Module './reporter.ps1' $PSCommandPath)
 
 # what the progress line reads while the part runs; a quiet part only writes this file, the
 # part that started it owns the console
@@ -407,7 +412,8 @@ function Get-ClientExe {
   $stamp = (Get-FileHash -LiteralPath $source -Algorithm SHA1).Hash.Substring(0, 12)
   $exe = Join-Path $cache ('client-' + $stamp + '.exe')
   if (-not (Test-Path -LiteralPath $exe)) {
-    $null = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $builder -Source $source -Out $exe 2>&1
+    $moduleBin = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'packages\module\bin\module.ps1'
+    $null = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $moduleBin $builder -Source $source -Out $exe 2>&1
   }
   if (Test-Path -LiteralPath $exe) { $script:Harness.ClientExe = $exe }
   return $script:Harness.ClientExe

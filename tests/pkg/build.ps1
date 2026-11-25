@@ -24,6 +24,8 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
 # never packing the history
 $pkgOut = Join-Path $tmpRoot 'pkg'
 $build = Join-Path $repoRoot 'packages\cli\bin\cli.ps1'
+# builder-cli is started by the module layer, like every tool: the command file carries imports
+$moduleBin = Join-Path $repoRoot 'packages\module\bin\module.ps1'
 $buildCfg = Join-Path $tmpRoot 'build-test.ini'
 
 # Every case below runs a real build, and a build compiles src\main\clipboard.dll. A resident
@@ -40,7 +42,7 @@ if (Test-Path -LiteralPath $stopCmd) {
 #
 # The file list itself is READ from builder.ini instead of being written again here. It is the one
 # fact that says what a package is, and a copy of it drifts the moment a folder moves.
-. (Join-Path $repoRoot 'packages\cli\utils\ini.ps1')
+. (Use-Module '../../packages/cli/utils/ini.ps1' $PSCommandPath)
 $repoFiles = [string](Import-IniMap (Join-Path $repoRoot 'builder.ini'))['files.Files']
 if (-not $repoFiles) { throw 'builder.ini has no [files] Files to test against' }
 # the client stays out of the default list so most cases skip a compile; builder.ini carries it
@@ -105,7 +107,7 @@ Describe 'int' {
       $script:stale = Join-Path $staleDir '__stale.ps1'
       [IO.File]::WriteAllText($script:stale, '# left by an earlier build', $Utf8)
       Write-BuildCfg $pkgOut @($withClient)
-      $script:bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $build build -BuilderConfig $buildCfg 2>&1
+      $script:bout = & powershell -NoProfile -ExecutionPolicy Bypass -File $moduleBin $build build -BuilderConfig $buildCfg 2>&1
       # the package folder is named after the version package.ini declares
       $script:pkgDir = Join-Path $pkgOut ('clipboard-' + $programVersion)
       $script:names = @()
@@ -360,7 +362,7 @@ Describe 'int' {
       # the list is the recursive one, so the replacement names it the same way.
       $oneTheme = ($allFiles -replace [regex]::Escape('src/**/*.ini'), 'src/themes/win11-light.ini') + ',README.md,LICENSE,docs/**/*'
       Write-BuildCfg $script:pkgOut2 @('Compression=store', ($oneTheme + ',!src/plugins/item-marks.ps1'))
-      $script:bout2 = & powershell -NoProfile -ExecutionPolicy Bypass -File $build build -BuilderConfig $buildCfg 2>&1
+      $script:bout2 = & powershell -NoProfile -ExecutionPolicy Bypass -File $moduleBin $build build -BuilderConfig $buildCfg 2>&1
       $script:pkgDir2 = Join-Path $script:pkgOut2 ('clipboard-' + $programVersion)
     }
     It 'a !pattern keeps the plugin out' {
@@ -387,7 +389,7 @@ Describe 'int' {
       # gets far enough to complain about the launcher
       $noEntry = 'Files=' + (@(($repoFiles -split ',') | Where-Object { $_ -ne 'src/**/*.ps1' }) -join ',')
       Write-BuildCfg (Join-Path $tmpRoot 'pkg2') @('Compression=store', $noEntry)
-      $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $build build -BuilderConfig $buildCfg 2>&1
+      $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $moduleBin $build build -BuilderConfig $buildCfg 2>&1
       Expect (($out -join ' ') -match 'does not ship clipboard\.ps1') (($out | Select-Object -Last 1) -as [string])
     }
   }

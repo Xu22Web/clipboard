@@ -30,7 +30,7 @@ if (-not (Test-Path -LiteralPath $cli)) { Write-Fail ('missing: ' + $cli); exit 
 # the sources, the compiler and its flags live in builder.cli.config.ps1 (the Main target): this
 # file only knows the command line and what to say when the compiler is missing. The bundle writes
 # under out\ and the program reads the dll from src\main, so the copy is part of the step.
-$cliArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $cli, 'bundle', '-Entry', 'Main')
+$cliArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'packages\module\bin\module.ps1'), $cli, 'bundle', '-Entry', 'Main')
 & powershell.exe @cliArgs
 $built = Join-Path $root 'out\main\clipboard.dll'
 $target = if ($Out) { $Out } else { Join-Path $root 'src\main\clipboard.dll' }

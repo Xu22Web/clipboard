@@ -66,7 +66,7 @@ if ($isPackaged) {
 # The tooling's logger prints every step a tool runs, and its duration helper is what the rows
 # below read. It is loaded here, at the top, because a hook runs in the harness scope and its
 # functions would not reach the checks.
-. (Join-Path $repoRoot 'packages\cli\utils\console.ps1')
+. (Use-Module '../../packages/cli/utils/console.ps1' $PSCommandPath)
 $script:results = New-Object System.Collections.Generic.List[object]
 # the label every row prints with
 $script:Harness.Part = 'unit\unit'
@@ -662,7 +662,7 @@ try {
         )
         . (Join-Path $defaultSource 'shared\utils\ini.ps1')
         $programDoc = Read-IniDoc $iniSample
-        . (Join-Path $repoRoot 'packages\cli\utils\ini.ps1')
+        . (Use-Module '../../packages/cli/utils/ini.ps1' $PSCommandPath)
         $toolDoc = Read-IniDoc $iniSample
         $iniDiff = @()
         foreach ($k in @($programDoc.Map.Keys)) {

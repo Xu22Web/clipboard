@@ -29,7 +29,9 @@ $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPat
 $cli = Join-Path $root 'packages\cli\bin\cli.ps1'
 if (-not (Test-Path -LiteralPath $cli)) { Write-Fail ('missing: ' + $cli); exit 1 }
 
-$cliArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $cli, 'bundle', '-Entry', 'Preload')
+# the command is started by the module layer, like every tool: one process, imports live
+$moduleBin = Join-Path $root 'packages\module\bin\module.ps1'
+$cliArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $moduleBin, $cli, 'bundle', '-Entry', 'Preload')
 if ($Source) { $cliArgs += @('-From', $Source) }
 & powershell.exe @cliArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
