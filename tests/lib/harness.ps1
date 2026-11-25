@@ -357,12 +357,15 @@ function Use-Drawing {
   }
 }
 
+# one folder per role, the same list the unit part copies (tests\unit\unit.ps1): a sandbox that
+# misses one of them fails at load time with "missing: preload\utils\window-host.ps1"
+$script:Harness.SrcParts = @('main', 'preload', 'renderer', 'shared', 'plugins', 'themes', 'lang')
+
 function New-Sandbox([string]$name) {
   $dir = Join-Path $script:Harness.TmpRoot $name
   New-Item -ItemType Directory -Path $dir -Force | Out-Null
   Copy-Item -LiteralPath $script:Harness.ClipPs1 -Destination $dir -Force
-  # main\ carries the type library - the compiled dll, or the sources the sandbox compiles
-  foreach ($sub in @('lib', 'utils', 'schema', 'plugins', 'themes', 'lang', 'ipc', 'main', 'renderer')) {
+  foreach ($sub in $script:Harness.SrcParts) {
     $src = Join-Path $script:Harness.SrcRoot $sub
     if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $dir -Recurse -Force }
   }

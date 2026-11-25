@@ -69,8 +69,9 @@ Describe 'int' {
       $cfgRoot = Join-Path $tmpRoot 'cfgroot'
       foreach ($d in @($script:altDir, $cfgRoot)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
       Copy-Item -LiteralPath $clipPs1 -Destination (Join-Path $cfgRoot 'clipboard.ps1')
-      # the program is entry file + lib\ + utils\ + schema\: a lone clipboard.ps1 cannot start
-      foreach ($d in @('lib', 'utils', 'schema')) { Copy-Item -LiteralPath (Join-Path $srcRoot $d) -Destination $cfgRoot -Recurse -Force }
+      # a lone clipboard.ps1 cannot start: the folders beside it come from the one list the
+      # sandbox uses, so this copy cannot drift from it
+      foreach ($d in $script:Harness.SrcParts) { Copy-Item -LiteralPath (Join-Path $srcRoot $d) -Destination $cfgRoot -Recurse -Force }
       [IO.File]::WriteAllLines((Join-Path $cfgRoot 'clipboard.ini'), @('DataDir=' + $script:altDir), $Utf8)
       & powershell -NoProfile -ExecutionPolicy Bypass -Sta -File (Join-Path $cfgRoot 'clipboard.ps1') put 'ini-datadir' 2>&1 | Out-Null
     }
