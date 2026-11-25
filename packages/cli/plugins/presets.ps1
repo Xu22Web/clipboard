@@ -5,13 +5,13 @@
 # config that names it. A target picks one with Preset= and may override any key; a preset whose
 # name matches the section (Main, Preload, Renderer) is used without writing Preset= at all.
 #
-# A preset is what electron-vite calls the default of a section: the input and the output the
-# three shapes start from. It carries no stage list - `plugins` is the target's own declaration,
-# the way a vite config writes its own plugin array - so a target that names no plugins is a
-# broken target, not one that quietly inherits a chain.
+# A preset is what electron-vite calls the default of a section: the input, the output and the
+# stage chain the shape starts from. A target that writes none of them builds that way; a target
+# that writes one overrides just that key, so `plugins = 'resolve,render'` shortens the chain and
+# `build.input` turns a single entry into a table of windows.
 #
-#   main       the type library: C#, library
-#   preload    the command line accelerator: C#, exe
+#   main       the type library: C#, library, two stages
+#   preload    the command line accelerator: C#, exe, two stages
 #   renderer   the window layer: one script out of many modules, with the base layer and the
 #              window geometry left outside - they travel as their own files
 #
@@ -19,16 +19,19 @@
 # every module", which is what the core check target wants.
 $script:Presets = [ordered]@{
   'main'     = [ordered]@{
-    Kind   = 'cs'
-    Target = 'library'
-    build  = [ordered]@{ input = 'src/main/index.cs'; output = 'main/clipboard.dll' }
+    Plugins = 'cs-part,cs-compile'
+    Kind    = 'cs'
+    Target  = 'library'
+    build   = [ordered]@{ input = 'src/main/index.cs'; output = 'main/clipboard.dll' }
   }
   'preload'  = [ordered]@{
-    Kind   = 'cs'
-    Target = 'exe'
-    build  = [ordered]@{ input = 'src/preload/client.cs'; output = 'preload/client.exe' }
+    Plugins = 'cs-part,cs-compile'
+    Kind    = 'cs'
+    Target  = 'exe'
+    build   = [ordered]@{ input = 'src/preload/client.cs'; output = 'preload/client.exe' }
   }
   'renderer' = [ordered]@{
+    Plugins  = 'resolve,treeshake,merge,render,verify'
     Kind     = 'script'
     External = 'main/utils/native,renderer/src/utils/text,shared/utils/schema,shared/utils/dpi,shared/utils/image,main/utils/config,main/utils/store,renderer/src/utils/themes,renderer/src/utils/theme-stub,main/utils/plugin/plugins,renderer/src/components/picker-geom'
     build    = [ordered]@{

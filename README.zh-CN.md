@@ -1073,12 +1073,12 @@ run build -BuilderConfig other.ini # 换一份发布描述
 
 | 键 | 说明 |
 |---|---|
-| `Preset` | `packages\cli\plugins\presets.ps1` 定义的成型配置之一；下面的键覆盖它，包括写成空值。预设只给形状自带的 `build.input` / `build.output`，不带阶段链 |
+| `Preset` | `packages\cli\plugins\presets.ps1` 定义的成型配置之一；下面的键覆盖它，包括写成空值。预设自带形状的 `build` 默认值与阶段链，两者都可以不写 |
 | `build` | 目标由什么构成：`input`、`output`、`scan`，与 vite 配置里的 `build` 同名 |
 | `build.input` | 一个路径、一组文件、一个通配，或 `key = @{ Entry = '<路径>' }` 的表；入口表从调用图取模块，不必再手写清单。多个入口就是目标要把这张表写出来的原因 |
 | `build.scan` | 解析模块 id 用的通配（窗口层预设写 `src/**/*.ps1`） |
 | `build.output` | 产物写到哪里，相对仓库根；C# 目标的路径同时是它在包内的路径。写成表时用 `entry` / `chunk` 两个模板（`[name]` / `[hash]`） |
-| `plugins` | bundler 的插件链，按顺序：每个名字是 `packages\bundler\plugins\` 下的一个文件。必须由目标自己写，缺就是坏目标，不会静默继承默认链 |
+| `plugins` | bundler 的插件链，按顺序：每个名字是 `packages\bundler\plugins\` 下的一个文件。预设已带形状的链，目标只在要改时才写（更短的链、不同顺序） |
 | `alias` | `名 = 目录` 的表，语义同 vite 的 `resolve.alias`：以该名开头的 `#@use` id 先换前缀再找模块 |
 | `Kind` | `cs` 编译 C#，`script` 合并 `.ps1`（默认） |
 | `External` | 目标不带的模块：指向它的 `#@use` 边是文件边界，不算漏清单 |

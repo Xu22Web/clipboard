@@ -8,10 +8,11 @@
 #
 #   Preset      one of the shapes packages\cli\plugins\presets.ps1 defines; the keys
 #               below it override what the preset says, an empty value included. The preset
-#               carries the shape's default build.input / build.output, not a stage list
+#               carries the shape's build.input / build.output and its stage chain
 #   build       what the target is made of: input, output, scan - vite's three names
 #   plugins     the bundler chain, in order: each name is a file under packages\bundler\plugins.
-#               Written by the target itself, because a chain is a decision, not a default
+#               A preset already carries the chain of its shape, so a target writes this only
+#               to change it (a shorter chain, a different order)
 #   alias       name = folder, the way resolve.alias works: a #@use id that starts with a
 #               name has the prefix replaced before the module is looked up
 #   Kind        cs compiles C#, script bundles .ps1 files (the default)
@@ -37,15 +38,13 @@
 
   Main = [ordered]@{
 
-    # the preset carries the input and the output (src/main/index.cs -> main/clipboard.dll); a
-    # target is what it declares, so the stage chain is written here and nowhere else
-    plugins = 'cs-part,cs-compile'
+    # everything comes from the preset: src/main/index.cs -> main/clipboard.dll through the
+    # cs-part, cs-compile chain. Naming a key here changes just that one.
   }
 
   Preload = [ordered]@{
 
-    # src/preload/client.cs -> preload/client.exe, from the preset as well
-    plugins = 'cs-part,cs-compile'
+    # src/preload/client.cs -> preload/client.exe, chain and paths from the preset as well
   }
 
   Renderer = [ordered]@{
@@ -67,7 +66,8 @@
       #   scan = 'src/**/*.ps1'
     }
 
-    plugins = 'resolve,treeshake,merge,render,verify'
+    # the chain and the two output templates come from the preset; the windows do not, because a
+    # preset cannot know how many there are
 
     # how a #@use id is spelled: the prefix is replaced before the module is looked up, the way
     # resolve.alias works in a vite config. Empty here - every #@use names a full id.

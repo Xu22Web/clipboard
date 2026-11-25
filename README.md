@@ -1080,12 +1080,12 @@ A target in `builder.cli.config.ps1` (a PowerShell expression returning one orde
 
 | Key | Meaning |
 |---|---|
-| `Preset` | one of the shapes `packages\cli\plugins\presets.ps1` defines; the keys below override it, an empty value included. A preset carries the default `build.input` / `build.output` of the shape, never a stage list |
+| `Preset` | one of the shapes `packages\cli\plugins\presets.ps1` defines; the keys below override it, an empty value included. A preset carries the shape's `build` defaults and its stage chain, so a target may write neither |
 | `build` | what the target is made of: `input`, `output`, `scan` - the same three names a vite config uses under `build` |
 | `build.input` | one path, a list of files, a glob, or a table of `key = @{ Entry = '<path>' }`; a table takes the modules from the call graph, so no file is listed twice. More than one entry is why a target writes this out |
 | `build.scan` | the glob the module ids are resolved against (the preset writes `src/**/*.ps1` for the window layer) |
 | `build.output` | where it lands, relative to the repository root; for a C# target the path doubles as the package path. A table holds `entry` and `chunk` templates (`[name]` / `[hash]`) |
-| `plugins` | the bundler chain, in order: each name is one file under `packages\bundler\plugins\`. A target writes it; a missing chain is a broken target, not an inherited default |
+| `plugins` | the bundler chain, in order: each name is one file under `packages\bundler\plugins\`. A preset carries the chain of its shape, so a target writes this only to change it (a shorter chain, another order) |
 | `alias` | `name = folder` pairs, the way `resolve.alias` works in a vite config: a `#@use` id that starts with a name has the prefix replaced before the module is looked up |
 | `Kind` | `cs` compiles C#, `script` bundles `.ps1` files (the default) |
 | `External` | modules the target does not carry: a `#@use` edge into one is a file boundary, not a missing list entry |
