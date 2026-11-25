@@ -16,7 +16,7 @@
 # modules: records with Path, Ast, Functions, Opaque (see the load step in bundler.ps1).
 # Returns the same records with a Functions list reduced to the reachable ones, and .Dropped
 # holding what was left out.
-. (Use-Module './ast.ps1' $PSCommandPath)
+. (Use-Module './ast.ps1' $PSCommandPath -Named Get-BundleCommandNames, Get-BundleLookupNames, Get-BundleStatements, Get-BundleStringNames)
 
 function Get-BundleReachable($modules, [string[]]$keep) {
   $byName = @{}
@@ -100,3 +100,4 @@ function Find-BundleFunction($ast, [string]$name) {
 }
 
 Export-Function Find-BundleFunction, Get-BundleReachable
+

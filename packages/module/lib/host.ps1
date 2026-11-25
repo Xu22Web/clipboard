@@ -32,7 +32,7 @@ $ModuleStub = Join-Path $env:TEMP ('module-empty-' + [guid]::NewGuid().ToString(
 # -Caller is the file that wrote the line; -Root overrides the host's root for a specifier that
 # needs one.
 function Use-Module {
-  param($Spec, $Caller = '', $Root = '')
+  param($Spec, $Caller = '', $Root = '', [string[]]$Named = @())
   if (-not $Caller) { $Caller = $PSCommandPath }
   if (-not $Root) { $Root = $ModuleHostRoot }
   $ref = Resolve-ModuleSpecifier ([string]$Spec) ([string]$Caller) $Root

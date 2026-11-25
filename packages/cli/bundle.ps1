@@ -12,9 +12,9 @@
 #
 # No package is written here. `build` is the one that stages and packs; this command leaves its
 # outputs under out\ so a single target can be inspected.
-. (Use-Module './utils/console.ps1' $PSCommandPath)
-. (Use-Module './config.ps1' $PSCommandPath)
-. (Use-Module './index.ps1' $PSCommandPath)
+. (Use-Module './utils/console.ps1' $PSCommandPath -Named Write-Fail)
+. (Use-Module './config.ps1' $PSCommandPath -Named ConvertTo-BundleSpec)
+. (Use-Module './index.ps1' $PSCommandPath -Named Get-CliHome, Resolve-CliSession)
 
 function Invoke-CliBundle {
   param(
@@ -67,3 +67,4 @@ function Invoke-CliBundle {
 }
 
 Export-Function Invoke-CliBundle
+

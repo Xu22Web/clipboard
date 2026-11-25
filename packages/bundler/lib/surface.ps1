@@ -27,7 +27,7 @@
 #>
 
 # The id a #@use names: the path under src\ without the extension, forward slashes.
-. (Use-Module './ast.ps1' $PSCommandPath)
+. (Use-Module './ast.ps1' $PSCommandPath -Named Get-BundleCommandNames)
 
 function Get-BundleModuleId([string]$root, [string]$path) {
   $full = [IO.Path]::GetFullPath($path)
@@ -250,3 +250,4 @@ function Get-BundleSurfaceReport($modules, $externals = $null, $alias = $null) {
 }
 
 Export-Function Expand-BundleAlias, Get-BundleDirectives, Get-BundleModuleId, Get-BundleSurfaceReport, Resolve-BundleUseId
+

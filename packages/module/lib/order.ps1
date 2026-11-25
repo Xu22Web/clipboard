@@ -84,6 +84,14 @@ function Get-ModuleDiagnostics([string]$entry, [string]$root, $alias = $null, [s
     $set = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
     foreach ($f in @($node.Statements.Defined)) { [void]$set.Add([string]$f) }
     foreach ($one in @($node.Statements.Exports)) {
+      # only named exports: `-All` is a star re-export and `-Default` names one export the whole
+      # program leans on - both hide which names a module really offers
+      if ([bool]$one.All) {
+        $problems.Add(('{0}:{1} re-exports everything; name each export' -f (Split-Path -Leaf $node.Path), [int]$one.Line))
+      }
+      if ([string]$one.Default) {
+        $problems.Add(('{0}:{1} marks {2} as the default export; name every export instead' -f (Split-Path -Leaf $node.Path), [int]$one.Line, $one.Default))
+      }
       if ($one.From) { continue }
       foreach ($name in @($one.Names)) {
         if (-not $set.Contains([string]$name)) {
@@ -98,6 +106,36 @@ function Get-ModuleDiagnostics([string]$entry, [string]$root, $alias = $null, [s
 
   $folded = Resolve-ModuleExports $graph $root $alias $Conditions
   foreach ($one in @($folded.Problems)) { $problems.Add($one) }
+
+  # Two checks on the import lines, both needing the export set: a named import has to name
+  # something the target exports (a rename on one side would otherwise only surface at run time),
+  # and a bare import may not reach a name of the target without naming it - that is the star
+  # import this program does not allow. A bare import that uses nothing stays: it is the
+  # side-effect form.
+  foreach ($node in @($graph.Nodes)) {
+    foreach ($use in @($node.Statements.Uses)) {
+      $ref = Resolve-ModuleSpecifier (Expand-ModuleAlias ([string]$use.Spec) $alias) ([string]$node.Path) $root $Conditions
+      if ($ref.Problem) { continue }
+      $fromKey = (Get-ModuleId $root $ref.Path).ToLowerInvariant()
+      if (-not $folded.Own.ContainsKey($fromKey)) { continue }
+      $named = @($use.Named)
+      if ($named.Count -gt 0) {
+        foreach ($name in $named) {
+          if (-not $folded.Own[$fromKey].Contains([string]$name)) {
+            $problems.Add(('{0}:{1} imports {2}, which {3} does not export' -f (Split-Path -Leaf $node.Path), [int]$use.Line, $name, $use.Spec))
+          }
+        }
+        continue
+      }
+      $hit = New-Object System.Collections.Generic.List[string]
+      foreach ($name in @($node.Statements.Calls)) {
+        if ($folded.Own[$fromKey].Contains([string]$name)) { $hit.Add([string]$name) }
+      }
+      if ($hit.Count -gt 0) {
+        $problems.Add(('{0}:{1} imports {2} whole; name what it uses with -Named ({3})' -f (Split-Path -Leaf $node.Path), [int]$use.Line, [string]$use.Spec, (@($hit | Sort-Object) -join ', ')))
+      }
+    }
+  }
   return $problems.ToArray()
 }
 

@@ -14,9 +14,9 @@
 #
 # Neither stage reads the other's config: this function is the only place that knows both, and
 # what it passes on is a list of paths.
-. (Use-Module './utils/console.ps1' $PSCommandPath)
-. (Use-Module './config.ps1' $PSCommandPath)
-. (Use-Module './index.ps1' $PSCommandPath)
+. (Use-Module './utils/console.ps1' $PSCommandPath -Named Write-Fail, Write-Note, Write-Raw)
+. (Use-Module './config.ps1' $PSCommandPath -Named ConvertTo-BundleSpec)
+. (Use-Module './index.ps1' $PSCommandPath -Named Get-PkgValue, Resolve-CliSession)
 
 function Invoke-CliBuild {
   param(
@@ -176,3 +176,4 @@ function Invoke-CliBuild {
 }
 
 Export-Function Invoke-CliBuild
+

@@ -17,7 +17,8 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPath)))
 
 # the suite's public surface, imported the way a script imports a module
-. (Use-Module '../index.ps1' $PSCommandPath)
+. (Use-Module '../index.ps1' $PSCommandPath -Named Invoke-Test)
 
 Set-Location -LiteralPath $root
 exit (Invoke-Test -Arguments $args)
+

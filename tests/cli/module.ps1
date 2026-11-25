@@ -133,23 +133,42 @@ Describe 'the import graph' {
 }
 
 Describe 'the export set' {
-  It 'folds a re-export, an all and a default' {
+  It 'folds a named re-export' {
     $leaf = Join-Path $modDir 'exp-leaf.ps1'
     $mid = Join-Path $modDir 'exp-mid.ps1'
     $topFile = Join-Path $modDir 'exp-top.ps1'
     [IO.File]::WriteAllText($leaf, "function Get-LeafValue { return 'leaf' }`r`nfunction Get-Other { return 'o' }`r`nExport-Function Get-LeafValue, Get-Other`r`n", $utf8)
-    [IO.File]::WriteAllText($mid, ". (Use-Module './exp-leaf.ps1' `$PSCommandPath)`r`nExport-Function -All -From './exp-leaf.ps1'`r`nfunction Get-MidValue { return (Get-LeafValue) }`r`nExport-Function Get-MidValue -Default`r`n", $utf8)
-    [IO.File]::WriteAllText($topFile, ". (Use-Module './exp-mid.ps1' `$PSCommandPath)`r`nExport-Function Get-LeafValue -From './exp-mid.ps1'`r`n", $utf8)
+    [IO.File]::WriteAllText($mid, ". (Use-Module './exp-leaf.ps1' `$PSCommandPath -Named Get-LeafValue)`r`nExport-Function Get-LeafValue -From './exp-leaf.ps1'`r`nfunction Get-MidValue { return (Get-LeafValue) }`r`nExport-Function Get-MidValue`r`n", $utf8)
+    [IO.File]::WriteAllText($topFile, ". (Use-Module './exp-mid.ps1' `$PSCommandPath -Named Get-LeafValue, Get-MidValue)`r`nExport-Function Get-LeafValue -From './exp-mid.ps1'`r`n", $utf8)
 
     $graph = Get-ModuleGraph $topFile $repoRoot
     $folded = Resolve-ModuleExports $graph $repoRoot
     $midId = (New-ModuleMeta $mid $repoRoot).Id.ToLowerInvariant()
     $own = @($folded.Own[$midId] | Sort-Object)
-    $ok = (($own -join ',') -eq 'Get-LeafValue,Get-MidValue,Get-Other')
-    $ok = $ok -and ($folded.Default[$midId] -eq 'Get-MidValue')
+    $ok = (($own -join ',') -eq 'Get-LeafValue,Get-MidValue')
     $ok = $ok -and (@($folded.Problems).Count -eq 0)
     $ok = $ok -and $folded.Exported.ContainsKey('Get-MidValue')
     Expect $ok (($own -join ',') + ' / ' + (@($folded.Problems) -join '; '))
+  }
+
+  It 'refuses an all export and a default export' {
+    $leaf = Join-Path $modDir 'bad-all-leaf.ps1'
+    $star = Join-Path $modDir 'bad-all.ps1'
+    [IO.File]::WriteAllText($leaf, "function Get-LeafValue { return 'leaf' }`r`nExport-Function Get-LeafValue`r`n", $utf8)
+    [IO.File]::WriteAllText($star, ". (Use-Module './bad-all-leaf.ps1' `$PSCommandPath -Named Get-LeafValue)`r`nExport-Function -All -From './bad-all-leaf.ps1'`r`nfunction Get-Mine { return 1 }`r`nExport-Function Get-Mine -Default`r`n", $utf8)
+    $rows = @(Get-ModuleDiagnostics $star $repoRoot)
+    $all = @($rows | Where-Object { $_ -like '*re-exports everything*' }).Count
+    $default = @($rows | Where-Object { $_ -like '*default export*' }).Count
+    Expect (($all -eq 1) -and ($default -eq 1)) ($rows -join '; ')
+  }
+
+  It 'refuses a bare import that reaches a name' {
+    $leaf = Join-Path $modDir 'bad-bare-leaf.ps1'
+    $bare = Join-Path $modDir 'bad-bare.ps1'
+    [IO.File]::WriteAllText($leaf, "function Get-LeafValue { return 'leaf' }`r`nExport-Function Get-LeafValue`r`n", $utf8)
+    [IO.File]::WriteAllText($bare, ". (Use-Module './bad-bare-leaf.ps1' `$PSCommandPath)`r`nfunction Get-Mine { return (Get-LeafValue) }`r`nExport-Function Get-Mine`r`n", $utf8)
+    $rows = @(Get-ModuleDiagnostics $bare $repoRoot)
+    Expect (@($rows | Where-Object { $_ -like '*imports ./bad-bare-leaf.ps1 whole*' }).Count -eq 1) ($rows -join '; ')
   }
 
   It 'refuses a name the source does not export' {

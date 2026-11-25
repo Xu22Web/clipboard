@@ -49,17 +49,17 @@ $root = Split-Path -Parent $packages
 
 # this package is a tool of its own: it loads the copies under its own utils\, so a change made
 # for the release script cannot change how a bundle is parsed, and the other way round
-. (Use-Module './utils/console.ps1' $PSCommandPath)
+. (Use-Module './utils/console.ps1' $PSCommandPath -Named Set-LogLevelFrom, Start-Step, Write-Done, Write-Fail, Write-Note, Write-Raw, Write-Step, Write-Text, Write-Title, Write-Warn)
 Set-LogLevelFrom -Quiet:$Quiet -Silent:$Silent
 . (Use-Module './utils/ini.ps1' $PSCommandPath)
 . (Use-Module './utils/minify.ps1' $PSCommandPath)
 . (Use-Module './utils/csc.ps1' $PSCommandPath)
-. (Use-Module './utils/globs.ps1' $PSCommandPath)
-. (Use-Module './lib/ast.ps1' $PSCommandPath)
+. (Use-Module './utils/globs.ps1' $PSCommandPath -Named Expand-Glob)
+. (Use-Module './lib/ast.ps1' $PSCommandPath -Named Get-BundleCommandNames, Get-BundleFunctionNames, Get-BundleParse, Get-BundleRejectReason, Test-BundleBlockInvoke, Test-BundleOpaque)
 . (Use-Module './lib/graph.ps1' $PSCommandPath)
 . (Use-Module './lib/emit.ps1' $PSCommandPath)
-. (Use-Module './lib/surface.ps1' $PSCommandPath)
-. (Use-Module './lib/chunk.ps1' $PSCommandPath)
+. (Use-Module './lib/surface.ps1' $PSCommandPath -Named Get-BundleDirectives, Get-BundleModuleId, Get-BundleSurfaceReport)
+. (Use-Module './lib/chunk.ps1' $PSCommandPath -Named Format-BundleOutput, Get-BundleChunkDefault, Get-BundleHash, Split-BundleChunks)
 
 # ---------------------------------------------------------------- the target file
 # What to build arrives as a document, not as a config file: packages\cli reads cli.ini, decides
@@ -869,3 +869,4 @@ try {
   exit 1
 }
 exit 0
+

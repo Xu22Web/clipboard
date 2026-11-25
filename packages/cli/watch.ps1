@@ -34,12 +34,12 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPath))
 # the same logger every tool prints through: [..] for a step, [ok] for a finished one, [x] for
 # a failure
-. (Use-Module './utils/console.ps1' $PSCommandPath)
+. (Use-Module './utils/console.ps1' $PSCommandPath -Named Enable-LogTimestamp, Fail, Set-LogLevelFrom, Start-Step, Write-Done, Write-Fail, Write-Note, Write-Step, Write-Warn)
 Set-LogLevelFrom -Quiet:$Quiet -Silent:$Silent
 if ($Timestamp) { Enable-LogTimestamp }
 $srcDir = Join-Path $root 'src'
 # package.ini owns the program name, and the name owns the entry: nothing here spells it out
-. (Use-Module './utils/ini.ps1' $PSCommandPath)
+. (Use-Module './utils/ini.ps1' $PSCommandPath -Named Import-IniMap)
 $pkg = Import-IniMap (Join-Path $root 'package.ini')
 $app = ''
 foreach ($candidate in @('package.Name', 'Name')) {
@@ -58,7 +58,7 @@ function Invoke-Cli([string[]]$cliArgs) {
 # What the loop watches is the file list a package is built from (builder.ini [files]) and the
 # poll interval is a build setting (Watch in builder.cli.config.ps1). Both are read with the
 # tooling's own parser, so a tool script never loads a module out of src\.
-. (Use-Module './utils/globs.ps1' $PSCommandPath)
+. (Use-Module './utils/globs.ps1' $PSCommandPath -Named Expand-Glob, Expand-GlobList, Resolve-BaseDir, Split-GlobList)
 $cfgFile = Join-Path $root 'builder.ini'
 if (-not (Test-Path -LiteralPath $cfgFile)) { Fail ('missing settings file: ' + $cfgFile) }
 $cfg = Import-IniMap $cfgFile
@@ -396,3 +396,4 @@ try {
     Write-Note 'resident stopped'
   }
 }
+

@@ -25,7 +25,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPath))
-. (Use-Module './utils/console.ps1' $PSCommandPath)
+. (Use-Module './utils/console.ps1' $PSCommandPath -Named Set-LogLevelFrom, Write-Fail, Write-Note, Write-Raw, Write-Text, Write-Title)
 Set-LogLevelFrom -Quiet:$Quiet -Silent:$Silent
 $source = Join-Path $root 'src'
 if (-not (Test-Path -LiteralPath (Join-Path $source 'clipboard.ps1'))) {
@@ -184,3 +184,4 @@ foreach ($k in @($out.Keys)) { Write-Output ([string]$k + '=' + [string]$out[$k]
 }
 if ($fail) { exit 1 }
 exit 0
+

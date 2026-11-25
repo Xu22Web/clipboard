@@ -12,9 +12,9 @@ if (-not $script:CliHome) { throw 'cli: cannot locate the package folder' }
 $script:PackagesRoot = Split-Path -Parent $script:CliHome
 $script:RepoRoot = Split-Path -Parent $script:PackagesRoot
 
-. (Use-Module './utils/console.ps1' $PSCommandPath)
-. (Use-Module './utils/ini.ps1' $PSCommandPath)
-. (Use-Module './utils/schema.ps1' $PSCommandPath)
+. (Use-Module './utils/console.ps1' $PSCommandPath -Named Format-Duration, Set-LogLevel, Write-Command, Write-Fail, Write-Note, Write-Pair, Write-Title)
+. (Use-Module './utils/ini.ps1' $PSCommandPath -Named Read-IniDoc)
+. (Use-Module './utils/schema.ps1' $PSCommandPath -Named Import-ToolSchema, Test-ToolConfigMap)
 
 # the extension plugins this package brings: target shapes the config can name with Preset=. They
 # are loaded here, at the package's own scope, so a config sees them all.
@@ -25,7 +25,7 @@ if (Test-Path -LiteralPath $pluginDir) {
   }
 }
 
-. (Use-Module './config.ps1' $PSCommandPath)
+. (Use-Module './config.ps1' $PSCommandPath -Named Read-PackageFile, Resolve-CliConfig)
 
 function Get-CliHome { return $script:CliHome }
 function Get-RepoRoot { return $script:RepoRoot }
@@ -266,3 +266,4 @@ function ConvertTo-ArgumentTable([string[]]$Arguments) {
 
 # what a caller outside this package may depend on, the way package.json's exports lists it
 Export-Function ConvertTo-ArgumentTable, Get-CliHome, Get-CliPackageRef, Get-CommandLine, Get-CommandOrder, Get-CommandSuggestion, Get-PackageBins, Get-PkgValue, Get-RepoRoot, Invoke-CliCommand, Read-CliPackageTable, Resolve-CliSession, Show-Commands
+

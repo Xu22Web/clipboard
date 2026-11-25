@@ -12,7 +12,7 @@
 # build.output / build.scan say what a target is made of, alias says how a #@use id is spelled,
 # and plugins is the stage chain. The flat names beside them (Input, Output, Scan, Plugins) are
 # the same fields written without the group, kept so an old target keeps reading.
-. (Use-Module './utils/ini.ps1' $PSCommandPath)
+. (Use-Module './utils/ini.ps1' $PSCommandPath -Named Read-IniDoc)
 $script:TargetKeys = @('Preset', 'Plugins', 'Kind', 'Input', 'Scan', 'Output', 'External', 'Ship', 'Target', 'Minify', 'Rename', 'Treeshake', 'Append', 'Keep', 'build', 'alias', 'plugins')
 
 # vite's mergeConfig, in the same order: two tables merge key by key, two arrays concatenate, and
@@ -320,3 +320,4 @@ function ConvertTo-BundleSpec($config, [string]$outDir = 'out') {
 }
 
 Export-Function ConvertTo-BundleSpec, ConvertTo-Flag, Merge-ConfigTable, Read-PackageFile, Resolve-CliConfig, Set-TargetField
+

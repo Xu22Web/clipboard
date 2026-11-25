@@ -25,7 +25,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPath))
-. (Use-Module './utils/console.ps1' $PSCommandPath)
+. (Use-Module './utils/console.ps1' $PSCommandPath -Named Write-Fail)
 $cli = Join-Path $root 'packages\cli\bin\cli.ps1'
 if (-not (Test-Path -LiteralPath $cli)) { Write-Fail ('missing: ' + $cli); exit 1 }
 
@@ -45,3 +45,4 @@ if ((Test-Path -LiteralPath $built) -and ($built -ne $Out)) {
   Copy-Item -LiteralPath $built -Destination $Out -Force
 }
 exit 0
+

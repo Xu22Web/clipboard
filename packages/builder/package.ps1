@@ -26,12 +26,12 @@ $here = Split-Path -Parent $PSCommandPath
 $packages = Split-Path -Parent $here
 $root = Split-Path -Parent $packages
 
-. (Use-Module './utils/console.ps1' $PSCommandPath)
-. (Use-Module './utils/ini.ps1' $PSCommandPath)
-. (Use-Module './utils/schema.ps1' $PSCommandPath)
-. (Use-Module './utils/globs.ps1' $PSCommandPath)
-. (Use-Module './utils/minify.ps1' $PSCommandPath)
-. (Use-Module './assets.ps1' $PSCommandPath)
+. (Use-Module './utils/console.ps1' $PSCommandPath -Named Fail, Start-Step, Write-Done, Write-Fail, Write-Note, Write-Step, Write-Text)
+. (Use-Module './utils/ini.ps1' $PSCommandPath -Named Import-IniMap)
+. (Use-Module './utils/schema.ps1' $PSCommandPath -Named Import-ToolSchema, Test-ToolConfigMap)
+. (Use-Module './utils/globs.ps1' $PSCommandPath -Named Resolve-BaseDir)
+. (Use-Module './utils/minify.ps1' $PSCommandPath -Named New-FunctionMap, New-GlobalVariableMap, New-ScriptVariableMap)
+. (Use-Module './assets.ps1' $PSCommandPath -Named Get-LibraryHandler, Initialize-AssetHandlers, Invoke-AssetConvert, Test-Flatten, Test-OwnScope)
 Initialize-AssetHandlers (Join-Path $here 'assets')
 # the extension plugins this package brings: the file list
 foreach ($pluginFile in @(Get-ChildItem -LiteralPath (Join-Path $here 'plugins') -File -Filter '*.ps1' | Sort-Object Name)) {
@@ -300,4 +300,5 @@ Write-Note ('uninstall.bat                 stop, remove the shortcuts, delete da
 Write-Note ($app + '.cmd config init      write a commented ' + $app + '.ini')
 Write-Note ($app + '.cmd install         startup shortcut + desktop shortcut')
 exit 0
+
 

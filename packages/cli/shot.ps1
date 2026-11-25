@@ -67,7 +67,7 @@ public static class Shot {
 '@ -ReferencedAssemblies System.Drawing, System.Windows.Forms
 
 $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPath))
-. (Use-Module './utils/console.ps1' $PSCommandPath)
+. (Use-Module './utils/console.ps1' $PSCommandPath -Named Set-LogLevelFrom, Write-Note, Write-Ok, Write-Warn)
 Set-LogLevelFrom -Quiet:$Quiet -Silent:$Silent
 $srcDir = Join-Path $root 'src'
 $docsDir = Join-Path $root 'docs'
@@ -557,3 +557,4 @@ try {
   # the shots move the real pointer; it goes back where the user left it
   [void][Shot]::SetCursorPos($cursor.X, $cursor.Y)
 }
+

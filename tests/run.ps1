@@ -86,7 +86,7 @@ if (Test-Path -LiteralPath $versionFile) {
 # test.config.ps1 is the project's vitest config: the driver needs Groups and Workers from it,
 # and packages\test\config.ps1 is the loader that says what the file may contain. A file the
 # loader rejects is a broken file rather than something to guess a default for.
-. (Use-Module '../packages/test/config.ps1' $PSCommandPath)
+. (Use-Module '../packages/test/config.ps1' $PSCommandPath -Named Get-TestConfig)
 $script:tc = $null
 try { $script:tc = Get-TestConfig -Root $repoRoot }
 catch {
@@ -522,3 +522,4 @@ Write-TestSummary $summary
 try { Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
 if ($fail -gt 0) { exit 1 }
 exit 0
+

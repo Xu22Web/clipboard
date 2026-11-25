@@ -23,7 +23,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPath))
-. (Use-Module './utils/console.ps1' $PSCommandPath)
+. (Use-Module './utils/console.ps1' $PSCommandPath -Named Write-Fail, Write-Warn)
 $cli = Join-Path $root 'packages\cli\bin\cli.ps1'
 if (-not (Test-Path -LiteralPath $cli)) { Write-Fail ('missing: ' + $cli); exit 1 }
 
@@ -44,3 +44,4 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $target)) {
   Write-Warn 'clipboard.dll not built; the package compiles the C# at run time'
 }
 exit 0
+

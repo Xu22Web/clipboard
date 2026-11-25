@@ -20,7 +20,8 @@ function Get-ModuleStatementAst($ast) {
   $uses = New-Object System.Collections.Generic.List[object]
   $exports = New-Object System.Collections.Generic.List[object]
   $defined = New-Object System.Collections.Generic.List[string]
-  if ($null -eq $ast) { return @{ Uses = @(); Exports = @(); Defined = @() } }
+  $calls = New-Object System.Collections.Generic.List[string]
+  if ($null -eq $ast) { return @{ Uses = @(); Exports = @(); Defined = @(); Calls = @() } }
 
   # one walk for both questions: the calls that write an edge and the functions the file defines.
   # Asking the tree twice doubled the cost of a long file, and the second answer never changed.
@@ -42,13 +43,43 @@ function Get-ModuleStatementAst($ast) {
     $name = ''
     try { $name = [string]$cmd.GetCommandName() } catch { $name = '' }
     $line = [int]$cmd.Extent.StartLineNumber
+    if ($name) { $calls.Add($name) }
     if ($name -eq 'Use-Module') {
+      # a named import is the readable form - `. (Use-Module 'main/utils/native' -Named Get-ClipCapture)`
+      # states what the file actually uses, and the diagnostics pass checks each name against the
+      # exports of the target module
       $spec = ''
-      if (@($cmd.CommandElements).Count -gt 1) {
-        $first = $cmd.CommandElements[1]
-        if ($first -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $spec = [string]$first.Value }
+      $named = New-Object System.Collections.Generic.List[string]
+      $i = 1
+      while ($i -lt @($cmd.CommandElements).Count) {
+        $e = $cmd.CommandElements[$i]
+        $i++
+        if ($e -is [System.Management.Automation.Language.CommandParameterAst]) {
+          $value = ''
+          if ($i -lt @($cmd.CommandElements).Count) {
+            $next = $cmd.CommandElements[$i]
+            if ($next -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $value = [string]$next.Value; $i++ }
+            elseif ($next -is [System.Management.Automation.Language.ArrayLiteralAst]) {
+              foreach ($item in @($next.Elements)) {
+                if ($item -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $named.Add([string]$item.Value) }
+              }
+              $i++
+            }
+          }
+          if (([string]$e.ParameterName).ToLowerInvariant() -eq 'named' -and $value) {
+            foreach ($one in @($value -split '[,\s]+')) { if ($one) { $named.Add($one) } }
+          }
+          continue
+        }
+        if ($e -is [System.Management.Automation.Language.ArrayLiteralAst]) {
+          foreach ($item in @($e.Elements)) {
+            if ($item -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $named.Add([string]$item.Value) }
+          }
+          continue
+        }
+        if (-not $spec -and $e -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $spec = [string]$e.Value }
       }
-      if ($spec) { $uses.Add(@{ Spec = $spec.Trim(); Line = $line }) }
+      if ($spec) { $uses.Add(@{ Spec = $spec.Trim(); Named = $named.ToArray(); Line = $line }) }
       continue
     }
     if ($name -ne 'Export-Function') { continue }
@@ -94,7 +125,7 @@ function Get-ModuleStatementAst($ast) {
   }
 
   # the comment forms were read beside the statements above
-  return @{ Uses = $uses.ToArray(); Exports = $exports.ToArray(); Defined = $defined.ToArray() }
+  return @{ Uses = $uses.ToArray(); Exports = $exports.ToArray(); Defined = $defined.ToArray(); Calls = $calls.ToArray() }
 }
 
 # The comment form, kept for files that have not been moved to statements yet. One function so
@@ -126,10 +157,10 @@ function Get-ModuleCommentDirectives($parsed) {
 
 # One file's statements, statements first and the comment form merged in. Uses carry a line;
 # an export from a comment carries the line of the token. Defined is the list of functions the
-# file defines - the diagnostics pass asks for it, and asking the tree twice cost as much as the
-# first walk did.
+# file defines, and Calls every command name it looks up - the diagnostics pass asks for both, and
+# asking the tree twice cost as much as the first walk did.
 function Get-ModuleStatements([string]$path) {
-  $empty = @{ Uses = @(); Exports = @(); Defined = @() }
+  $empty = @{ Uses = @(); Exports = @(); Defined = @(); Calls = @() }
   if (-not $path -or -not [IO.File]::Exists($path)) { return $empty }
   $tokens = $null
   $errors = $null
@@ -145,15 +176,28 @@ function Get-ModuleStatements([string]$path) {
 
   $uses = New-Object System.Collections.Generic.List[object]
   $seenUse = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
-  foreach ($one in @($found.Uses)) { if ($seenUse.Add([string]$one.Spec)) { $uses.Add($one) } }
+  foreach ($one in @($found.Uses)) {
+    $key = [string]$one.Spec
+    if ($seenUse.Add($key)) { $uses.Add($one); continue }
+    # two lines importing one module: one edge, the names as the union of both
+    for ($i = 0; $i -lt $uses.Count; $i++) {
+      if ([string]$uses[$i].Spec -ne $key) { continue }
+      $merged = New-Object System.Collections.Generic.List[string]
+      foreach ($n in @($uses[$i].Named) + @($one.Named)) {
+        if ($n -and -not $merged.Contains([string]$n)) { $merged.Add([string]$n) }
+      }
+      $uses[$i] = @{ Spec = $key; Named = $merged.ToArray(); Line = [int]$uses[$i].Line }
+      break
+    }
+  }
   foreach ($one in @($comments.Uses)) {
-    if ($seenUse.Add([string]$one.Spec)) { $uses.Add(@{ Spec = [string]$one.Spec; Line = [int]$one.Line }) }
+    if ($seenUse.Add([string]$one.Spec)) { $uses.Add(@{ Spec = [string]$one.Spec; Named = @(); Line = [int]$one.Line }) }
   }
 
   $exports = New-Object System.Collections.Generic.List[object]
   foreach ($one in @($found.Exports)) { $exports.Add($one) }
   foreach ($one in @($comments.Exports)) { $exports.Add($one) }
-  return @{ Uses = $uses.ToArray(); Exports = $exports.ToArray(); Defined = @($found.Defined) }
+  return @{ Uses = $uses.ToArray(); Exports = $exports.ToArray(); Defined = @($found.Defined); Calls = @($found.Calls) }
 }
 
 # The older shape: names only, no lines. Kept because the bundler comparison and older tests read it.

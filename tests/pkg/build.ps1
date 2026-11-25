@@ -42,7 +42,7 @@ if (Test-Path -LiteralPath $stopCmd) {
 #
 # The file list itself is READ from builder.ini instead of being written again here. It is the one
 # fact that says what a package is, and a copy of it drifts the moment a folder moves.
-. (Use-Module '../../packages/cli/utils/ini.ps1' $PSCommandPath)
+. (Use-Module '../../packages/cli/utils/ini.ps1' $PSCommandPath -Named Import-IniMap)
 $repoFiles = [string](Import-IniMap (Join-Path $repoRoot 'builder.ini'))['files.Files']
 if (-not $repoFiles) { throw 'builder.ini has no [files] Files to test against' }
 # the client stays out of the default list so most cases skip a compile; builder.ini carries it
@@ -396,3 +396,4 @@ Describe 'int' {
 }
 
 Complete-TestPart -ResultFile $ResultFile -Quiet:$Quiet
+

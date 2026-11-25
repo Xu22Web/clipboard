@@ -37,7 +37,7 @@ $moduleBin = Join-Path $root 'packages\module\bin\module.ps1'
 
 # packages\cli first: it carries the logger, the config reader and the command table, and every
 # other package is imported on top of it
-. (Use-Module '../index.ps1' $PSCommandPath)
+. (Use-Module '../index.ps1' $PSCommandPath -Named ConvertTo-ArgumentTable, Get-CliPackageRef)
 
 # the other packages, loaded through the declaration in their own package.ini
 $refs = @{}
@@ -71,8 +71,8 @@ Set-Location -LiteralPath $root
 switch ($wanted) {
   'build' {
     . (Use-Module 'bundler' $PSCommandPath)
-    . (Use-Module 'builder' $PSCommandPath)
-    . (Use-Module '../build.ps1' $PSCommandPath)
+    . (Use-Module 'builder' $PSCommandPath -Named Invoke-BuilderArchive)
+    . (Use-Module '../build.ps1' $PSCommandPath -Named Invoke-CliBuild)
     $bound = ConvertTo-ArgumentTable $Rest
     exit (Invoke-CliBuild @bound).Code
   }
@@ -82,7 +82,7 @@ switch ($wanted) {
     . (Use-Module 'bundler' $PSCommandPath)
     . (Use-Module 'builder' $PSCommandPath)
     . (Use-Module '../build.ps1' $PSCommandPath)
-    . (Use-Module 'test' $PSCommandPath)
+    . (Use-Module 'test' $PSCommandPath -Named Invoke-Test)
     $bound = ConvertTo-ArgumentTable $Rest
     $built = Invoke-CliBuild @bound
     if ($built.Code -ne 0) { exit $built.Code }
@@ -102,7 +102,7 @@ switch ($wanted) {
   }
   'bundle' {
     . (Use-Module 'bundler' $PSCommandPath)
-    . (Use-Module '../bundle.ps1' $PSCommandPath)
+    . (Use-Module '../bundle.ps1' $PSCommandPath -Named Invoke-CliBundle)
     $bound = ConvertTo-ArgumentTable $Rest
     exit (Invoke-CliBundle @bound)
   }
@@ -117,3 +117,4 @@ switch ($wanted) {
     exit 1
   }
 }
+
