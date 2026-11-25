@@ -86,6 +86,46 @@ Describe 'the import graph' {
   }
 }
 
+Describe 'the module table' {
+  It 'names files that exist and imports that resolve' {
+    $entry = Join-Path $repoRoot 'src\clipboard.ps1'
+    $tokens = $null
+    $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($entry, [ref]$tokens, [ref]$errors)
+
+    # only the three module tables: the file has other strings with a backslash in them (a
+    # regex, a message, a path under the package) and none of those is a module
+    $names = @{}
+    foreach ($a in @($ast.FindAll({
+            param($n)
+            ($n -is [System.Management.Automation.Language.AssignmentStatementAst]) -and
+            (([string]$n.Left.Extent.Text) -match '(baseModules|windowModules|groupModules)$')
+          }, $true))) {
+      foreach ($s in @($a.Right.FindAll({
+              param($n)
+              $n -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+              ([string]$n.Value) -match '\\'
+            }, $true))) {
+        $id = ([string]$s.Value) -replace '\\', '/'
+        if ($id.ToLowerInvariant().EndsWith('.ps1')) { $id = $id.Substring(0, $id.Length - 4) }
+        $names[$id.ToLowerInvariant()] = [string]$s.Value
+      }
+    }
+
+    $problems = New-Object System.Collections.Generic.List[string]
+    foreach ($key in @($names.Keys)) {
+      $rel = ([string]$names[$key]) -replace '/', '\'
+      $file = Join-Path $repoRoot ('src\' + $rel + '.ps1')
+      if (-not (Test-Path -LiteralPath $file)) { $problems.Add('the table names a file that is not there: ' + $rel); continue }
+      foreach ($use in @((Get-ModuleDirectives $file).Uses)) {
+        $ref = Resolve-ModuleSpecifier $use $file $repoRoot
+        if ($ref.Problem) { $problems.Add($rel + ': ' + $use + ' (' + $ref.Problem + ')') }
+      }
+    }
+    Expect ($problems.Count -eq 0) (($problems.Count.ToString() + ' of ' + $names.Count.ToString() + ': ') + ($problems -join '; '))
+  }
+}
+
 Complete-TestPart -ResultFile $ResultFile -Quiet:$Quiet
 
 # the rows above run after every Describe has been collected, so the files they read have to
