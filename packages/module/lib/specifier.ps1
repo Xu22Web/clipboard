@@ -13,16 +13,6 @@ function Get-ModulePackagesRoot([string]$root) {
   return (Join-Path $root 'packages')
 }
 
-# The exports a package declares, so "#Name" can be checked instead of hoped for.
-function Get-ModulePackageExports($pkg) {
-  $out = New-Object System.Collections.Generic.List[string]
-  foreach ($one in @(([string]$pkg.Exports) -split ',')) {
-    $name = $one.Trim()
-    if ($name) { $out.Add($name) }
-  }
-  return $out.ToArray()
-}
-
 # The package.ini of a package folder, read without depending on another package: four keys are
 # all a specifier needs, and a package that is not there is a missing import, not a crash.
 function Read-ModulePackage([string]$dir) {
@@ -52,7 +42,22 @@ function Read-ModulePackage([string]$dir) {
     Name     = (& $read 'Name')
     Main     = (& $read 'Main')
     Exports  = (& $read 'Exports')
+    Map      = $map
   }
+}
+
+# A condition is a second layer of the same three keys: [package.dev] Main=... in a package.ini
+# says what that package's entry is for the 'dev' condition, and the plain Main answers when the
+# condition does not name one. It is the smallest form of a conditional export.
+function Get-ModulePackageValue($pkg, [string]$key, [string[]]$Conditions = @()) {
+  if ($null -eq $pkg) { return '' }
+  foreach ($c in @($Conditions)) {
+    $name = ([string]$c).Trim()
+    if (-not $name) { continue }
+    $slot = 'package.' + $name + '.' + $key
+    if ($pkg.Map.ContainsKey($slot) -and ([string]$pkg.Map[$slot]).Trim()) { return ([string]$pkg.Map[$slot]).Trim() }
+  }
+  return [string]$pkg.$key
 }
 
 # Add the suffix a specifier left out. A path that already names a file keeps its name.
@@ -65,7 +70,7 @@ function Add-ModuleSuffix([string]$path) {
 # One specifier to one answer:
 #   @{ Spec; Kind; Path; Export; Package; Id; Problem }
 # Kind is 'local', 'package', 'package-file' or 'id'. Problem is '' when the answer is usable.
-function Resolve-ModuleSpecifier([string]$spec, [string]$from, [string]$root) {
+function Resolve-ModuleSpecifier([string]$spec, [string]$from, [string]$root, [string[]]$Conditions = @()) {
   $answer = @{ Spec = $spec; Kind = 'id'; Path = ''; Export = ''; Package = ''; Id = ''; Problem = '' }
   if (-not $spec) { $answer.Problem = 'empty specifier'; return $answer }
 
@@ -101,8 +106,9 @@ function Resolve-ModuleSpecifier([string]$spec, [string]$from, [string]$root) {
       $answer.Package = $parts[0]
       if ($parts.Count -eq 1) {
         $answer.Kind = 'package'
-        if ($null -eq $pkg -or -not $pkg.Main) { $answer.Problem = 'package ' + $parts[0] + ' declares no Main'; return $answer }
-        $answer.Path = [IO.Path]::GetFullPath((Join-Path $pkgDir $pkg.Main))
+        $main = Get-ModulePackageValue $pkg 'Main' $Conditions
+        if ($null -eq $pkg -or -not $main) { $answer.Problem = 'package ' + $parts[0] + ' declares no Main'; return $answer }
+        $answer.Path = [IO.Path]::GetFullPath((Join-Path $pkgDir $main))
         $answer.Id = $parts[0]
       } else {
         $answer.Kind = 'package-file'
@@ -113,7 +119,8 @@ function Resolve-ModuleSpecifier([string]$spec, [string]$from, [string]$root) {
       if ($null -eq $pkg) { $answer.Problem = 'package ' + $parts[0] + ' has no package.ini'; return $answer }
       if (-not (Test-Path -LiteralPath $answer.Path)) { $answer.Problem = 'no such file in ' + $parts[0] + ': ' + $answer.Id; return $answer }
       if ($export) {
-        $names = @(Get-ModulePackageExports $pkg)
+        $declared = Get-ModulePackageValue $pkg 'Exports' $Conditions
+        $names = @($declared -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
         if ($names -notcontains $export) {
           $answer.Problem = $parts[0] + ' does not export ' + $export + '   (exports: ' + $(if ($names.Count) { $names -join ', ' } else { 'none' }) + ')'
         }

@@ -82,7 +82,96 @@ Describe 'the import graph' {
     $bad = Join-Path $modDir 'bad.ps1'
     [IO.File]::WriteAllText($bad, "#@export Get-Missing`r`nfunction Get-Other { return 1 }`r`n", $utf8)
     $problems = @(Test-ModuleSpecifiers $bad $repoRoot)
-    Expect (($problems.Count -gt 0) -and ($problems[0] -like '*Get-Missing*')) ($problems -join '; ')
+    $row = @($problems | Where-Object { $_ -like '*Get-Missing*' })
+    Expect (($row.Count -eq 1) -and ($row[0] -like 'bad.ps1:1*')) ($problems -join '; ')
+  }
+
+  It 'reads a use statement and the line it sits on' {
+    $users = Join-Path $modDir 'users.ps1'
+    [IO.File]::WriteAllText($users, "function Get-Nothing { return 1 }`r`n. (Use-Module './leaf' `$PSCommandPath)`r`n. (Use-Module './gone' `$PSCommandPath)`r`n", $utf8)
+    $statements = Get-ModuleStatements $users
+    $rows = @(Test-ModuleSpecifiers $users $repoRoot)
+    $ok = (@($statements.Uses).Count -eq 2) -and ($statements.Uses[0].Spec -eq './leaf') -and ($statements.Uses[0].Line -eq 2)
+    $ok = $ok -and ($rows -contains 'users.ps1:3 ./gone (no file beside this module: ./gone)')
+    Expect $ok ($rows -join '; ')
+  }
+
+  It 'tolerates a cycle and still orders every file' {
+    $a = Join-Path $modDir 'cyc-a.ps1'
+    $b = Join-Path $modDir 'cyc-b.ps1'
+    [IO.File]::WriteAllText($a, ". (Use-Module './cyc-b' `$PSCommandPath)`r`n", $utf8)
+    [IO.File]::WriteAllText($b, ". (Use-Module './cyc-a' `$PSCommandPath)`r`n", $utf8)
+    $order = @(Get-ModuleOrder $a $repoRoot)
+    $graph = Get-ModuleGraph $a $repoRoot
+    $ok = ($order.Count -eq 2) -and ((Split-Path -Leaf $order[-1]) -eq 'cyc-a.ps1')
+    $ok = $ok -and (@($graph.Cycles).Count -eq 1) -and ($graph.Cycles[0] -like 'cyc-b.ps1:1 closes a cycle*')
+    Expect $ok ((@($graph.Cycles) -join '; ') + ' / ' + (@($order) -join ','))
+  }
+}
+
+Describe 'the export set' {
+  It 'folds a re-export, an all and a default' {
+    $leaf = Join-Path $modDir 'exp-leaf.ps1'
+    $mid = Join-Path $modDir 'exp-mid.ps1'
+    $topFile = Join-Path $modDir 'exp-top.ps1'
+    [IO.File]::WriteAllText($leaf, "function Get-LeafValue { return 'leaf' }`r`nfunction Get-Other { return 'o' }`r`nExport-Function Get-LeafValue, Get-Other`r`n", $utf8)
+    [IO.File]::WriteAllText($mid, ". (Use-Module './exp-leaf' `$PSCommandPath)`r`nExport-Function -All -From './exp-leaf'`r`nfunction Get-MidValue { return (Get-LeafValue) }`r`nExport-Function Get-MidValue -Default`r`n", $utf8)
+    [IO.File]::WriteAllText($topFile, ". (Use-Module './exp-mid' `$PSCommandPath)`r`nExport-Function Get-LeafValue -From './exp-mid'`r`n", $utf8)
+
+    $graph = Get-ModuleGraph $topFile $repoRoot
+    $folded = Resolve-ModuleExports $graph $repoRoot
+    $midId = (New-ModuleMeta $mid $repoRoot).Id.ToLowerInvariant()
+    $own = @($folded.Own[$midId] | Sort-Object)
+    $ok = (($own -join ',') -eq 'Get-LeafValue,Get-MidValue,Get-Other')
+    $ok = $ok -and ($folded.Default[$midId] -eq 'Get-MidValue')
+    $ok = $ok -and (@($folded.Problems).Count -eq 0)
+    $ok = $ok -and $folded.Exported.ContainsKey('Get-MidValue')
+    Expect $ok (($own -join ',') + ' / ' + (@($folded.Problems) -join '; '))
+  }
+
+  It 'refuses a name the source does not export' {
+    $leaf = Join-Path $modDir 'bad-leaf.ps1'
+    $topFile = Join-Path $modDir 'bad-re.ps1'
+    [IO.File]::WriteAllText($leaf, "function Get-LeafValue { return 'leaf' }`r`nExport-Function Get-LeafValue`r`n", $utf8)
+    [IO.File]::WriteAllText($topFile, ". (Use-Module './bad-leaf' `$PSCommandPath)`r`nExport-Function Get-Absent -From './bad-leaf'`r`n", $utf8)
+    $rows = @(Get-ModuleDiagnostics $topFile $repoRoot)
+    $hit = @($rows | Where-Object { $_ -like 'bad-re.ps1:2*Get-Absent*' })
+    Expect ($hit.Count -eq 1) ($rows -join '; ')
+  }
+}
+
+Describe 'a conditional entry' {
+  It 'takes [package.dev] Main when the condition is asked for' {
+    $demo = Join-Path $modDir 'packages\demo'
+    New-Item -ItemType Directory -Path $demo -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $demo 'package.ini'), "[package]`r`nName=demo`r`nMain=main.ps1`r`nExports=Get-Demo`r`n[package.dev]`r`nMain=dev.ps1`r`n", $utf8)
+    [IO.File]::WriteAllText((Join-Path $demo 'main.ps1'), "function Get-Demo { return 1 }`r`n", $utf8)
+    [IO.File]::WriteAllText((Join-Path $demo 'dev.ps1'), "function Get-Demo { return 2 }`r`n", $utf8)
+    $plain = Resolve-ModuleSpecifier 'demo' '' $modDir
+    $dev = Resolve-ModuleSpecifier 'demo' '' $modDir @('dev')
+    $named = Resolve-ModuleSpecifier 'demo#Get-Demo' '' $modDir @('dev')
+    $ok = ((Split-Path -Leaf $plain.Path) -eq 'main.ps1') -and ((Split-Path -Leaf $dev.Path) -eq 'dev.ps1')
+    $ok = $ok -and (-not $named.Problem) -and ((Split-Path -Leaf $named.Path) -eq 'dev.ps1')
+    Expect $ok ($plain.Path + ' / ' + $dev.Path + ' / ' + $named.Problem)
+  }
+}
+
+Describe 'the parse cache' {
+  It 'answers the same list twice and follows a file that changes' {
+    $entry = Join-Path $modDir 'cache-top.ps1'
+    $side = Join-Path $modDir 'cache-side.ps1'
+    [IO.File]::WriteAllText($side, "function Get-Side { return 1 }`r`n", $utf8)
+    [IO.File]::WriteAllText($entry, ". (Use-Module './cache-side' `$PSCommandPath)`r`n", $utf8)
+    $first = @(Get-ModuleOrder $entry $repoRoot)
+    $second = @(Get-ModuleOrder $entry $repoRoot)
+    $fresh = @(Get-ModuleOrder $entry $repoRoot -NoCache)
+    [IO.File]::WriteAllText($entry, ". (Use-Module './cache-side' `$PSCommandPath)`r`n. (Use-Module './leaf' `$PSCommandPath)`r`n", $utf8)
+    [IO.File]::SetLastWriteTimeUtc($entry, [DateTime]::UtcNow.AddSeconds(5))
+    $grown = @(Get-ModuleOrder $entry $repoRoot)
+    $ok = ($first.Count -eq 2) -and ($second.Count -eq 2) -and ($fresh.Count -eq 2)
+    $ok = $ok -and (($first -join ',') -eq ($second -join ','))
+    $ok = $ok -and ($grown.Count -eq 3)
+    Expect $ok ($first.Count.ToString() + ' ' + $second.Count.ToString() + ' ' + $grown.Count.ToString())
   }
 }
 
