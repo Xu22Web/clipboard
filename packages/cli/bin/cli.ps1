@@ -69,7 +69,7 @@ if (-not $wanted -or @('help', '-h', '--help', '-?', '/?') -contains $wanted) {
   exit 0
 }
 
-# every command below runs at the repository root, the same way `cli` runs one
+# every command below runs at the repository root, the same way `run` runs one
 Set-Location -LiteralPath $root
 
 switch ($wanted) {

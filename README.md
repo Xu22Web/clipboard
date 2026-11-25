@@ -48,6 +48,7 @@ run              # list the commands package.ini declares
 run dev          # start the resident process, restart it when a loaded file changes
 run test         # run every self test
 run build        # package into dist\clipboard-<version>\
+run release      # build, check the folder with the suite, then write the zip
 run client       # compile the optional native client src\preload\client.exe
 run assembly     # compile the optional type library src\main\clipboard.dll
 run bundle       # build one entry from builder.cli.config.ps1 (-Inspect lists what cannot be inlined)
@@ -1037,6 +1038,7 @@ Everything runs in a sandbox copy under `%TEMP%` and never touches the repositor
 | `run bench` | time capture, save, parse and filter in a temporary copy |
 | `run shot` | regenerate the screenshots under `docs\<language>\`: both panel themes, the compact shape, the hover card, the tray menu, the settings window |
 | `run build` | package into `dist\` |
+| `run release` | build, run the suite against the package folder, then write the zip beside it |
 | `run client` | compile `preload\client.cs` into `src\preload\client.exe` (optional) |
 | `run assembly` | compile the `#part` list in `src\main\index.cs` into `src\main\clipboard.dll` (optional) |
 | `run bundle` | build one target declared in `builder.cli.config.ps1`; `-All` builds every one of them; `-Inspect` lists the modules a bundle cannot inline and why |

@@ -48,6 +48,7 @@ run              # 列出 package.ini 中的命令
 run dev          # 启动常驻进程，被加载的文件变化后自动重启
 run test         # 运行全部自测
 run build        # 打包到 dist\clipboard-<version>\
+run release      # 打包，用测试校验包目录，通过后写出 zip
 run client       # 编译可选的原生客户端 src\preload\client.exe
 run assembly     # 编译可选的类型库 src\main\clipboard.dll
 run bundle       # 按 builder.cli.config.ps1 构建一个入口（-Inspect 列出无法内联的模块）
@@ -1030,6 +1031,7 @@ Describe 'int' {
 | `run bench` | 在临时副本里计时捕获、保存、解析与过滤 |
 | `run shot` | 重新生成 `docs\<语言>\screenshot-*.png`：历史面板深浅两套、紧凑形态、悬停预览卡、托盘菜单、设置窗口 |
 | `run build` | 打包到 `dist\` |
+| `run release` | 打包，用测试校验包目录，通过后在旁边写出 zip |
 | `run client` | 编译 `preload\client.cs` → `src\preload\client.exe`（可选） |
 | `run assembly` | 编译 `src\main\index.cs` 的 `#part` 清单 → `src\main\clipboard.dll`（可选） |
 | `run bundle` | 构建 `builder.cli.config.ps1` 声明的一个目标；`-Entry` 指定目标名；`-Inspect` 列出哪些模块无法被内联及原因 |

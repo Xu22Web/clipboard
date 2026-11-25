@@ -448,7 +448,7 @@ try {
           'packages\cli\bin\cli.ps1',
           'packages\builder\package.ps1', 'packages\cli\watch.ps1', 'packages\cli\bench.ps1', 'packages\cli\shot.ps1',
           'packages\cli\client.ps1', 'packages\cli\assembly.ps1',
-          'packages\test\index.ps1', 'packages\test\config.ps1', 'packages\test\utils\console.ps1',
+          'packages\test\index.ps1', 'packages\test\config.ps1', 'packages\test\utils\console.ps1', 'packages\test\bin\test.ps1',
           'packages\cli\utils\minify.ps1', 'packages\cli\utils\ini.ps1', 'packages\cli\utils\globs.ps1', 'packages\cli\utils\csc.ps1',
           'packages\cli\utils\console.ps1',
           'packages\bundler\bundler.ps1', 'packages\builder\assets.ps1',

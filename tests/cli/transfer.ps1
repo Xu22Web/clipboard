@@ -24,7 +24,7 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
 $runner = Start-CliRunner $intDir
 function Run([string[]]$cliArgs, [switch]$Cold) { return (Invoke-CliRunner $runner $cliArgs -Cold:$Cold) }
 # defined outside the blocks: a variable made inside a Describe is gone by the time its rows run
-$cliPath = Join-Path $repoRoot 'cli.ps1'
+$runPath = Join-Path $repoRoot 'run.ps1'
 
 
 Describe 'int' {
@@ -85,24 +85,24 @@ Describe 'int' {
     }
   }
 
-  # cli reads package.ini and runs the command line it finds there
-  if (Test-Path -LiteralPath $cliPath) {
-    Describe 'the repo cli' {
-      It 'cli lists the declared commands' {
-        $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $cliPath 2>&1 | Out-String)
+  # run reads package.ini and runs the command line it finds there
+  if (Test-Path -LiteralPath $runPath) {
+    Describe 'the repo runner' {
+      It 'run lists the declared commands' {
+        $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $runPath 2>&1 | Out-String)
         Expect (($o -match '\bdev\b') -and ($o -match '\bbuild\b') -and ($o -match '\btest\b') -and ($o -match '\bshot\b')) $o.Trim()
       }
-      It 'cli reports an unknown command' {
-        $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $cliPath 'nosuchcmd' 2>&1 | Out-String)
+      It 'run reports an unknown command' {
+        $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $runPath 'nosuchcmd' 2>&1 | Out-String)
         Expect (($o -match 'unknown command') -and ($o -match '\bdev\b')) $o.Trim()
       }
-      It 'cli runs a script through its command line' {
-        $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $cliPath 'dev' 'nosuch' 2>&1 | Out-String)
+      It 'run runs a script through its command line' {
+        $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $runPath 'dev' 'nosuch' 2>&1 | Out-String)
         Expect-Match $o 'dev always watches' $o.Trim()
       }
     }
   } else {
-    It 'cli lists the declared commands' { Expect $false 'no cli.ps1' }
+    It 'run lists the declared commands' { Expect $false 'no run.ps1' }
   }
 }
 

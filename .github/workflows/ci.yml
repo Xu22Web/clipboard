@@ -38,14 +38,14 @@ jobs:
         shell: pwsh
         # 结构组校验文件布局与纯 ASCII（PowerShell 5.1 按 GBK 读无 BOM 的 UTF-8 中文，
         # 所以脚本必须全 ASCII），单元组按名字调用内部函数，集成组起子进程跑每条 CLI 能力。
-        # 这里不打包：产物只在发版时生成（release.yml 的 Package 步骤跑 cli build，自带
+        # 这里不打包：产物只在发版时生成（release.yml 的 Package 步骤跑 run build，自带
         # Verify=1 复测），提交阶段只验证源码。
-        run: .\cli.ps1 test -Unit -Integration
+        run: .\run.ps1 test -Unit -Integration
 
   e2e:
     # 端到端要真实桌面：注册全局热键、接管剪贴板、启动常驻进程。托管 runner 没有交互式
     # 会话，这一项在推送与 PR 上只会一直红，因此只留手动触发：需要时在 Actions 页面点
-    # Run workflow 跑一次，日常以本机 cli test -E2E 为准。
+    # Run workflow 跑一次，日常以本机 run test -E2E 为准。
     if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 10
@@ -54,4 +54,4 @@ jobs:
 
       - name: Resident and clipboard end-to-end
         shell: pwsh
-        run: .\cli.ps1 test -E2E
+        run: .\run.ps1 test -E2E

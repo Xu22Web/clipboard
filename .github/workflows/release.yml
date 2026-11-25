@@ -34,20 +34,15 @@ jobs:
 
       - name: Self tests
         shell: pwsh
-        run: .\cli.ps1 test -Unit -Integration
+        run: .\run.ps1 test -Unit -Integration
 
       - name: Package
         shell: pwsh
-        # 发版要 zip：cli.ini 默认 Zip=0，这里写一份完整配置（[build] 的键必须写全，
-        # tools\build.ps1 对缺失的键直接报错），只改 Zip 与 Overwrite。
+        # build writes dist\clipboard-<ver>\, the suite then runs against that folder, and only a
+        # folder that passes is archived as one zip next to it. A failing suite removes the
+        # folder, so a zip here means both steps finished.
         run: |
-          @('OutDir=dist', 'BaseUrl=.', 'Minify=1', 'Rename=1', 'Verify=1',
-            'Overwrite=1', 'Zip=1',
-            'Includes=src/**/*.ps1,src/lib/client/*.cs,src/lib/assembly/*.cs,src/*.cmd,src/*.sh,src/themes/*.ini,src/lang/*.ini,scripts/**.bat',
-            'Excludes=') |
-            Set-Content -LiteralPath build-release.ini -Encoding ascii
-          .\cli.ps1 build -Config build-release.ini
-          Remove-Item -LiteralPath build-release.ini -Force
+          .\run.ps1 release
           $zip = @(Get-ChildItem -Path dist -Filter '*.zip')
           if ($zip.Count -ne 1) { throw ('dist\ 下应当正好一个 zip，实际 ' + $zip.Count + ' 个') }
           Write-Host ('package: ' + $zip[0].Name)
