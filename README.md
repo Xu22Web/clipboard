@@ -703,6 +703,7 @@ packages/builder/       staging and packing: package.ps1 + the asset table
 packages/builder/assets.ps1   what happens to one file: which handler rewrites it
 packages/builder/assets/*.ps1 one handler per kind of file: script, version, batch, shell, ini, copy
 packages/test/          the suite runner: config.ps1 + index.ps1
+packages/module/        the module layer: specifier, import graph and the export check
 packages/*/package.ini  each package's identity: name, version, description, licence, engine, entry, exports
 packages/*/README.md    what that package is for, and its file table
 packages/*/LICENSE      the same MIT licence as the repository root

@@ -702,6 +702,7 @@ packages/builder/       暂存与打包：package.ps1 + 文件处理表
 packages/builder/assets.ps1   文件处理表：按路径决定用哪个 handler 改写
 packages/builder/assets/*.ps1 每种文件类型一个 handler：script、version、batch、shell、ini、copy
 packages/test/          自测驱动：config.ps1 + index.ps1
+packages/module/        模块层：specifier、导入图与导出校验
 packages/*/package.ini  每个包的身份：名称、版本、描述、许可证、运行环境、入口、导出
 packages/*/README.md    该包的职责与文件清单
 packages/*/LICENSE      与仓库根相同的 MIT 许可证
