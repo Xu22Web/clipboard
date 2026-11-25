@@ -1,5 +1,10 @@
-#@use shared/utils/schema, renderer/src/utils/settings-model, renderer/src/utils/text, renderer/src/utils/themes, renderer/src/utils/theme-stub, main/utils/plugin/plugins
-#@export Get-SettingChordList, Get-SettingChoiceKeys, Format-SendKeyName, Convert-SendKeysToChord, Get-SettingChordAdded, Get-SettingChordRemoved, Get-SettingChordKeys, Format-ChordKeyCap, Format-ChordValue, Test-ChordUsable, Get-SettingNumberView, Convert-SettingNumberInput, Get-SettingChoiceLabels, Get-SettingChoices, Get-SettingPluginNames, Get-PluginCaption, Split-SettingList, Get-SettingListOn, Get-SettingListToggled, Convert-SettingInput
+. (Use-Module 'shared/utils/schema')
+. (Use-Module 'renderer/src/utils/settings-model')
+. (Use-Module 'renderer/src/utils/text')
+. (Use-Module 'renderer/src/utils/themes')
+. (Use-Module 'renderer/src/utils/theme-stub')
+. (Use-Module 'main/utils/plugin/plugins')
+Export-Function Get-SettingChordList, Get-SettingChoiceKeys, Format-SendKeyName, Convert-SendKeysToChord, Get-SettingChordAdded, Get-SettingChordRemoved, Get-SettingChordKeys, Format-ChordKeyCap, Format-ChordValue, Test-ChordUsable, Get-SettingNumberView, Convert-SettingNumberInput, Get-SettingChoiceLabels, Get-SettingChoices, Get-SettingPluginNames, Get-PluginCaption, Split-SettingList, Get-SettingListOn, Get-SettingListToggled, Convert-SettingInput
 # renderer/src/utils/settings-types.ps1 - what a value means when it is edited, per kind of setting.
 #
 # The window knows four behaviours (bool, number, text and a value picked from a list) and the

@@ -208,6 +208,9 @@ try {
     # manifests, not dot-sourced modules)
     BeforeAll {
       $script:StructEntryPath = Join-Path $srcRoot 'clipboard.ps1'
+      # the module lists left the entry for this loader: it says what the program is made of
+      # and how a command reaches the part that answers
+      $script:StructLoaderPath = Join-Path $srcRoot 'main\utils\modules.ps1'
       # most modules sit in main\utils\, which is also the folder the rows below read a file
       # by name from; the flat list adds the other sections so a guard sees every module
       $script:StructLibPath = Join-Path $srcRoot 'main\utils'
@@ -230,8 +233,11 @@ try {
 
     Describe 'module set' {
       It 'every required module exists' {
-        # the entry file names these by relative path; a package must carry all of them
-        $requiredLib = @('main\utils\base', 'main\utils\native', 'renderer\src\utils\focus', 'renderer\src\utils\theme-stub', 'main\utils\settings', 'main\utils\marks', 'main\utils\ordering',
+        # the loader names these by relative path; a package must carry all of them. The first
+        # three are the loader itself: the entry hands over to main\utils\modules, which reads
+        # the lists and asks shared\utils\module for each file it needs
+        $requiredLib = @('shared\utils\module', 'shared\utils\module-stub', 'main\utils\modules',
+          'main\utils\base', 'main\utils\native', 'renderer\src\utils\focus', 'renderer\src\utils\theme-stub', 'main\utils\settings', 'main\utils\marks', 'main\utils\ordering',
           'main\utils\media', 'main\utils\cfhtml', 'main\utils\clip', 'main\utils\blobs', 'main\utils\store', 'main\utils\migrate', 'main\utils\transfer', 'main\utils\modifiers', 'main\utils\apprules', 'main\utils\entry', 'main\utils\query', 'main\utils\select', 'renderer\src\components\picker-geom', 'renderer\src\components\picker-live', 'renderer\src\utils\text', 'renderer\src\utils\anim',
           'renderer\src\components\picker-draw', 'renderer\src\components\picker-edit', 'renderer\src\components\media-render', 'renderer\src\components\pinlist', 'renderer\src\components\preview', 'renderer\src\windows\picker', 'renderer\src\windows\tray-menu', 'main\utils\serve', 'main\utils\shortcut',
           'renderer\src\core\draw', 'renderer\src\core\layout', 'renderer\src\components\widgets', 'renderer\src\core\component', 'renderer\src\core\framework', 'renderer\src\components\views', 'renderer\src\core\setup', 'renderer\src\core\reactive',
@@ -319,12 +325,11 @@ try {
     Describe 'entry point' {
       It 'stays an entry point' {
         $entryLines = @([IO.File]::ReadAllLines($script:StructEntryPath)).Count
-        # 250, not 224: the window layer keeps its own list here, because a package carries it as
-        # the chunks renderer\manifest.ini names and a working copy loads the same list module by
-        # module - one list, two shapes. The entry also decides whether the resident answers the
-        # command instead of a fresh process (the proxy block), and `status` needs a group of its
-        # own for the panel geometry it prints
-        Expect ($entryLines -le 250) ([string]$entryLines + ' lines')
+        # 120, not 250: the module lists and the load loop moved to main\utils\modules.ps1, so
+        # the entry binds parameters, computes the root and hands over. What is still here is the
+        # runtime paths block and the retry that loads every group when a command reached a
+        # function its own group did not carry
+        Expect ($entryLines -le 120) ([string]$entryLines + ' lines')
       } -Skip $script:StructMinified
 
       It 'computes the tool root once' {
@@ -335,15 +340,15 @@ try {
 
     Describe 'module table' {
       BeforeAll {
-        # the entry loads only the module groups a command can reach. A command the dispatcher
-        # knows and the table does not would reach the default group and fail at run time, so
-        # the two lists have to line up; the group lists in turn have to name files that exist.
-        $entryText = [IO.File]::ReadAllText($script:StructEntryPath)
+        # the loader hands a command only the group it can reach. A command the dispatcher knows
+        # and the table does not would reach the default group and fail at run time, so the two
+        # lists have to line up; the group lists in turn have to name files that exist.
+        $loaderText = [IO.File]::ReadAllText($script:StructLoaderPath)
         $dispatchText = [IO.File]::ReadAllText((Join-Path $srcRoot 'main\utils\dispatch.ps1'))
         $script:StructDispatched = @([regex]::Matches($dispatchText, "(?m)^  '([a-z0-9-]+)' \{") | ForEach-Object { $_.Groups[1].Value })
-        $groupBlock = ($entryText -split '\$groupModules = @\{')[1]
+        $groupBlock = ($loaderText -split '\$groupModules = @\{')[1]
         if ($groupBlock) { $groupBlock = ($groupBlock -split "\r?\n\}")[0] } else { $groupBlock = '' }
-        $tableBlock = ($entryText -split '\$commandGroups = @\{')[1]
+        $tableBlock = ($loaderText -split '\$commandGroups = @\{')[1]
         if ($tableBlock) { $tableBlock = ($tableBlock -split "\r?\n\}")[0] } else { $tableBlock = '' }
         $script:StructTableKeys = @([regex]::Matches($tableBlock, "(?m)^  '([a-z0-9-]+)'") | ForEach-Object { $_.Groups[1].Value })
         $script:StructGroupNames = @([regex]::Matches($groupBlock, '(?m)^  ([a-z]+)\s+=') | ForEach-Object { $_.Groups[1].Value })
@@ -399,8 +404,8 @@ try {
         # `status` prints the panel size and shape, which needs picker-geom: without it the
         # one-shot path throws, reloads every group and registers the plugins a second time -
         # which is where the "duplicate key" lines in the log came from
-        $entryText = [IO.File]::ReadAllText($script:StructEntryPath)
-        $groupBlock = ($entryText -split '\$groupModules = @\{')[1]
+        $loaderText = [IO.File]::ReadAllText($script:StructLoaderPath)
+        $groupBlock = ($loaderText -split '\$groupModules = @\{')[1]
         if ($groupBlock) { $groupBlock = ($groupBlock -split "\r?\n\}")[0] }
         $need = @{
           'status' = @('renderer\src\components\picker-geom')
@@ -408,7 +413,7 @@ try {
           'config' = @('main\utils\config-template')
         }
         foreach ($cmd in @($need.Keys)) {
-          $line = [regex]::Match($entryText, "(?m)^  '" + $cmd + "'\s*= @\(([^)]*)\)")
+          $line = [regex]::Match($loaderText, "(?m)^  '" + $cmd + "'\s*= @\(([^)]*)\)")
           Expect ($line.Success) ($cmd + ' is not in the module table')
           $files = @()
           foreach ($g in @([regex]::Matches($line.Groups[1].Value, "'([a-z]+)'") | ForEach-Object { $_.Groups[1].Value })) {

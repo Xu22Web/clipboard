@@ -1,5 +1,8 @@
-#@use renderer/src/core/component, renderer/src/core/framework, renderer/src/components/widgets, shared/utils/dpi
-#@export Register-UiView, Get-UiViewKind, New-UiView, Test-UiViewEnabled, Get-UiViewProp, Set-UiViewState, Test-UiViewState, Draw-UiView, Hit-UiViewList, Get-UiViewRect, Update-UiViewHot, Sync-UiViews
+. (Use-Module 'renderer/src/core/component')
+. (Use-Module 'renderer/src/core/framework')
+. (Use-Module 'renderer/src/components/widgets')
+. (Use-Module 'shared/utils/dpi')
+Export-Function Register-UiView, Get-UiViewKind, New-UiView, Test-UiViewEnabled, Get-UiViewProp, Set-UiViewState, Test-UiViewState, Draw-UiView, Hit-UiViewList, Get-UiViewRect, Update-UiViewHot, Sync-UiViews
 # renderer\src\components\views.ps1 - a control as a record: what it is, what it holds, where it is, how it draws.
 #
 # component.ps1 gives a node a lifecycle, framework.ps1 gives a tree of them a patch. What was

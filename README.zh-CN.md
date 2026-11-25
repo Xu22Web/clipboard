@@ -722,9 +722,10 @@ dist/                   打包产物（不入库）
 src/                    程序本体（打包只读这个目录）
   clipboard.sh            Git Bash / MSYS2 启动器
   clipboard.cmd           CMD 启动器
-  clipboard.ps1           入口：参数绑定 / $Root / 模块分组表 / 运行时路径 / 调用 Invoke-Main
+  clipboard.ps1           入口：参数绑定、$Root、运行时路径，然后交给模块加载器
   clipboard.ini           配置（不存在时用内置默认，config init 才生成）
   data/                   历史 / 日志 / 生效热键缓存 / 媒体（不入库）
+  main/utils/modules.ps1         模块表：一条命令会读哪些文件，以及读它们的循环
   main/utils/base.ps1            常量、版本读取、记录格式、运行时标识、度量与全部默认值
   main/utils/native.ps1          平台层：P/Invoke、WinForms 类型、程序集加载、字体探测、DPI
   renderer/src/utils/theme-stub.ps1      内置配色与主题空实现
@@ -820,6 +821,8 @@ src/                    程序本体（打包只读这个目录）
   themes/*.ini            主题（win11-dark / win11-light）
   lang/*.ini              界面文案（en 为基准，覆盖叠加；含 [meta] 字体族）
 
+  shared/utils/module.ps1        模块写的两句声明：Use-Module / Export-Function
+  shared/utils/module-stub.ps1   已读过或被合并的导入拿到的空模块
   shared/utils/ini.ps1           文本 → 文档与文档上的增删改查（纯函数，含按模板重写）
   shared/utils/inifile.ps1       导入 ini 文件（按路径缓存）与写回单个键
   shared/utils/schema.ps1        schema 的加载 / 校验 / 单值转换
@@ -855,7 +858,7 @@ flowchart TD
 
 除 `renderer\src\utils\themes.ps1` 与插件三件套外，模块缺失会报 `missing: …` 并以退出码 1 结束。
 
-模块按命令加载：`$baseModules` 是每条命令都需要的 19 个文件，六个可选组 `store` / `transfer` / `config` / `panel` / `panelgeom` / `settings` 由 `$commandGroups` 决定：
+模块按命令加载，表在 `src\main\utils\modules.ps1`：`$baseModules` 是每条命令都需要的 19 个文件，六个可选组 `store` / `transfer` / `config` / `panel` / `panelgeom` / `settings` 由 `$commandGroups` 决定。模块自己也写明依赖（首行 `. (Use-Module 'main/utils/native')`），所以表里只需写根：加载器读一个根，它导入的文件随之跟上，已读过的模块拿到空模块而不是再解析一次：
 
 | 命令 | 加载的可选组 |
 |---|---|

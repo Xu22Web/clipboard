@@ -224,7 +224,8 @@ Describe 'the module command' {
 
 Describe 'the module table' {
   It 'names files that exist and imports that resolve' {
-    $entry = Join-Path $repoRoot 'src\clipboard.ps1'
+    # the tables live in the loader now: the entry only calls it
+    $entry = Join-Path $repoRoot 'src\main\utils\modules.ps1'
     $tokens = $null
     $errors = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseFile($entry, [ref]$tokens, [ref]$errors)

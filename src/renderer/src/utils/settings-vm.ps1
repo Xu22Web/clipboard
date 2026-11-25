@@ -1,5 +1,6 @@
-#@use renderer/src/utils/settings-model, renderer/src/utils/settings-types
-#@export Copy-SettingTable, Get-SettingStagedValue, Get-SettingFlipValue, Get-SettingRecordValue, Get-SettingChordDrop, Get-SettingListTick, Get-SettingsActionState, Get-SettingsPendingSignature, Get-SettingsSavePlan
+. (Use-Module 'renderer/src/utils/settings-model')
+. (Use-Module 'renderer/src/utils/settings-types')
+Export-Function Copy-SettingTable, Get-SettingStagedValue, Get-SettingFlipValue, Get-SettingRecordValue, Get-SettingChordDrop, Get-SettingListTick, Get-SettingsActionState, Get-SettingsPendingSignature, Get-SettingsSavePlan
 # renderer/src/utils/settings-vm.ps1 - what a change does to the settings window's state.
 #
 # The window is drawn by hand, so there are no controls to bind: a change is a value in a table

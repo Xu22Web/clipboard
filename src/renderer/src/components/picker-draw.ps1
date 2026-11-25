@@ -1,4 +1,4 @@
-#@use renderer/src/core/draw
+. (Use-Module 'renderer/src/core/draw')
 # renderer\src\components\picker-draw.ps1 - the panel's reusable drawing pieces.
 #
 # Everything here takes a Graphics (or a window, for the one region helper) plus plain

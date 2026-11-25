@@ -1,4 +1,4 @@
-#@export Get-Brush, New-PickerStringFormats, Scale-Alpha
+Export-Function Get-Brush, New-PickerStringFormats, Scale-Alpha
 # renderer\src\core\draw.ps1 - the three things every painted surface needs to start from.
 #
 # They lived in the panel because that is where they were first written: a brush cache, the

@@ -1,5 +1,6 @@
-#@use shared/utils/dpi, renderer/src/core/draw
-#@export Get-UiBlend, Draw-UiToggle, Get-UiChipWidth, Draw-UiKeyChip, Draw-UiScrollbar, Draw-UiButton, Draw-UiIconButton, Draw-UiCross, Draw-UiPlus
+. (Use-Module 'shared/utils/dpi')
+. (Use-Module 'renderer/src/core/draw')
+Export-Function Get-UiBlend, Draw-UiToggle, Get-UiChipWidth, Draw-UiKeyChip, Draw-UiScrollbar, Draw-UiButton, Draw-UiIconButton, Draw-UiCross, Draw-UiPlus
 # renderer\src\components\widgets.ps1 - the controls the drawn windows share.
 #
 # A widget is a rectangle plus a state, drawn by one function and hit-tested elsewhere against

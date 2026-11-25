@@ -1,5 +1,6 @@
-#@use renderer/src/core/component, renderer/src/components/views
-#@export Get-UiSetupState, Get-UiSetupContext, Merge-UiSetupProps, Add-UiSetupHook, Use-UiSlot, Invoke-UiSlot, New-UiSetupView, Get-UiSetupContextOf
+. (Use-Module 'renderer/src/core/component')
+. (Use-Module 'renderer/src/components/views')
+Export-Function Get-UiSetupState, Get-UiSetupContext, Merge-UiSetupProps, Add-UiSetupHook, Use-UiSlot, Invoke-UiSlot, New-UiSetupView, Get-UiSetupContextOf
 # renderer\src\core\setup.ps1 - a component declared the way <script setup> declares one.
 #
 # A component here is still a node (renderer\src\components\views.ps1) whose kind decides how it draws. What was

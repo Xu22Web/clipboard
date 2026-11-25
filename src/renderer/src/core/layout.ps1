@@ -1,4 +1,4 @@
-#@export New-UiBox, Get-UiInset, Get-UiStack, Get-UiColumns, Get-UiScrollMetrics, Get-UiNumber, Get-UiEdges, Get-UiBoxModel
+Export-Function New-UiBox, Get-UiInset, Get-UiStack, Get-UiColumns, Get-UiScrollMetrics, Get-UiNumber, Get-UiEdges, Get-UiBoxModel
 # renderer\src\core\layout.ps1 - boxes: the arithmetic both drawn windows share.
 #
 # A window's furniture is placed by cutting rectangles: a header off the top, a footer off the

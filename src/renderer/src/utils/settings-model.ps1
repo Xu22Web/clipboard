@@ -1,5 +1,11 @@
-#@use renderer/src/utils/text, shared/utils/schema, main/utils/config, renderer/src/utils/settings-types, renderer/src/core/component, renderer/src/core/framework, main/utils/store
-#@export Get-SettingGroupTable, Get-SettingLabel, Get-SettingKind, Get-SettingRaw, Format-SettingText, Format-SettingListText, Get-SettingHelp, Get-SettingEnabledBy, New-SettingControlKey, Get-SettingControlKeyParts, Get-SettingGroupKeys, Get-SettingsRows, New-SettingRowTree, Update-SettingRows, Get-SettingGroups, Get-SettingGroupsWithPending, New-SettingInfoRow, Get-SettingAboutFacts, Get-SettingLeaf, Get-SettingAboutRows
+. (Use-Module 'renderer/src/utils/text')
+. (Use-Module 'shared/utils/schema')
+. (Use-Module 'main/utils/config')
+. (Use-Module 'renderer/src/utils/settings-types')
+. (Use-Module 'renderer/src/core/component')
+. (Use-Module 'renderer/src/core/framework')
+. (Use-Module 'main/utils/store')
+Export-Function Get-SettingGroupTable, Get-SettingLabel, Get-SettingKind, Get-SettingRaw, Format-SettingText, Format-SettingListText, Get-SettingHelp, Get-SettingEnabledBy, New-SettingControlKey, Get-SettingControlKeyParts, Get-SettingGroupKeys, Get-SettingsRows, New-SettingRowTree, Update-SettingRows, Get-SettingGroups, Get-SettingGroupsWithPending, New-SettingInfoRow, Get-SettingAboutFacts, Get-SettingLeaf, Get-SettingAboutRows
 # renderer/src/utils/settings-model.ps1 - the rows a settings window shows.
 #
 # The settings live in schema\clipboard.ps1, which knows a type, a range, a default and a

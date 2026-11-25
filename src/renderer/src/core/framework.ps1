@@ -1,5 +1,5 @@
-#@use renderer/src/core/component
-#@export Get-UiPropsKey, Test-UiNodeStale, Sync-UiTree, Render-UiTree, Get-UiNodeValues
+. (Use-Module 'renderer/src/core/component')
+Export-Function Get-UiPropsKey, Test-UiNodeStale, Sync-UiTree, Render-UiTree, Get-UiNodeValues
 # renderer\src\core\framework.ps1 - the tree a surface is written as, and the patch that keeps it.
 #
 # A surface here is a tree of nodes: a node carries a type, a key, the values it was built from

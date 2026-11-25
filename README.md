@@ -723,10 +723,11 @@ dist/                   package output (not committed)
 src/                    the program (the only folder packaging reads)
   clipboard.sh            Git Bash / MSYS2 launcher
   clipboard.cmd           CMD launcher
-  clipboard.ps1           entry point: parameter binding / $Root / the module groups / runtime paths
+  clipboard.ps1           entry point: parameter binding, $Root, runtime paths, then the module loader
   clipboard.ini           settings (built-in defaults until config init writes it)
   data/                   history / log / hotkey cache / media (not committed)
   client.exe              compiled client (not committed; run client)
+  main/utils/modules.ps1         the module lists: the files a command reads, and the loop that reads them
   main/utils/base.ps1            constants, version, record format, runtime identity, metrics, every default
   main/utils/native.ps1          platform layer: P/Invoke, WinForms types, assembly loading, fonts, DPI
   renderer/src/utils/theme-stub.ps1      built-in colours and the empty theme
@@ -828,6 +829,8 @@ src/                    the program (the only folder packaging reads)
   themes/*.ini            the themes (win11-dark / win11-light)
   lang/*.ini              the words (en is the base, a language is laid over it; [meta] names its font)
 
+  shared/utils/module.ps1        Use-Module / Export-Function: the two statements a module writes
+  shared/utils/module-stub.ps1   the empty module an already-read or bundled import gets
   shared/utils/ini.ps1           text -> document, and edits on a document (pure functions)
   shared/utils/inifile.ps1       import an ini file (cached by path) and write one key back
   shared/utils/schema.ps1        schema loading, validation and single-value conversion
@@ -863,7 +866,7 @@ flowchart TD
 
 Apart from `renderer\src\utils\themes.ps1` and the three plugin files, a missing module prints `missing: ...` and exits with code 1.
 
-Modules load per command: `$baseModules` holds the 19 files every command needs, and the six optional groups `store` / `transfer` / `config` / `panel` / `panelgeom` / `settings` are chosen by `$commandGroups`:
+Modules load per command. The lists live in `src\main\utils\modules.ps1`: `$baseModules` holds the 19 files every command needs, and the six optional groups `store` / `transfer` / `config` / `panel` / `panelgeom` / `settings` are chosen by `$commandGroups`. A module also states its own imports - `. (Use-Module 'main/utils/native')` on its first line - so a list only has to name a root: the loader reads the root and what it imports follows, and a module that was already read gets the empty module instead of a second parse:
 
 | Command | Optional groups |
 |---|---|

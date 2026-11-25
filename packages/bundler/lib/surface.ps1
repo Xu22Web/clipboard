@@ -74,22 +74,78 @@ function Expand-BundleAlias([string]$id, $alias) {
   return ($dir + '/' + $rest)
 }
 
-# The directives of one module, read from its comment tokens.
+# The directives of one module: the edges it writes as statements, and the names it declares.
+#
+#     . (Use-Module 'renderer/src/core/draw')
+#     Export-Function New-UiBox, Get-UiBox
+#
+# A file written before the statements still carries the comment form (#@use / #@export), so both
+# are read and merged. An Export-Function that forwards (-From) or takes another module's whole
+# set (-All) declares nothing of its own: those names belong to the module it names.
 function Get-BundleDirectives($parsed) {
   $uses = New-Object System.Collections.Generic.List[string]
   $exports = New-Object System.Collections.Generic.List[string]
-  if ($null -eq $parsed -or $null -eq $parsed.Tokens) { return @{ Uses = @(); Exports = @() } }
-  foreach ($t in @($parsed.Tokens)) {
-    if ([string]$t.Kind -ne 'Comment') { continue }
-    $text = ([string]$t.Text).Trim()
-    if (-not $text.StartsWith('#')) { continue }
-    $m = [regex]::Match($text, '^#\s*@(use|export)\b(.*)$')
-    if (-not $m.Success) { continue }
-    $kind = $m.Groups[1].Value
-    $names = @($m.Groups[2].Value -split '[,;\s]+' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-    foreach ($one in $names) {
-      if ($kind -eq 'use') { if (-not $uses.Contains($one)) { $uses.Add($one) } }
-      else { if (-not $exports.Contains($one)) { $exports.Add($one) } }
+  if ($null -eq $parsed) { return @{ Uses = @(); Exports = @() } }
+
+  if ($null -ne $parsed.Ast) {
+    foreach ($cmd in @($parsed.Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true))) {
+      $name = ''
+      try { $name = [string]$cmd.GetCommandName() } catch { $name = '' }
+      if ($name -eq 'Use-Module') {
+        $spec = ''
+        if (@($cmd.CommandElements).Count -gt 1) {
+          $first = $cmd.CommandElements[1]
+          if ($first -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $spec = [string]$first.Value }
+        }
+        # a member id, the way the include table already spells them: forward slashes, no suffix
+        $spec = $spec.Trim() -replace '\\', '/'
+        if ($spec.ToLowerInvariant().EndsWith('.ps1')) { $spec = $spec.Substring(0, $spec.Length - 4) }
+        if ($spec -and -not $uses.Contains($spec)) { $uses.Add($spec) }
+        continue
+      }
+      if ($name -ne 'Export-Function') { continue }
+      $forward = $false
+      $names = New-Object System.Collections.Generic.List[string]
+      $i = 1
+      while ($i -lt @($cmd.CommandElements).Count) {
+        $e = $cmd.CommandElements[$i]
+        $i++
+        if ($e -is [System.Management.Automation.Language.CommandParameterAst]) {
+          $p = ([string]$e.ParameterName).ToLowerInvariant()
+          if ($p -eq 'from' -or $p -eq 'all') { $forward = $true }
+          continue
+        }
+        if ($e -is [System.Management.Automation.Language.ArrayLiteralAst]) {
+          foreach ($item in @($e.Elements)) {
+            if ($item -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+              foreach ($one in @(([string]$item.Value) -split '[,\s]+')) { if ($one) { $names.Add($one) } }
+            }
+          }
+          continue
+        }
+        if ($e -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+          foreach ($one in @(([string]$e.Value) -split '[,\s]+')) { if ($one) { $names.Add($one) } }
+        }
+      }
+      if ($forward) { continue }
+      foreach ($one in $names) { if (-not $exports.Contains($one)) { $exports.Add($one) } }
+    }
+  }
+
+  # the comment form, for a file written before the statements
+  if ($null -ne $parsed.Tokens) {
+    foreach ($t in @($parsed.Tokens)) {
+      if ([string]$t.Kind -ne 'Comment') { continue }
+      $text = ([string]$t.Text).Trim()
+      if (-not $text.StartsWith('#')) { continue }
+      $m = [regex]::Match($text, '^#\s*@(use|export)\b(.*)$')
+      if (-not $m.Success) { continue }
+      $kind = $m.Groups[1].Value
+      $names = @($m.Groups[2].Value -split '[,;\s]+' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+      foreach ($one in $names) {
+        if ($kind -eq 'use') { if (-not $uses.Contains($one)) { $uses.Add($one) } }
+        else { if (-not $exports.Contains($one)) { $exports.Add($one) } }
+      }
     }
   }
   return @{ Uses = $uses.ToArray(); Exports = $exports.ToArray() }
