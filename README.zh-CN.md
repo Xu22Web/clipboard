@@ -1039,6 +1039,8 @@ Describe 'int' {
 | `run bundle` | 构建 `builder.cli.config.ps1` 声明的一个目标；`-Entry` 指定目标名；`-Inspect` 列出哪些模块无法被内联及原因 |
 | `run module` | 带着 `Use-Module` / `Export-Function` 语句运行一个脚本：`run module <入口.ps1> [参数]`；`-Check` 只报告不运行，`-List` 打印加载顺序 |
 
+`run module` 启动一个脚本的方式与 node 启动文件一样：入口自己导入所需，每条导入都写明带后缀的文件。`.ps1` 是代码模块 —— ts 与 js 扮演的角色：文件在调用方作用域里执行，函数就落在导入它的代码旁边（`. (Use-Module './b.ps1' $PSCommandPath)`）。`.ini` 是数据模块 —— json 扮演的角色：文件只被读取而不执行，导入返回嵌套表（`$conf = Use-Module './settings.ini' $PSCommandPath`）。不猜测后缀：缺后缀或后缀不属于本层时，报错面会带上写它的文件与行号。`-Check` 只打印这些行、不运行；`-List` 打印脚本的加载顺序，数据文件是边而不是步骤。
+
 `run.sh` / `run.cmd` / `run.ps1` 三个入口行为一致，均先把工作目录切到仓库根，再把余下参数追加到 `package.ini` 中对应的命令行。`dev` / `build` / `bundle` 属于 `builder-cli`（构建工具），`test` 属于 `builder-test`，`module` 属于 `module`（模块层自己的命令），`client` / `assembly` / `bench` / `shot` 则是表中按路径直接运行的普通脚本。
 
 `run dev` 持续运行常驻进程，文件变化后重启；被外部停止（托盘退出、`clipboard stop`）或按 `Ctrl+C` 时结束，`config set` 引起的自动重启不触发退出。终端被直接杀掉时需手动 `clipboard stop`。监视范围取自 `builder.ini` 的 `[files] Files`（`!` 前缀为排除），另加 `packages\**\*.ps1`、`builder.ini`、`builder.cli.config.ps1`、`package.ini`：

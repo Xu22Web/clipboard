@@ -25,7 +25,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPath))
-. (Join-Path $root 'packages\cli\utils\console.ps1')
+. (Use-Module './utils/console.ps1' $PSCommandPath)
 Set-LogLevelFrom -Quiet:$Quiet -Silent:$Silent
 $source = Join-Path $root 'src'
 if (-not (Test-Path -LiteralPath (Join-Path $source 'clipboard.ps1'))) {

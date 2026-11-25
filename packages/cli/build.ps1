@@ -1,4 +1,4 @@
-﻿# packages\cli\build.ps1 - build every target, then hand the result to packages\builder.
+# packages\cli\build.ps1 - build every target, then hand the result to packages\builder.
 #
 # A function, not a script: packages\cli\bin\cli.ps1 is the assembly point that loads the
 # packages and calls this one. Nothing here dot-sources a package or reads the command table.
@@ -14,6 +14,10 @@
 #
 # Neither stage reads the other's config: this function is the only place that knows both, and
 # what it passes on is a list of paths.
+. (Use-Module './utils/console.ps1' $PSCommandPath)
+. (Use-Module './config.ps1' $PSCommandPath)
+. (Use-Module './index.ps1' $PSCommandPath)
+
 function Invoke-CliBuild {
   param(
     [string]$ConfigFile = '',
@@ -170,3 +174,5 @@ function Invoke-CliBuild {
     if (Test-Path -LiteralPath $tmpOut) { Remove-Item -LiteralPath $tmpOut -Recurse -Force -ErrorAction SilentlyContinue }
   }
 }
+
+Export-Function Invoke-CliBuild

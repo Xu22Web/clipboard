@@ -1,4 +1,4 @@
-﻿# packages\cli\config.ps1 - read builder.cli.config.ps1 and decide, for every target, what the
+# packages\cli\config.ps1 - read builder.cli.config.ps1 and decide, for every target, what the
 # bundler is told.
 #
 # This is the resolveConfig step: the one place that knows the shape of a target, applies the
@@ -12,6 +12,7 @@
 # build.output / build.scan say what a target is made of, alias says how a #@use id is spelled,
 # and plugins is the stage chain. The flat names beside them (Input, Output, Scan, Plugins) are
 # the same fields written without the group, kept so an old target keeps reading.
+. (Use-Module './utils/ini.ps1' $PSCommandPath)
 $script:TargetKeys = @('Preset', 'Plugins', 'Kind', 'Input', 'Scan', 'Output', 'External', 'Ship', 'Target', 'Minify', 'Rename', 'Treeshake', 'Append', 'Keep', 'build', 'alias', 'plugins')
 
 # vite's mergeConfig, in the same order: two tables merge key by key, two arrays concatenate, and
@@ -317,3 +318,5 @@ function ConvertTo-BundleSpec($config, [string]$outDir = 'out') {
   $spec['Targets'] = $list.ToArray()
   return $spec
 }
+
+Export-Function ConvertTo-BundleSpec, ConvertTo-Flag, Merge-ConfigTable, Read-PackageFile, Resolve-CliConfig, Set-TargetField

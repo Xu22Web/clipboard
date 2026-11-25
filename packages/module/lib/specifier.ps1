@@ -64,18 +64,48 @@ function Get-ModulePackageValue($pkg, [string]$key, [string[]]$Conditions = @())
   return [string]$pkg.$key
 }
 
-# Add the suffix a specifier left out. A path that already names a file keeps its name.
+# Add the suffix a specifier left out. Only a module id is spelled without one: an id names a
+# module under src\, the way #@use always has, while a path keeps the suffix it was written with.
 function Add-ModuleSuffix([string]$path) {
   if (-not $path) { return $path }
   if ($path.ToLowerInvariant().EndsWith('.ps1')) { return $path }
   return ($path + '.ps1')
 }
 
+# What a path names: 'script', 'ini', or '' for something this layer cannot load. The suffix
+# decides - the resolver never adds one and never tries a list of them.
+function Get-ModulePathKind([string]$path) {
+  switch ([IO.Path]::GetExtension($path).ToLowerInvariant()) {
+    '.ps1' { return 'script' }
+    '.ini' { return 'ini' }
+    default { return '' }
+  }
+}
+
+# A path specifier, answered the way an ESM resolver answers it: the file is the one the line
+# names, so the suffix is part of the name. A missing suffix is a mistake to report, not a hole to
+# fill - the same name may be a script, an ini file and a json file, and picking one for the caller
+# is how a build reads the wrong thing.
+function Resolve-ModulePath([string]$base, [string]$target) {
+  if (-not $base) { $base = (Get-Location).Path }
+  if (Test-Path -LiteralPath $base -PathType Leaf) { $base = Split-Path -Parent $base }
+  $path = [IO.Path]::GetFullPath((Join-Path $base ($target -replace '/', '\')))
+  $kind = Get-ModulePathKind $path
+  if (-not $kind) {
+    return @{ Path = $path; Kind = ''; Problem = 'no suffix: write ' + $target + '.ps1 or ' + $target + '.ini' }
+  }
+  if (-not (Test-Path -LiteralPath $path)) {
+    return @{ Path = $path; Kind = $kind; Problem = 'no such file: ' + $target }
+  }
+  return @{ Path = $path; Kind = $kind; Problem = '' }
+}
+
 # One specifier to one answer:
 #   @{ Spec; Kind; Path; Export; Package; Id; Problem }
-# Kind is 'local', 'package', 'package-file' or 'id'. Problem is '' when the answer is usable.
+# Kind is 'local', 'package', 'package-file' or 'id'; PathKind says what the file is - 'script',
+# 'ini' or 'json'. Problem is '' when the answer is usable.
 function Resolve-ModuleSpecifier([string]$spec, [string]$from, [string]$root, [string[]]$Conditions = @()) {
-  $answer = @{ Spec = $spec; Kind = 'id'; Path = ''; Export = ''; Package = ''; Id = ''; Problem = '' }
+  $answer = @{ Spec = $spec; Kind = 'id'; Path = ''; PathKind = 'script'; Export = ''; Package = ''; Id = ''; Problem = '' }
   if (-not $spec) { $answer.Problem = 'empty specifier'; return $answer }
 
   $target = $spec.Trim()
@@ -95,9 +125,10 @@ function Resolve-ModuleSpecifier([string]$spec, [string]$from, [string]$root, [s
     $answer.Kind = 'local'
     $base = $from
     if (-not $base) { $base = $root }
-    if (Test-Path -LiteralPath $base -PathType Leaf) { $base = Split-Path -Parent $base }
-    $answer.Path = [IO.Path]::GetFullPath((Add-ModuleSuffix (Join-Path $base $target)))
-    if (-not (Test-Path -LiteralPath $answer.Path)) { $answer.Problem = 'no file beside this module: ' + $target }
+    $hit = Resolve-ModulePath $base $target
+    $answer.Path = $hit.Path
+    $answer.PathKind = $hit.Kind
+    $answer.Problem = $hit.Problem
     return $answer
   }
 
@@ -117,10 +148,14 @@ function Resolve-ModuleSpecifier([string]$spec, [string]$from, [string]$root, [s
       } else {
         $answer.Kind = 'package-file'
         $rel = ($parts[1..($parts.Count - 1)] -join [IO.Path]::DirectorySeparatorChar)
-        $answer.Path = [IO.Path]::GetFullPath((Add-ModuleSuffix (Join-Path $pkgDir $rel)))
+        $hit = Resolve-ModulePath $pkgDir $rel
+        $answer.Path = $hit.Path
+        $answer.PathKind = $hit.Kind
         $answer.Id = ($parts -join '/')
       }
       if ($null -eq $pkg) { $answer.Problem = 'package ' + $parts[0] + ' has no package.ini'; return $answer }
+      if ($answer.Kind -eq 'package-file' -and $hit.Problem) { $answer.Problem = $parts[0] + ': ' + $hit.Problem; return $answer }
+      if ($answer.Kind -eq 'package') { $answer.PathKind = (Get-ModulePathKind $answer.Path) }
       if (-not (Test-Path -LiteralPath $answer.Path)) { $answer.Problem = 'no such file in ' + $parts[0] + ': ' + $answer.Id; return $answer }
       if ($export) {
         $declared = Get-ModulePackageValue $pkg 'Exports' $Conditions

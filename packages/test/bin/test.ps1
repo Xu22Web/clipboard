@@ -15,12 +15,9 @@
 $ErrorActionPreference = 'Stop'
 # bin -> test -> packages -> the repository
 $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPath)))
-$main = Join-Path $root 'packages\test\index.ps1'
-if (-not (Test-Path -LiteralPath $main)) {
-  Write-Host ('[x] missing: ' + $main)
-  exit 1
-}
 
-. $main
+# the suite's public surface, imported the way a script imports a module
+. (Use-Module '../index.ps1' $PSCommandPath)
+
 Set-Location -LiteralPath $root
 exit (Invoke-Test -Arguments $args)

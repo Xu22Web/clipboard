@@ -60,6 +60,9 @@ if ($isPackaged) {
 # it takes the describe/it layer from the shared harness and keeps its own results and
 # sandbox below. harness.ps1 loads the reporter as well.
 . (Join-Path $repoRoot 'tests\lib\harness.ps1')
+# the package files the cases below dot-source carry Use-Module / Export-Function at their own top
+# level, so the module layer has to be here before the first of them is read
+. (Join-Path $repoRoot 'packages\module\index.ps1')
 # The tooling's logger prints every step a tool runs, and its duration helper is what the rows
 # below read. It is loaded here, at the top, because a hook runs in the harness scope and its
 # functions would not reach the checks.
@@ -452,6 +455,7 @@ try {
           'packages\module\index.ps1', 'packages\module\lib\specifier.ps1',
           'packages\module\lib\graph.ps1', 'packages\module\lib\order.ps1',
           'packages\module\lib\exports.ps1', 'packages\module\bin\module.ps1',
+          'packages\module\lib\data.ps1', 'packages\module\lib\host.ps1',
           'packages\cli\utils\minify.ps1', 'packages\cli\utils\ini.ps1', 'packages\cli\utils\globs.ps1', 'packages\cli\utils\csc.ps1',
           'packages\cli\utils\console.ps1',
           'packages\bundler\bundler.ps1', 'packages\builder\assets.ps1',

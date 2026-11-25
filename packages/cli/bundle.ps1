@@ -1,4 +1,4 @@
-﻿# packages\cli\bundle.ps1 - build the targets the config declares, through the bundler.
+# packages\cli\bundle.ps1 - build the targets the config declares, through the bundler.
 #
 # A function, not a script: packages\cli\bin\cli.ps1 is the assembly point.
 #
@@ -12,6 +12,10 @@
 #
 # No package is written here. `build` is the one that stages and packs; this command leaves its
 # outputs under out\ so a single target can be inspected.
+. (Use-Module './utils/console.ps1' $PSCommandPath)
+. (Use-Module './config.ps1' $PSCommandPath)
+. (Use-Module './index.ps1' $PSCommandPath)
+
 function Invoke-CliBundle {
   param(
     [string]$Entry = '',
@@ -59,3 +63,5 @@ function Invoke-CliBundle {
     if ($specFile) { Remove-Item -LiteralPath $specFile -Force -ErrorAction SilentlyContinue }
   }
 }
+
+Export-Function Invoke-CliBundle

@@ -7,6 +7,8 @@
 # This file is loaded after tools\utils\console.ps1 by both callers, which is where a compiler
 # line is printed from: it belongs to the step above it, not to the run.
 
+. (Use-Module './console.ps1' $PSCommandPath)
+
 function Find-Csc {
   # the 64-bit compiler first, then the 32-bit one: both products are AnyCPU
   foreach ($dir in @(
@@ -26,3 +28,5 @@ function Write-CscLog($output) {
     Write-Note ('  ' + $text)
   }
 }
+
+Export-Function Find-Csc, Write-CscLog

@@ -1,4 +1,4 @@
-﻿# packages\bundler\lib\chunk.ps1 - which modules belong to which chunk, and what a chunk is called.
+# packages\bundler\lib\chunk.ps1 - which modules belong to which chunk, and what a chunk is called.
 #
 # The rule is rolldown's: every entry gets a bit, every module carries the set of entries that
 # reach it, and modules with the *same* set land in the same chunk. Two modules with different
@@ -124,3 +124,5 @@ function Get-BundleChunkDefault([string]$entryTemplate) {
   if ($dot -ge 0 -and $dot -lt ($file.Length - 1)) { $ext = $file.Substring($dot) }
   return ($dir + '[name]-[hash]' + $ext)
 }
+
+Export-Function Format-BundleOutput, Get-BundleChunkDefault, Get-BundleHash, Split-BundleChunks

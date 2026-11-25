@@ -67,7 +67,7 @@ public static class Shot {
 '@ -ReferencedAssemblies System.Drawing, System.Windows.Forms
 
 $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPath))
-. (Join-Path $root 'packages\cli\utils\console.ps1')
+. (Use-Module './utils/console.ps1' $PSCommandPath)
 Set-LogLevelFrom -Quiet:$Quiet -Silent:$Silent
 $srcDir = Join-Path $root 'src'
 $docsDir = Join-Path $root 'docs'

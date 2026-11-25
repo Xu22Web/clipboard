@@ -16,6 +16,8 @@
 # The text of one module body: every top-level statement through its extent. A definition that
 # the reachability walk dropped is left out here, which is where dropping happens - not by
 # deleting text afterwards.
+. (Use-Module './ast.ps1' $PSCommandPath)
+
 function New-BundleModuleText($module) {
   $parts = New-Object System.Collections.Generic.List[string]
   $kept = @()
@@ -99,3 +101,5 @@ function Compare-BundleFingerprint($expected, $actual, [switch]$Renamed) {
   }
   return $problems.ToArray()
 }
+
+Export-Function Compare-BundleFingerprint, Get-BundleFingerprint, New-BundleChunk, New-BundleModuleText

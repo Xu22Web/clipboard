@@ -84,13 +84,14 @@ if (-not (Test-Path -LiteralPath $entryPath -PathType Leaf)) {
 }
 $entryPath = [IO.Path]::GetFullPath($entryPath)
 
-# The root answers the package and id specifier forms. It is found by walking up from the entry
-# to the folder that has a package.ini, which is where packages\ lives; an entry outside a
-# repository simply has none, and its relative imports still resolve.
+# The root answers the package and id specifier forms. It is the OUTERMOST folder that has a
+# package.ini on the way up: every package declares one of its own, and stopping at the first
+# would answer 'bundler' with packages\cli\packages\bundler. An entry outside a repository has
+# none, and its relative imports still resolve.
 $root = ''
 $probe = Split-Path -Parent $entryPath
 while ($probe) {
-  if (Test-Path -LiteralPath (Join-Path $probe 'package.ini')) { $root = $probe; break }
+  if (Test-Path -LiteralPath (Join-Path $probe 'package.ini')) { $root = $probe }
   $up = Split-Path -Parent $probe
   if (-not $up -or $up -eq $probe) { break }
   $probe = $up
@@ -121,27 +122,33 @@ if ($check -or (-not $noCheck)) {
 }
 
 # ---- the two statements, live for the length of this run ------------------------------------
-# Use-Module answers the file an import names; the dot-source in front of the call does the rest,
-# in the scope that wrote the line. The third argument is optional: without it the root found
-# above is used, so './b' beside the entry needs no root at all.
-function Use-Module {
-  param($Spec, $Caller = '', $Root = '')
-  if (-not $Caller) { $Caller = $PSCommandPath }
-  if (-not $Root) { $Root = $root }
-  $ref = Resolve-ModuleSpecifier ([string]$Spec) ([string]$Caller) $Root
-  if ($ref.Problem) { throw ('import ' + $Spec + ': ' + $ref.Problem) }
-  return $ref.Path
+# host.ps1 defines Use-Module and Export-Function in this script's own scope, which is what the
+# entry sees: a dot-source runs a file in the scope that writes the line, so an import only needs
+# a path back.
+$ModuleHostRoot = $root
+. (Join-Path $packageHome 'lib\host.ps1')
+
+# ---- the entry runs here ----------------------------------------------------------------------
+# An argument list cannot be handed over as an array: splatting an array binds by position, so
+# '-Part module' arrives as one name and one stray word. The line is rebuilt instead, a switch left
+# bare and everything else quoted, which is what the command line already meant.
+function Format-ModuleArgument([string]$one) {
+  if ($one -match '^--?[A-Za-z]') { return $one }
+  if ($one -eq '') { return "''" }
+  if ($one -match "[^\w./\\:=+-]") { return "'" + ($one -replace "'", "''") + "'" }
+  return $one
 }
 
-# A declaration, not an action: the set it describes was read from the syntax tree before the run
-# and is what -Check reports on. It has to exist because the file that carries the line calls it.
-function Export-Function { }
+$commandLine = '& ' + "'" + ($entryPath -replace "'", "''") + "'"
+foreach ($one in $rest) { $commandLine += ' ' + (Format-ModuleArgument ([string]$one)) }
 
 try {
-  & $entryPath @rest
+  Invoke-Expression $commandLine
 } catch {
   Write-Host ('[x] ' + $_.Exception.Message)
   Write-Host ('    at ' + (Split-Path -Leaf $entryPath))
+  Remove-Item -LiteralPath $ModuleStub -Force -ErrorAction SilentlyContinue
   exit 1
 }
+Remove-Item -LiteralPath $ModuleStub -Force -ErrorAction SilentlyContinue
 exit 0

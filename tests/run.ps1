@@ -80,6 +80,7 @@ if (Test-Path -LiteralPath $versionFile) {
 # test.config.ps1 is the project's vitest config: the driver needs Groups and Workers from it,
 # and packages\test\config.ps1 is the loader that says what the file may contain. A file the
 # loader rejects is a broken file rather than something to guess a default for.
+. (Join-Path $repoRoot 'packages\module\index.ps1')
 . (Join-Path $repoRoot 'packages\test\config.ps1')
 $script:tc = $null
 try { $script:tc = Get-TestConfig -Root $repoRoot }

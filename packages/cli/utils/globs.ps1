@@ -188,3 +188,5 @@ function Resolve-BaseDir([string]$root, [string]$setting) {
   if ([IO.Path]::IsPathRooted($value)) { return $value }
   return (Join-Path $root $value)
 }
+
+Export-Function ConvertTo-GlobRegex, Expand-Glob, Expand-GlobBraces, Expand-GlobList, Resolve-BaseDir, Split-GlobList

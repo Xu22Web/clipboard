@@ -49,18 +49,17 @@ $root = Split-Path -Parent $packages
 
 # this package is a tool of its own: it loads the copies under its own utils\, so a change made
 # for the release script cannot change how a bundle is parsed, and the other way round
-. (Join-Path $here 'utils\console.ps1')
+. (Use-Module './utils/console.ps1' $PSCommandPath)
 Set-LogLevelFrom -Quiet:$Quiet -Silent:$Silent
-foreach ($tool in @('utils\ini.ps1', 'utils\minify.ps1', 'utils\csc.ps1', 'utils\globs.ps1')) {
-  $toolPath = Join-Path $here $tool
-  if (-not (Test-Path -LiteralPath $toolPath)) { Write-Fail ('missing: ' + $toolPath); exit 1 }
-  . $toolPath
-}
-foreach ($lib in @('ast', 'graph', 'emit', 'surface', 'chunk')) {
-  $libPath = Join-Path $here ('lib\' + $lib + '.ps1')
-  if (-not (Test-Path -LiteralPath $libPath)) { Write-Fail ('missing: ' + $libPath); exit 1 }
-  . $libPath
-}
+. (Use-Module './utils/ini.ps1' $PSCommandPath)
+. (Use-Module './utils/minify.ps1' $PSCommandPath)
+. (Use-Module './utils/csc.ps1' $PSCommandPath)
+. (Use-Module './utils/globs.ps1' $PSCommandPath)
+. (Use-Module './lib/ast.ps1' $PSCommandPath)
+. (Use-Module './lib/graph.ps1' $PSCommandPath)
+. (Use-Module './lib/emit.ps1' $PSCommandPath)
+. (Use-Module './lib/surface.ps1' $PSCommandPath)
+. (Use-Module './lib/chunk.ps1' $PSCommandPath)
 
 # ---------------------------------------------------------------- the target file
 # What to build arrives as a document, not as a config file: packages\cli reads cli.ini, decides

@@ -31,16 +31,16 @@ $modDir = Join-Path $env:TEMP ('cb-part-mod-' + [guid]::NewGuid().ToString('N').
 New-Item -ItemType Directory -Path $modDir -Force | Out-Null
 $utf8 = New-Object System.Text.UTF8Encoding $false
 [IO.File]::WriteAllText((Join-Path $modDir 'leaf.ps1'), "function Get-LeafValue { return 'leaf' }`r`n", $utf8)
-[IO.File]::WriteAllText((Join-Path $modDir 'middle.ps1'), "#@use ./leaf`r`nfunction Get-MiddleValue { return (Get-LeafValue) }`r`n", $utf8)
+[IO.File]::WriteAllText((Join-Path $modDir 'middle.ps1'), "#@use ./leaf.ps1`r`nfunction Get-MiddleValue { return (Get-LeafValue) }`r`n", $utf8)
 $top = Join-Path $modDir 'top.ps1'
-[IO.File]::WriteAllText($top, "#@use ./middle`r`n#@export Get-TopValue`r`nfunction Get-TopValue { return (Get-MiddleValue) }`r`n", $utf8)
+[IO.File]::WriteAllText($top, "#@use ./middle.ps1`r`n#@export Get-TopValue`r`nfunction Get-TopValue { return (Get-MiddleValue) }`r`n", $utf8)
 
 Describe 'a specifier' {
   It 'reads the five forms node reads' {
-    $rel = Resolve-ModuleSpecifier './middle' $top $repoRoot
+    $rel = Resolve-ModuleSpecifier './middle.ps1' $top $repoRoot
     $pkg = Resolve-ModuleSpecifier 'cli' '' $repoRoot
     $exp = Resolve-ModuleSpecifier 'cli#Invoke-CliCommand' '' $repoRoot
-    $sub = Resolve-ModuleSpecifier 'bundler/lib/surface' '' $repoRoot
+    $sub = Resolve-ModuleSpecifier 'bundler/lib/surface.ps1' '' $repoRoot
     $id = Resolve-ModuleSpecifier 'shared/utils/format' '' $repoRoot
     $ok = (-not $rel.Problem) -and ($rel.Kind -eq 'local')
     $ok = $ok -and (-not $pkg.Problem) -and ($pkg.Kind -eq 'package')
@@ -58,6 +58,17 @@ Describe 'a specifier' {
   It 'names the file a package Main points at' {
     $pkg = Resolve-ModuleSpecifier 'module' '' $repoRoot
     Expect ((Split-Path -Leaf $pkg.Path) -eq 'index.ps1') $pkg.Path
+  }
+
+  It 'keeps the suffix the line writes, the way ESM does' {
+    $ini = Join-Path $modDir 'conf.ini'
+    [IO.File]::WriteAllText($ini, "[package]`r`nName=demo`r`n", $utf8)
+    $none = Resolve-ModuleSpecifier './conf' $top $repoRoot
+    $data = Resolve-ModuleSpecifier './conf.ini' $top $repoRoot
+    $script = Resolve-ModuleSpecifier './middle.ps1' $top $repoRoot
+    $ok = ($none.Problem -like '*suffix*') -and (-not $data.Problem)
+    $ok = $ok -and ($data.PathKind -eq 'ini') -and ($script.PathKind -eq 'script')
+    Expect $ok ($none.Problem + ' / ' + $data.PathKind + ' / ' + $script.PathKind)
   }
 }
 
@@ -88,24 +99,36 @@ Describe 'the import graph' {
 
   It 'reads a use statement and the line it sits on' {
     $users = Join-Path $modDir 'users.ps1'
-    [IO.File]::WriteAllText($users, "function Get-Nothing { return 1 }`r`n. (Use-Module './leaf' `$PSCommandPath)`r`n. (Use-Module './gone' `$PSCommandPath)`r`n", $utf8)
+    [IO.File]::WriteAllText($users, "function Get-Nothing { return 1 }`r`n. (Use-Module './leaf.ps1' `$PSCommandPath)`r`n. (Use-Module './gone.ps1' `$PSCommandPath)`r`n", $utf8)
     $statements = Get-ModuleStatements $users
     $rows = @(Test-ModuleSpecifiers $users $repoRoot)
-    $ok = (@($statements.Uses).Count -eq 2) -and ($statements.Uses[0].Spec -eq './leaf') -and ($statements.Uses[0].Line -eq 2)
-    $ok = $ok -and ($rows -contains 'users.ps1:3 ./gone (no file beside this module: ./gone)')
+    $ok = (@($statements.Uses).Count -eq 2) -and ($statements.Uses[0].Spec -eq './leaf.ps1') -and ($statements.Uses[0].Line -eq 2)
+    $ok = $ok -and ($rows -contains 'users.ps1:3 ./gone.ps1 (no such file: ./gone.ps1)')
     Expect $ok ($rows -join '; ')
   }
 
   It 'tolerates a cycle and still orders every file' {
     $a = Join-Path $modDir 'cyc-a.ps1'
     $b = Join-Path $modDir 'cyc-b.ps1'
-    [IO.File]::WriteAllText($a, ". (Use-Module './cyc-b' `$PSCommandPath)`r`n", $utf8)
-    [IO.File]::WriteAllText($b, ". (Use-Module './cyc-a' `$PSCommandPath)`r`n", $utf8)
+    [IO.File]::WriteAllText($a, ". (Use-Module './cyc-b.ps1' `$PSCommandPath)`r`n", $utf8)
+    [IO.File]::WriteAllText($b, ". (Use-Module './cyc-a.ps1' `$PSCommandPath)`r`n", $utf8)
     $order = @(Get-ModuleOrder $a $repoRoot)
     $graph = Get-ModuleGraph $a $repoRoot
     $ok = ($order.Count -eq 2) -and ((Split-Path -Leaf $order[-1]) -eq 'cyc-a.ps1')
     $ok = $ok -and (@($graph.Cycles).Count -eq 1) -and ($graph.Cycles[0] -like 'cyc-b.ps1:1 closes a cycle*')
     Expect $ok ((@($graph.Cycles) -join '; ') + ' / ' + (@($order) -join ','))
+  }
+
+  It 'reads a data module as an edge but not as a file to load' {
+    $conf = Join-Path $modDir 'graph-conf.ini'
+    [IO.File]::WriteAllText($conf, "[package]`r`nName=demo`r`n", $utf8)
+    $entry = Join-Path $modDir 'graph-data.ps1'
+    [IO.File]::WriteAllText($entry, "`$conf = Use-Module './graph-conf.ini' `$PSCommandPath`r`n'name = ' + `$conf.package.Name`r`n", $utf8)
+    $graph = Get-ModuleGraph $entry $repoRoot
+    $order = @(Get-ModuleOrder $entry $repoRoot)
+    $ok = (@($order).Count -eq 1) -and ((Split-Path -Leaf $order[0]) -eq 'graph-data.ps1')
+    $ok = $ok -and (@($graph.Missing).Count -eq 0) -and (@($graph.Edges).Count -eq 1)
+    Expect $ok (@($order) -join ',') + ' / ' + (@($graph.Missing) -join '; ')
   }
 }
 
@@ -115,8 +138,8 @@ Describe 'the export set' {
     $mid = Join-Path $modDir 'exp-mid.ps1'
     $topFile = Join-Path $modDir 'exp-top.ps1'
     [IO.File]::WriteAllText($leaf, "function Get-LeafValue { return 'leaf' }`r`nfunction Get-Other { return 'o' }`r`nExport-Function Get-LeafValue, Get-Other`r`n", $utf8)
-    [IO.File]::WriteAllText($mid, ". (Use-Module './exp-leaf' `$PSCommandPath)`r`nExport-Function -All -From './exp-leaf'`r`nfunction Get-MidValue { return (Get-LeafValue) }`r`nExport-Function Get-MidValue -Default`r`n", $utf8)
-    [IO.File]::WriteAllText($topFile, ". (Use-Module './exp-mid' `$PSCommandPath)`r`nExport-Function Get-LeafValue -From './exp-mid'`r`n", $utf8)
+    [IO.File]::WriteAllText($mid, ". (Use-Module './exp-leaf.ps1' `$PSCommandPath)`r`nExport-Function -All -From './exp-leaf.ps1'`r`nfunction Get-MidValue { return (Get-LeafValue) }`r`nExport-Function Get-MidValue -Default`r`n", $utf8)
+    [IO.File]::WriteAllText($topFile, ". (Use-Module './exp-mid.ps1' `$PSCommandPath)`r`nExport-Function Get-LeafValue -From './exp-mid.ps1'`r`n", $utf8)
 
     $graph = Get-ModuleGraph $topFile $repoRoot
     $folded = Resolve-ModuleExports $graph $repoRoot
@@ -133,7 +156,7 @@ Describe 'the export set' {
     $leaf = Join-Path $modDir 'bad-leaf.ps1'
     $topFile = Join-Path $modDir 'bad-re.ps1'
     [IO.File]::WriteAllText($leaf, "function Get-LeafValue { return 'leaf' }`r`nExport-Function Get-LeafValue`r`n", $utf8)
-    [IO.File]::WriteAllText($topFile, ". (Use-Module './bad-leaf' `$PSCommandPath)`r`nExport-Function Get-Absent -From './bad-leaf'`r`n", $utf8)
+    [IO.File]::WriteAllText($topFile, ". (Use-Module './bad-leaf.ps1' `$PSCommandPath)`r`nExport-Function Get-Absent -From './bad-leaf.ps1'`r`n", $utf8)
     $rows = @(Get-ModuleDiagnostics $topFile $repoRoot)
     $hit = @($rows | Where-Object { $_ -like 'bad-re.ps1:2*Get-Absent*' })
     Expect ($hit.Count -eq 1) ($rows -join '; ')
@@ -161,11 +184,11 @@ Describe 'the parse cache' {
     $entry = Join-Path $modDir 'cache-top.ps1'
     $side = Join-Path $modDir 'cache-side.ps1'
     [IO.File]::WriteAllText($side, "function Get-Side { return 1 }`r`n", $utf8)
-    [IO.File]::WriteAllText($entry, ". (Use-Module './cache-side' `$PSCommandPath)`r`n", $utf8)
+    [IO.File]::WriteAllText($entry, ". (Use-Module './cache-side.ps1' `$PSCommandPath)`r`n", $utf8)
     $first = @(Get-ModuleOrder $entry $repoRoot)
     $second = @(Get-ModuleOrder $entry $repoRoot)
     $fresh = @(Get-ModuleOrder $entry $repoRoot -NoCache)
-    [IO.File]::WriteAllText($entry, ". (Use-Module './cache-side' `$PSCommandPath)`r`n. (Use-Module './leaf' `$PSCommandPath)`r`n", $utf8)
+    [IO.File]::WriteAllText($entry, ". (Use-Module './cache-side.ps1' `$PSCommandPath)`r`n. (Use-Module './leaf.ps1' `$PSCommandPath)`r`n", $utf8)
     [IO.File]::SetLastWriteTimeUtc($entry, [DateTime]::UtcNow.AddSeconds(5))
     $grown = @(Get-ModuleOrder $entry $repoRoot)
     $ok = ($first.Count -eq 2) -and ($second.Count -eq 2) -and ($fresh.Count -eq 2)
@@ -180,7 +203,7 @@ Describe 'the module command' {
     $leaf = Join-Path $modDir 'run-b.ps1'
     $entry = Join-Path $modDir 'run-a.ps1'
     [IO.File]::WriteAllText($leaf, "function Add-Numbers(`$x, `$y) { `$x + `$y }`r`nExport-Function Add-Numbers`r`n", $utf8)
-    [IO.File]::WriteAllText($entry, ". (Use-Module './run-b' `$PSCommandPath)`r`n'sum = ' + (Add-Numbers 3 4)`r`n", $utf8)
+    [IO.File]::WriteAllText($entry, ". (Use-Module './run-b.ps1' `$PSCommandPath)`r`n'sum = ' + (Add-Numbers 3 4)`r`n", $utf8)
     $bin = Join-Path $repoRoot 'packages\module\bin\module.ps1'
     $out = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bin $entry 2>&1)
     $code = $LASTEXITCODE

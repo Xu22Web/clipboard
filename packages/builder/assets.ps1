@@ -127,3 +127,5 @@ function Invoke-AssetConvert($ctx) {
   }
   return $result
 }
+
+Export-Function Get-AssetHandler, Get-AssetHandlerNames, Get-LibraryHandler, Initialize-AssetHandlers, Invoke-AssetConvert, Test-Flatten, Test-OwnScope

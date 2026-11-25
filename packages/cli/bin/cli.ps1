@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
   packages\cli\bin\cli.ps1 - the builder-cli command. Assemble the packages, then run one.
 
@@ -33,15 +33,11 @@ param(
 $ErrorActionPreference = 'Stop'
 # bin -> cli -> packages -> the repository
 $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPath)))
-$cliMain = Join-Path $root 'packages\cli\index.ps1'
-if (-not (Test-Path -LiteralPath $cliMain)) {
-  Write-Host ('[x] missing: ' + $cliMain)
-  exit 1
-}
+$moduleBin = Join-Path $root 'packages\module\bin\module.ps1'
 
 # packages\cli first: it carries the logger, the config reader and the command table, and every
-# other package is loaded on top of it
-. $cliMain
+# other package is imported on top of it
+. (Use-Module '../index.ps1' $PSCommandPath)
 
 # the other packages, loaded through the declaration in their own package.ini
 $refs = @{}
@@ -74,19 +70,19 @@ Set-Location -LiteralPath $root
 
 switch ($wanted) {
   'build' {
-    . $refs['bundler'].MainPath
-    . $refs['builder'].MainPath
-    . (Join-Path $root 'packages\cli\build.ps1')
+    . (Use-Module 'bundler' $PSCommandPath)
+    . (Use-Module 'builder' $PSCommandPath)
+    . (Use-Module '../build.ps1' $PSCommandPath)
     $bound = ConvertTo-ArgumentTable $Rest
     exit (Invoke-CliBuild @bound).Code
   }
   'release' {
     # the two steps the release flow keeps apart: write the folder, then check the folder. Packing
     # never deletes its own output on a test failure - that decision belongs here.
-    . $refs['bundler'].MainPath
-    . $refs['builder'].MainPath
-    . (Join-Path $root 'packages\cli\build.ps1')
-    . $refs['test'].MainPath
+    . (Use-Module 'bundler' $PSCommandPath)
+    . (Use-Module 'builder' $PSCommandPath)
+    . (Use-Module '../build.ps1' $PSCommandPath)
+    . (Use-Module 'test' $PSCommandPath)
     $bound = ConvertTo-ArgumentTable $Rest
     $built = Invoke-CliBuild @bound
     if ($built.Code -ne 0) { exit $built.Code }
@@ -105,14 +101,14 @@ switch ($wanted) {
     exit 0
   }
   'bundle' {
-    . $refs['bundler'].MainPath
-    . (Join-Path $root 'packages\cli\bundle.ps1')
+    . (Use-Module 'bundler' $PSCommandPath)
+    . (Use-Module '../bundle.ps1' $PSCommandPath)
     $bound = ConvertTo-ArgumentTable $Rest
     exit (Invoke-CliBundle @bound)
   }
   'dev' {
     $watcher = Join-Path $root 'packages\cli\watch.ps1'
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -File $watcher @Rest
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -File $moduleBin $watcher @Rest
     exit $LASTEXITCODE
   }
   default {

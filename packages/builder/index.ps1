@@ -1,4 +1,4 @@
-﻿# packages\builder\index.ps1 - the builder's public surface.
+# packages\builder\index.ps1 - the builder's public surface.
 #
 # A caller dot-sources this file and calls what package.ini Exports. The staging, the asset table
 # and the check run stay behind it: what a caller can depend on is the shape of Invoke-Package.
@@ -48,7 +48,8 @@ function Invoke-Package {
   $file = Join-Path $env:TEMP ('builder-request-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.json')
   try {
     [IO.File]::WriteAllText($file, ($Request | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding $false))
-    $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:BuilderScript, '-RequestFile', $file)
+    $moduleBin = Join-Path (Split-Path -Parent $script:BuilderHome) 'module\bin\module.ps1'
+    $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $moduleBin, $script:BuilderScript, '-RequestFile', $file)
     if ($Config) { $argv += @('-Config', $Config) }
     $log = @(& powershell.exe @argv 2>&1)
     $ok = ($LASTEXITCODE -eq 0)
@@ -69,3 +70,5 @@ function Invoke-Package {
     Remove-Item -LiteralPath ($file + '.result') -Force -ErrorAction SilentlyContinue
   }
 }
+
+Export-Function Get-BuilderRoot, Invoke-BuilderArchive, Invoke-Package

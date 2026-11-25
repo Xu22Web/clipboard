@@ -1,4 +1,4 @@
-﻿# packages\bundler\index.ps1 - the bundler's public surface.
+# packages\bundler\index.ps1 - the bundler's public surface.
 #
 # A caller dot-sources this file and calls what package.ini Exports. Nothing else of the package
 # is visible: the engine, the plugins and the lib\ modules stay behind it, so the only thing a
@@ -39,7 +39,8 @@ function Invoke-BundleTarget {
   try {
     $json = $Spec | ConvertTo-Json -Depth 8
     [IO.File]::WriteAllText($file, $json, (New-Object System.Text.UTF8Encoding $false))
-    $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:BundlerScript, '-TargetFile', $file)
+    $moduleBin = Join-Path (Split-Path -Parent $script:BundlerHome) 'module\bin\module.ps1'
+    $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $moduleBin, $script:BundlerScript, '-TargetFile', $file)
     if ($All) { $argv += '-All' }
     elseif ($Entry) { $argv += @('-Entry', $Entry) }
     if ($Out) { $argv += @('-Out', $Out) }
@@ -54,3 +55,5 @@ function Invoke-BundleTarget {
     Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
   }
 }
+
+Export-Function Get-BundlerRoot, Invoke-BundleTarget

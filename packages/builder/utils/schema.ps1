@@ -178,3 +178,5 @@ function Test-ToolSchemaFormat($schema) {
   }
   return $out.ToArray()
 }
+
+Export-Function Convert-ToolSchemaValue, Get-ToolSchemaSpec, Import-ToolSchema, Test-ToolConfigMap, Test-ToolSchemaFormat

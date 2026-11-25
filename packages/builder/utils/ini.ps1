@@ -52,3 +52,5 @@ function Import-IniMap([string]$path) {
     return $map
   }
 }
+
+Export-Function Import-IniMap, Read-IniDoc

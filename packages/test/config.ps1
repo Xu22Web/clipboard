@@ -1,4 +1,4 @@
-﻿# packages\test\config.ps1 - read test.config.ps1 and decide how a run is shaped.
+# packages\test\config.ps1 - read test.config.ps1 and decide how a run is shaped.
 #
 # The one place that knows the shape of the test config. A key it does not know is a typo whose
 # failure would otherwise be silent - a misspelled Report just keeps the default - so it stops the
@@ -57,3 +57,5 @@ function Get-TestConfig {
   if ($bad.Count -gt 0) { throw ($bad -join [Environment]::NewLine) }
   return $result
 }
+
+Export-Function Get-TestConfig

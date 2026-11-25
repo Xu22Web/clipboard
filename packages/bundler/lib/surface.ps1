@@ -27,6 +27,8 @@
 #>
 
 # The id a #@use names: the path under src\ without the extension, forward slashes.
+. (Use-Module './ast.ps1' $PSCommandPath)
+
 function Get-BundleModuleId([string]$root, [string]$path) {
   $full = [IO.Path]::GetFullPath($path)
   $srcRoot = [IO.Path]::GetFullPath((Join-Path $root 'src')).TrimEnd([char]92, [char]47) + [IO.Path]::DirectorySeparatorChar
@@ -190,3 +192,5 @@ function Get-BundleSurfaceReport($modules, $externals = $null, $alias = $null) {
     Exported = $exported.Count
   }
 }
+
+Export-Function Expand-BundleAlias, Get-BundleDirectives, Get-BundleModuleId, Get-BundleSurfaceReport, Resolve-BundleUseId

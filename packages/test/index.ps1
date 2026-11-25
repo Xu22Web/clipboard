@@ -1,4 +1,4 @@
-﻿# packages\test\index.ps1 - the test package's public surface.
+# packages\test\index.ps1 - the test package's public surface.
 #
 # A caller dot-sources this file and calls what package.ini Exports. The driver, the harness and
 # the reporter live under tests\ and stay behind it; what a caller can depend on is the shape of
@@ -10,9 +10,10 @@ $script:TestHome = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $script:TestHome) { throw 'test: cannot locate the package folder' }
 $script:RepoRoot = Split-Path -Parent (Split-Path -Parent $script:TestHome)
 $script:Driver = Join-Path $script:RepoRoot 'tests\run.ps1'
+$script:ModuleBin = Join-Path $script:RepoRoot 'packages\module\bin'
 
-. (Join-Path $script:TestHome 'utils\console.ps1')
-. (Join-Path $script:TestHome 'config.ps1')
+. (Use-Module './utils/console.ps1' $PSCommandPath)
+. (Use-Module './config.ps1' $PSCommandPath)
 
 function Get-TestRoot {
   return $script:TestHome
@@ -33,10 +34,15 @@ function Invoke-Test {
     [string[]]$Arguments = @()
   )
   if (-not (Test-Path -LiteralPath $script:Driver)) { throw ('test: missing ' + $script:Driver) }
-  $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', $script:Driver)
+  # the driver is started by the module layer, the same way a tool is: one process, with the
+  # import and export statements in the packages it reads live
+  $moduleBin = Join-Path $script:ModuleBin 'module.ps1'
+  $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', $moduleBin, $script:Driver)
   foreach ($a in @($Arguments)) { if ([string]$a) { $argv += [string]$a } }
   & powershell.exe @argv | Out-Host
   $code = $LASTEXITCODE
   if ($null -eq $code) { $code = 0 }
   return $code
 }
+
+Export-Function Get-TestRoot, Invoke-Test

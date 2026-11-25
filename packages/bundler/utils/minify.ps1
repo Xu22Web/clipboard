@@ -842,3 +842,5 @@ function Invoke-MinifyFile {
     After  = $minified.Length
   }
 }
+
+Export-Function Apply-Edits, Compress-Aliases, Compress-Batch, Compress-CSharp, Compress-CSharpBlocks, Compress-ErrorAction, Compress-Ini, Compress-Shell, Compress-Whitespace, Get-AliasMap, Get-LookedUpNames, Get-ParameterNames, Get-ParsedScript, Get-ScriptVariableName, Get-StringCallNames, Get-StringValues, Get-StringVariableNames, Get-VariableName, Get-VariableSigil, Invoke-MinifyFile, Merge-Statements, New-FunctionMap, New-GlobalVariableMap, New-ScriptVariableMap, New-ShortName, Test-CanJoinLine, Test-NeedsSpace

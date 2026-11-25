@@ -197,6 +197,9 @@ function Get-ModuleGraph([string]$entry, [string]$root, $alias = $null, [string[
     param($file)
     $key = ([string]$file).ToLowerInvariant()
     if ($byPath.ContainsKey($key)) { return $byPath[$key] }
+    # a data module has no statements to read and nothing to dot-source: the edge is recorded so a
+    # report can name it, and the walk stops there
+    if ((Get-ModulePathKind ([string]$file)) -ne 'script') { $byPath[$key] = $null; return $null }
     $statements = Get-ModuleStatements $file
     $node = @{
       Path       = [string]$file
@@ -232,6 +235,7 @@ function Get-ModuleGraph([string]$entry, [string]$root, $alias = $null, [string[
 
   $visit = {
     param($file)
+    if ((Get-ModulePathKind ([string]$file)) -ne 'script') { return }
     $key = ([string]$file).ToLowerInvariant()
     if ($state.ContainsKey($key)) {
       # a visit that finds an unfinished file is looking at the loop closing; the row names the

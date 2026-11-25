@@ -26,12 +26,12 @@ $here = Split-Path -Parent $PSCommandPath
 $packages = Split-Path -Parent $here
 $root = Split-Path -Parent $packages
 
-. (Join-Path $here 'utils\console.ps1')
-. (Join-Path $here 'utils\ini.ps1')
-. (Join-Path $here 'utils\schema.ps1')
-. (Join-Path $here 'utils\globs.ps1')
-. (Join-Path $here 'utils\minify.ps1')
-. (Join-Path $here 'assets.ps1')
+. (Use-Module './utils/console.ps1' $PSCommandPath)
+. (Use-Module './utils/ini.ps1' $PSCommandPath)
+. (Use-Module './utils/schema.ps1' $PSCommandPath)
+. (Use-Module './utils/globs.ps1' $PSCommandPath)
+. (Use-Module './utils/minify.ps1' $PSCommandPath)
+. (Use-Module './assets.ps1' $PSCommandPath)
 Initialize-AssetHandlers (Join-Path $here 'assets')
 # the extension plugins this package brings: the file list
 foreach ($pluginFile in @(Get-ChildItem -LiteralPath (Join-Path $here 'plugins') -File -Filter '*.ps1' | Sort-Object Name)) {

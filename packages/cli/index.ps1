@@ -1,4 +1,4 @@
-﻿# packages\cli\index.ps1 - the cli package's public surface, and the command runner.
+# packages\cli\index.ps1 - the cli package's public surface, and the command runner.
 #
 # This package is the electron-vite half of the tooling: it reads the target file (cli.ini),
 # builds every target through packages\bundler, and hands the result to packages\builder. It is
@@ -12,9 +12,9 @@ if (-not $script:CliHome) { throw 'cli: cannot locate the package folder' }
 $script:PackagesRoot = Split-Path -Parent $script:CliHome
 $script:RepoRoot = Split-Path -Parent $script:PackagesRoot
 
-. (Join-Path $script:CliHome 'utils\console.ps1')
-. (Join-Path $script:CliHome 'utils\ini.ps1')
-. (Join-Path $script:CliHome 'utils\schema.ps1')
+. (Use-Module './utils/console.ps1' $PSCommandPath)
+. (Use-Module './utils/ini.ps1' $PSCommandPath)
+. (Use-Module './utils/schema.ps1' $PSCommandPath)
 
 # the extension plugins this package brings: target shapes the config can name with Preset=. They
 # are loaded here, at the package's own scope, so a config sees them all.
@@ -25,7 +25,7 @@ if (Test-Path -LiteralPath $pluginDir) {
   }
 }
 
-. (Join-Path $script:CliHome 'config.ps1')
+. (Use-Module './config.ps1' $PSCommandPath)
 
 function Get-CliHome { return $script:CliHome }
 function Get-RepoRoot { return $script:RepoRoot }
@@ -220,7 +220,10 @@ function Invoke-CliCommand {
   # the output goes straight to the host: a function hands its caller whatever it printed, and
   # this one has to hand back the exit code only
   if ($binPath) {
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -File $binPath @binArgs | Out-Host
+    # a tool is started by the module layer, the way npm starts node: one process, with the import
+    # statements in the tool's own files live
+    $moduleBin = Join-Path $script:RepoRoot 'packages\module\bin\module.ps1'
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -File $moduleBin $binPath @binArgs | Out-Host
   } else {
     Invoke-Expression $line | Out-Host
   }
@@ -260,3 +263,6 @@ function ConvertTo-ArgumentTable([string[]]$Arguments) {
   }
   return $table
 }
+
+# what a caller outside this package may depend on, the way package.json's exports lists it
+Export-Function ConvertTo-ArgumentTable, Get-CliHome, Get-CliPackageRef, Get-CommandLine, Get-CommandOrder, Get-CommandSuggestion, Get-PackageBins, Get-PkgValue, Get-RepoRoot, Invoke-CliCommand, Read-CliPackageTable, Resolve-CliSession, Show-Commands

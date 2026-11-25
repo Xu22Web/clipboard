@@ -23,11 +23,21 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSCommandPath
-$entry = Join-Path $root 'packages\cli\index.ps1'
-if (-not (Test-Path -LiteralPath $entry)) {
-  Write-Host ('[x] missing: ' + $entry)
-  exit 1
+
+# The cli package's public surface, imported the way a script imports anything. run.cmd and run.sh
+# start this file through packages\module\bin\module.ps1, so Use-Module is already there - the
+# block below is only for a caller that ran run.ps1 straight from PowerShell.
+if (-not (Get-Command -Name 'Use-Module' -CommandType Function -ErrorAction SilentlyContinue)) {
+  $moduleMain = Join-Path $root 'packages\module\index.ps1'
+  if (-not (Test-Path -LiteralPath $moduleMain)) {
+    Write-Host ('[x] missing: ' + $moduleMain)
+    exit 1
+  }
+  . $moduleMain
+  $ModuleHostRoot = $root
+  . (Join-Path $root 'packages\module\lib\host.ps1')
 }
-. $entry
+. (Use-Module 'cli/index.ps1' $PSCommandPath)
+
 $code = Invoke-CliCommand -Command $Command -Rest $Rest
 exit $code

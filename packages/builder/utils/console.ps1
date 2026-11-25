@@ -193,3 +193,5 @@ function Write-Command([string]$title, [string]$shown, [string]$line) {
 }
 
 function Fail([string]$text) { Write-Fail $text; exit 1 }
+
+Export-Function Enable-LogTimestamp, Fail, Format-Duration, Initialize-Console, Set-LogLevel, Set-LogLevelFrom, Start-Step, Test-ConsoleAnsi, Test-LogEnabled, Write-Command, Write-Done, Write-Fail, Write-Line, Write-Note, Write-Ok, Write-Pair, Write-Raw, Write-Step, Write-Text, Write-Title, Write-Warn

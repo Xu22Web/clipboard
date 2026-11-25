@@ -156,3 +156,5 @@ function Test-BundleOpaque($ast) {
   return @($reasons | Select-Object -Unique)
 }
 
+
+Export-Function Get-BundleCommandNames, Get-BundleFunctionNames, Get-BundleLookupNames, Get-BundleParse, Get-BundleRejectReason, Get-BundleStatements, Get-BundleStringNames, Test-BundleBlockInvoke, Test-BundleOpaque
