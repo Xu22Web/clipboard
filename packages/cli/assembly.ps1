@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 <#
-  tools\build-assembly.ps1 - compile the type library into src\main\clipboard.dll.
+  packages\cli\assembly.ps1 - compile the type library into src\main\clipboard.dll.
 
   The assembly is an accelerator, never a requirement: a cold panel open takes 850 ms with it
   against 1050 ms compiling the source (measured, three runs each). The .cs files stay as the
@@ -11,11 +11,11 @@
   a #part line each, and the bundler resolves that list (packages\bundler\plugins\50-cs-part.ps1).
   The executable source lives in src\preload (tools\build-client.ps1).
 
-      cli assembly                       write src\main\clipboard.dll
-      cli assembly -Out dist\clipboard.dll  write it somewhere else
+      run assembly                          write src\main\clipboard.dll
+      run assembly -Out dist\clipboard.dll  write it somewhere else
 
   A failed build only prints a note: the run-time compile still works. The client
-  (preload\client.exe) is the other product: tools\build-client.ps1 builds that one.
+  (preload\client.exe) is the other product: packages\cli\client.ps1 builds that one.
 #>
 param(
   [string]$Out = ''
@@ -24,7 +24,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPath))
 . (Join-Path $root 'packages\cli\utils\console.ps1')
-$cli = Join-Path $root 'builder.cli.ps1'
+$cli = Join-Path $root 'packages\cli\bin\cli.ps1'
 if (-not (Test-Path -LiteralPath $cli)) { Write-Fail ('missing: ' + $cli); exit 1 }
 
 # the sources, the compiler and its flags live in builder.cli.config.ps1 (the Main target): this

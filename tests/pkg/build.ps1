@@ -23,7 +23,7 @@ $cfg2 = Join-Path $intDir 'clipboard.ini'
 # packages\builder\package.ps1 is driven by a settings file and rewrites the scripts from their syntax tree,
 # never packing the history
 $pkgOut = Join-Path $tmpRoot 'pkg'
-$build = Join-Path $repoRoot 'builder.cli.ps1'
+$build = Join-Path $repoRoot 'packages\cli\bin\cli.ps1'
 $buildCfg = Join-Path $tmpRoot 'build-test.ini'
 
 # Every case below runs a real build, and a build compiles src\main\clipboard.dll. A resident

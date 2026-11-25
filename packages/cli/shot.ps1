@@ -1,15 +1,15 @@
 #Requires -Version 5.1
 <#
-  tools\shot.ps1 - refresh the screenshots in docs\\.
+  packages\cli\shot.ps1 - refresh the screenshots in docs\.
 
-      cli shot                          every surface
-      cli shot -Part panel              only the history panel, both themes
-      cli shot -Part tray,settings      two surfaces
-      cli shot -Theme light -Part panel one theme
-      cli shot -Select 7                row to leave selected (1 = first row)
-      cli shot -PreviewRow 5            row the hover card is taken from
-      cli shot -Language zh-CN          a language: docs\zh-cn\, and Chinese example rows
-      cli shot -KeepBox                 keep the temporary sandbox for inspection
+      run shot                          every surface
+      run shot -Part panel              only the history panel, both themes
+      run shot -Part tray,settings      two surfaces
+      run shot -Theme light -Part panel one theme
+      run shot -Select 7                row to leave selected (1 = first row)
+      run shot -PreviewRow 5            row the hover card is taken from
+      run shot -Language zh-CN          a language: docs\zh-cn\, and Chinese example rows
+      run shot -KeepBox                 keep the temporary sandbox for inspection
 
   Every shot is taken from a throw-away copy of src\: the store is seeded with example rows
   (fixed ages, one pinned row, one starred row), the copy carries its own named objects

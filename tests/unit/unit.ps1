@@ -444,7 +444,8 @@ try {
         Expect (Test-LogEnabled 'info') 'info dropped at info'
       }
       It 'ships with the repo' {
-        $tooling = @('package.ini', 'builder.ini', 'builder.cli.ps1', 'builder.cli.config.ps1', 'test.config.ps1', 'cli.ps1', 'cli.cmd', 'cli.sh',
+        $tooling = @('package.ini', 'builder.ini', 'builder.cli.config.ps1', 'test.config.ps1', 'run.ps1', 'run.cmd', 'run.sh',
+          'packages\cli\bin\cli.ps1',
           'packages\builder\package.ps1', 'packages\cli\watch.ps1', 'packages\cli\bench.ps1', 'packages\cli\shot.ps1',
           'packages\cli\client.ps1', 'packages\cli\assembly.ps1',
           'packages\test\index.ps1', 'packages\test\config.ps1', 'packages\test\utils\console.ps1',

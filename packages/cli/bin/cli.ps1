@@ -1,22 +1,23 @@
 ﻿#Requires -Version 5.1
 <#
-  packages\cli\bin\cli.ps1 - the command itself. Assemble the packages, then run one of them.
+  packages\cli\bin\cli.ps1 - the builder-cli command. Assemble the packages, then run one.
 
-      cli                  list what this tooling can do
-      cli build            build every target and write the release
-      cli bundle -All      build targets without packing (one target by -Entry)
-      cli bundle -Inspect  say which modules a bundle cannot inline
-      cli dev              watch the tree and restart the development copy
-      cli test -Part unit  run the suite
+      builder-cli                  list what this tooling can do
+      builder-cli build            build every target and write the release
+      builder-cli bundle -All      build targets without packing (one target by -Entry)
+      builder-cli bundle -Inspect  say which modules a bundle cannot inline
+      builder-cli dev              watch the tree and restart the development copy
 
-  It sits in the package the way vite's bin\vite.js does; the repository root keeps a launcher
-  (builder.cli.ps1) for the paths its package.ini commands already use.
+  Only the build pipeline is behind this command. The suite is builder-test, and client,
+  assembly, bench and shot are plain scripts package.ini runs as files.
+
+  It sits in the package the way vite's bin\vite.js does; run.ps1 at the repository root is
+  the launcher that resolves the name for package.ini's command lines.
 
       bundler   the engine: resolve, treeshake, merge, render, verify, cs-part, cs-compile
                 nothing in it knows what an "electron main process" is
       cli       the shapes and the loop: the electron presets in plugins\, the resolve step,
-                build, the watcher, and the auxiliary commands (test, shot, bench, client,
-                assembly)
+                build, and the watcher
       builder   the release: the files list, the staging pass, the archive, the check run
 
   Each package declares Main, Exports and Requires in its own package.ini. This file loads what
@@ -50,9 +51,9 @@ foreach ($name in @('bundler', 'builder', 'test')) {
 
 $wanted = $Command.ToLower()
 if (-not $wanted -or @('help', '-h', '--help', '-?', '/?') -contains $wanted) {
-  Write-Title 'cli'
+  Write-Title 'builder-cli'
   Write-Host ''
-  Write-Note 'usage: cli <command> [args]'
+  Write-Note 'usage: builder-cli <command> [args]'
   Write-Host ''
   $width = 8
   foreach ($pair in @(
@@ -60,7 +61,6 @@ if (-not $wanted -or @('help', '-h', '--help', '-?', '/?') -contains $wanted) {
       @('release', 'build, then run the suite against the package and drop it when the suite fails')
       @('bundle', 'build one target or all of them; -Inspect lists what cannot be inlined')
       @('dev', 'watch the tree and restart the development copy')
-      @('test', 'run the suite: -Unit, -Integration, -E2E, -Part <name>')
     )) {
     Write-Pair ([string]$pair[0]) ([string]$pair[1]) $width
   }
@@ -115,13 +115,9 @@ switch ($wanted) {
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -File $watcher @Rest
     exit $LASTEXITCODE
   }
-  'test' {
-    . $refs['test'].MainPath
-    exit (Invoke-Test -Arguments $Rest)
-  }
   default {
     Write-Fail ('unknown command: ' + $Command)
-    Write-Note 'cli build | bundle | dev | test'
+    Write-Note 'builder-cli build | release | bundle | dev'
     exit 1
   }
 }

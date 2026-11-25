@@ -41,19 +41,19 @@ The program is the entry point `src\clipboard.ps1` plus the modules under `src\m
 
 ## Quick start
 
-The program runs on its own (`src\clipboard.ps1` plus `src\main\` / `src\preload\` / `src\renderer\` / `src\shared\`), and the repository root has `cli` for the commands `package.ini` declares.
+The program runs on its own (`src\clipboard.ps1` plus `src\main\` / `src\preload\` / `src\renderer\` / `src\shared\`), and the repository root has `run` for the commands `package.ini` declares.
 
 ```powershell
-cli              # list the commands package.ini declares
-cli dev          # start the resident process, restart it when a loaded file changes
-cli test         # run every self test
-cli build        # package into dist\clipboard-<version>\
-cli client       # compile the optional native client src\preload\client.exe
-cli assembly     # compile the optional type library src\main\clipboard.dll
-cli bundle       # build one entry from builder.cli.config.ps1 (-Inspect lists what cannot be inlined)
+run              # list the commands package.ini declares
+run dev          # start the resident process, restart it when a loaded file changes
+run test         # run every self test
+run build        # package into dist\clipboard-<version>\
+run client       # compile the optional native client src\preload\client.exe
+run assembly     # compile the optional type library src\main\clipboard.dll
+run bundle       # build one entry from builder.cli.config.ps1 (-Inspect lists what cannot be inlined)
 ```
 
-`cli` has two entries: `cli.sh` (Git Bash / MSYS, `./cli.sh`) and `cli.cmd` (CMD, `cli`). Command names are case-insensitive; the remaining arguments are appended to the matching line of `package.ini`, for example `cli test -Unit`, `cli build -Config other.ini`.
+`run` has two entries: `run.sh` (Git Bash / MSYS, `./run.sh`) and `run.cmd` (CMD, `run`). Command names are case-insensitive; the remaining arguments are appended to the matching line of `package.ini`, for example `run test -Unit`, `run build -Config other.ini`. A line either names a tool a package registers in its `Bin=` (`builder-cli`, `builder-test`) or names the interpreter and the file (`powershell -File packages\cli\shot.ps1`).
 
 The program itself is called directly (Git Bash: `./src/clipboard.sh <command>`; CMD: `src\clipboard.cmd <command>`):
 
@@ -338,7 +338,7 @@ Every ini in the repository uses the same syntax (`package.ini`, `builder.ini`, 
 | File | Purpose | Sections |
 |---|---|---|
 | `package.ini` | project metadata and commands, read by `cli` | `Name` / `Version` under `[package]`, the command names under `[scripts]` |
-| `builder.cli.config.ps1` | what `cli build` / `cli bundle` build: one table per target | `Input` / `Scan` / `Output` / `Plugins` / `External` / `Ship` and the rewrite switches |
+| `builder.cli.config.ps1` | what `run build` / `run bundle` build: one table per target | `Input` / `Scan` / `Output` / `Plugins` / `External` / `Ship` and the rewrite switches |
 | `builder.ini` | what a release is: electron-builder's three keys | `Compression`, `[directories]`, `[files]` |
 | `test.config.ps1` | which parts the suite runs | `Test.Groups` / `Test.Exclude` / `Test.Workers` / `Test.Reporter` / `Test.Bail` / `Test.Serial` |
 | `clipboard.ini` | program settings, written by `config init` | base keys are ungrouped; plugin keys live in `[<plugin>]` (a flat `<plugin>.<Key>` still reads) |
@@ -640,9 +640,9 @@ Between a window and the channel sits the store, and the panel takes the rows fr
 
 ### Precompiled parts (optional)
 
-`cli client` and `cli assembly` each produce one optional file with the .NET Framework compiler that ships with Windows: `preload\client.exe` and `main\clipboard.dll`. Without them the program still runs: no `client.exe` means the script client, no `clipboard.dll` means `src\main\*.cs` is compiled on the spot.
+`run client` and `run assembly` each produce one optional file with the .NET Framework compiler that ships with Windows: `preload\client.exe` and `main\clipboard.dll`. Without them the program still runs: no `client.exe` means the script client, no `clipboard.dll` means `src\main\*.cs` is compiled on the spot.
 
-`client.exe` is called only by `clipboard.cmd`, before PowerShell starts (source `preload\client.cs`): when taking over fails it returns `100` to fall back to the script, and passes any other exit code through. `clipboard.dll` is loaded by `main\utils\native.ps1` and ignored when a `.cs` is newer or the file is missing. `cli build` compiles both into `src\` first when the manifest carries the matching `.cs`, then packages them at the paths their entries name.
+`client.exe` is called only by `clipboard.cmd`, before PowerShell starts (source `preload\client.cs`): when taking over fails it returns `100` to fall back to the script, and passes any other exit code through. `clipboard.dll` is loaded by `main\utils\native.ps1` and ignored when a `.cs` is newer or the file is missing. `run build` compiles both into `src\` first when the manifest carries the matching `.cs`, then packages them at the paths their entries name.
 
 The `resident` line of `status`, and the restart after `config set`, only accept the resident serving the current data folder (judged by the `hotkey.txt` it writes into its own `data\`, `(stopped)` on exit), so a second install or a test sandbox is never mistaken for it.
 
@@ -674,10 +674,10 @@ flowchart LR
 Layout, relative to the repository root:
 
 ```
-package.ini             project metadata and commands (Name / Version / the [scripts] names); read by cli
-cli.sh  cli.cmd  cli.ps1  the command entry points (sh / CMD / PowerShell) running package.ini
-builder.cli.ps1         the launcher: hands the command to packages\cli\bin\cli.ps1
-packages/cli/bin/cli.ps1  the command itself: loads the packages, then dispatches one
+package.ini             project metadata and commands (Name / Version / the [scripts] names); read by run
+run.sh  run.cmd  run.ps1  the command entry points (sh / CMD / PowerShell) running package.ini
+packages/cli/bin/cli.ps1  the builder-cli command itself: loads the packages, then dispatches one
+packages/test/bin/test.ps1  the builder-test command: hands every argument to the suite
 builder.cli.config.ps1  what a build produces: one table per target (Input / Scan / Output / Plugins / Ship)
 builder.ini             what a release carries: electron-builder's Compression / [directories] / [files]
 test.config.ps1         which parts the suite runs
@@ -688,7 +688,7 @@ packages/cli/index.ps1  the package's exports; every other file is internal
 packages/cli/config.ps1 resolve builder.cli.config.ps1, presets and the package defaults
 packages/cli/bundle.ps1 build one target or all of them, through packages\bundler
 packages/cli/build.ps1  build, stage and pack a release through packages\builder
-packages/cli/watch.ps1  `cli dev`: watch builder.ini's file list, restart the resident
+packages/cli/watch.ps1  `run dev`: watch builder.ini's file list, restart the resident
 packages/cli/assembly.ps1 / client.ps1  the two C# products (main\clipboard.dll, preload\client.exe)
 packages/cli/bench.ps1  timing for capture, save, parse and filter
 packages/cli/shot.ps1   regenerate the screenshots under docs\ (one folder per language)
@@ -723,7 +723,7 @@ src/                    the program (the only folder packaging reads)
   clipboard.ps1           entry point: parameter binding / $Root / the module groups / runtime paths
   clipboard.ini           settings (built-in defaults until config init writes it)
   data/                   history / log / hotkey cache / media (not committed)
-  client.exe              compiled client (not committed; cli client)
+  client.exe              compiled client (not committed; run client)
   main/utils/base.ps1            constants, version, record format, runtime identity, metrics, every default
   main/utils/native.ps1          platform layer: P/Invoke, WinForms types, assembly loading, fonts, DPI
   renderer/src/utils/theme-stub.ps1      built-in colours and the empty theme
@@ -773,7 +773,7 @@ src/                    the program (the only folder packaging reads)
     history-store.ps1     the history: Rows, Count, IsEmpty, Refresh, Clear, Remove
 
   main/                   the type library, one folder per job, compiled through index.cs
-  main/clipboard.dll      the compiled library (not committed; cli assembly)
+  main/clipboard.dll      the compiled library (not committed; run assembly)
   main/index.cs           the #part list that decides what is compiled: a source nothing reaches
                             is not compiled at all
   main/ui/win.cs            the win32 surface: entry points, the accessibility interface, the caret helpers
@@ -941,22 +941,22 @@ The tool does not run as a Windows service: a service lives in Session 0, with n
 
 | Command | Effect |
 |---|---|
-| `cli test` | every part, in parallel by default |
-| `cli test -Unit` | the unit part only |
-| `cli test -Part transfer,history` | the named parts |
-| `cli test -Changed` | only the parts this change can affect |
-| `cli test -Serial` | one part at a time |
-| `cli test -Workers N` | override the number of workers for this run |
-| `cli test -Reporter verbose` | one line per assertion, no part lines (default `default`; anything else is `unknown reporter`) |
-| `cli test -Bail` | stop starting new parts after the first failure |
-| `cli test -Profile` | print the slowest command-line calls and the command-line time per part |
-| `cli test -NoProgress` | no live window |
-| `cli test -NoColor` | no colour, ASCII markers |
-| `cli test -Source dist\clipboard-0.1.0` | run the command-line parts against a packaged copy |
+| `run test` | every part, in parallel by default |
+| `run test -Unit` | the unit part only |
+| `run test -Part transfer,history` | the named parts |
+| `run test -Changed` | only the parts this change can affect |
+| `run test -Serial` | one part at a time |
+| `run test -Workers N` | override the number of workers for this run |
+| `run test -Reporter verbose` | one line per assertion, no part lines (default `default`; anything else is `unknown reporter`) |
+| `run test -Bail` | stop starting new parts after the first failure |
+| `run test -Profile` | print the slowest command-line calls and the command-line time per part |
+| `run test -NoProgress` | no live window |
+| `run test -NoColor` | no colour, ASCII markers |
+| `run test -Source dist\clipboard-0.1.0` | run the command-line parts against a packaged copy |
 
 `powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run.ps1` works as well.
 
-One part is one file, one process and one sandbox. The worker count defaults to the number of logical processors and can be set by `Test.Workers` in `test.config.ps1` or by `-Workers`; `1` is serial. Which groups a plain `cli test` runs comes from `Test.Groups` (`unit` / `integration` / `e2e`, all three by default). The number of items in a run comes from the `Test Files` / `Tests` lines at the end of `cli test` and is not pinned here.
+One part is one file, one process and one sandbox. The worker count defaults to the number of logical processors and can be set by `Test.Workers` in `test.config.ps1` or by `-Workers`; `1` is serial. Which groups a plain `run test` runs comes from `Test.Groups` (`unit` / `integration` / `e2e`, all three by default). The number of items in a run comes from the `Test Files` / `Tests` lines at the end of `run test` and is not pinned here.
 
 A command-line call inside a part goes through `tests\lib\cli-runner.ps1` by default: the part starts one child process and every command runs in its own runspace inside it, which saves an interpreter start per call. Commands involving plugin script blocks (`pin`, `star`, `highlight`, `transform`, `kind`, `list`…) still start a real child process, because a script block needs a real module scope.
 
@@ -1032,46 +1032,46 @@ Everything runs in a sandbox copy under `%TEMP%` and never touches the repositor
 
 | Command | Effect |
 |---|---|
-| `cli dev` | stop a leftover resident, start `src\clipboard.ps1 serve`, restart it when a loaded file changes; the resident it started is stopped when `dev` exits |
-| `cli test` | the self tests (see above) |
-| `cli bench` | time capture, save, parse and filter in a temporary copy |
-| `cli shot` | regenerate the screenshots under `docs\<language>\`: both panel themes, the compact shape, the hover card, the tray menu, the settings window |
-| `cli build` | package into `dist\` |
-| `cli client` | compile `preload\client.cs` into `src\preload\client.exe` (optional) |
-| `cli assembly` | compile the `#part` list in `src\main\index.cs` into `src\main\clipboard.dll` (optional) |
-| `cli bundle` | build one target declared in `builder.cli.config.ps1`; `-All` builds every one of them; `-Inspect` lists the modules a bundle cannot inline and why |
+| `run dev` | stop a leftover resident, start `src\clipboard.ps1 serve`, restart it when a loaded file changes; the resident it started is stopped when `dev` exits |
+| `run test` | the self tests (see above) |
+| `run bench` | time capture, save, parse and filter in a temporary copy |
+| `run shot` | regenerate the screenshots under `docs\<language>\`: both panel themes, the compact shape, the hover card, the tray menu, the settings window |
+| `run build` | package into `dist\` |
+| `run client` | compile `preload\client.cs` into `src\preload\client.exe` (optional) |
+| `run assembly` | compile the `#part` list in `src\main\index.cs` into `src\main\clipboard.dll` (optional) |
+| `run bundle` | build one target declared in `builder.cli.config.ps1`; `-All` builds every one of them; `-Inspect` lists the modules a bundle cannot inline and why |
 
-`cli.sh` / `cli.cmd` / `cli.ps1` behave the same: they change to the repository root and append the remaining arguments to the matching line of `package.ini`.
+`run.sh` / `run.cmd` / `run.ps1` behave the same: they change to the repository root and append the remaining arguments to the matching line of `package.ini`. `dev`, `build` and `bundle` belong to `builder-cli` (the build tool), `test` to `builder-test`, and `client`, `assembly`, `bench` and `shot` are plain scripts the table runs by path.
 
-`cli dev` keeps the resident running and restarts it when a file changes; it ends when the resident is stopped from outside (the tray's Exit, `clipboard stop`) or when you press `Ctrl+C`, and the restart after a `config set` does not count as an exit. A terminal killed outright needs a manual `clipboard stop`. What it watches is the `[files] Files` list of `builder.ini` (a `!` prefix excludes), plus `packages\**\*.ps1`, `builder.ini`, `builder.cli.config.ps1` and `package.ini`:
+`run dev` keeps the resident running and restarts it when a file changes; it ends when the resident is stopped from outside (the tray's Exit, `clipboard stop`) or when you press `Ctrl+C`, and the restart after a `config set` does not count as an exit. A terminal killed outright needs a manual `clipboard stop`. What it watches is the `[files] Files` list of `builder.ini` (a `!` prefix excludes), plus `packages\**\*.ps1`, `builder.ini`, `builder.cli.config.ps1` and `package.ini`:
 
 - `BaseUrl` (`[directories]` of `builder.ini`): the folder the globs are relative to, `.` = the repository root (the default); an absolute path works.
 - `Files`: globs under `BaseUrl`, written in minimatch's language: `*` and `?` stay inside one name, `**` as a path portion recurses (`src/**` is every file under it), `[abc]` is a character class and `{a,b}` a choice. A `!pattern` removes what it reaches and the list applies in order, so a later pattern can put a file back. A new or deleted file counts as a change, and a missing file a dot-source line points at prints `[!] missing:`.
 - A `.cs` in the list is compiled once before the start, and afterwards only the side that changed: `src/main/*.cs` → `src\main\clipboard.dll`, `src/preload/*.cs` → `src\preload\client.exe`; taking it out of the list stops the compile. The resident is stopped before compiling, or the dll is locked.
 - `Interval`: the poll interval in ms, 600 unless `Watch = @{ Interval = 300 }` is written in `builder.cli.config.ps1`. The restart waits for one quiet interval, so a save that writes in several steps restarts once.
 
-`cli bench` copies `src\` into `%TEMP%` and points `DataDir` at a temporary folder, so capture, save, parse and filter can be measured while a resident is running (`-Records` changes the store size, `-Json` / `-Out` make runs comparable); panel opening and paste injection need a real desktop and are not part of it. `cli shot` copies `src\` into `%PUBLIC%`, seeds an example history and starts the copy's resident to capture the panel, the tray menu and the settings window. The copy carries its own named objects (`Local\clipboard.shot.*`), so a resident already running is unaffected and neither the real history nor the real settings reach a screenshot; `-Part` picks the surface, `-Theme` the theme and `-PreviewRow` the row the card is taken from.
+`run bench` copies `src\` into `%TEMP%` and points `DataDir` at a temporary folder, so capture, save, parse and filter can be measured while a resident is running (`-Records` changes the store size, `-Json` / `-Out` make runs comparable); panel opening and paste injection need a real desktop and are not part of it. `run shot` copies `src\` into `%PUBLIC%`, seeds an example history and starts the copy's resident to capture the panel, the tray menu and the settings window. The copy carries its own named objects (`Local\clipboard.shot.*`), so a resident already running is unaffected and neither the real history nor the real settings reach a screenshot; `-Part` picks the surface, `-Theme` the theme and `-PreviewRow` the row the card is taken from.
 
 Nothing under `packages\` dot-sources a file in `src\`: each package carries the functions it needs.
 
-Every tool prints through `packages\cli\utils\console.ps1`: `[..]` a step (cyan), `[ok]` done with its time (green), `[!]` a warning (yellow), `[x]` a failure (red), with detail lines indented and dimmed; under a second the time is shown in ms. The levels are `silent < error < warn < info`: `-Quiet` keeps only `[!]` and `[x]`, `-Silent` only `[x]`, and `CLIPBOARD_LOG_LEVEL` sets a level for the whole shell (a switch wins). `cli dev -Timestamp` prefixes every line with `HH:mm:ss`. Redirected output, or `NO_COLOR`, leaves plain text and `FORCE_COLOR=1` keeps the colour; `cli nosuchcmd` suggests the closest command name.
+Every tool prints through `packages\cli\utils\console.ps1`: `[..]` a step (cyan), `[ok]` done with its time (green), `[!]` a warning (yellow), `[x]` a failure (red), with detail lines indented and dimmed; under a second the time is shown in ms. The levels are `silent < error < warn < info`: `-Quiet` keeps only `[!]` and `[x]`, `-Silent` only `[x]`, and `CLIPBOARD_LOG_LEVEL` sets a level for the whole shell (a switch wins). `run dev -Timestamp` prefixes every line with `HH:mm:ss`. Redirected output, or `NO_COLOR`, leaves plain text and `FORCE_COLOR=1` keeps the colour; `run nosuchcmd` suggests the closest command name.
 
 `README.md` and `README.zh-CN.md` are the documents for users; the plugin and theme pages live under `docs\<language>\`, and `docs\release-notes\` holds one file per release, named after its tag (`v0.5.0.md`). A release note is written in Chinese only, and the same text is what the GitHub release shows.
 
 ## Packaging
 
-`cli build` runs every target `builder.cli.config.ps1` declares and writes into `dist\clipboard-<version>\` (the version comes from `package.ini`). The window layer is built the way a bundler splits one: each entry is resolved on its own, every module carries the set of entries that reach it, and modules with the same set form one chunk. A window's own chunk lands as `renderer\<name>.<hash>.ps1`, the chunks several windows load land under `renderer\assets\<name>-<hash>.ps1`, and `renderer\manifest.ini` lists them in load order together with the modules each one carries. `clipboard.ps1` dot-sources that list when a command opens a window. Only the modules the window layer owns leave the package: a module the base layer or a command like `status` needs keeps its own file, and a module an entry declares as external is never bundled. The two C# products land the same way: `main\clipboard.dll` and `preload\client.exe`, one folder per process. Each target owns one folder under `out\` (`OutDir=`, `out` by default), and a run empties that folder before it writes: a chunk named after an earlier build never stays beside the new one. An absolute `Output=` or `-Out` names a file outside that rule and is left alone.
+`run build` runs every target `builder.cli.config.ps1` declares and writes into `dist\clipboard-<version>\` (the version comes from `package.ini`). The window layer is built the way a bundler splits one: each entry is resolved on its own, every module carries the set of entries that reach it, and modules with the same set form one chunk. A window's own chunk lands as `renderer\<name>.<hash>.ps1`, the chunks several windows load land under `renderer\assets\<name>-<hash>.ps1`, and `renderer\manifest.ini` lists them in load order together with the modules each one carries. `clipboard.ps1` dot-sources that list when a command opens a window. Only the modules the window layer owns leave the package: a module the base layer or a command like `status` needs keeps its own file, and a module an entry declares as external is never bundled. The two C# products land the same way: `main\clipboard.dll` and `preload\client.exe`, one folder per process. Each target owns one folder under `out\` (`OutDir=`, `out` by default), and a run empties that folder before it writes: a chunk named after an earlier build never stays beside the new one. An absolute `Output=` or `-Out` names a file outside that rule and is left alone.
 
-`cli bundle` is the second half of that tooling and is independent of it: it builds the targets `builder.cli.config.ps1` declares with the stages named in each target's `Plugins` chain (`resolve`, `treeshake`, `merge`, `render`, `verify`) and the plugin files under `packages\bundler\plugins\`. `Input` is one path, a list of files, or a table of `key = @{ Entry = '<path>' }`; a table of entries takes the modules from the call graph instead of a written list. A module boundary is always a parser node, never a line of text: a bundle is emitted statement by statement through each node's extent, then read back and compared with the modules it was built from. `cli bundle -Inspect` lists, for every file under `src\`, whether a bundle could inline it (a `param` block, a `begin`/`process`/`end` block or a `trap` cannot be glued into a larger script) and which modules call a name nothing can follow. `cli build` runs every target marked `Ship` itself: the chunks are merged there, then minified and renamed by the same tables as the files beside them, so a package carries the window layer as `renderer\<name>.<hash>.ps1` plus `renderer\assets\` and leaves the modules it merged out of the copy.
+`run bundle` is the second half of that tooling and is independent of it: it builds the targets `builder.cli.config.ps1` declares with the stages named in each target's `Plugins` chain (`resolve`, `treeshake`, `merge`, `render`, `verify`) and the plugin files under `packages\bundler\plugins\`. `Input` is one path, a list of files, or a table of `key = @{ Entry = '<path>' }`; a table of entries takes the modules from the call graph instead of a written list. A module boundary is always a parser node, never a line of text: a bundle is emitted statement by statement through each node's extent, then read back and compared with the modules it was built from. `run bundle -Inspect` lists, for every file under `src\`, whether a bundle could inline it (a `param` block, a `begin`/`process`/`end` block or a `trap` cannot be glued into a larger script) and which modules call a name nothing can follow. `run build` runs every target marked `Ship` itself: the chunks are merged there, then minified and renamed by the same tables as the files beside them, so a package carries the window layer as `renderer\<name>.<hash>.ps1` plus `renderer\assets\` and leaves the modules it merged out of the copy.
 
-A module can state its own edges with two directives at the top of the file: `#@use <module id>, ...` for the modules it calls and `#@export <function>, ...` for what the rest of the program may call. They are comments on purpose - they describe the build, not the program, so the shipped copy runs the same file with no cost and nothing at run time has to understand them. With them the bundler checks the entry *before* building: a call to a function its module does not export, a call into a module the entry does not list (the mistake that otherwise only shows up as "module group too small"), an export naming a function that does not exist, and the same name exported twice. Modules without directives are left unchecked and only make the "would drop" answer unknown. `cli bundle -Inspect -Suggest` prints, for every module, the `#@use` and `#@export` lines its real calls imply.
+A module can state its own edges with two directives at the top of the file: `#@use <module id>, ...` for the modules it calls and `#@export <function>, ...` for what the rest of the program may call. They are comments on purpose - they describe the build, not the program, so the shipped copy runs the same file with no cost and nothing at run time has to understand them. With them the bundler checks the entry *before* building: a call to a function its module does not export, a call into a module the entry does not list (the mistake that otherwise only shows up as "module group too small"), an export naming a function that does not exist, and the same name exported twice. Modules without directives are left unchecked and only make the "would drop" answer unknown. `run bundle -Inspect -Suggest` prints, for every module, the `#@use` and `#@export` lines its real calls imply.
 
-`cli bundle -All` builds every target the file declares, one Windows PowerShell process per target, up to `Workers` at a time (`0` = one per logical processor, capped at the number of targets; the default and the rest of `Bundler` live in `packages\cli\config.ps1`, and a `Bundler = @{ Workers = 2 }` section overrides it). Each worker writes its own output and its own temp folder, and the logs are printed in the order the file declares the targets, so a parallel run reads like a serial one.
+`run bundle -All` builds every target the file declares, one Windows PowerShell process per target, up to `Workers` at a time (`0` = one per logical processor, capped at the number of targets; the default and the rest of `Bundler` live in `packages\cli\config.ps1`, and a `Bundler = @{ Workers = 2 }` section overrides it). Each worker writes its own output and its own temp folder, and the logs are printed in the order the file declares the targets, so a parallel run reads like a serial one.
 
 ```powershell
-cli build                          # builder.cli.config.ps1 + builder.ini
-cli build -Config other.ps1        # another target table
-cli build -BuilderConfig other.ini # another release description
+run build                          # builder.cli.config.ps1 + builder.ini
+run build -Config other.ps1        # another target table
+run build -BuilderConfig other.ini # another release description
 ```
 
 A target in `builder.cli.config.ps1` (a PowerShell expression returning one ordered table):
@@ -1086,7 +1086,7 @@ A target in `builder.cli.config.ps1` (a PowerShell expression returning one orde
 | `Output` | where it lands, relative to the repository root; for a C# target the path doubles as the package path |
 | `ChunkOutput` | the template for the chunks an entry-driven target splits into (`[name]` and `[hash]`) |
 | `External` | modules the target does not carry: a `#@use` edge into one is a file boundary, not a missing list entry |
-| `Ship` | `$true` puts the output in the release: `cli build` merges it and `builder.ini` leaves its sources out of `Files` |
+| `Ship` | `$true` puts the output in the release: `run build` merges it and `builder.ini` leaves its sources out of `Files` |
 | `Target` | `library` (default) or `exe`, for a C# target |
 | `Append` | further globs added to a C# target's file list, after the declared ones |
 | `Keep` | names the bundle must not rename |
@@ -1101,9 +1101,9 @@ A target in `builder.cli.config.ps1` (a PowerShell expression returning one orde
 | `directories.BaseUrl` | `.` | the folder `Files` and the output folder are relative to; `.` = the repository root, an absolute path works |
 | `files.Files` | see below | the file list of the package, in electron-builder's pattern language (minimatch): `*` and `?` stay inside one name, `**` recurses as a path portion, `{a,b}` is a choice; a `!` prefix removes and the list applies in order |
 
-`cli build` also writes `builder-effective-config.ini` into `directories.output`, beside the package folder: the settings the build resolved and the version it packed. It is electron-builder's `builder-effective-config.yaml` in the format this repository reads.
+`run build` also writes `builder-effective-config.ini` into `directories.output`, beside the package folder: the settings the build resolved and the version it packed. It is electron-builder's `builder-effective-config.yaml` in the format this repository reads.
 
-`cli bundle -Entry <name>` builds one target and `-All` builds every one. `cli client` and `cli assembly` compile the `Preload` and `Main` targets, and `cli build` compiles both through the same call, so no tool spells out a compiler flag of its own.
+`run bundle -Entry <name>` builds one target and `-All` builds every one. `run client` and `run assembly` compile the `Preload` and `Main` targets, and `run build` compiles both through the same call, so no tool spells out a compiler flag of its own.
 
 `[files] Files` defaults to `src/**/*.ps1,src/**/*.cs,src/**/*.ini,src/**/*.cmd,src/**/*.sh,scripts/**/*.bat,LICENSE,README.md,README.zh-CN.md`. What a release leaves out is expressed with `!`, and because the list applies in order a pattern after it can name a file back; the folders no pattern reaches - `src\data\`, `tests\`, `dist\`, `.git`, the `docs\` pages - never enter it.
 
@@ -1130,11 +1130,11 @@ Two workflows under `.github\workflows\`, both on `windows-latest`.
 
 | Workflow | Trigger | Steps |
 |---|---|---|
-| `ci.yml` | push to `master`, a pull request, manual (the end-to-end job only manually) | print the PowerShell version → `cli test -Unit -Integration`; no packaging |
+| `ci.yml` | push to `master`, a pull request, manual (the end-to-end job only manually) | print the PowerShell version → `run test -Unit -Integration`; no packaging |
 | `release.yml` | a `v*` tag, manual | check the tag against `package.ini` → run the tests → package → write `SHA256SUMS.txt` → publish the release |
 
 - The structure group checks the layout and the ASCII rule, the unit group calls internal functions by name, and the integration group starts child processes and checks the CLI capability by capability.
-- The end-to-end group needs a real desktop and a hosted runner has no interactive session, so it only runs when triggered by hand; verify locally with `cli test -E2E`.
+- The end-to-end group needs a real desktop and a hosted runner has no interactive session, so it only runs when triggered by hand; verify locally with `run test -E2E`.
 - One run per branch (`concurrency`), and the `test` job is capped at 20 minutes.
 - A release changes `Version=` in `package.ini` only, then tags `v<version>` and pushes; a tag that disagrees with the version fails the workflow in its first step. A manual `release.yml` publishes a release named after `package.ini` and overwrites the assets when it already exists.
 

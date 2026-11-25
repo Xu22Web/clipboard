@@ -2,8 +2,8 @@
 #
 # This package is the electron-vite half of the tooling: it reads the target file (cli.ini),
 # builds every target through packages\bundler, and hands the result to packages\builder. It is
-# also the runner the cli binary starts, so the command table in package.ini and the two config
-# files are read here and nowhere else.
+# also the runner the builder-cli binary starts, so the command table in package.ini and the two
+# config files are read here and nowhere else.
 #
 # What is visible from outside is package.ini's Exports list and nothing else: the modules under
 # utils\, config.ps1 and the command scripts stay behind this file.
@@ -92,6 +92,37 @@ function Get-CommandLine([string]$name) {
   return [string]$script:Pkg['scripts.' + $name]
 }
 
+# The commands the packages register: Bin= in a package.ini, the way package.json's bin names an
+# executable. A script line may start with one of these names, so the line reads "builder-cli
+# build" instead of a path to a file - npm puts node_modules\.bin on PATH for the same reason.
+# A line may also name the interpreter and the file, as "node tools/shot.js" does.
+$script:PkgBins = $null
+
+function Get-PackageBins {
+  if ($null -ne $script:PkgBins) { return $script:PkgBins }
+  $bins = @{}
+  foreach ($dir in @(Get-ChildItem -LiteralPath $script:PackagesRoot -Directory -ErrorAction SilentlyContinue)) {
+    $file = Join-Path $dir.FullName 'package.ini'
+    if (-not (Test-Path -LiteralPath $file)) { continue }
+    $pkg = Read-PackageFile $file
+    if (-not $pkg.Bin) { continue }
+    # Bin= is "name=path" or just "path": npm's bin names an executable that may differ from the
+    # package name, the way electron-vite ships "electron-vite" as the command of its own package
+    $binName = [string]$pkg.Name
+    $binRel = [string]$pkg.Bin
+    $eq = $binRel.IndexOf('=')
+    if ($eq -gt 0) {
+      $binName = $binRel.Substring(0, $eq).Trim()
+      $binRel = $binRel.Substring($eq + 1).Trim()
+    }
+    $path = Join-Path $dir.FullName ($binRel -replace '/', '\')
+    if (-not (Test-Path -LiteralPath $path)) { throw ($pkg.Name + ': Bin= names no file: ' + $binRel) }
+    $bins[$binName.ToLowerInvariant()] = $path
+  }
+  $script:PkgBins = $bins
+  return $bins
+}
+
 function Show-Commands {
   $name = Get-PkgValue 'name'
   $version = Get-PkgValue 'version'
@@ -104,7 +135,7 @@ function Show-Commands {
     Write-Note 'no scripts.<name>= lines in package.ini'
     return
   }
-  Write-Note 'usage: cli <command> [args]'
+  Write-Note 'usage: run <command> [args]'
   Write-Host ''
   $width = 8
   foreach ($one in $order) { if ($one.Length -gt $width) { $width = $one.Length } }
@@ -169,12 +200,30 @@ function Invoke-CliCommand {
     if ($flag -eq '-q' -or $flag -eq '-quiet' -or $flag -eq '--quiet') { Set-LogLevel 'warn' }
     elseif ($flag -eq '-silent' -or $flag -eq '--silent') { Set-LogLevel 'silent' }
   }
+  # the line may start with a tool; the tool is a file a package registered in Bin=. Resolving the
+  # name here is the runner's half of npm: npm puts node_modules\.bin on PATH, this hands the file
+  # to PowerShell instead. A line that starts with anything else runs as written.
+  $binPath = ''
+  $binArgs = @()
+  $tokens = @($line.Trim() -split '\s+')
+  if ($tokens.Count -gt 0) {
+    $head = ([string]$tokens[0]).Trim('"', "'")
+    $bins = Get-PackageBins
+    if ($bins.ContainsKey($head.ToLowerInvariant())) {
+      $binPath = $bins[$head.ToLowerInvariant()]
+      if ($tokens.Count -gt 1) { $binArgs = @($tokens[1..($tokens.Count - 1)]) }
+    }
+  }
   Write-Command $title $shown $line
   $global:LASTEXITCODE = 0
   Set-Location -LiteralPath $script:RepoRoot
   # the output goes straight to the host: a function hands its caller whatever it printed, and
   # this one has to hand back the exit code only
-  Invoke-Expression $line | Out-Host
+  if ($binPath) {
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -File $binPath @binArgs | Out-Host
+  } else {
+    Invoke-Expression $line | Out-Host
+  }
   $sw.Stop()
   $code = $LASTEXITCODE
   if ($null -eq $code) { $code = 0 }

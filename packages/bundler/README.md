@@ -1,6 +1,6 @@
 # bundler
 
-The engine behind `cli bundle` and `cli build`. It is handed one resolved target and returns
+The engine behind `run bundle` and `run build`. It is handed one resolved target and returns
 file paths: it reads the modules the entry reaches through the call graph and the `#@use` edges,
 marks the definitions a load-time path can reach, groups the modules by the entries that reach
 them, writes one chunk per group plus `manifest.ini`, and verifies every chunk against the

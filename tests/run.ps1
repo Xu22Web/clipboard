@@ -20,12 +20,12 @@
   behind each other; everything else runs beside them. The cli parts share nothing, so they
   are only limited by -Workers.
 
-      cli test                        every part, one per logical processor
-      cli test -Unit                  one part, by name
-      cli test -Part cli,history      several parts, by name
-      cli test -Workers 6             fewer at a time (package.ini [test] Workers is the default,
+      run test                        every part, one per logical processor
+      run test -Unit                  one part, by name
+      run test -Part cli,history      several parts, by name
+      run test -Workers 6             fewer at a time (package.ini [test] Workers is the default,
                                       0 = one per logical processor)
-      cli test -Serial                one after another
+      run test -Serial                one after another
 #>
 [CmdletBinding()]
 param(
@@ -101,7 +101,7 @@ function Split-List([string]$value) {
 }
 
 # Which parts a change can break. A heuristic for the edit-run loop: anything that is not
-# obviously local to one part falls back to the whole suite, and `cli build` stays the check
+# obviously local to one part falls back to the whole suite, and `run build` stays the check
 # that the package itself is still right.
 $script:AllParts = @('unit', 'history', 'transfer', 'settings', 'config', 'marks', 'pins', 'serve')
 function Get-ChangedParts([string[]]$Given) {

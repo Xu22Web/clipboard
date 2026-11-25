@@ -41,19 +41,19 @@ Windows 10 / 11 的剪贴板历史工具，纯 PowerShell 5.1 实现，无第三
 
 ## 快速开始
 
-可直接运行程序本体（`src\clipboard.ps1` + `src\main\` / `src\preload\` / `src\renderer\` / `src\shared\`），也可在仓库根用 `cli` 执行 `package.ini` 中声明的命令。
+可直接运行程序本体（`src\clipboard.ps1` + `src\main\` / `src\preload\` / `src\renderer\` / `src\shared\`），也可在仓库根用 `run` 执行 `package.ini` 中声明的命令。
 
 ```powershell
-cli              # 列出 package.ini 中的命令
-cli dev          # 启动常驻进程，被加载的文件变化后自动重启
-cli test         # 运行全部自测
-cli build        # 打包到 dist\clipboard-<version>\
-cli client       # 编译可选的原生客户端 src\preload\client.exe
-cli assembly     # 编译可选的类型库 src\main\clipboard.dll
-cli bundle       # 按 builder.cli.config.ps1 构建一个入口（-Inspect 列出无法内联的模块）
+run              # 列出 package.ini 中的命令
+run dev          # 启动常驻进程，被加载的文件变化后自动重启
+run test         # 运行全部自测
+run build        # 打包到 dist\clipboard-<version>\
+run client       # 编译可选的原生客户端 src\preload\client.exe
+run assembly     # 编译可选的类型库 src\main\clipboard.dll
+run bundle       # 按 builder.cli.config.ps1 构建一个入口（-Inspect 列出无法内联的模块）
 ```
 
-`cli` 有两个入口：`cli.sh`（Git Bash / MSYS，`./cli.sh`）与 `cli.cmd`（CMD，`cli`）；命令名不区分大小写，其余参数追加到 `package.ini` 对应行，例如 `cli test -Unit`、`cli build -Config other.ini`。
+`run` 有两个入口：`run.sh`（Git Bash / MSYS，`./run.sh`）与 `run.cmd`（CMD，`run`）；命令名不区分大小写，其余参数追加到 `package.ini` 对应行，例如 `run test -Unit`、`run build -Config other.ini`。命令行有两种写法：写包在 `Bin=` 里注册的工具名（`builder-cli`、`builder-test`），或写解释器加文件（`powershell -File packages\cli\shot.ps1`）。
 
 程序本身可直接调用（Git Bash：`./src/clipboard.sh <命令>`；CMD：`src\clipboard.cmd <命令>`）：
 
@@ -337,7 +337,7 @@ cli bundle       # 按 builder.cli.config.ps1 构建一个入口（-Inspect 列�
 | 文件 | 用途 | 段 |
 |---|---|---|
 | `package.ini` | 项目元数据与命令，`cli` 读取 | `[package]` 的 `Name` / `Version`，`[scripts]` 的命令名 |
-| `builder.cli.config.ps1` | `cli build` / `cli bundle` 构建什么：一张表一个目标 | `Input` / `Scan` / `Output` / `Plugins` / `External` / `Ship` 及压缩改名开关 |
+| `builder.cli.config.ps1` | `run build` / `run bundle` 构建什么：一张表一个目标 | `Input` / `Scan` / `Output` / `Plugins` / `External` / `Ship` 及压缩改名开关 |
 | `builder.ini` | 发布包里放什么：electron-builder 的三个键 | `Compression`、`[directories]`、`[files]` |
 | `test.config.ps1` | 测试跑哪些组 | `Test.Groups` / `Test.Exclude` / `Test.Workers` / `Test.Reporter` / `Test.Bail` / `Test.Serial` |
 | `clipboard.ini` | 程序设置，由 `config init` 生成 | 基础键不分组；插件键写在 `[<插件名>]` 段（平铺的 `<插件名>.<Key>` 仍可读） |
@@ -639,9 +639,9 @@ clipboard config set entry-actions.Reveal 0
 
 ### 提前编译的产物（可选）
 
-`cli client` 与 `cli assembly` 用系统自带的 .NET Framework 编译器各产出一个可选文件：`preload\client.exe` 与 `main\clipboard.dll`。两者缺失时程序照常运行：缺 `client.exe` 回退到脚本客户端，缺 `clipboard.dll` 时按 `src\main\*.cs` 现场编译。
+`run client` 与 `run assembly` 用系统自带的 .NET Framework 编译器各产出一个可选文件：`preload\client.exe` 与 `main\clipboard.dll`。两者缺失时程序照常运行：缺 `client.exe` 回退到脚本客户端，缺 `clipboard.dll` 时按 `src\main\*.cs` 现场编译。
 
-`client.exe` 只由 `clipboard.cmd` 在启动 PowerShell 之前调用（源码 `preload\client.cs`）：接管失败时以退出码 `100` 退回脚本，其它退出码原样透传。`clipboard.dll` 由 `main\utils\native.ps1` 载入，任一 `.cs` 比它新或文件缺失时不使用。两者都由 `cli build` 在清单含对应 `.cs` 时先编到 `src\` 下，再按各自入口声明的路径入包。
+`client.exe` 只由 `clipboard.cmd` 在启动 PowerShell 之前调用（源码 `preload\client.cs`）：接管失败时以退出码 `100` 退回脚本，其它退出码原样透传。`clipboard.dll` 由 `main\utils\native.ps1` 载入，任一 `.cs` 比它新或文件缺失时不使用。两者都由 `run build` 在清单含对应 `.cs` 时先编到 `src\` 下，再按各自入口声明的路径入包。
 
 `status` 的 `resident` 行与 `config set` 之后的自动重启只认服务于当前数据目录的常驻进程（依据是它写在自身 `data\` 下的 `hotkey.txt`，退出时写成 `(stopped)`），另装一份或运行测试沙箱时不会误报。
 
@@ -673,10 +673,10 @@ flowchart LR
 文件布局（相对仓库根）：
 
 ```
-package.ini             项目元数据与命令：Name / Version / [scripts] 下的命令名（cli 读取）
-cli.sh  cli.cmd  cli.ps1   命令入口（sh / CMD / PowerShell），执行 package.ini 中的命令
-builder.cli.ps1         启动器：把命令交给 packages\cli\bin\cli.ps1
-packages/cli/bin/cli.ps1  命令本身：装配各包并分发
+package.ini             项目元数据与命令：Name / Version / [scripts] 下的命令名（run 读取）
+run.sh  run.cmd  run.ps1   命令入口（sh / CMD / PowerShell），执行 package.ini 中的命令
+packages/cli/bin/cli.ps1  builder-cli 命令本身：装配各包并分发
+packages/test/bin/test.ps1  builder-test 命令：把全部参数交给测试套件
 builder.cli.config.ps1  构建什么：一个目标一节（Input / Scan / Output / Plugins / Ship）
 builder.ini             发布包里放什么：electron-builder 的 Compression / [directories] / [files]
 test.config.ps1         测试跑哪些组
@@ -687,7 +687,7 @@ packages/cli/index.ps1  包的导出；其余文件都在包内
 packages/cli/config.ps1 解析 builder.cli.config.ps1、preset 与包内默认值
 packages/cli/bundle.ps1 构建一个或全部目标，交给 packages\bundler
 packages/cli/build.ps1  构建、暂存并打包发布，交给 packages\builder
-packages/cli/watch.ps1  `cli dev`：监视 builder.ini 的文件清单并重启常驻
+packages/cli/watch.ps1  `run dev`：监视 builder.ini 的文件清单并重启常驻
 packages/cli/assembly.ps1 / client.ps1  两个 C# 产物（main\clipboard.dll、preload\client.exe）
 packages/cli/bench.ps1  性能测量（捕获、保存、解析、过滤）
 packages/cli/shot.ps1   重新生成 docs\ 下的界面截图
@@ -771,7 +771,7 @@ src/                    程序本体（打包只读这个目录）
     history-store.ps1     历史：Rows / Count / IsEmpty / Refresh / Clear / Remove
 
   main/                  类型库：一个目录一件事，统一由 index.cs 决定编译集合
-  main/clipboard.dll      类型库产物（不入库；cli assembly 生成）
+  main/clipboard.dll      类型库产物（不入库；run assembly 生成）
   main/index.cs           决定编译集合的 #part 清单：没人引用的源文件根本不参与编译
   main/search/search.cs     Cb.Search，搜索框使用的行过滤
   main/reactivity/          Cb.ReactiveBag、Cb.Reactive、Cb.ComputedCell：陷阱、批量写入的调度、派生值
@@ -933,22 +933,22 @@ CBHIST RS <数据版本> RS <flags> US <epoch 秒> US <extra> US <payload> RS <f
 
 | 命令 | 说明 |
 |---|---|
-| `cli test` | 全部分件，默认并行 |
-| `cli test -Unit` | 只跑单元分件 |
-| `cli test -Part transfer,history` | 指定分件 |
-| `cli test -Changed` | 只跑本次改动可能影响到的分件 |
-| `cli test -Serial` | 逐个运行 |
-| `cli test -Workers N` | 覆盖本次运行的并发数 |
-| `cli test -Reporter verbose` | 每条断言一行，不打印分件行；默认 `default`，其它值报 `unknown reporter` |
-| `cli test -Bail` | 首个失败后不再启动新分件 |
-| `cli test -Profile` | 打印最慢的命令行调用与每个分件的命令行耗时 |
-| `cli test -NoProgress` | 不绘制实时窗口 |
-| `cli test -NoColor` | 不输出颜色，标记改用 ASCII |
-| `cli test -Source dist\clipboard-0.1.0` | 对打包副本跑命令行分件 |
+| `run test` | 全部分件，默认并行 |
+| `run test -Unit` | 只跑单元分件 |
+| `run test -Part transfer,history` | 指定分件 |
+| `run test -Changed` | 只跑本次改动可能影响到的分件 |
+| `run test -Serial` | 逐个运行 |
+| `run test -Workers N` | 覆盖本次运行的并发数 |
+| `run test -Reporter verbose` | 每条断言一行，不打印分件行；默认 `default`，其它值报 `unknown reporter` |
+| `run test -Bail` | 首个失败后不再启动新分件 |
+| `run test -Profile` | 打印最慢的命令行调用与每个分件的命令行耗时 |
+| `run test -NoProgress` | 不绘制实时窗口 |
+| `run test -NoColor` | 不输出颜色，标记改用 ASCII |
+| `run test -Source dist\clipboard-0.1.0` | 对打包副本跑命令行分件 |
 
 也可直接运行 `powershell -NoProfile -ExecutionPolicy Bypass -Sta -File tests\run.ps1`。
 
-一个分件对应一个文件、一个进程、一个沙箱。并发数取逻辑处理器数，可由 `test.config.ps1` 的 `Test.Workers` 或 `-Workers` 指定，`1` 为串行；不带开关的 `cli test` 跑哪些组由 `Test.Groups` 决定（`unit` / `integration` / `e2e`，默认三组都跑）；每次运行的项数由 `cli test` 末尾的 `Test Files` / `Tests` 两行给出，不在文档里固定。
+一个分件对应一个文件、一个进程、一个沙箱。并发数取逻辑处理器数，可由 `test.config.ps1` 的 `Test.Workers` 或 `-Workers` 指定，`1` 为串行；不带开关的 `run test` 跑哪些组由 `Test.Groups` 决定（`unit` / `integration` / `e2e`，默认三组都跑）；每次运行的项数由 `run test` 末尾的 `Test Files` / `Tests` 两行给出，不在文档里固定。
 
 分件内的命令行调用默认经 `tests\lib\cli-runner.ps1`：分件启动时拉起一个子进程，每条命令在其内的独立 runspace 中执行，省去每次解释器启动。插件脚本块相关的命令（`pin`、`star`、`highlight`、`transform`、`kind`、`list` 等）仍起真实子进程，因为脚本块需要真实的模块加载作用域。
 
@@ -1025,46 +1025,46 @@ Describe 'int' {
 
 | 命令 | 作用 |
 |---|---|
-| `cli dev` | 停止残留常驻进程，启动 `src\clipboard.ps1 serve`，被加载的文件变化后重启；`dev` 退出时一并停掉它启动的常驻进程 |
-| `cli test` | 运行自测（开关见上一节） |
-| `cli bench` | 在临时副本里计时捕获、保存、解析与过滤 |
-| `cli shot` | 重新生成 `docs\<语言>\screenshot-*.png`：历史面板深浅两套、紧凑形态、悬停预览卡、托盘菜单、设置窗口 |
-| `cli build` | 打包到 `dist\` |
-| `cli client` | 编译 `preload\client.cs` → `src\preload\client.exe`（可选） |
-| `cli assembly` | 编译 `src\main\index.cs` 的 `#part` 清单 → `src\main\clipboard.dll`（可选） |
-| `cli bundle` | 构建 `builder.cli.config.ps1` 声明的一个目标；`-Entry` 指定目标名；`-Inspect` 列出哪些模块无法被内联及原因 |
+| `run dev` | 停止残留常驻进程，启动 `src\clipboard.ps1 serve`，被加载的文件变化后重启；`dev` 退出时一并停掉它启动的常驻进程 |
+| `run test` | 运行自测（开关见上一节） |
+| `run bench` | 在临时副本里计时捕获、保存、解析与过滤 |
+| `run shot` | 重新生成 `docs\<语言>\screenshot-*.png`：历史面板深浅两套、紧凑形态、悬停预览卡、托盘菜单、设置窗口 |
+| `run build` | 打包到 `dist\` |
+| `run client` | 编译 `preload\client.cs` → `src\preload\client.exe`（可选） |
+| `run assembly` | 编译 `src\main\index.cs` 的 `#part` 清单 → `src\main\clipboard.dll`（可选） |
+| `run bundle` | 构建 `builder.cli.config.ps1` 声明的一个目标；`-Entry` 指定目标名；`-Inspect` 列出哪些模块无法被内联及原因 |
 
-`cli.sh` / `cli.cmd` / `cli.ps1` 三个入口行为一致，均先把工作目录切到仓库根，再把余下参数追加到 `package.ini` 中对应的命令行。
+`run.sh` / `run.cmd` / `run.ps1` 三个入口行为一致，均先把工作目录切到仓库根，再把余下参数追加到 `package.ini` 中对应的命令行。`dev` / `build` / `bundle` 属于 `builder-cli`（构建工具），`test` 属于 `builder-test`，`client` / `assembly` / `bench` / `shot` 则是表中按路径直接运行的普通脚本。
 
-`cli dev` 持续运行常驻进程，文件变化后重启；被外部停止（托盘退出、`clipboard stop`）或按 `Ctrl+C` 时结束，`config set` 引起的自动重启不触发退出。终端被直接杀掉时需手动 `clipboard stop`。监视范围取自 `builder.ini` 的 `[files] Files`（`!` 前缀为排除），另加 `packages\**\*.ps1`、`builder.ini`、`builder.cli.config.ps1`、`package.ini`：
+`run dev` 持续运行常驻进程，文件变化后重启；被外部停止（托盘退出、`clipboard stop`）或按 `Ctrl+C` 时结束，`config set` 引起的自动重启不触发退出。终端被直接杀掉时需手动 `clipboard stop`。监视范围取自 `builder.ini` 的 `[files] Files`（`!` 前缀为排除），另加 `packages\**\*.ps1`、`builder.ini`、`builder.cli.config.ps1`、`package.ini`：
 
 - `BaseUrl`（`builder.ini` 的 `[directories]`）：通配的基准目录，`.` = 仓库根（默认），可写绝对路径。
 - `Files`：相对 `BaseUrl` 的通配，语法为 minimatch：`*` 与 `?` 不跨目录，`**` 作为路径段时递归（`src/**` 即其下全部文件），`[abc]` 是字符集，`{a,b}` 是备选；`!` 前缀移除它命中的文件，列表按顺序生效，所以后面的通配可以再把它加回来。新增与删除也算变化，入口 dot-source 行指向的缺失文件会打印 `[!] missing:`。
 - 清单里的 `.cs` 在启动前编译一次，之后哪边变了只重编那一边：`src/main/*.cs` → `src\main\clipboard.dll`，`src/preload/*.cs` → `src\preload\client.exe`；移出清单即不编译。编译前先停常驻进程，否则 dll 被占用。
 - `Interval`：轮询间隔（毫秒），默认 600；在 `builder.cli.config.ps1` 写 `Watch = @{ Interval = 300 }` 可改。连续一个间隔无变化才重启，一次保存分多步写入只重启一次。
 
-`cli bench` 在 `%TEMP%` 下复制 `src\` 并把 `DataDir` 指向临时目录，可在常驻进程运行时测量捕获、保存、解析与过滤的耗时（`-Records` 改库规模，`-Json` / `-Out` 便于对比）；面板打开与粘贴注入需要真实桌面，不在其中。`cli shot` 把 `src\` 复制到 `%PUBLIC%`，写入示例历史后启动副本里的常驻进程，截取面板、托盘菜单与设置窗口。副本使用自己的命名对象（`Local\clipboard.shot.*`），已在运行的常驻进程不受影响，真实历史与配置不进入截图；`-Part` 选界面、`-Theme` 选主题、`-PreviewRow` 指定预览卡取自哪一行。
+`run bench` 在 `%TEMP%` 下复制 `src\` 并把 `DataDir` 指向临时目录，可在常驻进程运行时测量捕获、保存、解析与过滤的耗时（`-Records` 改库规模，`-Json` / `-Out` 便于对比）；面板打开与粘贴注入需要真实桌面，不在其中。`run shot` 把 `src\` 复制到 `%PUBLIC%`，写入示例历史后启动副本里的常驻进程，截取面板、托盘菜单与设置窗口。副本使用自己的命名对象（`Local\clipboard.shot.*`），已在运行的常驻进程不受影响，真实历史与配置不进入截图；`-Part` 选界面、`-Theme` 选主题、`-PreviewRow` 指定预览卡取自哪一行。
 
 `packages\` 下的脚本不 dot-source `src\` 的任何文件：各包自带所需函数。
 
-工具的日志都经 `packages\cli\utils\console.ps1` 输出：`[..]` 步骤（青）、`[ok]` 完成并附耗时（绿）、`[!]` 警告（黄）、`[x]` 失败（红），明细行缩进变暗；耗时不足一秒显示毫秒。级别为 `silent < error < warn < info`：`-Quiet` 只留 `[!]` 与 `[x]`，`-Silent` 只留 `[x]`，环境变量 `CLIPBOARD_LOG_LEVEL` 可为整条 shell 指定级别（命令行开关优先），`cli dev -Timestamp` 给每行加 `HH:mm:ss`。输出被重定向、或设置了 `NO_COLOR` 时只留纯文本，`FORCE_COLOR=1` 强制保留颜色；`cli nosuchcmd` 会给出最接近的命令名。
+工具的日志都经 `packages\cli\utils\console.ps1` 输出：`[..]` 步骤（青）、`[ok]` 完成并附耗时（绿）、`[!]` 警告（黄）、`[x]` 失败（红），明细行缩进变暗；耗时不足一秒显示毫秒。级别为 `silent < error < warn < info`：`-Quiet` 只留 `[!]` 与 `[x]`，`-Silent` 只留 `[x]`，环境变量 `CLIPBOARD_LOG_LEVEL` 可为整条 shell 指定级别（命令行开关优先），`run dev -Timestamp` 给每行加 `HH:mm:ss`。输出被重定向、或设置了 `NO_COLOR` 时只留纯文本，`FORCE_COLOR=1` 强制保留颜色；`run nosuchcmd` 会给出最接近的命令名。
 
 `README.md` 与 `README.zh-CN.md` 是对外文档，插件与主题的说明页在 `docs\<语言>\`；`docs\release-notes\` 按标签名放每个版本的发布说明（如 `v0.5.0.md`），只用中文，GitHub 上的发布说明与该文件一致。
 
 ## 打包分发
 
-`cli build` 会跑 `builder.cli.config.ps1` 声明的每个目标，产物写入 `dist\clipboard-<version>\`（版本取自 `package.ini`）。窗口层按打包器的分块方式构建：每个入口单独求闭包，每个模块带上能到达它的入口集合，集合相同的模块才能合成一块。窗口自己的块落到 `renderer\<name>.<hash>.ps1`，多个窗口共用的块落到 `renderer\assets\<name>-<hash>.ps1`，`renderer\manifest.ini` 按加载顺序列出它们以及每块携带的模块；命令要开窗时 `clipboard.ps1` 按这份清单逐个 dot-source。只有窗口层自有的模块不再随包：基础层或 `status` 这类命令要用的模块仍以自己的文件随包，被入口声明为 external 的模块从不合并。两个 C# 产品的落点同一规则：`main\clipboard.dll` 与 `preload\client.exe`，一个进程一个目录。每个目标在 `out\` 下占一个目录（`OutDir=`，默认 `out`），构建前先清空该目录再写入，所以带旧 hash 的块不会与新的并排留着；`Output=` 写成绝对路径或用 `-Out` 指定文件时不按此规则处理。
+`run build` 会跑 `builder.cli.config.ps1` 声明的每个目标，产物写入 `dist\clipboard-<version>\`（版本取自 `package.ini`）。窗口层按打包器的分块方式构建：每个入口单独求闭包，每个模块带上能到达它的入口集合，集合相同的模块才能合成一块。窗口自己的块落到 `renderer\<name>.<hash>.ps1`，多个窗口共用的块落到 `renderer\assets\<name>-<hash>.ps1`，`renderer\manifest.ini` 按加载顺序列出它们以及每块携带的模块；命令要开窗时 `clipboard.ps1` 按这份清单逐个 dot-source。只有窗口层自有的模块不再随包：基础层或 `status` 这类命令要用的模块仍以自己的文件随包，被入口声明为 external 的模块从不合并。两个 C# 产品的落点同一规则：`main\clipboard.dll` 与 `preload\client.exe`，一个进程一个目录。每个目标在 `out\` 下占一个目录（`OutDir=`，默认 `out`），构建前先清空该目录再写入，所以带旧 hash 的块不会与新的并排留着；`Output=` 写成绝对路径或用 `-Out` 指定文件时不按此规则处理。
 
-`cli bundle` 是同一套工具链的另一半，与 `cli build` 互不依赖：它构建 `builder.cli.config.ps1` 声明的目标，阶段由每个目标的 `Plugins` 链声明（`resolve`、`treeshake`、`merge`、`render`、`verify`），实现放在 `packages\bundler\plugins\`。`Input` 可以是一个路径、一组文件，或 `key = @{ Entry = '<路径>' }` 的表；入口表从调用图取模块，不再手写文件清单。模块边界一律取自解析器节点而不是文本：产物按每条语句的 extent 逐条取出，最后重新解析并与参与合并的模块逐项比对。`cli bundle -Inspect` 会列出 `src\` 下每个文件能否被内联（带 `param` 块、`begin`/`process`/`end` 块或 `trap` 的模块无法粘进更大的脚本），以及哪些模块调用了无法追踪的名字。标了 `Ship` 的目标由 `cli build` 自己跑：先分块合并，再与旁边的文件用同一张表压缩与改名，所以包里窗口层是 `renderer\<name>.<hash>.ps1` 加 `renderer\assets\`，被合并的模块不再复制。
+`run bundle` 是同一套工具链的另一半，与 `run build` 互不依赖：它构建 `builder.cli.config.ps1` 声明的目标，阶段由每个目标的 `Plugins` 链声明（`resolve`、`treeshake`、`merge`、`render`、`verify`），实现放在 `packages\bundler\plugins\`。`Input` 可以是一个路径、一组文件，或 `key = @{ Entry = '<路径>' }` 的表；入口表从调用图取模块，不再手写文件清单。模块边界一律取自解析器节点而不是文本：产物按每条语句的 extent 逐条取出，最后重新解析并与参与合并的模块逐项比对。`run bundle -Inspect` 会列出 `src\` 下每个文件能否被内联（带 `param` 块、`begin`/`process`/`end` 块或 `trap` 的模块无法粘进更大的脚本），以及哪些模块调用了无法追踪的名字。标了 `Ship` 的目标由 `run build` 自己跑：先分块合并，再与旁边的文件用同一张表压缩与改名，所以包里窗口层是 `renderer\<name>.<hash>.ps1` 加 `renderer\assets\`，被合并的模块不再复制。
 
-模块可以用开头两条指令说明自己的边界：`#@use <模块 id>, ...` 列出它调用的模块，`#@export <函数>, ...` 列出其它模块可以调用它的哪些函数。它们故意写成注释：描述的是构建而不是程序，发布出去的副本照旧直接运行同一份文件、零成本，运行时也不需要理解它们。有了声明，bundler 在构建之前就能检查：调用了所属模块没导出的函数、调用了入口没带的模块（即平时只在运行时才露面的「module group too small」）、导出里写了不存在的函数、同一个名字被两个模块导出。没写声明的模块不参与校验，只会让「会被丢弃」的结论变成未知。`cli bundle -Inspect -Suggest` 会按真实调用关系打印每个模块该写的那两行，复制即可。
+模块可以用开头两条指令说明自己的边界：`#@use <模块 id>, ...` 列出它调用的模块，`#@export <函数>, ...` 列出其它模块可以调用它的哪些函数。它们故意写成注释：描述的是构建而不是程序，发布出去的副本照旧直接运行同一份文件、零成本，运行时也不需要理解它们。有了声明，bundler 在构建之前就能检查：调用了所属模块没导出的函数、调用了入口没带的模块（即平时只在运行时才露面的「module group too small」）、导出里写了不存在的函数、同一个名字被两个模块导出。没写声明的模块不参与校验，只会让「会被丢弃」的结论变成未知。`run bundle -Inspect -Suggest` 会按真实调用关系打印每个模块该写的那两行，复制即可。
 
-`cli bundle -All` 构建文件里声明的全部目标：每个目标一个独立的 Windows PowerShell 进程，同时最多 `Workers` 个（`0` 表示按逻辑处理器数，且不超过目标数；默认值与 `Bundler` 其余键在 `packages\cli\config.ps1`，写 `Bundler = @{ Workers = 2 }` 可覆盖）。每个 worker 写自己的产物与自己的临时目录，日志按文件声明顺序输出，所以并行跑出来的样子与串行一致。
+`run bundle -All` 构建文件里声明的全部目标：每个目标一个独立的 Windows PowerShell 进程，同时最多 `Workers` 个（`0` 表示按逻辑处理器数，且不超过目标数；默认值与 `Bundler` 其余键在 `packages\cli\config.ps1`，写 `Bundler = @{ Workers = 2 }` 可覆盖）。每个 worker 写自己的产物与自己的临时目录，日志按文件声明顺序输出，所以并行跑出来的样子与串行一致。
 
 ```powershell
-cli build                          # builder.cli.config.ps1 + builder.ini
-cli build -Config other.ps1        # 换一份目标表
-cli build -BuilderConfig other.ini # 换一份发布描述
+run build                          # builder.cli.config.ps1 + builder.ini
+run build -Config other.ps1        # 换一份目标表
+run build -BuilderConfig other.ini # 换一份发布描述
 ```
 
 `builder.cli.config.ps1` 里一个目标就是一张有序表：
@@ -1079,7 +1079,7 @@ cli build -BuilderConfig other.ini # 换一份发布描述
 | `Output` | 产物写到哪里，相对仓库根；C# 目标的路径同时是它在包内的路径 |
 | `ChunkOutput` | 入口型目标拆块时的命名模板（`[name]` 与 `[hash]`） |
 | `External` | 目标不带的模块：指向它的 `#@use` 边是文件边界，不算漏清单 |
-| `Ship` | `$true` = 产物属于发布：`cli build` 合并它，`builder.ini` 的 `Files` 不再复制它的源码 |
+| `Ship` | `$true` = 产物属于发布：`run build` 合并它，`builder.ini` 的 `Files` 不再复制它的源码 |
 | `Target` | C# 目标取 `library`（默认）或 `exe` |
 | `Append` | C# 目标在声明之外再追加的通配 |
 | `Keep` | 不许被改名的名字 |
@@ -1094,9 +1094,9 @@ cli build -BuilderConfig other.ini # 换一份发布描述
 | `directories.BaseUrl` | `.` | `Files` 与输出目录的相对基准；`.` = 仓库根，可写绝对路径 |
 | `files.Files` | 见下 | 产物文件清单，语法为 electron-builder 的 minimatch：`*` 与 `?` 不跨目录，`**` 作为路径段递归，`{a,b}` 是备选；`!` 前缀移除，列表按顺序生效 |
 
-`cli build` 还会在 `directories.output` 下、包目录旁写出 `builder-effective-config.ini`：本次构建解析出的设置与打包的版本号。它就是 electron-builder 的 `builder-effective-config.yaml`，改用本仓库统一的格式。
+`run build` 还会在 `directories.output` 下、包目录旁写出 `builder-effective-config.ini`：本次构建解析出的设置与打包的版本号。它就是 electron-builder 的 `builder-effective-config.yaml`，改用本仓库统一的格式。
 
-`cli bundle -Entry <名称>` 构建一个目标，`-All` 构建全部。`cli client` 与 `cli assembly` 分别编译 `Preload` 与 `Main` 目标，`cli build` 也走同一个调用，所以编译器参数只有一处。
+`run bundle -Entry <名称>` 构建一个目标，`-All` 构建全部。`run client` 与 `run assembly` 分别编译 `Preload` 与 `Main` 目标，`run build` 也走同一个调用，所以编译器参数只有一处。
 
 `[files] Files` 默认 `src/**/*.ps1,src/**/*.cs,src/**/*.ini,src/**/*.cmd,src/**/*.sh,scripts/**/*.bat,LICENSE,README.md,README.zh-CN.md`。发布剔除什么用 `!` 表达，且列表按顺序生效，所以写在它后面的通配可以把文件再加回；任何通配都到不了的目录（`src\data\`、`tests\`、`dist\`、`.git`、`docs\` 页面）本就不在清单里。
 
@@ -1123,11 +1123,11 @@ Files=src/**/*.ps1,src/**/*.cs,src/**/*.cmd,src/**/*.sh,src/themes/win11-dark.in
 
 | workflow | 触发 | 步骤 |
 |---|---|---|
-| `ci.yml` | 推送到 `master`、PR、手动（端到端 job 只在手动时跑） | 打印 PowerShell 版本 → `cli test -Unit -Integration`；不打包 |
+| `ci.yml` | 推送到 `master`、PR、手动（端到端 job 只在手动时跑） | 打印 PowerShell 版本 → `run test -Unit -Integration`；不打包 |
 | `release.yml` | 推 `v*` tag、手动 | 校验 tag 与 `package.ini` 版本一致 → 跑测试 → 打包 → 生成 `SHA256SUMS.txt` → 发布 Release |
 
 - 结构组校验文件布局与纯 ASCII，单元组按名字调用内部函数，集成组起子进程逐条验证 CLI 能力。
-- 端到端组需要真实桌面，托管 runner 没有交互式会话，因此只在手动触发时运行；本机验证用 `cli test -E2E`。
+- 端到端组需要真实桌面，托管 runner 没有交互式会话，因此只在手动触发时运行；本机验证用 `run test -E2E`。
 - 同一分支只保留一次运行（`concurrency`），`test` job 上限 20 分钟。
 - 发版只改 `package.ini` 的 `Version=`，再 `git tag v<version>` 并推送；版本号与 tag 不一致时 workflow 在第一步失败。手动触发 `release.yml` 时按 `package.ini` 发同名 Release，已存在则覆盖资产。
 

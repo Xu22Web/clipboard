@@ -1,11 +1,11 @@
 #Requires -Version 5.1
 <#
-  tools\bench.ps1 - time the paths that run on every capture, save, and keystroke.
+  packages\cli\bench.ps1 - time the paths that run on every capture, save, and keystroke.
 
-      cli bench                     the table
-      cli bench -Json               the same numbers as JSON
-      cli bench -Out base.json      JSON to a file, for a before/after diff
-      cli bench -Records 600        a bigger store
+      run bench                     the table
+      run bench -Json               the same numbers as JSON
+      run bench -Out base.json      JSON to a file, for a before/after diff
+      run bench -Records 600        a bigger store
 
   Everything runs against a throwaway copy under %TEMP%, with its own data folder, so the
   real history is never touched and a running resident does not interfere. The panel is not
