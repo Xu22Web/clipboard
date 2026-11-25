@@ -37,6 +37,22 @@ function Get-BundleModuleId([string]$root, [string]$path) {
   return $rel
 }
 
+# A #@use may name a file beside the module: './x' means the module's own folder, the way an
+# import inside a folder reads. A package specifier ('pkg#Export') has no file under src\ to
+# point at, so it is left as written and reported as a module the entry does not carry - which
+# is the honest answer for a bundle that only knows the source tree.
+function Resolve-BundleUseId([string]$moduleId, [string]$use) {
+  if (-not $use) { return $use }
+  if (-not ($use.StartsWith('./') -or $use.StartsWith('.\'))) { return $use }
+  $dir = ''
+  $slash = ([string]$moduleId).LastIndexOf('/')
+  if ($slash -ge 0) { $dir = ([string]$moduleId).Substring(0, $slash) }
+  $rest = $use.Substring(2).TrimStart([char]'/', [char]92)
+  if (-not $rest) { return $dir }
+  if (-not $dir) { return $rest }
+  return ($dir + '/' + $rest)
+}
+
 # resolve.alias for a #@use id: the longest matching prefix wins and is replaced by the folder
 # it names, the way a vite alias turns '@renderer/x' into 'src/renderer/src/x'. An id that
 # matches nothing comes back unchanged, so tables without an alias keep their behaviour.
@@ -120,7 +136,7 @@ function Get-BundleSurfaceReport($modules, $externals = $null, $alias = $null) {
     }
 
     foreach ($one in $uses) {
-      $use = ([string](Expand-BundleAlias ([string]$one) $alias)).ToLowerInvariant()
+      $use = ([string](Expand-BundleAlias (Resolve-BundleUseId ([string]$m.Id) ([string]$one)) $alias)).ToLowerInvariant()
       if ($external.Contains($use)) { continue }
       if (-not $byId.ContainsKey($use)) {
         $problems.Add(([string]$m.Id + ': uses ' + $one + ', which the entry does not carry'))

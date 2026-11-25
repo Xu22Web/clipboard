@@ -103,7 +103,7 @@ function Split-List([string]$value) {
 # Which parts a change can break. A heuristic for the edit-run loop: anything that is not
 # obviously local to one part falls back to the whole suite, and `run build` stays the check
 # that the package itself is still right.
-$script:AllParts = @('unit', 'history', 'transfer', 'settings', 'config', 'marks', 'pins', 'serve')
+$script:AllParts = @('unit', 'history', 'transfer', 'settings', 'config', 'marks', 'pins', 'module', 'serve')
 function Get-ChangedParts([string[]]$Given) {
   $files = New-Object System.Collections.Generic.List[string]
   if ($Given) {

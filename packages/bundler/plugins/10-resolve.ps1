@@ -65,11 +65,13 @@ $Plugin = @{
       $calls = @{}
       $uses = @{}
       $byId = @{}
+      $ids = @{}
       foreach ($file in $candidates) {
         $parsed = Get-BundleParse ([IO.File]::ReadAllText($file))
         if (Get-BundleRejectReason $parsed) { continue }
         $id = ([string](Get-BundleModuleId $root $file)).ToLowerInvariant()
         if ($id -and -not $byId.ContainsKey($id)) { $byId[$id] = $file }
+        $ids[$file] = $id
         foreach ($name in @(Get-BundleFunctionNames $parsed.Ast)) {
           $key = ([string]$name).ToLowerInvariant()
           if (-not $owner.ContainsKey($key)) { $owner[$key] = $file }
@@ -100,7 +102,8 @@ $Plugin = @{
         }
         if ($uses.ContainsKey($file)) {
           foreach ($one in @($uses[$file])) {
-            $use = ([string](Expand-BundleAlias ([string]$one) $alias)).ToLowerInvariant()
+            $expanded = Resolve-BundleUseId ([string]$ids[$file]) ([string]$one)
+            $use = ([string](Expand-BundleAlias $expanded $alias)).ToLowerInvariant()
             if ($byId.ContainsKey($use)) { & $visit ([string]$byId[$use]) }
           }
         }
@@ -117,6 +120,7 @@ $Plugin = @{
           $parsed = Get-BundleParse ([IO.File]::ReadAllText($full))
           $calls[$full] = @(Get-BundleCommandNames $parsed.Ast)
           $uses[$full] = @((Get-BundleDirectives $parsed).Uses)
+          $ids[$full] = ([string](Get-BundleModuleId $root $full)).ToLowerInvariant()
         }
         & $visit $full
       }
