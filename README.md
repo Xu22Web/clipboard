@@ -339,7 +339,7 @@ Every ini in the repository uses the same syntax (`package.ini`, `builder.ini`, 
 | File | Purpose | Sections |
 |---|---|---|
 | `package.ini` | project metadata and commands, read by `cli` | `Name` / `Version` under `[package]`, the command names under `[scripts]` |
-| `builder.cli.config.ps1` | what `run build` / `run bundle` build: one table per target | `Input` / `Scan` / `Output` / `Plugins` / `External` / `Ship` and the rewrite switches |
+| `builder.cli.config.ps1` | what `run build` / `run bundle` build: one table per target | `build` (`input` / `output` / `scan`) / `plugins` / `alias` / `External` / `Ship` and the rewrite switches |
 | `builder.ini` | what a release is: electron-builder's three keys | `Compression`, `[directories]`, `[files]` |
 | `test.config.ps1` | which parts the suite runs | `Test.Groups` / `Test.Exclude` / `Test.Workers` / `Test.Reporter` / `Test.Bail` / `Test.Serial` |
 | `clipboard.ini` | program settings, written by `config init` | base keys are ungrouped; plugin keys live in `[<plugin>]` (a flat `<plugin>.<Key>` still reads) |
@@ -1080,19 +1080,24 @@ A target in `builder.cli.config.ps1` (a PowerShell expression returning one orde
 
 | Key | Meaning |
 |---|---|
-| `Preset` | one of the shapes `packages\cli\plugins\presets.ps1` defines; the keys below override it, an empty value included |
-| `Plugins` | the bundler chain, in order: each name is one file under `packages\bundler\plugins\` |
+| `Preset` | one of the shapes `packages\cli\plugins\presets.ps1` defines; the keys below override it, an empty value included. A preset carries the default `build.input` / `build.output` of the shape, never a stage list |
+| `build` | what the target is made of: `input`, `output`, `scan` - the same three names a vite config uses under `build` |
+| `build.input` | one path, a list of files, a glob, or a table of `key = @{ Entry = '<path>' }`; a table takes the modules from the call graph, so no file is listed twice. More than one entry is why a target writes this out |
+| `build.scan` | the glob the module ids are resolved against (the preset writes `src/**/*.ps1` for the window layer) |
+| `build.output` | where it lands, relative to the repository root; for a C# target the path doubles as the package path. A table holds `entry` and `chunk` templates (`[name]` / `[hash]`) |
+| `plugins` | the bundler chain, in order: each name is one file under `packages\bundler\plugins\`. A target writes it; a missing chain is a broken target, not an inherited default |
+| `alias` | `name = folder` pairs, the way `resolve.alias` works in a vite config: a `#@use` id that starts with a name has the prefix replaced before the module is looked up |
 | `Kind` | `cs` compiles C#, `script` bundles `.ps1` files (the default) |
-| `Input` | one path, a list of files, a glob, or a table of `key = @{ Entry = '<path>' }`; a table takes the modules from the call graph, so no file is listed twice |
-| `Scan` | the glob the module ids are resolved against |
-| `Output` | where it lands, relative to the repository root; for a C# target the path doubles as the package path |
-| `ChunkOutput` | the template for the chunks an entry-driven target splits into (`[name]` and `[hash]`) |
 | `External` | modules the target does not carry: a `#@use` edge into one is a file boundary, not a missing list entry |
 | `Ship` | `$true` puts the output in the release: `run build` merges it and `builder.ini` leaves its sources out of `Files` |
 | `Target` | `library` (default) or `exe`, for a C# target |
 | `Append` | further globs added to a C# target's file list, after the declared ones |
 | `Keep` | names the bundle must not rename |
 | `Minify` `Rename` `Treeshake` | per-target overrides; the defaults live in `packages\cli\config.ps1`, and a `Bundler` section in `builder.cli.config.ps1` changes them for every target |
+
+The flat spellings (`Input`, `Output`, `Scan`, `Plugins`) still read, so an older target keeps working. A key written both ways inside one target is the flat one, because it is applied last.
+
+`build` and `alias` merge the way vite's `mergeConfig` does: two tables merge key by key, two arrays concatenate, and a key the preset has but the target does not keeps the preset's value.
 
 `builder.ini` holds electron-builder's three keys and nothing else:
 

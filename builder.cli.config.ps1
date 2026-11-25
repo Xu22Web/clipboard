@@ -7,13 +7,16 @@
 # list of accepted keys.
 #
 #   Preset      one of the shapes packages\cli\plugins\presets.ps1 defines; the keys
-#               below it override what the preset says, an empty value included
-#   Plugins     the bundler chain, in order: each name is a file under packages\bundler\plugins
+#               below it override what the preset says, an empty value included. The preset
+#               carries the shape's default build.input / build.output, not a stage list
+#   build       what the target is made of: input, output, scan - vite's three names
+#   plugins     the bundler chain, in order: each name is a file under packages\bundler\plugins.
+#               Written by the target itself, because a chain is a decision, not a default
+#   alias       name = folder, the way resolve.alias works: a #@use id that starts with a
+#               name has the prefix replaced before the module is looked up
 #   Kind        cs compiles C#, script bundles .ps1 files (the default)
-#   Input       the sources: a list of files, or a glob, or both
-#   Output      where it lands; for a C# target the path doubles as the package path
 #   External    modules the target does not carry (a #@use edge into one is a file boundary)
-#   Ship        $true puts the output in the release: `cli build` merges it and builder.ini
+#   Ship        $true puts the output in the release: `run build` merges it and builder.ini
 #               leaves its sources out of Files
 #   Target      library (default) or exe, for a C# target
 #   Minify      overrides Bundler for this target
@@ -34,37 +37,46 @@
 
   Main = [ordered]@{
 
-    Input  = 'src/main/index.cs'
-    Output = 'main/clipboard.dll'
+    # the preset carries the input and the output (src/main/index.cs -> main/clipboard.dll); a
+    # target is what it declares, so the stage chain is written here and nowhere else
+    plugins = 'cs-part,cs-compile'
   }
 
   Preload = [ordered]@{
 
-    Input  = 'src/preload/client.cs'
-    Output = 'preload/client.exe'
+    # src/preload/client.cs -> preload/client.exe, from the preset as well
+    plugins = 'cs-part,cs-compile'
   }
 
   Renderer = [ordered]@{
 
     # rolldown's input: one key per window, and the entry each one starts from. The modules a
     # window reaches are resolved from that entry - the call graph and the #@use edges - so no
-    # file is listed here, and a module that nothing reaches never travels.
-    Input  = [ordered]@{
-      Picker   = @{ Entry = 'src/renderer/src/windows/picker.ps1' }
-      Settings = @{ Entry = 'src/renderer/src/windows/settings.ps1' }
-      Tray     = @{ Entry = 'src/renderer/src/windows/tray-menu.ps1' }
+    # file is listed here, and a module that nothing reaches never travels. More than one entry
+    # is why this table is written out: the preset knows the output and the scan, not the windows.
+    build = [ordered]@{
+      input = [ordered]@{
+        Picker   = @{ Entry = 'src/renderer/src/windows/picker.ps1' }
+        Settings = @{ Entry = 'src/renderer/src/windows/settings.ps1' }
+        Tray     = @{ Entry = 'src/renderer/src/windows/tray-menu.ps1' }
+      }
+      # entryFileNames / chunkFileNames - the preset writes both templates: a window's own chunk
+      # in renderer\, the chunks more than one window loads in renderer\assets\
+      #   output = [ordered]@{ entry = 'renderer/[name].[hash].ps1'; chunk = 'renderer/assets/[name]-[hash].ps1' }
+      # the graph is resolved against this set, so a module nothing calls is not dragged in
+      #   scan = 'src/**/*.ps1'
     }
-    Scan   = 'src/**/*.ps1'
-    # rolldown's entryFileNames / chunkFileNames: a window's own chunk sits in renderer\, the
-    # chunks more than one window loads sit in renderer\assets\
-    Output = [ordered]@{
-      Entry = 'renderer/[name].[hash].ps1'
-      Chunk = 'renderer/assets/[name]-[hash].ps1'
-    }
-    Ship   = $true
+
+    plugins = 'resolve,treeshake,merge,render,verify'
+
+    # how a #@use id is spelled: the prefix is replaced before the module is looked up, the way
+    # resolve.alias works in a vite config. Empty here - every #@use names a full id.
+    alias = [ordered]@{}
+
     # the build's own passes compress and rename the whole package with one table, so a name
     # means the same thing in the bundle and in the files beside it
     Minify = $false
     Rename = $false
+    Ship   = $true
   }
 }

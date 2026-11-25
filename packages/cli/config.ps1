@@ -7,7 +7,78 @@
 
 # The keys a target may hold. Anything else is a typo the failure of which would otherwise be
 # silent - a misspelled Minify simply keeps the default.
-$script:TargetKeys = @('Preset', 'Plugins', 'Kind', 'Input', 'Scan', 'Output', 'External', 'Ship', 'Target', 'Minify', 'Rename', 'Treeshake', 'Append', 'Keep')
+#
+# `build`, `alias` and `plugins` are the same three names a vite config uses: build.input /
+# build.output / build.scan say what a target is made of, alias says how a #@use id is spelled,
+# and plugins is the stage chain. The flat names beside them (Input, Output, Scan, Plugins) are
+# the same fields written without the group, kept so an old target keeps reading.
+$script:TargetKeys = @('Preset', 'Plugins', 'Kind', 'Input', 'Scan', 'Output', 'External', 'Ship', 'Target', 'Minify', 'Rename', 'Treeshake', 'Append', 'Keep', 'build', 'alias', 'plugins')
+
+# vite's mergeConfig, in the same order: two tables merge key by key, two arrays concatenate, and
+# anything on the right wins. A null on the right is "not written" - the left value stays - which
+# is what a PowerShell table means by a missing key; clear a field with an empty string instead.
+function Merge-ConfigTable($left, $right) {
+  if ($null -eq $right) { return $left }
+  if ($null -eq $left) { return $right }
+  if (($left -is [System.Collections.IDictionary]) -and ($right -is [System.Collections.IDictionary])) {
+    $out = [ordered]@{}
+    foreach ($k in @($left.Keys)) { $out[$k] = $left[$k] }
+    foreach ($k in @($right.Keys)) {
+      if ($out.Contains([string]$k)) { $out[$k] = Merge-ConfigTable $out[$k] $right[$k] }
+      else { $out[$k] = $right[$k] }
+    }
+    return $out
+  }
+  $isArray = { param($v) ($v -is [System.Collections.IEnumerable]) -and -not ($v -is [string]) -and -not ($v -is [System.Collections.IDictionary]) }
+  if ((& $isArray $left) -and (& $isArray $right)) { return @(@($left) + @($right)) }
+  return $right
+}
+
+# One field of a target. Both spellings arrive here: the flat keys of an old target and the
+# build table a target writes today.
+function Set-TargetField($t, [string]$field, $value) {
+  if (@('Ship', 'Minify', 'Rename', 'Treeshake') -contains $field) {
+    $t[$field] = ConvertTo-Flag $value
+  } elseif ($field -eq 'Input') {
+    # rolldown's input: one path, a table of key -> path, or a table of key -> @{ Entry= }.
+    # A table names the chunks, so the output template can use [name] and the file a window
+    # loads is the key it was given; Entry= is the form that keeps a key and its file apart.
+    if ($value -is [System.Collections.IDictionary]) {
+      $entryList = New-Object System.Collections.Generic.List[object]
+      foreach ($chunkKey in @($value.Keys)) {
+        $item = $value[$chunkKey]
+        $chunkName = [string]$chunkKey
+        $path = ''
+        if ($item -is [System.Collections.IDictionary]) {
+          if ($item.Contains('Entry')) { $path = ([string]$item['Entry']).Trim() }
+          if ($item.Contains('Key')) {
+            $given = ([string]$item['Key']).Trim()
+            if ($given) { $chunkName = $given }
+          }
+        } else {
+          $path = ([string]$item).Trim()
+        }
+        if (-not $path) { continue }
+        $entryList.Add(@{ Name = $chunkName; Path = $path })
+      }
+      $t['Entries'] = $entryList.ToArray()
+      $t['Input'] = ''
+    } else {
+      $parts = @($value | ForEach-Object { [string]$_ } | Where-Object { $_.Trim() })
+      $t['Input'] = ($parts -join ',')
+    }
+  } elseif ($field -eq 'Scan') {
+    $parts = @($value | ForEach-Object { [string]$_ } | Where-Object { $_.Trim() })
+    $t['Scan'] = ($parts -join ',')
+  } elseif (($field -eq 'Output') -and ($value -is [System.Collections.IDictionary])) {
+    # rolldown's entryFileNames / chunkFileNames: an entry chunk keeps the entry's own name,
+    # a chunk more than one entry loads goes to its own folder
+    if ($value.Contains('Entry')) { $t['Output'] = ([string]$value['Entry']).Trim() }
+    if ($value.Contains('Chunk')) { $t['ChunkOutput'] = ([string]$value['Chunk']).Trim() }
+  } else {
+    $t[$field] = ([string]$value).Trim()
+  }
+}
 
 function ConvertTo-Flag($value) {
   if ($null -eq $value) { return $false }
@@ -115,6 +186,7 @@ function Resolve-CliConfig {
       Output    = ''
       ChunkOutput = ''
       External  = ''
+      Alias     = @{}
       Target    = 'library'
       Ship      = $false
       Append    = ''
@@ -133,58 +205,55 @@ function Resolve-CliConfig {
       if ($given) { $presetName = $given; $explicit = $true }
     }
     $preset = Get-Preset $presetName
+    $presetBuild = $null
     if ($null -eq $preset) {
       if ($explicit) { $bad.Add(($name + ': no preset named ' + $presetName + '   (known: ' + ((Get-PresetNames) -join ', ') + ')')) }
     } else {
-      foreach ($pk in @($preset.Keys)) { $t[[string]$pk] = $preset[$pk] }
+      foreach ($pk in @($preset.Keys)) {
+        if ([string]$pk -eq 'build') { $presetBuild = $preset[$pk]; continue }
+        $t[[string]$pk] = $preset[$pk]
+      }
     }
 
+    $givenBuild = $null
+    $aliasTable = $null
     foreach ($k in @($def.Keys)) {
       $field = [string]$k
       if ($field -eq 'Preset') { continue }
       if ($script:TargetKeys -notcontains $field) { $bad.Add(($name + ': unknown key ' + $field)); continue }
       $value = $def[$k]
-      if (@('Ship', 'Minify', 'Rename', 'Treeshake') -contains $field) {
-        $t[$field] = ConvertTo-Flag $value
-      } elseif ($field -eq 'Input') {
-        # rolldown's input: one path, a table of key -> path, or a table of key -> @{ Entry= }.
-        # A table names the chunks, so the output template can use [name] and the file a window
-        # loads is the key it was given; Entry= is the form that keeps a key and its file apart.
-        if ($value -is [System.Collections.IDictionary]) {
-          $entryList = New-Object System.Collections.Generic.List[object]
-          foreach ($chunkKey in @($value.Keys)) {
-            $item = $value[$chunkKey]
-            $chunkName = [string]$chunkKey
-            $path = ''
-            if ($item -is [System.Collections.IDictionary]) {
-              if ($item.Contains('Entry')) { $path = ([string]$item['Entry']).Trim() }
-              if ($item.Contains('Key')) {
-                $given = ([string]$item['Key']).Trim()
-                if ($given) { $chunkName = $given }
-              }
-            } else {
-              $path = ([string]$item).Trim()
-            }
-            if (-not $path) { continue }
-            $entryList.Add(@{ Name = $chunkName; Path = $path })
-          }
-          $t['Entries'] = $entryList.ToArray()
-          $t['Input'] = ''
-        } else {
-          $parts = @($value | ForEach-Object { [string]$_ } | Where-Object { $_.Trim() })
-          $t['Input'] = ($parts -join ',')
-        }
-      } elseif ($field -eq 'Scan') {
-        $parts = @($value | ForEach-Object { [string]$_ } | Where-Object { $_.Trim() })
-        $t['Scan'] = ($parts -join ',')
-      } elseif ($field -eq 'Output' -and $value -is [System.Collections.IDictionary]) {
-        # rolldown's entryFileNames / chunkFileNames: an entry chunk keeps the entry's own name,
-        # a chunk more than one entry loads goes to its own folder
-        if ($value.Contains('Entry')) { $t['Output'] = ([string]$value['Entry']).Trim() }
-        if ($value.Contains('Chunk')) { $t['ChunkOutput'] = ([string]$value['Chunk']).Trim() }
-      } else {
-        $t[$field] = ([string]$value).Trim()
+      if ($field -eq 'build') {
+        if ($value -isnot [System.Collections.IDictionary]) { $bad.Add(($name + ': build is a table of input / output / scan')); continue }
+        $givenBuild = Merge-ConfigTable $givenBuild $value
+        continue
       }
+      if ($field -eq 'alias') {
+        if ($value -isnot [System.Collections.IDictionary]) { $bad.Add(($name + ': alias is a table of name -> folder')); continue }
+        $aliasTable = Merge-ConfigTable $aliasTable $value
+        continue
+      }
+      if ($field -eq 'plugins') {
+        $parts = @($value | ForEach-Object { [string]$_ } | Where-Object { $_.Trim() })
+        Set-TargetField $t 'Plugins' ($parts -join ',')
+        continue
+      }
+      Set-TargetField $t $field $value
+    }
+
+    # the target's own build table after the preset's, in vite's mergeConfig order: a table
+    # merges key by key and an array concatenates, so a preset can carry a default and the
+    # target file only writes what it changes.
+    $buildTable = Merge-ConfigTable $presetBuild $givenBuild
+    foreach ($bk in @('input', 'output', 'scan')) {
+      if ($null -ne $buildTable -and $buildTable.Contains($bk)) { Set-TargetField $t $bk $buildTable[$bk] }
+    }
+    if ($null -ne $aliasTable) {
+      $aliases = @{}
+      foreach ($ak in @($aliasTable.Keys)) {
+        $one = ([string]$aliasTable[$ak]).Trim()
+        if ([string]$ak -and $one) { $aliases[[string]$ak] = $one }
+      }
+      $t['Alias'] = $aliases
     }
 
     foreach ($required in @('Plugins', 'Input', 'Output')) {
@@ -236,6 +305,7 @@ function ConvertTo-BundleSpec($config, [string]$outDir = 'out') {
         Output    = $t.Output
         ChunkOutput = $t.ChunkOutput
         External  = $t.External
+        Alias     = $t.Alias
         Target    = $t.Target
         Append    = $t.Append
         Keep      = $t.Keep

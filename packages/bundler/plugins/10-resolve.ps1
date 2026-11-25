@@ -80,6 +80,8 @@ $Plugin = @{
 
       $order = New-Object System.Collections.Generic.List[string]
       $state = @{}
+      $alias = @{}
+      if ($null -ne $ctx.Entry.Alias -and $ctx.Entry.Alias -is [System.Collections.IDictionary]) { $alias = $ctx.Entry.Alias }
       $visit = {
         param($file)
         $key = ([string]$file).ToLowerInvariant()
@@ -98,7 +100,7 @@ $Plugin = @{
         }
         if ($uses.ContainsKey($file)) {
           foreach ($one in @($uses[$file])) {
-            $use = ([string]$one).ToLowerInvariant()
+            $use = ([string](Expand-BundleAlias ([string]$one) $alias)).ToLowerInvariant()
             if ($byId.ContainsKey($use)) { & $visit ([string]$byId[$use]) }
           }
         }

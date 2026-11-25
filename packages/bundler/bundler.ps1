@@ -95,6 +95,22 @@ function TargetBool($target, [string]$key, [bool]$default) {
   return @('1', 'true', 'yes', 'on') -contains $raw.ToLowerInvariant()
 }
 
+# The alias table of one target: resolve.alias in a vite config, a name and the folder it stands
+# for. A #@use id that starts with a name is expanded before the module is looked up, so a module
+# can be named by the short form the config declares instead of its path under src\.
+function Get-TargetAlias($target) {
+  $out = @{}
+  if ($null -eq $target) { return $out }
+  $value = $target.Alias
+  if ($null -eq $value -or -not ($value -is [System.Collections.IDictionary])) { return $out }
+  foreach ($k in @($value.Keys)) {
+    $name = ([string]$k).Trim()
+    $dir = ([string]$value[$k]).Trim().TrimEnd([char]92, [char]47)
+    if ($name -and $dir) { $out[$name] = $dir }
+  }
+  return $out
+}
+
 # one key of one target read as a list: a JSON array keeps its items, a comma separated string is
 # split. Both shapes appear because a config may write either.
 function TargetList($target, [string]$key) {
@@ -292,7 +308,7 @@ function Invoke-BundleInspect {
         Exports   = @($decl.Exports)
       })
   }
-  $surface = Get-BundleSurfaceReport $records.ToArray()
+  $surface = Get-BundleSurfaceReport $records.ToArray() $null $null
   Write-Note ('  declare edges      ' + $surface.Declared + ' of ' + $surface.Total + ' module(s), ' + $surface.Edges + ' cross-module call(s)')
   foreach ($p in @($surface.Problems)) { Write-Fail $p }
   if ($Suggest) {
@@ -527,7 +543,7 @@ function Invoke-BundleEntry($t) {
     Maps    = $null
     Mods    = @{}
     Options = $options
-    Entry   = @{ Name = $name; Product = $chain; Modules = $modules; Keep = $keep; To = $to; Entries = $entryPaths; Scan = (TargetList $t 'Scan') }
+    Entry   = @{ Name = $name; Product = $chain; Modules = $modules; Keep = $keep; To = $to; Entries = $entryPaths; Scan = (TargetList $t 'Scan'); Alias = (Get-TargetAlias $t) }
   }
 
   $sw = Start-Step
@@ -588,7 +604,7 @@ function Invoke-BundleEntry($t) {
           if ($other -eq $pieceName) { continue }
           foreach ($id in @($idsByPiece[$other])) { $others.Add([string]$id) }
         }
-        $surface = Get-BundleSurfaceReport $mods $others.ToArray()
+        $surface = Get-BundleSurfaceReport $mods $others.ToArray() (Get-TargetAlias $t)
         foreach ($w in @($surface.Warnings)) { Write-Warn $w }
         if (@($surface.Problems).Count -gt 0) {
           foreach ($p in @($surface.Problems)) { Write-Fail $p }
@@ -670,7 +686,7 @@ function Invoke-BundleEntry($t) {
 
     # the declared import and export lists are checked before anything is rendered: a call to
     # something a module does not export is a mistake in the list, not in the output
-    $surface = Get-BundleSurfaceReport $mods.ToArray() $externals
+    $surface = Get-BundleSurfaceReport $mods.ToArray() $externals (Get-TargetAlias $t)
     Write-Field 'surface' ('' + $surface.Declared + ' of ' + $surface.Total + ' module(s) declare edges   ' + $surface.Edges + ' cross-module call(s)   ' + $surface.Exported + ' export(s)')
     foreach ($w in @($surface.Warnings)) { Write-Warn $w }
     if (@($surface.Problems).Count -gt 0) {

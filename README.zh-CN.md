@@ -338,7 +338,7 @@ run bundle       # 按 builder.cli.config.ps1 构建一个入口（-Inspect 列�
 | 文件 | 用途 | 段 |
 |---|---|---|
 | `package.ini` | 项目元数据与命令，`cli` 读取 | `[package]` 的 `Name` / `Version`，`[scripts]` 的命令名 |
-| `builder.cli.config.ps1` | `run build` / `run bundle` 构建什么：一张表一个目标 | `Input` / `Scan` / `Output` / `Plugins` / `External` / `Ship` 及压缩改名开关 |
+| `builder.cli.config.ps1` | `run build` / `run bundle` 构建什么：一张表一个目标 | `build`（`input` / `output` / `scan`）/ `plugins` / `alias` / `External` / `Ship` 及压缩改名开关 |
 | `builder.ini` | 发布包里放什么：electron-builder 的三个键 | `Compression`、`[directories]`、`[files]` |
 | `test.config.ps1` | 测试跑哪些组 | `Test.Groups` / `Test.Exclude` / `Test.Workers` / `Test.Reporter` / `Test.Bail` / `Test.Serial` |
 | `clipboard.ini` | 程序设置，由 `config init` 生成 | 基础键不分组；插件键写在 `[<插件名>]` 段（平铺的 `<插件名>.<Key>` 仍可读） |
@@ -1073,19 +1073,22 @@ run build -BuilderConfig other.ini # 换一份发布描述
 
 | 键 | 说明 |
 |---|---|
-| `Preset` | `packages\cli\plugins\presets.ps1` 定义的成型配置之一；下面的键覆盖它，包括写成空值 |
-| `Plugins` | bundler 的插件链，按顺序：每个名字是 `packages\bundler\plugins\` 下的一个文件 |
+| `Preset` | `packages\cli\plugins\presets.ps1` 定义的成型配置之一；下面的键覆盖它，包括写成空值。预设只给形状自带的 `build.input` / `build.output`，不带阶段链 |
+| `build` | 目标由什么构成：`input`、`output`、`scan`，与 vite 配置里的 `build` 同名 |
+| `build.input` | 一个路径、一组文件、一个通配，或 `key = @{ Entry = '<路径>' }` 的表；入口表从调用图取模块，不必再手写清单。多个入口就是目标要把这张表写出来的原因 |
+| `build.scan` | 解析模块 id 用的通配（窗口层预设写 `src/**/*.ps1`） |
+| `build.output` | 产物写到哪里，相对仓库根；C# 目标的路径同时是它在包内的路径。写成表时用 `entry` / `chunk` 两个模板（`[name]` / `[hash]`） |
+| `plugins` | bundler 的插件链，按顺序：每个名字是 `packages\bundler\plugins\` 下的一个文件。必须由目标自己写，缺就是坏目标，不会静默继承默认链 |
+| `alias` | `名 = 目录` 的表，语义同 vite 的 `resolve.alias`：以该名开头的 `#@use` id 先换前缀再找模块 |
 | `Kind` | `cs` 编译 C#，`script` 合并 `.ps1`（默认） |
-| `Input` | 一个路径、一组文件、一个通配，或 `key = @{ Entry = '<路径>' }` 的表；入口表从调用图取模块，不必再手写清单 |
-| `Scan` | 解析模块 id 用的通配 |
-| `Output` | 产物写到哪里，相对仓库根；C# 目标的路径同时是它在包内的路径 |
-| `ChunkOutput` | 入口型目标拆块时的命名模板（`[name]` 与 `[hash]`） |
 | `External` | 目标不带的模块：指向它的 `#@use` 边是文件边界，不算漏清单 |
 | `Ship` | `$true` = 产物属于发布：`run build` 合并它，`builder.ini` 的 `Files` 不再复制它的源码 |
 | `Target` | C# 目标取 `library`（默认）或 `exe` |
 | `Append` | C# 目标在声明之外再追加的通配 |
 | `Keep` | 不许被改名的名字 |
 | `Minify` `Rename` `Treeshake` | 逐目标覆盖；默认值在 `packages\cli\config.ps1`，`builder.cli.config.ps1` 的 `Bundler` 段可对所有目标改写 |
+
+不分组的老写法（`Input`、`Output`、`Scan`、`Plugins`）仍可读，旧目标不必改；同一目标两种写法都写时以不分组的那份为准（它后应用）。`build` 与 `alias` 按 vite `mergeConfig` 的规则合并：两张表逐键合并，两组数组拼接，预设有而目标没写的键保留预设值。
 
 `builder.ini` 只有 electron-builder 的三个键：
 

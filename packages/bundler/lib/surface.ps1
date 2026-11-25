@@ -37,6 +37,25 @@ function Get-BundleModuleId([string]$root, [string]$path) {
   return $rel
 }
 
+# resolve.alias for a #@use id: the longest matching prefix wins and is replaced by the folder
+# it names, the way a vite alias turns '@renderer/x' into 'src/renderer/src/x'. An id that
+# matches nothing comes back unchanged, so tables without an alias keep their behaviour.
+function Expand-BundleAlias([string]$id, $alias) {
+  if (-not $id -or $null -eq $alias -or -not ($alias -is [System.Collections.IDictionary])) { return $id }
+  $best = ''
+  foreach ($k in @($alias.Keys)) {
+    $name = [string]$k
+    if (-not $name) { continue }
+    if (-not $id.StartsWith($name, [StringComparison]::OrdinalIgnoreCase)) { continue }
+    if ($name.Length -gt $best.Length) { $best = $name }
+  }
+  if (-not $best) { return $id }
+  $rest = $id.Substring($best.Length).TrimStart([char]'/')
+  $dir = ([string]$alias[$best]).TrimEnd([char]'/', [char]92)
+  if (-not $rest) { return $dir }
+  return ($dir + '/' + $rest)
+}
+
 # The directives of one module, read from its comment tokens.
 function Get-BundleDirectives($parsed) {
   $uses = New-Object System.Collections.Generic.List[string]
@@ -61,7 +80,7 @@ function Get-BundleDirectives($parsed) {
 # The whole check for one entry: the declared graph, what is wrong with it, and what it leaves
 # unused. Modules without directives are reported separately: they can be bundled (the inferred
 # walk is used for them) but they cannot be checked.
-function Get-BundleSurfaceReport($modules, $externals = $null) {
+function Get-BundleSurfaceReport($modules, $externals = $null, $alias = $null) {
   $problems = New-Object System.Collections.Generic.List[string]
   $warnings = New-Object System.Collections.Generic.List[string]
 
@@ -101,8 +120,9 @@ function Get-BundleSurfaceReport($modules, $externals = $null) {
     }
 
     foreach ($one in $uses) {
-      if ($external.Contains($one)) { continue }
-      if (-not $byId.ContainsKey($one)) {
+      $use = ([string](Expand-BundleAlias ([string]$one) $alias)).ToLowerInvariant()
+      if ($external.Contains($use)) { continue }
+      if (-not $byId.ContainsKey($use)) {
         $problems.Add(([string]$m.Id + ': uses ' + $one + ', which the entry does not carry'))
       }
     }
