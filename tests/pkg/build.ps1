@@ -281,9 +281,15 @@ Describe 'int' {
     }
     # documentation is data like any other file, so a list that does not name it ships none -
     # the positive half of that pair is asserted on the docs package below
+    It 'the licence and the READMEs travel with the program' {
+      if (-not (Test-Built $script:pkgDir $script:bout)) { return }
+      Expect ((Test-Path -LiteralPath (Join-Path $script:pkgDir 'LICENSE')) -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'README.md'))) 'a package carries the licence and the READMEs'
+    }
     It 'a list without the documentation ships none' {
       if (-not (Test-Built $script:pkgDir $script:bout)) { return }
-      Expect ((Test-Path -LiteralPath (Join-Path $script:pkgDir 'README.md')) -eq $false -and (Test-Path -LiteralPath (Join-Path $script:pkgDir 'docs')) -eq $false) 'a list that does not name the docs must not ship them'
+      # the READMEs travel by default, the docs\ pages do not: a list that does not name them
+      # must reach no docs folder
+      Expect ((Test-Path -LiteralPath (Join-Path $script:pkgDir 'docs')) -eq $false) 'a list that does not name the docs must not ship them'
     }
     # the point of the build: same scripts, smaller, still parsing
     # (compare against the repository sources, not $srcRoot: with -Source the latter is

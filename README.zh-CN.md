@@ -675,7 +675,8 @@ flowchart LR
 ```
 package.ini             项目元数据与命令：Name / Version / [scripts] 下的命令名（cli 读取）
 cli.sh  cli.cmd  cli.ps1   命令入口（sh / CMD / PowerShell），执行 package.ini 中的命令
-builder.cli.ps1         装配点：先 packages\cli，再 bundler / builder / test
+builder.cli.ps1         启动器：把命令交给 packages\cli\bin\cli.ps1
+packages/cli/bin/cli.ps1  命令本身：装配各包并分发
 builder.cli.config.ps1  构建什么：一个目标一节（Input / Scan / Output / Plugins / Ship）
 builder.ini             发布包里放什么：electron-builder 的 Compression / [directories] / [files]
 test.config.ps1         测试跑哪些组

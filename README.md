@@ -676,7 +676,8 @@ Layout, relative to the repository root:
 ```
 package.ini             project metadata and commands (Name / Version / the [scripts] names); read by cli
 cli.sh  cli.cmd  cli.ps1  the command entry points (sh / CMD / PowerShell) running package.ini
-builder.cli.ps1         the assembly point: packages\cli, then bundler / builder / test
+builder.cli.ps1         the launcher: hands the command to packages\cli\bin\cli.ps1
+packages/cli/bin/cli.ps1  the command itself: loads the packages, then dispatches one
 builder.cli.config.ps1  what a build produces: one table per target (Input / Scan / Output / Plugins / Ship)
 builder.ini             what a release carries: electron-builder's Compression / [directories] / [files]
 test.config.ps1         which parts the suite runs

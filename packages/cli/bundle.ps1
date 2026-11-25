@@ -1,6 +1,6 @@
 ﻿# packages\cli\bundle.ps1 - build the targets the config declares, through the bundler.
 #
-# A function, not a script: builder.cli.ps1 is the assembly point.
+# A function, not a script: packages\cli\bin\cli.ps1 is the assembly point.
 #
 #   -Entry <name>   one target, by name
 #   -All            every target, side by side

@@ -38,6 +38,7 @@ function Read-PackageFile([string]$path) {
     Description = (& $read 'Description')
     License  = (& $read 'License')
     Engines  = (& $read 'Engines')
+    Bin      = (& $read 'Bin')
     Main     = (& $read 'Main')
     Exports  = (& $read 'Exports')
     Requires = (& $read 'Requires')

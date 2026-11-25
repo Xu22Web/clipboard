@@ -1,7 +1,7 @@
 ﻿# packages\cli\build.ps1 - build every target, then hand the result to packages\builder.
 #
-# A function, not a script: builder.cli.ps1 is the assembly point that loads the three packages
-# and calls this one. Nothing here dot-sources a package or reads the command table.
+# A function, not a script: packages\cli\bin\cli.ps1 is the assembly point that loads the
+# packages and calls this one. Nothing here dot-sources a package or reads the command table.
 #
 # Two stages, the way electron-vite and electron-builder divide the work:
 #

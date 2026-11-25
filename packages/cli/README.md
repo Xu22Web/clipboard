@@ -6,6 +6,7 @@ applies the presets and the defaults, and calls `packages\bundler` for a bundle 
 
 | Path | What it holds |
 |---|---|
+| `bin/cli.ps1` | the command itself: loads the packages and dispatches `build` / `release` / `bundle` / `dev` / `test` |
 | `index.ps1` | the entry; exports `Invoke-CliCommand` |
 | `config.ps1` | reads the target table, applies presets, and holds the tooling's defaults |
 | `bundle.ps1` | `cli bundle`: one target, or `-All` with one process per target |
@@ -23,3 +24,7 @@ only overrides one, the way a `vite.config.ts` writes `build.minify` only when i
 default.
 
 Requires `bundler` and `builder`; the release layer is loaded only by `cli build`.
+
+`bin/cli.ps1` is the command. `builder.cli.ps1` at the repository root is a launcher for the
+paths `package.ini` already uses, the way vite's package ships `bin/vite.js` and the project
+keeps its own script name.
