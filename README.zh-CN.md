@@ -700,6 +700,9 @@ packages/builder/       暂存与打包：package.ps1 + 文件处理表
 packages/builder/assets.ps1   文件处理表：按路径决定用哪个 handler 改写
 packages/builder/assets/*.ps1 每种文件类型一个 handler：script、version、batch、shell、ini、copy
 packages/test/          自测驱动：config.ps1 + index.ps1
+packages/*/package.ini  每个包的身份：名称、版本、描述、许可证、运行环境、入口、导出
+packages/*/README.md    该包的职责与文件清单
+packages/*/LICENSE      与仓库根相同的 MIT 许可证
 tests/run.ps1           自测驱动：按目录发现分件、并行执行、合并结果（打印在 tests\lib\reporter.ps1）
 tests/lib/harness.ps1   分件共用的断言、沙箱与命令调用
 tests/lib/reporter.ps1  测试打印：分件行、失败块、实时窗口与汇总
@@ -1094,7 +1097,7 @@ cli build -BuilderConfig other.ini # 换一份发布描述
 
 `cli bundle -Entry <名称>` 构建一个目标，`-All` 构建全部。`cli client` 与 `cli assembly` 分别编译 `Preload` 与 `Main` 目标，`cli build` 也走同一个调用，所以编译器参数只有一处。
 
-`[files] Files` 默认 `src/**/*.ps1,src/**/*.cs,src/**/*.ini,src/**/*.cmd,src/**/*.sh,scripts/**/*.bat`。发布剔除什么用 `!` 表达，且列表按顺序生效，所以写在它后面的通配可以把文件再加回；任何通配都到不了的目录（`src\data\`、`tests\`、`dist\`、`.git`）本就不在清单里。
+`[files] Files` 默认 `src/**/*.ps1,src/**/*.cs,src/**/*.ini,src/**/*.cmd,src/**/*.sh,scripts/**/*.bat,LICENSE,README.md,README.zh-CN.md`。发布剔除什么用 `!` 表达，且列表按顺序生效，所以写在它后面的通配可以把文件再加回；任何通配都到不了的目录（`src\data\`、`tests\`、`dist\`、`.git`、`docs\` 页面）本就不在清单里。
 
 ```ini
 # 精简发布：一套主题 + 带文档，只压缩不改名

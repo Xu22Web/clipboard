@@ -35,6 +35,9 @@ function Read-PackageFile([string]$path) {
     Dir      = Split-Path -Parent $path
     Name     = (& $read 'Name')
     Version  = (& $read 'Version')
+    Description = (& $read 'Description')
+    License  = (& $read 'License')
+    Engines  = (& $read 'Engines')
     Main     = (& $read 'Main')
     Exports  = (& $read 'Exports')
     Requires = (& $read 'Requires')

@@ -701,6 +701,9 @@ packages/builder/       staging and packing: package.ps1 + the asset table
 packages/builder/assets.ps1   what happens to one file: which handler rewrites it
 packages/builder/assets/*.ps1 one handler per kind of file: script, version, batch, shell, ini, copy
 packages/test/          the suite runner: config.ps1 + index.ps1
+packages/*/package.ini  each package's identity: name, version, description, licence, engine, entry, exports
+packages/*/README.md    what that package is for, and its file table
+packages/*/LICENSE      the same MIT licence as the repository root
 tests/run.ps1           the test driver: discover parts, run them, merge results
 tests/lib/harness.ps1   assertions, sandboxes and command calls shared by the parts
 tests/lib/reporter.ps1  the printed output: part lines, failure blocks, live window, summary
@@ -1101,7 +1104,7 @@ A target in `builder.cli.config.ps1` (a PowerShell expression returning one orde
 
 `cli bundle -Entry <name>` builds one target and `-All` builds every one. `cli client` and `cli assembly` compile the `Preload` and `Main` targets, and `cli build` compiles both through the same call, so no tool spells out a compiler flag of its own.
 
-`[files] Files` defaults to `src/**/*.ps1,src/**/*.cs,src/**/*.ini,src/**/*.cmd,src/**/*.sh,scripts/**/*.bat`. What a release leaves out is expressed with `!`, and because the list applies in order a pattern after it can name a file back; the folders no pattern reaches - `src\data\`, `tests\`, `dist\`, `.git` - never enter it.
+`[files] Files` defaults to `src/**/*.ps1,src/**/*.cs,src/**/*.ini,src/**/*.cmd,src/**/*.sh,scripts/**/*.bat,LICENSE,README.md,README.zh-CN.md`. What a release leaves out is expressed with `!`, and because the list applies in order a pattern after it can name a file back; the folders no pattern reaches - `src\data\`, `tests\`, `dist\`, `.git`, the `docs\` pages - never enter it.
 
 ```ini
 # a lean release: one theme, with the documents, no renaming
